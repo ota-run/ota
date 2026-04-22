@@ -98,15 +98,18 @@ use crate::provisioning::{
 use crate::runner::{
     DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
     ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
-    StaleContainerOwnership, TaskExecutionRelation, clean_execution, clean_stale_execution,
-    effective_execution, effective_task_execution, env_resolution_source_label,
-    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, resolve_declared_env_source_value, resolve_execution_backend,
-    resolve_task_env_details, resolve_task_env_details_with_policy,
+    RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
+    RuntimeListenerResolutionKind, StaleContainerOwnership, TaskExecutionRelation, clean_execution,
+    clean_stale_execution, effective_execution, effective_task_execution,
+    env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
+    named_execution_context, persistent_container_name, resolve_declared_env_source_value,
+    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };
-use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskSpec};
+use crate::schema::{
+    Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskRuntimeHostPortMode, TaskSpec,
+};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -792,19 +795,46 @@ pub fn validate(
                     format,
                 ),
             },
-            Err(ContractProblem::Validation(errors)) => invalid_repo_contract_output(
-                "VALIDATE",
-                &resolved_path,
-                &errors
-                    .errors()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-                validate_invalid_contract_next_steps(&resolved_path),
-                format,
-            ),
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => render_task_runtime_bind_validation_text(
+                    "VALIDATE",
+                    &resolved_path,
+                    member,
+                    &errors,
+                    &["ota validate"],
+                )
+                .map(CommandOutput::failure)
+                .unwrap_or_else(|| {
+                    invalid_repo_contract_output(
+                        "VALIDATE",
+                        &resolved_path,
+                        &errors
+                            .errors()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        validate_invalid_contract_next_steps(&resolved_path),
+                        format,
+                    )
+                }),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    summary: Some(ValidateSummary {
+                        error_count: errors.errors().len(),
+                    }),
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "VALIDATE",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &validate_invalid_contract_next_steps(&resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
@@ -3757,6 +3787,40 @@ fn invalid_repo_contract_output(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeProjectionLoadIssue {
+    field: String,
+    why_lines: Vec<String>,
+    next_steps: Vec<String>,
+}
+
+fn runtime_projection_load_text(
+    command: &str,
+    where_value: &str,
+    error: &str,
+    fallback_next_steps: &[String],
+) -> Option<String> {
+    let issue = parse_runtime_projection_load_issue(error)?;
+    let mut next_steps = issue.next_steps;
+    for step in fallback_next_steps {
+        if step.starts_with("repair ") {
+            continue;
+        }
+        if !next_steps.contains(step) {
+            next_steps.push(step.clone());
+        }
+    }
+
+    Some(structured_field_error_text(
+        command,
+        where_value,
+        &issue.field,
+        "Contract could not be loaded",
+        &issue.why_lines,
+        &next_steps,
+    ))
+}
+
 fn repo_contract_load_text(
     command: &str,
     target_path: &Path,
@@ -3764,9 +3828,14 @@ fn repo_contract_load_text(
     error: &str,
     next_steps: &[String],
 ) -> String {
+    let where_value = compact_contract_path(target_path);
+    if let Some(text) = runtime_projection_load_text(command, &where_value, error, next_steps) {
+        return text;
+    }
+
     structured_error_text(
         command,
-        &compact_contract_path(target_path),
+        &where_value,
         summary,
         &[compact_backticked_paths(error)],
         next_steps,
@@ -4634,17 +4703,46 @@ pub fn doctor(
                                     Ok(target) => target,
                                     Err(ContractProblem::Validation(errors)) => {
                                         return finalize_debug(
-                                            invalid_repo_contract_output(
-                                                "DOCTOR",
-                                                &resolved_path,
-                                                &errors
-                                                    .errors()
-                                                    .iter()
-                                                    .map(ToString::to_string)
-                                                    .collect::<Vec<_>>(),
-                                                doctor_invalid_contract_next_steps(&resolved_path),
-                                                format,
-                                            ),
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    render_task_runtime_bind_validation_text(
+                                                        "DOCTOR",
+                                                        &resolved_path,
+                                                        Some(member.as_str()),
+                                                        &errors,
+                                                        &["ota validate", "ota doctor"],
+                                                    )
+                                                    .map(CommandOutput::failure)
+                                                    .unwrap_or_else(|| {
+                                                        invalid_repo_contract_output(
+                                                            "DOCTOR",
+                                                            &resolved_path,
+                                                            &errors
+                                                                .errors()
+                                                                .iter()
+                                                                .map(ToString::to_string)
+                                                                .collect::<Vec<_>>(),
+                                                            doctor_invalid_contract_next_steps(
+                                                                &resolved_path,
+                                                            ),
+                                                            format,
+                                                        )
+                                                    })
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ValidateFailure {
+                                                        summary: None,
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: errors
+                                                            .errors()
+                                                            .iter()
+                                                            .map(ToString::to_string)
+                                                            .collect(),
+                                                        error: None,
+                                                    }),
+                                                ),
+                                            },
                                             debug,
                                             debug_lines,
                                         );
@@ -4896,19 +4994,48 @@ pub fn doctor(
                     },
                 }
             }
-            Err(ContractProblem::Validation(errors)) => invalid_repo_contract_output(
-                "DOCTOR",
-                &resolved_path,
-                &errors
-                    .errors()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-                doctor_invalid_contract_next_steps(&resolved_path),
-                format,
-            ),
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => render_task_runtime_bind_validation_text(
+                    "DOCTOR",
+                    &resolved_path,
+                    single_member,
+                    &errors,
+                    &["ota validate", "ota doctor"],
+                )
+                .map(CommandOutput::failure)
+                .unwrap_or_else(|| {
+                    invalid_repo_contract_output(
+                        "DOCTOR",
+                        &resolved_path,
+                        &errors
+                            .errors()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        doctor_invalid_contract_next_steps(&resolved_path),
+                        format,
+                    )
+                }),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: errors.errors().iter().map(ToString::to_string).collect(),
+                        error: None,
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
+            },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "DOCTOR",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &doctor_invalid_contract_next_steps(&resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&ValidateFailure {
                         summary: None,
@@ -5176,36 +5303,49 @@ pub fn explain(
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => invalid_repo_contract_output(
+                OutputFormat::Text => render_task_runtime_bind_validation_text(
                     "EXPLAIN",
                     &resolved_path,
-                    &errors
-                        .errors()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>(),
-                    vec![
-                        format!(
-                            "repair {}",
-                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota validate", &resolved_path)
-                            ))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota explain", &resolved_path)
-                            ))
-                        ),
-                    ],
-                    format,
-                ),
+                    single_member,
+                    &errors,
+                    &["ota validate", "ota explain"],
+                )
+                .map(CommandOutput::failure)
+                .unwrap_or_else(|| {
+                    invalid_repo_contract_output(
+                        "EXPLAIN",
+                        &resolved_path,
+                        &errors
+                            .errors()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        vec![
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target(
+                                        "ota validate",
+                                        &resolved_path
+                                    )
+                                ))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target("ota explain", &resolved_path)
+                                ))
+                            ),
+                        ],
+                        format,
+                    )
+                }),
                 OutputFormat::Json => {
                     let error = errors.to_string();
                     CommandOutput::failure(to_json(&ExplainFailure {
@@ -6035,36 +6175,49 @@ pub fn receipt(
                 )
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => invalid_repo_contract_output(
+                OutputFormat::Text => render_task_runtime_bind_validation_text(
                     "RECEIPT",
                     &resolved_path,
-                    &errors
-                        .errors()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>(),
-                    vec![
-                        format!(
-                            "repair {}",
-                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota validate", &resolved_path)
-                            ))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota receipt", &resolved_path)
-                            ))
-                        ),
-                    ],
-                    format,
-                ),
+                    member,
+                    &errors,
+                    &["ota validate", "ota receipt"],
+                )
+                .map(CommandOutput::failure)
+                .unwrap_or_else(|| {
+                    invalid_repo_contract_output(
+                        "RECEIPT",
+                        &resolved_path,
+                        &errors
+                            .errors()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        vec![
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target(
+                                        "ota validate",
+                                        &resolved_path
+                                    )
+                                ))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target("ota receipt", &resolved_path)
+                                ))
+                            ),
+                        ],
+                        format,
+                    )
+                }),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&ValidateFailure {
                         summary: None,
@@ -8896,31 +9049,37 @@ fn workspace_repo_contract_load_text(
     repo_contract_path: &Path,
     error: &str,
 ) -> String {
+    let where_value = compact_contract_path(repo_contract_path);
+    let next_steps = vec![
+        format!(
+            "repair {}",
+            paint_code(&format!("`{}`", compact_contract_path(repo_contract_path)))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_repo_contract_target("ota validate", repo_contract_path)
+            ))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_workspace("ota workspace tasks", workspace_path)
+            ))
+        ),
+    ];
+    if let Some(text) = runtime_projection_load_text(command, &where_value, error, &next_steps) {
+        return text;
+    }
+
     structured_error_text(
         command,
-        &compact_contract_path(repo_contract_path),
+        &where_value,
         "Repo contract could not be loaded",
         &[compact_backticked_paths(error)],
-        &[
-            format!(
-                "repair {}",
-                paint_code(&format!("`{}`", compact_contract_path(repo_contract_path)))
-            ),
-            format!(
-                "rerun {}",
-                paint_code(&format!(
-                    "`{}`",
-                    command_for_repo_contract_target("ota validate", repo_contract_path)
-                ))
-            ),
-            format!(
-                "rerun {}",
-                paint_code(&format!(
-                    "`{}`",
-                    command_for_workspace("ota workspace tasks", workspace_path)
-                ))
-            ),
-        ],
+        &next_steps,
     )
 }
 
@@ -19492,17 +19651,23 @@ fn render_explain_section(
     report: &DoctorReport,
     summary: &ExplainSummary,
 ) -> String {
+    let action_count = explain_action_count(&report.findings);
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("EXPLAIN", path),
-        render_readiness_status(report.ok)
+        render_explain_status(report.ok, action_count)
     );
     stdout.push_str(&render_explain_steps_text(&report.findings, contract_path));
-    stdout.push_str(&render_explain_summary_text(
-        summary,
-        explain_action_count(&report.findings),
-    ));
+    stdout.push_str(&render_explain_summary_text(summary, action_count));
     stdout
+}
+
+pub(super) fn render_explain_status(ready: bool, action_count: usize) -> String {
+    if ready && action_count == 0 {
+        render_readiness_status(true)
+    } else {
+        render_named_status("BLOCKED", primary_warn_marker(), "1;38;2;255;235;59")
+    }
 }
 
 fn render_explain_summary_text(summary: &ExplainSummary, action_count: usize) -> String {
@@ -20261,7 +20426,16 @@ fn render_up(
             show_receipt,
         ),
         OutputFormat::Json => render_up_json(
-            path, status, phase, report, ready, service, task, exit_code, receipt,
+            path,
+            status,
+            phase,
+            report,
+            ready,
+            stderr.filter(|stderr| !stderr.is_empty()),
+            service,
+            task,
+            exit_code,
+            receipt,
         ),
     }
 }
@@ -20316,7 +20490,7 @@ fn render_up_result(
             result.service_command.as_deref(),
             result.task.as_deref(),
             result.task_command.as_deref(),
-            Some(result.stderr.as_ref()),
+            (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
             result.exit_code,
             &result.receipt,
             false,
@@ -20389,6 +20563,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "phase": result.phase,
             "findings": result.report.findings,
             "receipt": result.receipt,
+            "stderr": result.stderr,
             "service": result.service,
             "task": result.task,
             "exit_code": result.exit_code,
@@ -20416,6 +20591,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "status": result.status,
             "phase": result.phase,
             "findings": result.report.findings,
+            "stderr": result.stderr,
             "service": result.service,
             "task": result.task,
             "exit_code": result.exit_code,
@@ -21340,21 +21516,16 @@ mod tests {
 
         assert!(text.contains("Plan"));
         assert!(text.contains("1. Fix version mismatches (2)"));
-        assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
-        assert!(text.contains("run `sdk install java 21`"));
-        assert!(text.contains("and rerun `ota doctor`"));
-        assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
-        assert!(text.contains("run `brew install node@22`"));
-        assert!(text.contains("and rerun `ota doctor`"));
         assert!(text.contains("2. Review contract drift (2)"));
-        assert!(text.contains("» `tools.node` is no longer detected"));
         assert!(text.contains("Next:"));
         assert!(text.contains("ota detect --merge --dry-run"));
         assert!(text.contains("to review the comparison, then"));
         assert!(text.contains("ota detect --merge"));
-        assert!(text.contains("3. Review active policy surfaces (1)"));
+        assert!(text.contains("Context"));
+        assert!(text.contains("Review active policy surfaces"));
         assert!(!text.contains("Code:"));
         assert!(text.contains("Provenance: org policy"));
+        assert_eq!(text.matches("ota policy review").count(), 1);
     }
 
     #[test]
@@ -22036,6 +22207,84 @@ tasks:
         assert!(!text.contains("Policy-backed version rules are declared"));
         assert!(!text.contains("Review active policy surfaces"));
         assert!(!text.contains("Target:"));
+    }
+
+    #[test]
+    fn up_blocked_provisioning_text_reports_missing_container_image_as_invalid_contract() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24-bookworm")),
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "provisioning",
+                "BLOCKED",
+                None,
+                None,
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "BLOCKED",
+            phase: "provisioning",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: vec![Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Container execution is not configured"),
+                    why: String::from(
+                        "container diagnosis requires `execution.backends.container.image` so Ota can inspect the execution image that actually runs tasks",
+                    ),
+                    next: String::from(
+                        "add `execution.backends.container.image`, then rerun `ota doctor --mode container`",
+                    ),
+                }],
+            },
+            preview: None,
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("setup")),
+            task_command: None,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+
+        let text = strip_ansi_codes(&super::render_up_section("./ota.yaml", &result));
+
+        assert!(text.contains("BLOCKED"));
+        assert!(text.contains("Invalid contract"));
+        assert!(text.contains("Where: ./ota.yaml"));
+        assert!(text.contains("Field: execution.backends.container.image"));
+        assert!(text.contains(
+            "container-backed provisioning requires `execution.backends.container.image`"
+        ));
+        assert!(
+            text.contains("this contract does not declare `execution.backends.container.image`")
+        );
+        assert!(text.contains("set `execution.backends.container.image` in the repo contract"));
+        assert!(text.contains("rerun `ota up`"));
     }
 
     #[test]
@@ -24043,6 +24292,35 @@ tasks:
                         }),
                     },
                 )]),
+                primary_listener: Some(String::from("http")),
+                primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                    listener: String::from("http"),
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 3000,
+                    },
+                    host: crate::runner::ResolvedTaskRuntimeHost {
+                        address: String::from("127.0.0.1"),
+                        port: 49153,
+                        url: Some(String::from("http://127.0.0.1:49153/")),
+                    },
+                    primary: true,
+                }),
+                exposed_endpoints: vec![crate::runner::ResolvedTaskRuntimeEndpoint {
+                    listener: String::from("http"),
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 3000,
+                    },
+                    host: crate::runner::ResolvedTaskRuntimeHost {
+                        address: String::from("127.0.0.1"),
+                        port: 49153,
+                        url: Some(String::from("http://127.0.0.1:49153/")),
+                    },
+                    primary: true,
+                }],
             },
         );
 
@@ -24083,6 +24361,230 @@ tasks:
         ));
 
         assert!(rendered.contains("Endpoint:  http://127.0.0.1:49153/"));
+    }
+
+    #[test]
+    fn execution_summary_reports_secondary_workload_endpoints() {
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([
+                (
+                    String::from("http"),
+                    crate::runner::ResolvedTaskRuntimeListener {
+                        protocol: crate::schema::TaskRuntimeProtocol::Http,
+                        bind: crate::runner::ResolvedTaskRuntimeBind {
+                            address: String::from("0.0.0.0"),
+                            port: 3000,
+                        },
+                        resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                            host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                                address: String::from("127.0.0.1"),
+                                port: 49153,
+                                url: Some(String::from("http://127.0.0.1:49153/")),
+                            }),
+                        }),
+                    },
+                ),
+                (
+                    String::from("metrics"),
+                    crate::runner::ResolvedTaskRuntimeListener {
+                        protocol: crate::schema::TaskRuntimeProtocol::Http,
+                        bind: crate::runner::ResolvedTaskRuntimeBind {
+                            address: String::from("0.0.0.0"),
+                            port: 9090,
+                        },
+                        resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                            host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                                address: String::from("127.0.0.1"),
+                                port: 49154,
+                                url: Some(String::from("http://127.0.0.1:49154/metrics")),
+                            }),
+                        }),
+                    },
+                ),
+            ]),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 49153,
+                    url: Some(String::from("http://127.0.0.1:49153/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: vec![
+                crate::runner::ResolvedTaskRuntimeEndpoint {
+                    listener: String::from("http"),
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 3000,
+                    },
+                    host: crate::runner::ResolvedTaskRuntimeHost {
+                        address: String::from("127.0.0.1"),
+                        port: 49153,
+                        url: Some(String::from("http://127.0.0.1:49153/")),
+                    },
+                    primary: true,
+                },
+                crate::runner::ResolvedTaskRuntimeEndpoint {
+                    listener: String::from("metrics"),
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 9090,
+                    },
+                    host: crate::runner::ResolvedTaskRuntimeHost {
+                        address: String::from("127.0.0.1"),
+                        port: 49154,
+                        url: Some(String::from("http://127.0.0.1:49154/metrics")),
+                    },
+                    primary: false,
+                },
+            ],
+        };
+
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("node:24")),
+            target: Some(String::from("ota-container")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: Some(runtime),
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "READY", None, None)],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+
+        assert!(rendered.contains("Endpoint:  http://127.0.0.1:49153/"));
+        assert!(rendered.contains("Secondary: 1 additional endpoint(s)"));
+    }
+
+    #[test]
+    fn runtime_listener_lines_label_primary_and_secondary_listeners() {
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([
+                (
+                    String::from("http"),
+                    crate::runner::ResolvedTaskRuntimeListener {
+                        protocol: crate::schema::TaskRuntimeProtocol::Http,
+                        bind: crate::runner::ResolvedTaskRuntimeBind {
+                            address: String::from("0.0.0.0"),
+                            port: 3000,
+                        },
+                        resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                            host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                                address: String::from("127.0.0.1"),
+                                port: 49153,
+                                url: Some(String::from("http://127.0.0.1:49153/")),
+                            }),
+                        }),
+                    },
+                ),
+                (
+                    String::from("metrics"),
+                    crate::runner::ResolvedTaskRuntimeListener {
+                        protocol: crate::schema::TaskRuntimeProtocol::Http,
+                        bind: crate::runner::ResolvedTaskRuntimeBind {
+                            address: String::from("0.0.0.0"),
+                            port: 9090,
+                        },
+                        resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                            host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                                address: String::from("127.0.0.1"),
+                                port: 49154,
+                                url: Some(String::from("http://127.0.0.1:49154/metrics")),
+                            }),
+                        }),
+                    },
+                ),
+            ]),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 49153,
+                    url: Some(String::from("http://127.0.0.1:49153/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: vec![
+                crate::runner::ResolvedTaskRuntimeEndpoint {
+                    listener: String::from("http"),
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 3000,
+                    },
+                    host: crate::runner::ResolvedTaskRuntimeHost {
+                        address: String::from("127.0.0.1"),
+                        port: 49153,
+                        url: Some(String::from("http://127.0.0.1:49153/")),
+                    },
+                    primary: true,
+                },
+                crate::runner::ResolvedTaskRuntimeEndpoint {
+                    listener: String::from("metrics"),
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 9090,
+                    },
+                    host: crate::runner::ResolvedTaskRuntimeHost {
+                        address: String::from("127.0.0.1"),
+                        port: 49154,
+                        url: Some(String::from("http://127.0.0.1:49154/metrics")),
+                    },
+                    primary: false,
+                },
+            ],
+        };
+
+        let mut rendered = String::new();
+        super::append_runtime_listener_lines(&mut rendered, &runtime, "");
+        let rendered = strip_ansi_codes(&rendered);
+
+        assert!(
+            rendered.contains("http (primary) 0.0.0.0:3000"),
+            "rendered: {rendered}"
+        );
+        assert!(rendered.contains("Endpoint: http://127.0.0.1:49153/"));
+        assert!(
+            rendered.contains("metrics (secondary) 0.0.0.0:9090"),
+            "rendered: {rendered}"
+        );
+        assert!(rendered.contains("Endpoint: http://127.0.0.1:49154/metrics"));
     }
 
     #[test]
@@ -25945,6 +26447,18 @@ fn run_single_contract_target_streaming(
             })
         }
         Err(error) => {
+            let next_note = match &error {
+                RunError::RuntimeListenerResolutionFailed {
+                    task,
+                    listener,
+                    kind,
+                } => runtime_listener_resolution_receipt_note(member, task, listener, kind),
+                _ => format!(
+                    "{}; {}",
+                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                    details_footer
+                ),
+            };
             let receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -25956,11 +26470,7 @@ fn run_single_contract_target_streaming(
                 false,
                 None,
                 None,
-                Some(format!(
-                    "{}; {}",
-                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                    details_footer
-                )),
+                Some(next_note),
             );
             let summary = render_execution_receipt_summary_block(
                 &receipt,
@@ -26082,6 +26592,18 @@ fn run_single_contract_target_captured(
             })
         }
         Err(error) => {
+            let next_note = match &error {
+                RunError::RuntimeListenerResolutionFailed {
+                    task,
+                    listener,
+                    kind,
+                } => runtime_listener_resolution_receipt_note(member, task, listener, kind),
+                _ => format!(
+                    "{}; {}",
+                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                    details_footer
+                ),
+            };
             let receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -26093,11 +26615,7 @@ fn run_single_contract_target_captured(
                 false,
                 None,
                 None,
-                Some(format!(
-                    "{}; {}",
-                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                    details_footer
-                )),
+                Some(next_note),
             );
             let summary = render_execution_receipt_summary_block(
                 &receipt,
@@ -26184,6 +26702,17 @@ fn render_run_captured_failure_text(
     receipt_text: Option<&str>,
     summary: &str,
 ) -> String {
+    if let Some(port) = parse_container_host_port_conflict(stderr) {
+        return render_host_publication_failure_text(
+            where_value,
+            task_name,
+            member,
+            port,
+            &[],
+            Some(summary),
+            receipt_text,
+        );
+    }
     let mut next_steps = Vec::new();
     if run_output_excerpt(stdout, stderr, 20).is_some() {
         next_steps.push(format!(
@@ -26200,6 +26729,81 @@ fn render_run_captured_failure_text(
         Some(summary),
         receipt_text,
     )
+}
+
+fn parse_container_host_port_conflict(stderr: &str) -> Option<u16> {
+    let normalized = stderr.replace("\r\n", "\n");
+    normalized.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if !lower.contains("bind for ") || !lower.contains("port is already allocated") {
+            return None;
+        }
+
+        let bind = trimmed
+            .split_once("Bind for ")
+            .or_else(|| trimmed.split_once("bind for "))?
+            .1;
+        let address = bind.split_once(" failed")?.0.trim();
+        let port = address.rsplit_once(':')?.1.trim().parse::<u16>().ok()?;
+        Some(port)
+    })
+}
+
+fn render_host_publication_failure_text(
+    where_value: &str,
+    task_name: &str,
+    member: Option<&str>,
+    port: u16,
+    next_steps: &[String],
+    summary_block: Option<&str>,
+    receipt_text: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Host publication failed", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{}",
+        stylize_inline_text(&format!(
+            "task `{task_name}` could not publish host port `{port}`"
+        ))
+    ));
+    if let Some(context) = execution_context_from_summary_block(summary_block) {
+        out.push_str(&format!("\n{} {context}", paint_key("Context:")));
+    }
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    append_error_detail_section(
+        &mut out,
+        "Why:",
+        &[
+            format!("host port `{port}` is already allocated"),
+            String::from("the task requested a published host endpoint"),
+        ],
+        None,
+    );
+    let mut next_steps = next_steps.to_vec();
+    next_steps.push(format!(
+        "stop the process or container using host port `{port}`"
+    ));
+    next_steps.push(format!(
+        "rerun {}",
+        paint_code(&repo_run_stream_command(task_name, member))
+    ));
+    next_steps.push(String::from("or change `project.host.port.mode` to `auto`"));
+    append_error_detail_section(&mut out, "Next:", &next_steps, None);
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push_str(receipt_text);
+    }
+    append_summary_block(&mut out, summary_block);
+    out
 }
 
 struct OutputExcerpt {
@@ -26342,6 +26946,173 @@ fn run_default_fallback_step(task_name: &str, overrides: ExecutionOverrides) -> 
     }
 }
 
+struct RuntimeListenerResolutionText {
+    summary: String,
+    field: String,
+    why_lines: Vec<String>,
+    next_steps: Vec<String>,
+}
+
+fn runtime_listener_resolution_text(
+    task_name: &str,
+    listener_name: &str,
+    kind: &RuntimeListenerResolutionKind,
+    rerun_command: &str,
+) -> RuntimeListenerResolutionText {
+    match kind {
+        RuntimeListenerResolutionKind::BindDiscovery(failure) => {
+            let field = format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port");
+            let mut why_lines = vec![format!(
+                "task `{task_name}` listener `{listener_name}` binds inside the execution context, but ota could not discover a single listening port"
+            )];
+            let mut next_steps = vec![
+                String::from(
+                    "set `bind.port.mode` to `fixed` if the listener always binds a known port",
+                ),
+                format!(
+                    "set `tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.value` to the port the app listens on"
+                ),
+            ];
+            match failure {
+                RuntimeListenerBindDiscoveryFailure::ProcessExited { exit_code } => {
+                    why_lines.push(format!(
+                        "the process exited before ota could discover a listening port (exit code {exit_code})"
+                    ));
+                    next_steps.insert(
+                        0,
+                        String::from(
+                            "rerun with `--stream` so ota can inspect the listener while it is still running",
+                        ),
+                    );
+                }
+                RuntimeListenerBindDiscoveryFailure::ProcessInspectionFailed { details } => {
+                    why_lines.push(details.clone());
+                    next_steps.insert(
+                        0,
+                        String::from(
+                            "rerun with `--stream` after fixing the local process inspection failure",
+                        ),
+                    );
+                }
+                RuntimeListenerBindDiscoveryFailure::MultiplePorts { pid, ports } => {
+                    why_lines.push(format!(
+                        "multiple listening ports were discovered for pid {pid} ({ports}); declare a fixed bind port instead"
+                    ));
+                }
+                RuntimeListenerBindDiscoveryFailure::TimedOut => {
+                    why_lines.push(String::from(
+                        "timed out waiting for the declared service listener to start listening",
+                    ));
+                    next_steps.insert(
+                        0,
+                        String::from(
+                            "rerun with `--stream` if the listener needs more time to start",
+                        ),
+                    );
+                }
+            }
+            next_steps.push(format!(
+                "rerun {}",
+                paint_code(&format!("`{rerun_command}`"))
+            ));
+            RuntimeListenerResolutionText {
+                summary: String::from("Listener bind port could not be resolved"),
+                field,
+                why_lines,
+                next_steps,
+            }
+        }
+        RuntimeListenerResolutionKind::HostPublication(failure) => {
+            let mut field =
+                format!("tasks.{task_name}.runtime.listeners.{listener_name}.project.host.port");
+            let mut summary = String::from("Published endpoint could not be resolved");
+            let mut why_lines = vec![format!(
+                "task `{task_name}` listener `{listener_name}` declared a host-published endpoint"
+            )];
+            let mut next_steps = vec![
+                String::from(
+                    "if the workload exits too quickly, rerun with `--stream` so ota can inspect the published port while it is still running",
+                ),
+                format!(
+                    "set `tasks.{task_name}.runtime.listeners.{listener_name}.project.host.port.mode` to `fixed` if you want a deterministic host endpoint"
+                ),
+            ];
+            match failure {
+                RuntimeListenerHostPublicationFailure::MissingPublishedPort {
+                    container_name,
+                    bind_port,
+                    transport,
+                } => {
+                    why_lines.push(format!(
+                        "the container engine did not report a published host port for `{container_name}` on internal port `{bind_port}/{transport}`"
+                    ));
+                    next_steps.insert(
+                        0,
+                        format!("inspect the published port mapping for `{container_name}`"),
+                    );
+                }
+                RuntimeListenerHostPublicationFailure::BindReservationFailed {
+                    address,
+                    details,
+                } => {
+                    field = format!(
+                        "tasks.{task_name}.runtime.listeners.{listener_name}.project.host.address"
+                    );
+                    summary = String::from("Host publication address could not be reserved");
+                    why_lines.push(format!(
+                        "the host address `{address}` could not be reserved for this published endpoint"
+                    ));
+                    why_lines.push(details.to_string());
+                    next_steps.insert(
+                        0,
+                        format!(
+                            "set `tasks.{task_name}.runtime.listeners.{listener_name}.project.host.address` to a bindable interface, for example `127.0.0.1` or `0.0.0.0`"
+                        ),
+                    );
+                }
+                RuntimeListenerHostPublicationFailure::MismatchedPublishedPort {
+                    container_name,
+                    bind_port,
+                    transport,
+                    expected_port,
+                    actual_port,
+                } => {
+                    why_lines.push(format!(
+                        "ota reserved host port `{expected_port}`, but `{container_name}` published `{actual_port}` for internal port `{bind_port}/{transport}`"
+                    ));
+                    next_steps.insert(
+                        0,
+                        format!(
+                            "inspect published mappings for `{container_name}` and ensure no concurrent engine rewrites are occurring"
+                        ),
+                    );
+                }
+            }
+            next_steps.push(format!(
+                "rerun {}",
+                paint_code(&format!("`{rerun_command}`"))
+            ));
+            RuntimeListenerResolutionText {
+                summary,
+                field,
+                why_lines,
+                next_steps,
+            }
+        }
+    }
+}
+
+fn runtime_listener_resolution_receipt_note(
+    member: Option<&str>,
+    task: &str,
+    listener: &str,
+    kind: &RuntimeListenerResolutionKind,
+) -> String {
+    runtime_listener_resolution_text(task, listener, kind, &repo_run_stream_command(task, member))
+        .next_steps
+        .join("; ")
+}
+
 fn render_run_structured_error_text(
     contract: &Contract,
     contract_path: &Path,
@@ -26354,6 +27125,23 @@ fn render_run_structured_error_text(
 ) -> String {
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
     let (summary, mut why_lines, mut next_steps) = match error {
+        RunError::RuntimeListenerResolutionFailed {
+            task,
+            listener,
+            kind,
+        } => {
+            let runtime_listener_resolution = runtime_listener_resolution_text(
+                task,
+                listener,
+                kind,
+                &repo_run_stream_command(task, member),
+            );
+            (
+                runtime_listener_resolution.summary,
+                runtime_listener_resolution.why_lines,
+                runtime_listener_resolution.next_steps,
+            )
+        }
         RunError::UnknownTask { task } => (
             String::from("Unknown task"),
             vec![format!("task `{task}` is not declared in this contract")],
@@ -26418,6 +27206,44 @@ fn render_run_structured_error_text(
                 "install one of the supported container engines: `{engines}`"
             )],
         ),
+        RunError::HostPublicationConflict {
+            task,
+            listener,
+            address,
+            port,
+        } => {
+            let is_auto_projection = contract
+                .tasks
+                .get(task.as_str())
+                .and_then(|task_spec| task_spec.service_runtime())
+                .and_then(|runtime| runtime.listeners.get(listener.as_str()))
+                .and_then(|listener_spec| listener_spec.project.host.as_ref())
+                .is_some_and(|host| host.port.mode == TaskRuntimeHostPortMode::Auto);
+            let mut next_steps = vec![format!(
+                "stop the process or container using host port `{port}`"
+            )];
+            if is_auto_projection {
+                next_steps.push(format!(
+                    "rerun `{}` so ota can reserve a new host port",
+                    repo_run_stream_command(task.as_str(), member).replace(" --stream", "")
+                ));
+            } else {
+                next_steps.push(format!(
+                    "change `tasks.{task}.runtime.listeners.{listener}.project.host.port.mode` to `auto`"
+                ));
+            }
+            next_steps.push(task_use_details_step(Some(contract_path), member));
+            (
+                String::from("Host publication failed"),
+                vec![
+                    format!("host port `{port}` on `{address}` is already allocated"),
+                    format!(
+                        "task `{task}` listener `{listener}` requested a published host endpoint"
+                    ),
+                ],
+                next_steps,
+            )
+        }
         RunError::MissingRemoteProvider { .. } => (
             String::from("Remote run is not configured"),
             run_execution_backend_why_lines(contract, overrides, task_name, Backend::Remote),
@@ -26543,6 +27369,59 @@ fn render_run_structured_error_text(
         RunError::MissingContainerBackendCli { engines, .. } => why_lines.push(format!(
             "no supported container engine is available on PATH: {engines}"
         )),
+        RunError::HostPublicationConflict {
+            task,
+            listener,
+            address: _,
+            port: _,
+        } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!("tasks.{task}.runtime.listeners.{listener}.project.host.port"),
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            return output;
+        }
+        RunError::RuntimeListenerResolutionFailed {
+            task,
+            listener,
+            kind,
+        } => {
+            let runtime_listener_resolution = runtime_listener_resolution_text(
+                task,
+                listener,
+                kind,
+                &repo_run_stream_command(task, member),
+            );
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &runtime_listener_resolution.field,
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            return output;
+        }
         _ => {}
     }
 
@@ -26893,45 +27772,1112 @@ fn render_run_runtime_validation_text(
     task_name: &str,
     errors: &ValidationErrors,
 ) -> Option<String> {
-    if errors.errors().len() != 1 {
-        return None;
+    let text_path_display = display_contract_target(&compact_contract_path(resolved_path), member);
+    if let Some(issue) = parse_runtime_projection_primary_issue(errors) {
+        if issue.task_name != task_name {
+            return None;
+        }
+
+        let field = format!("tasks.{task_name}.runtime.listeners");
+        let listeners = issue
+            .listeners
+            .iter()
+            .map(|listener| format!("`{listener}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let (why_lines, mut next_steps) = match issue.kind {
+            RuntimeProjectionPrimaryIssueKind::MissingPrimary => (
+                vec![
+                    format!(
+                        "task `{task_name}` projects multiple listeners ({listeners}) but none is marked primary"
+                    ),
+                    String::from(
+                        "ota needs one primary projected listener to pick `OTA_PUBLIC_URL` and the summary endpoint deterministically",
+                    ),
+                ],
+                vec![
+                    String::from(
+                        "set `project.host.primary: true` on exactly one projected listener",
+                    ),
+                    String::from("leave all other projected listeners unset or `false`"),
+                ],
+            ),
+            RuntimeProjectionPrimaryIssueKind::MultiplePrimaries => (
+                vec![
+                    format!(
+                        "task `{task_name}` marks multiple projected listeners as primary ({listeners})"
+                    ),
+                    String::from(
+                        "`OTA_PUBLIC_URL` and primary endpoint rendering require exactly one primary projected listener",
+                    ),
+                ],
+                vec![
+                    String::from(
+                        "keep `project.host.primary: true` on one projected listener only",
+                    ),
+                    String::from(
+                        "set all other projected listeners to `primary: false` or remove the field",
+                    ),
+                ],
+            ),
+        };
+        next_steps.extend([
+            format!(
+                "rerun {} to revalidate the contract",
+                paint_code(&format!(
+                    "`{}`",
+                    command_for_repo_contract_target("ota validate", resolved_path)
+                ))
+            ),
+            format!(
+                "rerun {}",
+                paint_code(&format!(
+                    "`{}`",
+                    match member {
+                        Some(member) => format!("ota run --member {member} {task_name}"),
+                        None => format!("ota run {task_name}"),
+                    }
+                ))
+            ),
+            task_use_details_step(Some(resolved_path), member),
+        ]);
+
+        return Some(structured_field_error_text(
+            "RUN",
+            &text_path_display,
+            &field,
+            "Task runtime projection is invalid",
+            &why_lines,
+            &next_steps,
+        ));
     }
 
-    let error = errors.errors()[0].to_string();
-    let text_path_display = display_contract_target(&compact_contract_path(resolved_path), member);
-    let (parsed_task_name, listener_name) = parse_fixed_host_projection_error(&error)?;
+    let Some((parsed_task_name, listener_name, issue_kind)) =
+        parse_runtime_projection_issue(errors)
+    else {
+        return None;
+    };
     if parsed_task_name != task_name {
         return None;
     }
 
-    let field =
-        format!("tasks.{task_name}.runtime.listeners.{listener_name}.project.host.port.value");
-    let why_lines = vec![String::from(
-        "`project.host.port.mode: fixed` requires `project.host.port.value`",
-    )];
-    let next_steps = vec![
-        format!(
-            "set `project.host.port.value` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
-        ),
-        String::from("or change `project.host.port.mode` to `auto`"),
-        format!(
-            "rerun {} to revalidate the contract",
-            paint_code(&format!(
-                "`{}`",
-                command_for_repo_contract_target("ota validate", resolved_path)
-            ))
-        ),
-        task_use_details_step(Some(resolved_path), member),
-    ];
+    match issue_kind {
+        RuntimeProjectionIssueKind::BindPortModeAuto => {
+            let field =
+                format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.mode");
+            let why_lines = vec![
+                format!(
+                    "task `{task_name}` listener `{listener_name}` with `bind.port.mode: auto` is invalid"
+                ),
+                String::from("`bind.port.mode` only supports `fixed` or `discover`"),
+                String::from("`auto` is only valid on `project.host.port.mode`"),
+            ];
+            let next_steps = vec![
+                String::from("change this field to `fixed` or `discover`"),
+                format!(
+                    "rerun {} to revalidate the contract",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target("ota validate", resolved_path)
+                    ))
+                ),
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        match member {
+                            Some(member) => format!("ota run --member {member} {task_name}"),
+                            None => format!("ota run {task_name}"),
+                        }
+                    ))
+                ),
+                task_use_details_step(Some(resolved_path), member),
+            ];
 
-    Some(structured_field_error_text(
-        "RUN",
-        &text_path_display,
-        &field,
-        "Task runtime projection is invalid",
-        &why_lines,
-        &next_steps,
+            Some(structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &field,
+                "Task runtime projection is invalid",
+                &why_lines,
+                &next_steps,
+            ))
+        }
+        RuntimeProjectionIssueKind::ContainerProjectionRequiresFixedBind => {
+            let field =
+                format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.mode");
+            let why_lines = vec![
+                format!(
+                    "task `{task_name}` listener `{listener_name}` with `bind.port.mode: auto` is invalid"
+                ),
+                String::from(
+                    "container workloads with `project.host` declared must use a fixed internal bind port",
+                ),
+                String::from(
+                    "`project.host.port.mode: auto` can stay auto so Ota can choose the published host port",
+                ),
+            ];
+            let next_steps = vec![
+                format!(
+                    "change `bind.port.mode` to `fixed` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
+                ),
+                String::from("set `bind.port.value` to the port the app listens on"),
+                String::from(
+                    "keep `project.host.port.mode: auto` if you want Ota to choose the host port",
+                ),
+                format!(
+                    "rerun {} to revalidate the contract",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target("ota validate", resolved_path)
+                    ))
+                ),
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        match member {
+                            Some(member) => format!("ota run --member {member} {task_name}"),
+                            None => format!("ota run {task_name}"),
+                        }
+                    ))
+                ),
+                task_use_details_step(Some(resolved_path), member),
+            ];
+
+            Some(structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &field,
+                "Task runtime projection is invalid",
+                &why_lines,
+                &next_steps,
+            ))
+        }
+        RuntimeProjectionIssueKind::FixedBindPortValueMissing => {
+            let field =
+                format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.value");
+            let why_lines = vec![format!(
+                "task `{task_name}` listener `{listener_name}` with `bind.port.mode: fixed` must declare `bind.port.value`"
+            )];
+            let next_steps = vec![
+                format!(
+                    "set `bind.port.value` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
+                ),
+                format!(
+                    "rerun {} to revalidate the contract",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target("ota validate", resolved_path)
+                    ))
+                ),
+                task_use_details_step(Some(resolved_path), member),
+            ];
+
+            Some(structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &field,
+                "Task runtime projection is invalid",
+                &why_lines,
+                &next_steps,
+            ))
+        }
+        RuntimeProjectionIssueKind::FixedHostPortValueMissing => {
+            let field = format!(
+                "tasks.{task_name}.runtime.listeners.{listener_name}.project.host.port.value"
+            );
+            let why_lines = vec![String::from(
+                "`project.host.port.mode: fixed` requires `project.host.port.value`",
+            )];
+            let next_steps = vec![
+                format!(
+                    "set `project.host.port.value` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
+                ),
+                String::from("or change `project.host.port.mode` to `auto`"),
+                format!(
+                    "rerun {} to revalidate the contract",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target("ota validate", resolved_path)
+                    ))
+                ),
+                task_use_details_step(Some(resolved_path), member),
+            ];
+
+            Some(structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &field,
+                "Task runtime projection is invalid",
+                &why_lines,
+                &next_steps,
+            ))
+        }
+    }
+}
+
+fn parse_invalid_bind_port_mode_error(error: &str) -> Option<(String, String)> {
+    let error = error.strip_prefix("task `")?;
+    let (task_name, remainder) = error.split_once("` listener `")?;
+    let (listener_name, remainder) =
+        remainder.split_once("` with `bind.port.mode: auto` is invalid")?;
+    if !remainder.is_empty() {
+        return None;
+    }
+
+    Some((task_name.to_string(), listener_name.to_string()))
+}
+
+fn parse_missing_bind_port_value_error(error: &str) -> Option<(String, String)> {
+    let error = error.strip_prefix("task `")?;
+    let (task_name, remainder) = error.split_once("` listener `")?;
+    let (listener_name, remainder) =
+        remainder.split_once("` with `bind.port.mode: fixed` must declare `bind.port.value`")?;
+    if !remainder.is_empty() {
+        return None;
+    }
+
+    Some((task_name.to_string(), listener_name.to_string()))
+}
+
+fn parse_container_host_projection_bind_mode_error(error: &str) -> Option<(String, String)> {
+    let error = error.strip_prefix("task `")?;
+    let (task_name, remainder) = error.split_once("` listener `")?;
+    let (listener_name, remainder) = remainder.split_once(
+        "` in a container context must use `bind.port.mode: fixed` when `project.host` is declared",
+    )?;
+    if !remainder.is_empty() {
+        return None;
+    }
+
+    Some((task_name.to_string(), listener_name.to_string()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeProjectionPrimaryIssueKind {
+    MissingPrimary,
+    MultiplePrimaries,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RuntimeProjectionPrimaryIssue {
+    task_name: String,
+    listeners: Vec<String>,
+    kind: RuntimeProjectionPrimaryIssueKind,
+}
+
+fn parse_listener_list_from_group(group: &str) -> Option<Vec<String>> {
+    let listeners = group
+        .split(',')
+        .map(str::trim)
+        .map(|listener| {
+            listener
+                .strip_prefix('`')
+                .and_then(|value| value.strip_suffix('`'))
+                .map(str::to_string)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if listeners.is_empty() {
+        return None;
+    }
+    Some(listeners)
+}
+
+fn parse_missing_primary_listener_error(error: &str) -> Option<(String, Vec<String>)> {
+    let error = error.strip_prefix("task `")?;
+    let (task_name, remainder) = error.split_once("` declares multiple projected listeners (")?;
+    let (listeners, remainder) = remainder.split_once(") but none sets `project.host.primary: true`; mark exactly one projected listener as primary")?;
+    if !remainder.is_empty() {
+        return None;
+    }
+    Some((
+        task_name.to_string(),
+        parse_listener_list_from_group(listeners)?,
     ))
+}
+
+fn parse_multiple_primary_listener_error(error: &str) -> Option<(String, Vec<String>)> {
+    let error = error.strip_prefix("task `")?;
+    let (task_name, remainder) =
+        error.split_once("` declares multiple listeners with `project.host.primary: true` (")?;
+    let (listeners, remainder) =
+        remainder.split_once("); mark exactly one projected listener as primary")?;
+    if !remainder.is_empty() {
+        return None;
+    }
+    Some((
+        task_name.to_string(),
+        parse_listener_list_from_group(listeners)?,
+    ))
+}
+
+fn parse_runtime_projection_primary_issue(
+    errors: &ValidationErrors,
+) -> Option<RuntimeProjectionPrimaryIssue> {
+    let mut issue: Option<RuntimeProjectionPrimaryIssue> = None;
+    for error in errors.errors() {
+        let error = error.to_string();
+        let (task_name, listeners, kind) = if let Some((task_name, listeners)) =
+            parse_missing_primary_listener_error(&error)
+        {
+            (
+                task_name,
+                listeners,
+                RuntimeProjectionPrimaryIssueKind::MissingPrimary,
+            )
+        } else if let Some((task_name, listeners)) = parse_multiple_primary_listener_error(&error) {
+            (
+                task_name,
+                listeners,
+                RuntimeProjectionPrimaryIssueKind::MultiplePrimaries,
+            )
+        } else {
+            return None;
+        };
+
+        match &issue {
+            Some(existing)
+                if existing.task_name != task_name
+                    || existing.listeners != listeners
+                    || existing.kind != kind =>
+            {
+                return None;
+            }
+            Some(_) => {}
+            None => {
+                issue = Some(RuntimeProjectionPrimaryIssue {
+                    task_name,
+                    listeners,
+                    kind,
+                });
+            }
+        }
+    }
+    issue
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeProjectionIssueKind {
+    BindPortModeAuto,
+    FixedBindPortValueMissing,
+    FixedHostPortValueMissing,
+    ContainerProjectionRequiresFixedBind,
+}
+
+fn parse_runtime_projection_issue(
+    errors: &ValidationErrors,
+) -> Option<(String, String, RuntimeProjectionIssueKind)> {
+    let mut target: Option<(String, String)> = None;
+    let mut has_bind_port_mode_auto = false;
+    let mut has_fixed_bind_port_value_missing = false;
+    let mut has_fixed_host_port_value_missing = false;
+    let mut has_container_projection_requires_fixed_bind = false;
+
+    for error in errors.errors() {
+        let error = error.to_string();
+        let (task_name, listener_name, kind) = if let Some((task_name, listener_name)) =
+            parse_invalid_bind_port_mode_error(&error)
+        {
+            has_bind_port_mode_auto = true;
+            (
+                task_name,
+                listener_name,
+                RuntimeProjectionIssueKind::BindPortModeAuto,
+            )
+        } else if let Some((task_name, listener_name)) = parse_missing_bind_port_value_error(&error)
+        {
+            has_fixed_bind_port_value_missing = true;
+            (
+                task_name,
+                listener_name,
+                RuntimeProjectionIssueKind::FixedBindPortValueMissing,
+            )
+        } else if let Some((task_name, listener_name)) =
+            parse_container_host_projection_bind_mode_error(&error)
+        {
+            has_container_projection_requires_fixed_bind = true;
+            (
+                task_name,
+                listener_name,
+                RuntimeProjectionIssueKind::ContainerProjectionRequiresFixedBind,
+            )
+        } else if let Some((task_name, listener_name)) = parse_fixed_host_projection_error(&error) {
+            has_fixed_host_port_value_missing = true;
+            (
+                task_name,
+                listener_name,
+                RuntimeProjectionIssueKind::FixedHostPortValueMissing,
+            )
+        } else {
+            return None;
+        };
+
+        match &target {
+            Some((existing_task, existing_listener))
+                if existing_task != &task_name || existing_listener != &listener_name =>
+            {
+                return None;
+            }
+            Some(_) => {}
+            None => target = Some((task_name, listener_name)),
+        }
+
+        if matches!(
+            kind,
+            RuntimeProjectionIssueKind::ContainerProjectionRequiresFixedBind
+        ) {
+            has_container_projection_requires_fixed_bind = true;
+        }
+    }
+
+    let (task_name, listener_name) = target?;
+    let kind = if has_container_projection_requires_fixed_bind {
+        RuntimeProjectionIssueKind::ContainerProjectionRequiresFixedBind
+    } else if has_fixed_host_port_value_missing {
+        RuntimeProjectionIssueKind::FixedHostPortValueMissing
+    } else if has_fixed_bind_port_value_missing {
+        RuntimeProjectionIssueKind::FixedBindPortValueMissing
+    } else if has_bind_port_mode_auto {
+        RuntimeProjectionIssueKind::BindPortModeAuto
+    } else {
+        return None;
+    };
+
+    Some((task_name, listener_name, kind))
+}
+
+fn parse_runtime_projection_load_issue(error: &str) -> Option<RuntimeProjectionLoadIssue> {
+    let parse_detail = error
+        .strip_prefix("failed to parse contract `")?
+        .split_once("`: ")?
+        .1;
+    let (path, detail) = parse_detail.split_once(": ")?;
+    if !path.starts_with("tasks.") || !path.contains(".runtime") {
+        return None;
+    }
+
+    let (detail, location) = split_yaml_error_location(detail);
+    if let Some(field) = detail
+        .strip_prefix("missing field `")
+        .and_then(|field| field.strip_suffix('`'))
+    {
+        return build_runtime_projection_missing_field_issue(path, field, location.as_deref());
+    }
+
+    if let Some((field, expected)) = parse_unknown_field_error_detail(detail) {
+        return build_runtime_projection_unknown_field_issue(
+            path,
+            field,
+            expected,
+            location.as_deref(),
+        );
+    }
+
+    if let Some((value, expected)) = parse_unknown_variant_error_detail(detail) {
+        return build_runtime_projection_unknown_variant_issue(
+            path,
+            value,
+            expected,
+            location.as_deref(),
+        );
+    }
+
+    None
+}
+
+fn split_yaml_error_location(detail: &str) -> (&str, Option<String>) {
+    let Some((detail, tail)) = detail.rsplit_once(" at line ") else {
+        return (detail, None);
+    };
+    let Some((line, column)) = tail.split_once(" column ") else {
+        return (detail, None);
+    };
+    if !line.chars().all(|ch| ch.is_ascii_digit()) || !column.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return (detail, None);
+    }
+
+    (
+        detail,
+        Some(format!("parser stopped at line {line}, column {column}")),
+    )
+}
+
+fn parse_unknown_field_error_detail(detail: &str) -> Option<(&str, &str)> {
+    let detail = detail.strip_prefix("unknown field `")?;
+    let (field, expected) = detail.split_once("`, expected ")?;
+    Some((field, expected))
+}
+
+fn parse_unknown_variant_error_detail(detail: &str) -> Option<(&str, &str)> {
+    let detail = detail.strip_prefix("unknown variant `")?;
+    let (value, expected) = detail.split_once("`, expected ")?;
+    Some((value, expected))
+}
+
+fn append_runtime_projection_location(why_lines: &mut Vec<String>, location: Option<&str>) {
+    if let Some(location) = location {
+        why_lines.push(location.to_string());
+    }
+}
+
+fn build_runtime_projection_missing_field_issue(
+    path: &str,
+    missing_field: &str,
+    location: Option<&str>,
+) -> Option<RuntimeProjectionLoadIssue> {
+    let segments = path.split('.').collect::<Vec<_>>();
+    let (field, mut why_lines, next_steps) = match (segments.as_slice(), missing_field) {
+        (["tasks", task, "runtime"], "kind") => (
+            format!("tasks.{task}.runtime.kind"),
+            vec![
+                format!("task `{task}` runtime is missing `kind`"),
+                String::from("`runtime.kind` must be `service`"),
+            ],
+            vec![String::from("set `runtime.kind` to `service`")],
+        ),
+        (["tasks", task, "runtime", "listeners", listener], "protocol") => (
+            format!("tasks.{task}.runtime.listeners.{listener}.protocol"),
+            vec![
+                format!("task `{task}` listener `{listener}` is missing `protocol`"),
+                String::from("`protocol` must be `http`, `https`, or `tcp`"),
+            ],
+            vec![String::from("set `protocol` to `http`, `https`, or `tcp`")],
+        ),
+        (["tasks", task, "runtime", "listeners", listener], "bind") => (
+            format!("tasks.{task}.runtime.listeners.{listener}.bind"),
+            vec![
+                format!("task `{task}` listener `{listener}` is missing `bind`"),
+                String::from(
+                    "listeners must declare where the workload binds inside its execution context",
+                ),
+            ],
+            vec![String::from("add a `bind` block with `address` and `port`")],
+        ),
+        (["tasks", task, "runtime", "listeners", listener, "bind"], "address") => (
+            format!("tasks.{task}.runtime.listeners.{listener}.bind.address"),
+            vec![
+                format!("task `{task}` listener `{listener}` bind settings are missing `address`"),
+                String::from("`bind.address` is the interface the workload listens on"),
+            ],
+            vec![String::from(
+                "set `bind.address` to the interface the app listens on, for example `0.0.0.0`",
+            )],
+        ),
+        (["tasks", task, "runtime", "listeners", listener, "bind"], "port") => (
+            format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+            vec![
+                format!("task `{task}` listener `{listener}` bind settings are missing `port`"),
+                String::from("`bind.port` must declare `mode` and, when fixed, `value`"),
+            ],
+            vec![String::from(
+                "add a `bind.port` block with `mode` and, when using `fixed`, `value`",
+            )],
+        ),
+        (
+            [
+                "tasks",
+                task,
+                "runtime",
+                "listeners",
+                listener,
+                "bind",
+                "port",
+            ],
+            "mode",
+        ) => (
+            format!("tasks.{task}.runtime.listeners.{listener}.bind.port.mode"),
+            vec![
+                format!("task `{task}` listener `{listener}` bind port is missing `mode`"),
+                String::from("`bind.port.mode` must be `fixed` or `discover`"),
+            ],
+            vec![
+                String::from("set `bind.port.mode` to `fixed` or `discover`"),
+                String::from("use `fixed` when this listener is published through `project.host`"),
+            ],
+        ),
+        (
+            [
+                "tasks",
+                task,
+                "runtime",
+                "listeners",
+                listener,
+                "project",
+                "host",
+            ],
+            "address",
+        ) => (
+            format!("tasks.{task}.runtime.listeners.{listener}.project.host.address"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` host publication is missing `address`"
+                ),
+                String::from(
+                    "`project.host.address` is the host-visible address for this listener",
+                ),
+            ],
+            vec![String::from(
+                "set `project.host.address` to the host-visible address, for example `127.0.0.1`",
+            )],
+        ),
+        (
+            [
+                "tasks",
+                task,
+                "runtime",
+                "listeners",
+                listener,
+                "project",
+                "host",
+            ],
+            "port",
+        ) => (
+            format!("tasks.{task}.runtime.listeners.{listener}.project.host.port"),
+            vec![
+                format!("task `{task}` listener `{listener}` host publication is missing `port`"),
+                String::from("`project.host.port` must declare `mode` and, when fixed, `value`"),
+            ],
+            vec![String::from(
+                "add a `project.host.port` block with `mode` and, when using `fixed`, `value`",
+            )],
+        ),
+        (
+            [
+                "tasks",
+                task,
+                "runtime",
+                "listeners",
+                listener,
+                "project",
+                "host",
+                "port",
+            ],
+            "mode",
+        ) => (
+            format!("tasks.{task}.runtime.listeners.{listener}.project.host.port.mode"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` host publication port is missing `mode`"
+                ),
+                String::from("`project.host.port.mode` must be `fixed` or `auto`"),
+            ],
+            vec![
+                String::from(
+                    "set `project.host.port.mode` to `auto` if you want Ota to choose the host port",
+                ),
+                String::from(
+                    "or set `project.host.port.mode` to `fixed` and add `project.host.port.value`",
+                ),
+            ],
+        ),
+        _ => return None,
+    };
+
+    append_runtime_projection_location(&mut why_lines, location);
+    Some(RuntimeProjectionLoadIssue {
+        field,
+        why_lines,
+        next_steps,
+    })
+}
+
+fn build_runtime_projection_unknown_field_issue(
+    path: &str,
+    unknown_field: &str,
+    expected: &str,
+    location: Option<&str>,
+) -> Option<RuntimeProjectionLoadIssue> {
+    let segments = path.split('.').collect::<Vec<_>>();
+    let (field, mut why_lines, next_steps) = match segments.as_slice() {
+        ["tasks", task, "runtime"] => (
+            format!("tasks.{task}.runtime.{unknown_field}"),
+            vec![
+                format!("task `{task}` runtime does not accept field `{unknown_field}`"),
+                format!("expected fields: {expected}"),
+            ],
+            vec![String::from(
+                "use `runtime.kind` and optional `listeners` only",
+            )],
+        ),
+        ["tasks", task, "runtime", "listeners", listener] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.{unknown_field}"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` does not accept field `{unknown_field}`"
+                ),
+                format!("expected fields: {expected}"),
+            ],
+            vec![String::from(
+                "use `protocol`, `bind`, and optional `project` under a listener",
+            )],
+        ),
+        ["tasks", task, "runtime", "listeners", listener, "bind"] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.bind.{unknown_field}"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` bind settings do not accept field `{unknown_field}`"
+                ),
+                format!("expected fields: {expected}"),
+            ],
+            vec![String::from("use `bind.address` and `bind.port` only")],
+        ),
+        [
+            "tasks",
+            task,
+            "runtime",
+            "listeners",
+            listener,
+            "bind",
+            "port",
+        ] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.bind.port.{unknown_field}"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` bind port does not accept field `{unknown_field}`"
+                ),
+                format!("expected fields: {expected}"),
+            ],
+            vec![String::from(
+                "use `bind.port.mode` and optional `bind.port.value` only",
+            )],
+        ),
+        [
+            "tasks",
+            task,
+            "runtime",
+            "listeners",
+            listener,
+            "project",
+            "host",
+        ] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.project.host.{unknown_field}"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` host publication does not accept field `{unknown_field}`"
+                ),
+                format!("expected fields: {expected}"),
+            ],
+            vec![String::from(
+                "use `project.host.address`, `project.host.port`, optional `project.host.primary`, and optional `project.host.path` only",
+            )],
+        ),
+        [
+            "tasks",
+            task,
+            "runtime",
+            "listeners",
+            listener,
+            "project",
+            "host",
+            "port",
+        ] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.project.host.port.{unknown_field}"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` host publication port does not accept field `{unknown_field}`"
+                ),
+                format!("expected fields: {expected}"),
+            ],
+            vec![String::from(
+                "use `project.host.port.mode` and optional `project.host.port.value` only",
+            )],
+        ),
+        _ => return None,
+    };
+
+    append_runtime_projection_location(&mut why_lines, location);
+    Some(RuntimeProjectionLoadIssue {
+        field,
+        why_lines,
+        next_steps,
+    })
+}
+
+fn build_runtime_projection_unknown_variant_issue(
+    path: &str,
+    value: &str,
+    expected: &str,
+    location: Option<&str>,
+) -> Option<RuntimeProjectionLoadIssue> {
+    let segments = path.split('.').collect::<Vec<_>>();
+    let (field, mut why_lines, next_steps) = match segments.as_slice() {
+        ["tasks", task, "runtime", "kind"] => (
+            format!("tasks.{task}.runtime.kind"),
+            vec![
+                format!("task `{task}` runtime kind `{value}` is invalid"),
+                format!("expected one of: {expected}"),
+            ],
+            vec![String::from("set `runtime.kind` to `service`")],
+        ),
+        ["tasks", task, "runtime", "listeners", listener, "protocol"] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.protocol"),
+            vec![
+                format!("task `{task}` listener `{listener}` protocol `{value}` is invalid"),
+                format!("expected one of: {expected}"),
+            ],
+            vec![String::from("set `protocol` to `http`, `https`, or `tcp`")],
+        ),
+        [
+            "tasks",
+            task,
+            "runtime",
+            "listeners",
+            listener,
+            "bind",
+            "port",
+            "mode",
+        ] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.bind.port.mode"),
+            vec![
+                format!("task `{task}` listener `{listener}` bind port mode `{value}` is invalid"),
+                format!("expected one of: {expected}"),
+            ],
+            vec![String::from(
+                "set `bind.port.mode` to `fixed` or `discover`",
+            )],
+        ),
+        [
+            "tasks",
+            task,
+            "runtime",
+            "listeners",
+            listener,
+            "project",
+            "host",
+            "port",
+            "mode",
+        ] => (
+            format!("tasks.{task}.runtime.listeners.{listener}.project.host.port.mode"),
+            vec![
+                format!(
+                    "task `{task}` listener `{listener}` host publication port mode `{value}` is invalid"
+                ),
+                format!("expected one of: {expected}"),
+            ],
+            vec![String::from(
+                "set `project.host.port.mode` to `auto` or `fixed`",
+            )],
+        ),
+        _ => return None,
+    };
+
+    append_runtime_projection_location(&mut why_lines, location);
+    Some(RuntimeProjectionLoadIssue {
+        field,
+        why_lines,
+        next_steps,
+    })
+}
+
+fn render_task_runtime_bind_validation_text(
+    command: &str,
+    resolved_path: &Path,
+    member: Option<&str>,
+    errors: &ValidationErrors,
+    rerun_commands: &[&str],
+) -> Option<String> {
+    let text_path_display = display_contract_target(&compact_contract_path(resolved_path), member);
+    if let Some(issue) = parse_runtime_projection_primary_issue(errors) {
+        let field = format!("tasks.{}.runtime.listeners", issue.task_name);
+        let listeners = issue
+            .listeners
+            .iter()
+            .map(|listener| format!("`{listener}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let (why_lines, mut next_steps) = match issue.kind {
+            RuntimeProjectionPrimaryIssueKind::MissingPrimary => (
+                vec![
+                    format!(
+                        "task `{}` projects multiple listeners ({listeners}) but none is marked primary",
+                        issue.task_name
+                    ),
+                    String::from(
+                        "ota needs one primary projected listener to pick `OTA_PUBLIC_URL` and the summary endpoint deterministically",
+                    ),
+                ],
+                vec![
+                    String::from(
+                        "set `project.host.primary: true` on exactly one projected listener",
+                    ),
+                    String::from("leave all other projected listeners unset or `false`"),
+                ],
+            ),
+            RuntimeProjectionPrimaryIssueKind::MultiplePrimaries => (
+                vec![
+                    format!(
+                        "task `{}` marks multiple projected listeners as primary ({listeners})",
+                        issue.task_name
+                    ),
+                    String::from(
+                        "`OTA_PUBLIC_URL` and primary endpoint rendering require exactly one primary projected listener",
+                    ),
+                ],
+                vec![
+                    String::from(
+                        "keep `project.host.primary: true` on one projected listener only",
+                    ),
+                    String::from(
+                        "set all other projected listeners to `primary: false` or remove the field",
+                    ),
+                ],
+            ),
+        };
+        next_steps.extend(rerun_commands.iter().map(|rerun_command| {
+            format!(
+                "rerun {}",
+                paint_code(&format!(
+                    "`{}`",
+                    command_for_repo_contract_target(rerun_command, resolved_path)
+                ))
+            )
+        }));
+        return Some(structured_field_error_text(
+            command,
+            &text_path_display,
+            &field,
+            "Invalid contract",
+            &why_lines,
+            &next_steps,
+        ));
+    }
+
+    let Some((task_name, listener_name, issue_kind)) = parse_runtime_projection_issue(errors)
+    else {
+        return None;
+    };
+
+    match issue_kind {
+        RuntimeProjectionIssueKind::BindPortModeAuto => {
+            let field =
+                format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.mode");
+            let why_lines = vec![
+                format!(
+                    "task `{task_name}` listener `{listener_name}` with `bind.port.mode: auto` is invalid"
+                ),
+                String::from("`bind.port.mode` only supports `fixed` or `discover`"),
+                String::from("`auto` is only valid on `project.host.port.mode`"),
+            ];
+            let mut next_steps = vec![String::from("change this field to `fixed` or `discover`")];
+            next_steps.extend(rerun_commands.iter().map(|rerun_command| {
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target(rerun_command, resolved_path)
+                    ))
+                )
+            }));
+            return Some(structured_field_error_text(
+                command,
+                &text_path_display,
+                &field,
+                "Invalid contract",
+                &why_lines,
+                &next_steps,
+            ));
+        }
+        RuntimeProjectionIssueKind::ContainerProjectionRequiresFixedBind => {
+            let field =
+                format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.mode");
+            let why_lines = vec![
+                format!(
+                    "task `{task_name}` listener `{listener_name}` with `bind.port.mode: auto` is invalid"
+                ),
+                String::from(
+                    "container workloads with `project.host` declared must use a fixed internal bind port",
+                ),
+                String::from(
+                    "`project.host.port.mode: auto` can stay auto so Ota can choose the published host port",
+                ),
+            ];
+            let mut next_steps = vec![
+                format!(
+                    "change `bind.port.mode` to `fixed` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
+                ),
+                String::from("set `bind.port.value` to the port the app listens on"),
+                String::from(
+                    "keep `project.host.port.mode: auto` if you want Ota to choose the host port",
+                ),
+            ];
+            next_steps.extend(rerun_commands.iter().map(|rerun_command| {
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target(rerun_command, resolved_path)
+                    ))
+                )
+            }));
+            return Some(structured_field_error_text(
+                command,
+                &text_path_display,
+                &field,
+                "Invalid contract",
+                &why_lines,
+                &next_steps,
+            ));
+        }
+        RuntimeProjectionIssueKind::FixedBindPortValueMissing => {
+            let field =
+                format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.value");
+            let why_lines = vec![format!(
+                "task `{task_name}` listener `{listener_name}` with `bind.port.mode: fixed` must declare `bind.port.value`"
+            )];
+            let mut next_steps = vec![format!(
+                "set `bind.port.value` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
+            )];
+            next_steps.extend(rerun_commands.iter().map(|rerun_command| {
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target(rerun_command, resolved_path)
+                    ))
+                )
+            }));
+            return Some(structured_field_error_text(
+                command,
+                &text_path_display,
+                &field,
+                "Invalid contract",
+                &why_lines,
+                &next_steps,
+            ));
+        }
+        RuntimeProjectionIssueKind::FixedHostPortValueMissing => {
+            let field = format!(
+                "tasks.{task_name}.runtime.listeners.{listener_name}.project.host.port.value"
+            );
+            let why_lines = vec![String::from(
+                "`project.host.port.mode: fixed` requires `project.host.port.value`",
+            )];
+            let mut next_steps = vec![format!(
+                "set `project.host.port.value` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
+            )];
+            next_steps.push(String::from("or change `project.host.port.mode` to `auto`"));
+            next_steps.extend(rerun_commands.iter().map(|rerun_command| {
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_repo_contract_target(rerun_command, resolved_path)
+                    ))
+                )
+            }));
+            return Some(structured_field_error_text(
+                command,
+                &text_path_display,
+                &field,
+                "Invalid contract",
+                &why_lines,
+                &next_steps,
+            ));
+        }
+    }
 }
 
 fn render_run_contract_problem_failure(
@@ -27202,16 +29148,49 @@ fn render_up_blocked_provisioning_section(
         .iter()
         .find(|finding| finding.severity == FindingSeverity::Error)
     {
-        let doctor_mode = doctor_mode_from_backend(receipt.backend.as_deref());
-        let (display_why, display_next, container_image) =
-            render_container_image_finding_text(&primary.why, &primary.next, doctor_mode);
-        let why_lines =
-            finding_why_lines(&primary.summary, &display_why, container_image.as_deref());
-        let next_steps =
-            finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
-        stdout.push('\n');
-        append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
-        append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
+        if primary.summary == "Container execution is not configured" {
+            let where_value = contract_path
+                .map(compact_contract_path)
+                .unwrap_or_else(|| path.to_string());
+            let why_lines = vec![
+                String::from(
+                    "container-backed provisioning requires `execution.backends.container.image` so Ota can provision and run setup inside the execution image instead of on the host",
+                ),
+                String::from("this contract does not declare `execution.backends.container.image`"),
+            ];
+            let next_steps = vec![
+                String::from("set `execution.backends.container.image` in the repo contract"),
+                String::from("rerun `ota up`"),
+            ];
+            stdout.push_str(&format!(
+                "\n\n{}  {}",
+                render_severity(FindingSeverity::Error),
+                paint("Invalid contract", "1;37")
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Where:"),
+                paint_code(&where_value)
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Field:"),
+                paint_code("execution.backends.container.image")
+            ));
+            append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
+            append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
+        } else {
+            let doctor_mode = doctor_mode_from_backend(receipt.backend.as_deref());
+            let (display_why, display_next, container_image) =
+                render_container_image_finding_text(&primary.why, &primary.next, doctor_mode);
+            let why_lines =
+                finding_why_lines(&primary.summary, &display_why, container_image.as_deref());
+            let next_steps =
+                finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
+            stdout.push('\n');
+            append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
+            append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
+        }
     }
 
     let context = blocked_provisioning_context_lines(&report.findings);
@@ -27633,6 +29612,10 @@ fn doctor_mode_from_backend(backend: Option<&str>) -> Option<DoctorMode> {
 
 fn setup_failure_output_label(stderr: &str) -> &'static str {
     let stderr = stderr.trim_start();
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("bind for ") && lower.contains("port is already allocated") {
+        return "Host publication error:";
+    }
     if stderr.starts_with("container backend `")
         || stderr.starts_with("backend provider `")
         || stderr.starts_with("remote provider `")
@@ -27940,6 +29923,13 @@ fn render_execution_receipt_summary_block(
     }
     if let Some(endpoint) = primary_receipt_endpoint(receipt) {
         lines.push(summary_detail_line("Endpoint:", &endpoint));
+        let secondary_count = secondary_receipt_endpoint_count(receipt);
+        if secondary_count > 0 {
+            lines.push(summary_detail_line(
+                "Secondary:",
+                &format!("{secondary_count} additional endpoint(s)"),
+            ));
+        }
     }
     lines.push(summary_detail_line("Task:", task));
     let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
@@ -27969,47 +29959,71 @@ fn append_runtime_listener_lines(
     runtime: &crate::runner::ResolvedTaskRuntime,
     indent: &str,
 ) {
+    let endpoint_index = runtime
+        .exposed_endpoints
+        .iter()
+        .map(|endpoint| (endpoint.listener.as_str(), endpoint))
+        .collect::<BTreeMap<_, _>>();
     for (listener_name, listener) in &runtime.listeners {
+        let role = if runtime.primary_listener.as_deref() == Some(listener_name.as_str()) {
+            Some("primary")
+        } else if endpoint_index.contains_key(listener_name.as_str()) {
+            Some("secondary")
+        } else {
+            None
+        };
+        let listener_label = role
+            .map(|role| format!("{listener_name} ({role})"))
+            .unwrap_or_else(|| listener_name.to_string());
         stdout.push_str(&format!(
             "\n{indent}{} {}:{}",
-            paint_key(listener_name),
+            paint_key(&listener_label),
             listener.bind.address,
             listener.bind.port
         ));
+        if let Some(endpoint) = endpoint_index.get(listener_name.as_str()) {
+            stdout.push_str(&format!(
+                "\n{indent}  {} {}",
+                paint_key("Endpoint:"),
+                runtime_host_endpoint_text(&endpoint.host)
+            ));
+            continue;
+        }
         if let Some(host) = listener
             .resolved
             .as_ref()
             .and_then(|resolved| resolved.host.as_ref())
         {
-            if let Some(url) = host.url.as_deref() {
-                stdout.push_str(&format!("\n{indent}  {} {}", paint_key("Endpoint:"), url));
-            } else {
-                stdout.push_str(&format!(
-                    "\n{indent}  {} {}:{}",
-                    paint_key("Host:"),
-                    host.address,
-                    host.port
-                ));
-            }
+            stdout.push_str(&format!(
+                "\n{indent}  {} {}",
+                paint_key("Endpoint:"),
+                runtime_host_endpoint_text(host)
+            ));
         }
     }
 }
 
+fn runtime_host_endpoint_text(host: &crate::runner::ResolvedTaskRuntimeHost) -> String {
+    host.url
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", host.address, host.port))
+}
+
 fn primary_runtime_endpoint(runtime: &crate::runner::ResolvedTaskRuntime) -> Option<String> {
-    runtime.listeners.values().find_map(|listener| {
-        listener
-            .resolved
-            .as_ref()
-            .and_then(|resolved| resolved.host.as_ref())
-            .and_then(|host| host.url.clone())
-            .or_else(|| {
-                listener
-                    .resolved
-                    .as_ref()
-                    .and_then(|resolved| resolved.host.as_ref())
-                    .map(|host| format!("{}:{}", host.address, host.port))
-            })
-    })
+    runtime
+        .primary_endpoint
+        .as_ref()
+        .map(|endpoint| runtime_host_endpoint_text(&endpoint.host))
+        .or_else(|| {
+            runtime
+                .exposed_endpoints
+                .first()
+                .map(|endpoint| runtime_host_endpoint_text(&endpoint.host))
+        })
+}
+
+fn secondary_runtime_endpoint_count(runtime: &crate::runner::ResolvedTaskRuntime) -> usize {
+    runtime.exposed_endpoints.len().saturating_sub(1)
 }
 
 fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
@@ -28023,6 +30037,23 @@ fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
                 .values()
                 .find_map(primary_runtime_endpoint)
         })
+}
+
+fn secondary_receipt_endpoint_count(receipt: &ExecutionReceipt) -> usize {
+    if let Some(runtime) = receipt
+        .runtime
+        .as_ref()
+        .filter(|runtime| primary_runtime_endpoint(runtime).is_some())
+    {
+        return secondary_runtime_endpoint_count(runtime);
+    }
+
+    receipt
+        .workloads
+        .values()
+        .find(|runtime| primary_runtime_endpoint(runtime).is_some())
+        .map(secondary_runtime_endpoint_count)
+        .unwrap_or(0)
 }
 
 fn render_execution_summary_status_value(status: &str) -> String {
@@ -28042,6 +30073,7 @@ fn render_up_json(
     phase: &str,
     report: DoctorReport,
     ready: bool,
+    stderr: Option<&str>,
     service: Option<&str>,
     task: Option<&str>,
     exit_code: Option<i32>,
@@ -28055,6 +30087,7 @@ fn render_up_json(
             phase,
             findings: &report.findings,
             receipt: receipt.clone(),
+            stderr,
             service,
             task,
             exit_code,
@@ -30778,7 +32811,7 @@ fn run_up_setup_task(
             target: outcome.target,
             runtime: outcome.runtime,
         })
-        .map_err(render_run_error),
+        .map_err(|error| render_up_run_error(resolved_path, error)),
         RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
             contract,
             resolved_path,
@@ -30794,7 +32827,7 @@ fn run_up_setup_task(
             target: outcome.target,
             runtime: outcome.runtime,
         })
-        .map_err(render_run_error),
+        .map_err(|error| render_up_run_error(resolved_path, error)),
     }
 }
 
@@ -34698,6 +36731,104 @@ fn load_and_diagnose_workspace_streaming(
 
 fn render_run_error(error: RunError) -> String {
     error.to_string()
+}
+
+fn render_up_run_error(contract_path: &Path, error: RunError) -> String {
+    match error {
+        RunError::HostPublicationConflict {
+            task,
+            listener,
+            address,
+            port,
+        } => {
+            let is_auto_projection = load_contract(contract_path)
+                .ok()
+                .and_then(|contract| {
+                    contract
+                        .tasks
+                        .get(task.as_str())
+                        .and_then(|task_spec| task_spec.service_runtime())
+                        .and_then(|runtime| runtime.listeners.get(listener.as_str()))
+                        .and_then(|listener_spec| listener_spec.project.host.as_ref())
+                        .map(|host| host.port.mode == TaskRuntimeHostPortMode::Auto)
+                })
+                .unwrap_or(false);
+            let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            let mut next_steps = vec![format!(
+                "stop the process or container using host port `{port}`"
+            )];
+            if is_auto_projection {
+                next_steps.push(String::from(
+                    "rerun `ota up` so ota can reserve a new host port",
+                ));
+            } else {
+                next_steps.push(format!(
+                    "change `tasks.{task}.runtime.listeners.{listener}.project.host.port.mode` to `auto`"
+                ));
+            }
+            next_steps.push(String::from("rerun `ota up`"));
+            render_field_error_with_tail(
+                "UP",
+                &where_value,
+                &format!("tasks.{task}.runtime.listeners.{listener}.project.host.port"),
+                "Host publication failed",
+                &[
+                    format!("host port `{port}` on `{address}` is already allocated"),
+                    format!(
+                        "task `{task}` listener `{listener}` requested a published host endpoint"
+                    ),
+                ],
+                &next_steps,
+                None,
+                None,
+            )
+        }
+        RunError::RuntimeListenerResolutionFailed {
+            task,
+            listener,
+            kind,
+        } => {
+            let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            let runtime_listener_resolution =
+                runtime_listener_resolution_text(&task, &listener, &kind, "ota up");
+            render_field_error_with_tail(
+                "UP",
+                &where_value,
+                &runtime_listener_resolution.field,
+                &runtime_listener_resolution.summary,
+                &runtime_listener_resolution.why_lines,
+                &runtime_listener_resolution.next_steps,
+                None,
+                None,
+            )
+        }
+        _ => render_run_error(error),
+    }
+}
+
+fn render_field_error_with_tail(
+    command: &str,
+    where_value: &str,
+    field: &str,
+    summary: &str,
+    why_lines: &[String],
+    next_steps: &[String],
+    receipt_text: Option<&str>,
+    summary_block: Option<&str>,
+) -> String {
+    let mut output =
+        structured_field_error_text(command, where_value, field, summary, why_lines, next_steps);
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        output.push('\n');
+        output.push_str(receipt_text);
+    }
+    if let Some(summary_block) = summary_block {
+        output.push('\n');
+        output.push_str(summary_block);
+    }
+    output
 }
 
 fn render_confidence(confidence: Confidence) -> String {

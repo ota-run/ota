@@ -150,10 +150,15 @@ pub(crate) fn render_workspace_explain_text(
     path: &str,
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
+    let action_count = report
+        .repos
+        .iter()
+        .map(|repo| explain_action_count(&repo.findings))
+        .sum::<usize>();
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("WORKSPACE EXPLAIN", path),
-        render_readiness_status(report.ok)
+        render_explain_status(report.ok, action_count)
     );
 
     for repo in &report.repos {

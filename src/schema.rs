@@ -862,6 +862,7 @@ pub struct TaskRuntimePortSpec {
 pub enum TaskRuntimePortMode {
     Fixed,
     Discover,
+    Auto,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -876,6 +877,8 @@ pub struct TaskRuntimeProjectionSpec {
 pub struct TaskRuntimeHostProjectionSpec {
     pub address: String,
     pub port: TaskRuntimeHostPortSpec,
+    #[serde(default)]
+    pub primary: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 }

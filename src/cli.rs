@@ -4800,6 +4800,33 @@ case "$command" in
     [ -f "$state_dir/$name.path" ]
     exit $?
     ;;
+  port)
+    name="$1"
+    query="$2"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    if [ -f "$state_dir/$name.publish" ]; then
+      while IFS= read -r publication; do
+        [ -n "$publication" ] || continue
+        transport="${publication##*/}"
+        publication="${publication%/*}"
+        if printf "%s" "$publication" | grep -q "::"; then
+          host_address="${publication%%::*}"
+          bind_port="${publication##*::}"
+          host_port="49153"
+        else
+          host_address="${publication%%:*}"
+          remainder="${publication#*:}"
+          host_port="${remainder%%:*}"
+          bind_port="${remainder##*:}"
+        fi
+        if [ "$bind_port/$transport" = "$query" ]; then
+          printf "%s:%s\n" "$host_address" "$host_port"
+          exit 0
+        fi
+      done < "$state_dir/$name.publish"
+    fi
+    exit 1
+    ;;
   start)
     attach=0
     while [ "$#" -gt 0 ]; do
@@ -4858,6 +4885,7 @@ case "$command" in
     name=""
     network=""
     env_entries=""
+    pub_entries=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --rm|-i)
@@ -4879,6 +4907,11 @@ case "$command" in
           shift 2
           ;;
         -w)
+          shift 2
+          ;;
+        -p)
+          pub_entries="${pub_entries}${2}
+"
           shift 2
           ;;
         --env)
@@ -4914,6 +4947,11 @@ case "$command" in
     else
       : > "$state_dir/$name.env"
     fi
+    if [ -n "$pub_entries" ]; then
+      printf "%s" "$pub_entries" > "$state_dir/$name.publish"
+    else
+      : > "$state_dir/$name.publish"
+    fi
     if [ "$1" = "-c" ]; then
       printf "%s" "$2" > "$state_dir/$name.command"
     elif [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
@@ -4930,6 +4968,7 @@ case "$command" in
     name=""
     labels=""
     network=""
+    pub_entries=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -4962,6 +5001,11 @@ case "$command" in
         -w)
           shift 2
           ;;
+        -p)
+          pub_entries="${pub_entries}${2}
+"
+          shift 2
+          ;;
         --env)
           export "$2"
           shift 2
@@ -4986,8 +5030,18 @@ case "$command" in
       if [ -n "$labels" ]; then
         printf "%s" "$labels" > "$state_dir/$name.labels"
       fi
+      if [ -n "$pub_entries" ]; then
+        printf "%s" "$pub_entries" > "$state_dir/$name.publish"
+      else
+        : > "$state_dir/$name.publish"
+      fi
       printf "run-persistent\n" >> "$host_dir/docker-log.txt"
       exit 0
+    fi
+    if [ -n "$pub_entries" ]; then
+      printf "%s" "$pub_entries" > "$state_dir/$name.publish"
+    else
+      : > "$state_dir/$name.publish"
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
@@ -5027,6 +5081,25 @@ esac
 
 exit 1
 "#,
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn install_fake_docker_without_port_reporting(path: &std::path::Path) {
+        let real_path = path.with_file_name("docker-real");
+        install_fake_docker(&real_path);
+        fs::write(
+            path,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = "port" ]; then
+  exit 1
+fi
+exec "{}" "$@"
+"#,
+                real_path.display()
+            ),
         )
         .unwrap();
     }
@@ -5873,6 +5946,7 @@ project:
         assert!(output.stderr.is_none());
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("EXPLAIN"));
+        assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("Overview"));
         assert!(stdout.contains("Plan"));
         assert!(stdout.contains("Findings:"));
@@ -10514,6 +10588,426 @@ tasks:
     }
 
     #[test]
+    fn run_text_reports_missing_host_projection_port_mode_with_field_guidance() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Contract could not be loaded"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.project.host.port.mode"));
+        assert!(
+            stderr.contains("task `dev` listener `http` host publication port is missing `mode`")
+        );
+        assert!(stderr.contains("`project.host.port.mode` must be `fixed` or `auto`"));
+        assert!(stderr.contains(
+            "set `project.host.port.mode` to `auto` if you want Ota to choose the host port"
+        ));
+        assert!(stderr.contains(
+            "or set `project.host.port.mode` to `fixed` and add `project.host.port.value`"
+        ));
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(stderr.contains("rerun `ota run dev`"));
+        assert!(!stderr.contains("repair `./ota.yaml`"));
+        assert!(!stderr.contains("failed to parse contract"));
+    }
+
+    #[test]
+    fn runtime_projection_missing_host_port_mode_reports_field_specific_guidance_for_shared_commands()
+     {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+"#,
+        );
+
+        let cases = [
+            ("validate", "ota validate"),
+            ("doctor", "ota doctor"),
+            ("receipt", "ota receipt"),
+            ("explain", "ota explain"),
+        ];
+
+        for (command, rerun_command) in cases {
+            let output = run_with(["ota", command, fixture.path()]);
+            assert_eq!(
+                output.exit_code, 1,
+                "command `{command}` should fail cleanly"
+            );
+            let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+            assert!(
+                stderr.contains("Contract could not be loaded"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains("Field: tasks.dev.runtime.listeners.http.project.host.port.mode"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr
+                    .contains("task `dev` listener `http` host publication port is missing `mode`"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains("`project.host.port.mode` must be `fixed` or `auto`"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(
+                    "set `project.host.port.mode` to `auto` if you want Ota to choose the host port"
+                ),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(
+                    "or set `project.host.port.mode` to `fixed` and add `project.host.port.value`"
+                ),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(&format!("rerun `{rerun_command} ")),
+                "command `{command}`"
+            );
+            assert!(
+                !stderr.contains("repair `./ota.yaml`"),
+                "command `{command}`"
+            );
+            assert!(
+                !stderr.contains("failed to parse contract"),
+                "command `{command}`"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_with_missing_bind_port_mode_reports_field_specific_guidance() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Contract could not be loaded"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.mode"));
+        assert!(stderr.contains("task `dev` listener `http` bind port is missing `mode`"));
+        assert!(stderr.contains("`bind.port.mode` must be `fixed` or `discover`"));
+        assert!(stderr.contains("set `bind.port.mode` to `fixed` or `discover`"));
+        assert!(
+            stderr.contains("use `fixed` when this listener is published through `project.host`")
+        );
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(!stderr.contains("repair `./ota.yaml`"));
+        assert!(!stderr.contains("failed to parse contract"));
+    }
+
+    #[test]
+    fn validate_with_invalid_host_projection_port_mode_reports_field_specific_guidance() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: dynamic
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Contract could not be loaded"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.project.host.port.mode"));
+        assert!(stderr.contains(
+            "task `dev` listener `http` host publication port mode `dynamic` is invalid"
+        ));
+        assert!(stderr.contains("expected one of:"));
+        assert!(stderr.contains("`fixed`"));
+        assert!(stderr.contains("`auto`"));
+        assert!(stderr.contains("set `project.host.port.mode` to `auto` or `fixed`"));
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(!stderr.contains("repair `./ota.yaml`"));
+        assert!(!stderr.contains("failed to parse contract"));
+    }
+
+    #[test]
+    fn run_text_reports_container_projection_bind_port_mode_next_steps() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: auto
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Task runtime projection is invalid"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.mode"));
+        assert!(
+            stderr.contains("task `dev` listener `http` with `bind.port.mode: auto` is invalid")
+        );
+        assert!(stderr.contains(
+            "container workloads with `project.host` declared must use a fixed internal bind port"
+        ));
+        assert!(stderr.contains(
+            "`project.host.port.mode: auto` can stay auto so Ota can choose the published host port"
+        ));
+        assert!(
+            stderr.contains(
+                "change `bind.port.mode` to `fixed` for `tasks.dev.runtime.listeners.http`"
+            )
+        );
+        assert!(stderr.contains("set `bind.port.value` to the port the app listens on"));
+        assert!(stderr.contains(
+            "keep `project.host.port.mode: auto` if you want Ota to choose the host port"
+        ));
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(stderr.contains("rerun `ota run dev`"));
+        assert!(!stderr.contains("repair `./ota.yaml`"));
+    }
+
+    #[test]
+    fn runtime_projection_bind_mode_auto_reports_field_specific_guidance_for_shared_commands() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: auto
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+
+        let cases = [
+            ("validate", "ota validate"),
+            ("doctor", "ota doctor"),
+            ("receipt", "ota receipt"),
+            ("explain", "ota explain"),
+        ];
+
+        for (command, rerun_command) in cases {
+            let output = run_with(["ota", command, fixture.path()]);
+            assert_eq!(
+                output.exit_code, 1,
+                "command `{command}` should fail cleanly"
+            );
+            let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+            assert!(stderr.contains("Invalid contract"), "command `{command}`");
+            assert!(
+                stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.mode"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(
+                    "container workloads with `project.host` declared must use a fixed internal bind port"
+                ),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(
+                    "`project.host.port.mode: auto` can stay auto so Ota can choose the published host port"
+                ),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(
+                    "change `bind.port.mode` to `fixed` for `tasks.dev.runtime.listeners.http`"
+                ),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains("set `bind.port.value` to the port the app listens on"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(
+                    "keep `project.host.port.mode: auto` if you want Ota to choose the host port"
+                ),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(&format!("rerun `{rerun_command} ")),
+                "command `{command}`"
+            );
+            assert!(
+                !stderr.contains("repair `./ota.yaml`"),
+                "command `{command}`"
+            );
+        }
+    }
+
+    #[test]
     fn validate_with_bind_port_mode_auto_reports_field_specific_guidance() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -10605,6 +11099,309 @@ tasks:
         assert!(stderr.contains("set `bind.port.value` for `tasks.dev.runtime.listeners.http`"));
         assert!(stderr.contains("rerun `ota doctor"));
         assert!(!stderr.contains("repair `./ota.yaml`"));
+    }
+
+    #[test]
+    fn validate_with_fixed_host_projection_missing_value_reports_field_specific_next_steps() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Invalid contract"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.project.host.port.value"));
+        assert!(
+            stderr.contains("`project.host.port.mode: fixed` requires `project.host.port.value`")
+        );
+        assert!(
+            stderr.contains("set `project.host.port.value` for `tasks.dev.runtime.listeners.http`")
+        );
+        assert!(stderr.contains("or change `project.host.port.mode` to `auto`"));
+        assert!(!stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.value"));
+    }
+
+    #[test]
+    fn receipt_with_bind_port_mode_auto_reports_field_specific_next_steps() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: auto
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Invalid contract"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.mode"));
+        assert!(
+            stderr.contains("task `dev` listener `http` with `bind.port.mode: auto` is invalid")
+        );
+        assert!(stderr.contains("`bind.port.mode` only supports `fixed` or `discover`"));
+        assert!(stderr.contains("`auto` is only valid on `project.host.port.mode`"));
+        assert!(stderr.contains("change this field to `fixed` or `discover`"));
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(stderr.contains("rerun `ota receipt"));
+        assert!(!stderr.contains("Contract could not be loaded"));
+        assert!(!stderr.contains("failed to parse contract"));
+    }
+
+    #[test]
+    fn explain_with_bind_port_mode_auto_reports_field_specific_next_steps() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: auto
+"#,
+        );
+
+        let output = run_with(["ota", "explain", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Invalid contract"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.mode"));
+        assert!(
+            stderr.contains("task `dev` listener `http` with `bind.port.mode: auto` is invalid")
+        );
+        assert!(stderr.contains("`bind.port.mode` only supports `fixed` or `discover`"));
+        assert!(stderr.contains("`auto` is only valid on `project.host.port.mode`"));
+        assert!(stderr.contains("change this field to `fixed` or `discover`"));
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(stderr.contains("rerun `ota explain"));
+        assert!(!stderr.contains("repair `./ota.yaml`"));
+    }
+
+    #[test]
+    fn run_reports_missing_primary_listener_for_multi_projection_tasks() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+        metrics:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Task runtime projection is invalid"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners"));
+        assert!(stderr.contains(
+            "task `dev` projects multiple listeners (`http`, `metrics`) but none is marked primary"
+        ));
+        assert!(
+            stderr.contains("set `project.host.primary: true` on exactly one projected listener")
+        );
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(stderr.contains("rerun `ota run dev`"));
+    }
+
+    #[test]
+    fn shared_commands_report_multiple_primary_listener_conflicts() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: auto
+        metrics:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: auto
+"#,
+        );
+
+        let cases = [
+            ("validate", "ota validate"),
+            ("doctor", "ota doctor"),
+            ("receipt", "ota receipt"),
+            ("explain", "ota explain"),
+        ];
+        for (command, rerun_command) in cases {
+            let output = run_with(["ota", command, fixture.path()]);
+            assert_eq!(output.exit_code, 1, "command `{command}` should fail");
+            let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+            assert!(stderr.contains("Invalid contract"), "command `{command}`");
+            assert!(
+                stderr.contains("Field: tasks.dev.runtime.listeners"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(
+                    "task `dev` marks multiple projected listeners as primary (`http`, `metrics`)"
+                ),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains("keep `project.host.primary: true` on one projected listener only"),
+                "command `{command}`"
+            );
+            assert!(
+                stderr.contains(&format!("rerun `{rerun_command} ")),
+                "command `{command}`"
+            );
+        }
     }
 
     #[test]
@@ -10886,6 +11683,324 @@ tasks:
         assert!(stderr.contains("Why: task `fail` returned a non-zero exit code\nNext:"));
         assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
         assert!(!stderr.contains("Next:\n\n\nRUN SUMMARY"));
+    }
+
+    #[test]
+    fn run_failure_reports_host_publication_conflict_as_a_host_port_error() {
+        let _guard = env_mutex_lock();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .expect("bind test port for host publication conflict");
+        let host_port = listener
+            .local_addr()
+            .expect("read local host publication port")
+            .port();
+        let fixture_text = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: echo setup
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {host_port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {host_port}
+              path: /
+  dev:
+    context: app
+    depends_on:
+      - setup
+    run: echo dev
+"#
+        );
+        let fixture = ContractFixture::new(&fixture_text);
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        install_fake_docker(&bin_dir.join("docker"));
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _keep_port_bound = listener;
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Host publication failed"));
+        assert!(stderr.contains("Field: tasks.setup.runtime.listeners.http.project.host.port"));
+        assert!(stderr.contains(&format!(
+            "host port `{host_port}` on `127.0.0.1` is already allocated"
+        )));
+        assert!(stderr.contains(
+            "change `tasks.setup.runtime.listeners.http.project.host.port.mode` to `auto`"
+        ));
+        assert!(!stderr.contains("Task Failed"));
+        assert!(!fixture.dir.path().join("docker-log.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_failure_with_auto_host_publication_conflict_suggests_rerun_not_mode_change() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: app
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_real = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real);
+        let mut real_permissions = fs::metadata(&docker_real).unwrap().permissions();
+        real_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real, real_permissions).unwrap();
+        let docker_wrapper = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper,
+            r#"#!/bin/sh
+if [ "$1" = "create" ]; then
+  printf "Bind for 0.0.0.0 failed: port is already allocated\n" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper, wrapper_permissions).unwrap();
+
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Host publication failed"));
+        assert!(stderr.contains("rerun `ota run dev` so ota can reserve a new host port"));
+        assert!(!stderr.contains(
+            "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_failure_reports_host_publication_conflict_before_container_creation() {
+        let _guard = env_mutex_lock();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .expect("bind test port for host publication conflict");
+        let host_port = listener
+            .local_addr()
+            .expect("read local host publication port")
+            .port();
+        let fixture_text = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: echo setup
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {host_port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {host_port}
+              path: /
+"#
+        );
+        let fixture = ContractFixture::new(&fixture_text);
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        install_fake_docker(&bin_dir.join("docker"));
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _keep_port_bound = listener;
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Host publication failed"));
+        assert!(stderr.contains("Field: tasks.setup.runtime.listeners.http.project.host.port"));
+        assert!(stderr.contains(&format!(
+            "host port `{host_port}` on `127.0.0.1` is already allocated"
+        )));
+        assert!(stderr.contains("rerun `ota up`"));
+        assert!(!fixture.dir.path().join("docker-log.txt").exists());
+    }
+
+    #[test]
+    fn run_failure_reports_native_runtime_listener_resolution_with_field_guidance() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: sh -c 'exit 0'
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: discover
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Listener bind port could not be resolved"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port"));
+        assert!(stderr.contains("the process exited before ota could discover a listening port"));
+        assert!(stderr.contains("rerun `ota run dev --stream`"));
+        assert!(!stderr.contains("Task run failed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_failure_reports_missing_published_host_port_with_field_guidance() {
+        let _guard = env_mutex_lock();
+        let fixture_text = r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: echo setup
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#;
+        let fixture = ContractFixture::new(fixture_text);
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        install_fake_docker_without_port_reporting(&bin_dir.join("docker"));
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Published endpoint could not be resolved"));
+        assert!(stderr.contains("Field: tasks.setup.runtime.listeners.http.project.host.port"));
+        assert!(stderr.contains(
+            "the container engine did not report a published host port for `ota-ephemeral"
+        ));
+        assert!(stderr.contains("rerun `ota up`"));
+        assert!(!stderr.contains("Task run failed"));
     }
 
     #[test]

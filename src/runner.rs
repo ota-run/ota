@@ -27,6 +27,7 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,7 +49,7 @@ use crate::policy_pack::{
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
     ExtensionKind, Lifecycle, RemoteBackend, TaskRuntimeHostPortMode, TaskRuntimeKind,
-    TaskRuntimeProtocol, TaskSpec,
+    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
 };
 
 #[derive(Clone)]
@@ -292,6 +293,130 @@ pub(crate) fn run_streaming_command_with_loader(
     Ok(status.code().unwrap_or(1))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RuntimeListenerBindDiscoveryFailure {
+    #[error(
+        "the process exited before ota could discover a listening port (exit code {exit_code})"
+    )]
+    ProcessExited { exit_code: i32 },
+    #[error("failed to inspect the running process: {details}")]
+    ProcessInspectionFailed { details: String },
+    #[error(
+        "multiple listening ports were discovered for pid {pid} ({ports}); declare a fixed bind port instead"
+    )]
+    MultiplePorts { pid: u32, ports: String },
+    #[error("timed out waiting for the declared service listener to start listening")]
+    TimedOut,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RuntimeListenerHostPublicationFailure {
+    #[error(
+        "the container engine did not report a published host port for `{container_name}` on internal port `{bind_port}/{transport}`"
+    )]
+    MissingPublishedPort {
+        container_name: String,
+        bind_port: u16,
+        transport: String,
+    },
+    #[error(
+        "the container engine published host port `{actual_port}` for `{container_name}` on internal port `{bind_port}/{transport}`, but ota reserved `{expected_port}`"
+    )]
+    MismatchedPublishedPort {
+        container_name: String,
+        bind_port: u16,
+        transport: String,
+        expected_port: u16,
+        actual_port: u16,
+    },
+    #[error(
+        "the host address `{address}` could not be reserved for a published endpoint: {details}"
+    )]
+    BindReservationFailed { address: String, details: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RuntimeListenerResolutionKind {
+    #[error("{0}")]
+    BindDiscovery(#[source] RuntimeListenerBindDiscoveryFailure),
+    #[error("{0}")]
+    HostPublication(#[source] RuntimeListenerHostPublicationFailure),
+}
+
+fn runtime_listener_bind_discovery_failed(
+    task: &str,
+    listener: &str,
+    failure: RuntimeListenerBindDiscoveryFailure,
+) -> RunError {
+    RunError::RuntimeListenerResolutionFailed {
+        task: task.to_string(),
+        listener: listener.to_string(),
+        kind: RuntimeListenerResolutionKind::BindDiscovery(failure),
+    }
+}
+
+fn runtime_listener_host_publication_failed(
+    task: &str,
+    listener: &str,
+    container_name: &str,
+    bind_port: u16,
+    transport: &str,
+) -> RunError {
+    RunError::RuntimeListenerResolutionFailed {
+        task: task.to_string(),
+        listener: listener.to_string(),
+        kind: RuntimeListenerResolutionKind::HostPublication(
+            RuntimeListenerHostPublicationFailure::MissingPublishedPort {
+                container_name: container_name.to_string(),
+                bind_port,
+                transport: transport.to_string(),
+            },
+        ),
+    }
+}
+
+fn runtime_listener_host_publication_bind_failed(
+    task: &str,
+    listener: &str,
+    address: &str,
+    details: String,
+) -> RunError {
+    RunError::RuntimeListenerResolutionFailed {
+        task: task.to_string(),
+        listener: listener.to_string(),
+        kind: RuntimeListenerResolutionKind::HostPublication(
+            RuntimeListenerHostPublicationFailure::BindReservationFailed {
+                address: address.to_string(),
+                details,
+            },
+        ),
+    }
+}
+
+fn runtime_listener_host_publication_mismatch_failed(
+    task: &str,
+    listener: &str,
+    container_name: &str,
+    bind_port: u16,
+    transport: &str,
+    expected_port: u16,
+    actual_port: u16,
+) -> RunError {
+    RunError::RuntimeListenerResolutionFailed {
+        task: task.to_string(),
+        listener: listener.to_string(),
+        kind: RuntimeListenerResolutionKind::HostPublication(
+            RuntimeListenerHostPublicationFailure::MismatchedPublishedPort {
+                container_name: container_name.to_string(),
+                bind_port,
+                transport: transport.to_string(),
+                expected_port,
+                actual_port,
+            },
+        ),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
     #[error("task `{task}` is not defined in ota.yaml")]
@@ -326,6 +451,15 @@ pub enum RunError {
         "task `{task}` requires one of the supported container execution backend CLIs to be available on PATH: {engines}"
     )]
     MissingContainerBackendCli { task: String, engines: String },
+    #[error(
+        "task `{task}` listener `{listener}` could not publish host port `{port}` on `{address}`"
+    )]
+    HostPublicationConflict {
+        task: String,
+        listener: String,
+        address: String,
+        port: u16,
+    },
     #[error("container backend `{engine}` could not list stale ota containers: {details}")]
     StaleContainerQueryFailed { engine: String, details: String },
     #[error("could not compose environment variable `{name}` as a PATH: {source}")]
@@ -392,11 +526,12 @@ pub enum RunError {
         provider: String,
         exit_code: i32,
     },
-    #[error("task `{task}` could not resolve declared runtime listener `{listener}`: {details}")]
-    RuntimeEndpointDiscoveryFailed {
+    #[error("task `{task}` could not resolve declared runtime listener `{listener}`: {kind}")]
+    RuntimeListenerResolutionFailed {
         task: String,
         listener: String,
-        details: String,
+        #[source]
+        kind: RuntimeListenerResolutionKind,
     },
     #[error(
         "task `{task}` uses secret environment variables that cannot be passed through remote execution: {names}"
@@ -557,6 +692,7 @@ pub struct StaleContainerCleanupReport {
 
 const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
 const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
+const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
@@ -1227,32 +1363,30 @@ fn persistent_cleanup_targets(
         }
     }
 
-    if !targets.is_empty() {
-        return Ok(targets);
-    }
-
     let (backend, lifecycle) = effective_execution(contract, ExecutionOverrides::default());
-    if backend != Backend::Container || lifecycle != Some(Lifecycle::Persistent) {
-        return Ok(Vec::new());
-    }
-
-    let image =
-        execution_image(contract, Backend::Container).ok_or(RunError::MissingContainerImage {
-            task: String::from("clean"),
+    if backend == Backend::Container && lifecycle == Some(Lifecycle::Persistent) {
+        let image = execution_image(contract, Backend::Container).ok_or(
+            RunError::MissingContainerImage {
+                task: String::from("clean"),
+            },
+        )?;
+        let engine = selected_container_engine(contract).ok_or_else(|| {
+            RunError::MissingContainerBackendCli {
+                task: String::from("clean"),
+                engines: container_engine_candidates(contract).join(", "),
+            }
         })?;
-    let engine = selected_container_engine(contract).ok_or_else(|| {
-        RunError::MissingContainerBackendCli {
-            task: String::from("clean"),
-            engines: container_engine_candidates(contract).join(", "),
+        for publications in task_container_publication_sets_for_context(contract, None) {
+            let target = (
+                Some(LEGACY_EXECUTION_CONTEXT_NAME.to_string()),
+                image.clone(),
+                engine.clone(),
+                publications,
+            );
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
         }
-    })?;
-    for publications in task_container_publication_sets_for_context(contract, None) {
-        targets.push((
-            Some(LEGACY_EXECUTION_CONTEXT_NAME.to_string()),
-            image.clone(),
-            engine.clone(),
-            publications,
-        ));
     }
     Ok(targets)
 }
@@ -1387,6 +1521,12 @@ pub struct ResolvedTaskRuntime {
     pub kind: TaskRuntimeKind,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub listeners: BTreeMap<String, ResolvedTaskRuntimeListener>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_listener: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_endpoint: Option<ResolvedTaskRuntimeEndpoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exposed_endpoints: Vec<ResolvedTaskRuntimeEndpoint>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -1415,6 +1555,16 @@ pub struct ResolvedTaskRuntimeHost {
     pub port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ResolvedTaskRuntimeEndpoint {
+    pub listener: String,
+    pub protocol: TaskRuntimeProtocol,
+    pub bind: ResolvedTaskRuntimeBind,
+    pub host: ResolvedTaskRuntimeHost,
+    #[serde(default)]
+    pub primary: bool,
 }
 
 #[derive(Debug)]
@@ -1446,6 +1596,14 @@ pub(crate) struct ContainerPortPublication {
     host_port_mode: TaskRuntimeHostPortMode,
     host_port: Option<u16>,
     protocol: TaskRuntimeProtocol,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PreparedContainerRuntimeProjection {
+    publications: Vec<ContainerPortPublication>,
+    listener_publications: Vec<(String, ContainerPortPublication)>,
+    env: BTreeMap<String, String>,
+    expected_host_ports: BTreeMap<String, u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2368,6 +2526,16 @@ fn task_container_publications(
     contract: &Contract,
     task_name: &str,
 ) -> Vec<ContainerPortPublication> {
+    task_container_publication_details(contract, task_name)
+        .into_iter()
+        .map(|(_, publication)| publication)
+        .collect()
+}
+
+fn task_container_publication_details(
+    contract: &Contract,
+    task_name: &str,
+) -> Vec<(String, ContainerPortPublication)> {
     let Some(task) = contract.tasks.get(task_name) else {
         return Vec::new();
     };
@@ -2377,22 +2545,403 @@ fn task_container_publications(
 
     runtime
         .listeners
-        .values()
-        .filter_map(|listener| {
+        .iter()
+        .filter_map(|(listener_name, listener)| {
             let host = listener.project.host.as_ref()?;
-            Some(ContainerPortPublication {
-                bind_port: listener
-                    .bind
-                    .port
-                    .value
-                    .expect("validated container runtime listener should declare a bind port"),
-                host_address: host.address.trim().to_string(),
-                host_port_mode: host.port.mode,
-                host_port: host.port.value,
-                protocol: listener.protocol,
-            })
+            Some((
+                listener_name.clone(),
+                ContainerPortPublication {
+                    bind_port: listener
+                        .bind
+                        .port
+                        .value
+                        .expect("validated container runtime listener should declare a bind port"),
+                    host_address: host.address.trim().to_string(),
+                    host_port_mode: host.port.mode,
+                    host_port: host.port.value,
+                    protocol: listener.protocol,
+                },
+            ))
         })
         .collect()
+}
+
+fn task_runtime_listener_publications(
+    runtime: Option<&TaskRuntimeSpec>,
+) -> Vec<(String, ContainerPortPublication)> {
+    let Some(runtime) = runtime else {
+        return Vec::new();
+    };
+
+    runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            let host = listener.project.host.as_ref()?;
+            Some((
+                listener_name.clone(),
+                ContainerPortPublication {
+                    bind_port: listener
+                        .bind
+                        .port
+                        .value
+                        .expect("validated container runtime listener should declare a bind port"),
+                    host_address: host.address.trim().to_string(),
+                    host_port_mode: host.port.mode,
+                    host_port: host.port.value,
+                    protocol: listener.protocol,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn prepare_container_runtime_projection(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    publications: &[ContainerPortPublication],
+    listener_publications: &[(String, ContainerPortPublication)],
+    resolve_auto_host_ports: bool,
+) -> Result<PreparedContainerRuntimeProjection, RunError> {
+    if runtime.is_none() || listener_publications.is_empty() {
+        return Ok(PreparedContainerRuntimeProjection {
+            publications: publications.to_vec(),
+            listener_publications: listener_publications.to_vec(),
+            env: BTreeMap::new(),
+            expected_host_ports: BTreeMap::new(),
+        });
+    }
+
+    let mut prepared_listeners = listener_publications.to_vec();
+    for (listener_name, publication) in &mut prepared_listeners {
+        if resolve_auto_host_ports && publication.host_port_mode == TaskRuntimeHostPortMode::Auto {
+            let listener =
+                TcpListener::bind((publication.host_address.as_str(), 0)).map_err(|source| {
+                    runtime_listener_host_publication_bind_failed(
+                        task_name,
+                        listener_name.as_str(),
+                        &publication.host_address,
+                        format!(
+                            "could not reserve an ephemeral host port on `{}`: {source}",
+                            publication.host_address
+                        ),
+                    )
+                })?;
+            let port = listener
+                .local_addr()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: String::from("runtime-projection"),
+                    source,
+                })?
+                .port();
+            drop(listener);
+            publication.host_port_mode = TaskRuntimeHostPortMode::Fixed;
+            publication.host_port = Some(port);
+        }
+    }
+
+    let mut publication_index = BTreeMap::<(String, u16, String), u16>::new();
+    for (_, publication) in &prepared_listeners {
+        if publication.host_port_mode != TaskRuntimeHostPortMode::Fixed {
+            continue;
+        }
+        let Some(host_port) = publication.host_port else {
+            continue;
+        };
+        publication_index.insert(
+            (
+                publication.host_address.clone(),
+                publication.bind_port,
+                publication.protocol.network_protocol().to_string(),
+            ),
+            host_port,
+        );
+    }
+
+    let mut prepared_publications = publications.to_vec();
+    for publication in &mut prepared_publications {
+        if let Some(host_port) = publication_index.get(&(
+            publication.host_address.clone(),
+            publication.bind_port,
+            publication.protocol.network_protocol().to_string(),
+        )) {
+            publication.host_port_mode = TaskRuntimeHostPortMode::Fixed;
+            publication.host_port = Some(*host_port);
+        }
+    }
+
+    let mut expected_host_ports = BTreeMap::new();
+    for (listener_name, publication) in &prepared_listeners {
+        if publication.host_port_mode != TaskRuntimeHostPortMode::Fixed {
+            continue;
+        }
+        let Some(port) = publication.host_port else {
+            continue;
+        };
+        expected_host_ports.insert(listener_name.clone(), port);
+    }
+
+    let env = runtime_public_env(runtime, &prepared_listeners, &expected_host_ports);
+
+    Ok(PreparedContainerRuntimeProjection {
+        publications: prepared_publications,
+        listener_publications: prepared_listeners,
+        env,
+        expected_host_ports,
+    })
+}
+
+fn runtime_public_env_from_resolved_runtime(
+    runtime: &ResolvedTaskRuntime,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+
+    for endpoint in &runtime.exposed_endpoints {
+        env.insert(
+            format!(
+                "OTA_PUBLIC_URL_{}",
+                runtime_listener_env_suffix(endpoint.listener.as_str())
+            ),
+            resolved_runtime_host_endpoint_text(&endpoint.host),
+        );
+    }
+
+    if let Some(endpoint) = runtime
+        .primary_endpoint
+        .as_ref()
+        .or_else(|| runtime.exposed_endpoints.first())
+    {
+        env.insert(
+            String::from("OTA_PUBLIC_HOST"),
+            endpoint.host.address.clone(),
+        );
+        env.insert(
+            String::from("OTA_PUBLIC_PORT"),
+            endpoint.host.port.to_string(),
+        );
+        env.insert(
+            String::from("OTA_PUBLIC_URL"),
+            resolved_runtime_host_endpoint_text(&endpoint.host),
+        );
+    }
+
+    env
+}
+
+fn resolved_runtime_host_endpoint_text(host: &ResolvedTaskRuntimeHost) -> String {
+    host.url
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", host.address, host.port))
+}
+
+fn resolved_primary_listener_name(
+    runtime: &TaskRuntimeSpec,
+    available: &BTreeSet<String>,
+) -> Option<String> {
+    let projected = runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener.project.host.as_ref().and_then(|_| {
+                available
+                    .contains(listener_name)
+                    .then_some(listener_name.clone())
+            })
+        })
+        .collect::<Vec<_>>();
+    if projected.is_empty() {
+        return None;
+    }
+
+    if let Some((listener_name, _)) = runtime.listeners.iter().find(|(listener_name, listener)| {
+        listener
+            .project
+            .host
+            .as_ref()
+            .is_some_and(|host| host.primary && available.contains(*listener_name))
+    }) {
+        return Some(listener_name.clone());
+    }
+
+    if projected.len() == 1 {
+        return projected.into_iter().next();
+    }
+
+    projected.into_iter().next()
+}
+
+fn runtime_public_env(
+    runtime: Option<&TaskRuntimeSpec>,
+    _listener_publications: &[(String, ContainerPortPublication)],
+    expected_host_ports: &BTreeMap<String, u16>,
+) -> BTreeMap<String, String> {
+    let Some(runtime) = runtime else {
+        return BTreeMap::new();
+    };
+
+    let mut env = BTreeMap::new();
+    let available = expected_host_ports
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<String>>();
+    let primary_listener = resolved_primary_listener_name(runtime, &available);
+    let mut selected_primary: Option<(String, u16, String)> = None;
+    for (listener_name, listener) in &runtime.listeners {
+        let Some(host_projection) = listener.project.host.as_ref() else {
+            continue;
+        };
+        let Some(host_port) = expected_host_ports.get(listener_name) else {
+            continue;
+        };
+        let host_address = host_projection.address.trim().to_string();
+        let endpoint = listener
+            .protocol
+            .url_scheme()
+            .map(|scheme| {
+                format!(
+                    "{scheme}://{}:{host_port}{}",
+                    host_address,
+                    normalized_runtime_path(host_projection.path.as_deref())
+                )
+            })
+            .unwrap_or_else(|| format!("{}:{host_port}", host_address));
+
+        env.insert(
+            format!(
+                "OTA_PUBLIC_URL_{}",
+                runtime_listener_env_suffix(listener_name.as_str())
+            ),
+            endpoint.clone(),
+        );
+
+        if primary_listener.as_deref() == Some(listener_name.as_str()) {
+            selected_primary = Some((host_address.clone(), *host_port, endpoint.clone()));
+        } else if selected_primary.is_none() {
+            selected_primary = Some((host_address.clone(), *host_port, endpoint.clone()));
+        }
+    }
+
+    if let Some((host, port, endpoint)) = selected_primary {
+        env.insert(String::from("OTA_PUBLIC_HOST"), host);
+        env.insert(String::from("OTA_PUBLIC_PORT"), port.to_string());
+        env.insert(String::from("OTA_PUBLIC_URL"), endpoint);
+    }
+
+    env
+}
+
+fn runtime_listener_env_suffix(listener_name: &str) -> String {
+    let mut suffix = String::new();
+    for ch in listener_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            suffix.push(ch.to_ascii_uppercase());
+        } else {
+            suffix.push('_');
+        }
+    }
+    suffix
+}
+
+fn is_container_host_publication_conflict(stdout: &str, stderr: &str) -> bool {
+    let output = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    output.contains("port is already allocated")
+        || output.contains("address already in use")
+        || output.contains("bind for")
+}
+
+fn preflight_container_host_publications(
+    task_name: &str,
+    listener_publications: &[(String, ContainerPortPublication)],
+) -> Result<(), RunError> {
+    for (listener_name, publication) in listener_publications {
+        if publication.host_port_mode != TaskRuntimeHostPortMode::Fixed {
+            continue;
+        }
+        let Some(port) = publication.host_port else {
+            continue;
+        };
+
+        match TcpListener::bind((publication.host_address.as_str(), port)) {
+            Ok(listener) => drop(listener),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+                return Err(RunError::HostPublicationConflict {
+                    task: task_name.to_string(),
+                    listener: listener_name.clone(),
+                    address: publication.host_address.clone(),
+                    port,
+                });
+            }
+            Err(error) => {
+                return Err(runtime_listener_host_publication_bind_failed(
+                    task_name,
+                    listener_name,
+                    &publication.host_address,
+                    format!(
+                        "could not bind host port `{port}` on `{}`: {error}",
+                        publication.host_address
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn build_resolved_runtime(
+    runtime: &TaskRuntimeSpec,
+    listeners: BTreeMap<String, ResolvedTaskRuntimeListener>,
+) -> ResolvedTaskRuntime {
+    let available = listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener
+                .resolved
+                .as_ref()
+                .and_then(|resolved| resolved.host.as_ref())
+                .map(|_| listener_name.clone())
+        })
+        .collect::<BTreeSet<String>>();
+    let selected_primary = resolved_primary_listener_name(runtime, &available);
+
+    let mut exposed_endpoints = Vec::new();
+    for (listener_name, listener) in &listeners {
+        let Some(host) = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+        else {
+            continue;
+        };
+        exposed_endpoints.push(ResolvedTaskRuntimeEndpoint {
+            listener: listener_name.clone(),
+            protocol: listener.protocol,
+            bind: listener.bind.clone(),
+            host: host.clone(),
+            primary: selected_primary.as_deref() == Some(listener_name.as_str()),
+        });
+    }
+
+    let primary_endpoint = selected_primary
+        .as_ref()
+        .and_then(|listener_name| {
+            exposed_endpoints
+                .iter()
+                .find(|endpoint| endpoint.listener == *listener_name)
+                .cloned()
+        })
+        .or_else(|| exposed_endpoints.first().cloned());
+    let primary_listener = primary_endpoint
+        .as_ref()
+        .map(|endpoint| endpoint.listener.clone());
+
+    ResolvedTaskRuntime {
+        kind: runtime.kind,
+        listeners,
+        primary_listener,
+        primary_endpoint,
+        exposed_endpoints,
+    }
 }
 
 fn task_container_publication_sets_for_context(
@@ -3387,6 +3936,11 @@ fn resolve_native_task_runtime(
             crate::schema::TaskRuntimePortMode::Discover => {
                 discover_native_listener_port(child, pid, task_name, listener_name)?
             }
+            crate::schema::TaskRuntimePortMode::Auto => {
+                return Err(RunError::InvalidTaskExecution {
+                    task: task_name.to_string(),
+                });
+            }
         };
 
         let resolved = listener
@@ -3420,10 +3974,7 @@ fn resolve_native_task_runtime(
         );
     }
 
-    Ok(Some(ResolvedTaskRuntime {
-        kind: runtime.kind,
-        listeners,
-    }))
+    Ok(Some(build_resolved_runtime(runtime, listeners)))
 }
 
 fn discover_native_listener_port(
@@ -3436,22 +3987,23 @@ fn discover_native_listener_port(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                return Err(RunError::RuntimeEndpointDiscoveryFailed {
-                    task: task_name.to_string(),
-                    listener: listener_name.to_string(),
-                    details: format!(
-                        "the process exited before ota could discover a listening port (exit code {})",
-                        status.code().unwrap_or(1)
-                    ),
-                });
+                return Err(runtime_listener_bind_discovery_failed(
+                    task_name,
+                    listener_name,
+                    RuntimeListenerBindDiscoveryFailure::ProcessExited {
+                        exit_code: status.code().unwrap_or(1),
+                    },
+                ));
             }
             Ok(None) => {}
             Err(source) => {
-                return Err(RunError::RuntimeEndpointDiscoveryFailed {
-                    task: task_name.to_string(),
-                    listener: listener_name.to_string(),
-                    details: format!("failed to inspect the running process: {source}"),
-                });
+                return Err(runtime_listener_bind_discovery_failed(
+                    task_name,
+                    listener_name,
+                    RuntimeListenerBindDiscoveryFailure::ProcessInspectionFailed {
+                        details: source.to_string(),
+                    },
+                ));
             }
         }
 
@@ -3463,37 +4015,35 @@ fn discover_native_listener_port(
                     .expect("single discovered port should exist"));
             }
             Ok(ports) if ports.len() > 1 => {
-                return Err(RunError::RuntimeEndpointDiscoveryFailed {
-                    task: task_name.to_string(),
-                    listener: listener_name.to_string(),
-                    details: format!(
-                        "multiple listening ports were discovered for pid {pid} ({}); declare a fixed bind port instead",
-                        ports
+                return Err(runtime_listener_bind_discovery_failed(
+                    task_name,
+                    listener_name,
+                    RuntimeListenerBindDiscoveryFailure::MultiplePorts {
+                        pid,
+                        ports: ports
                             .into_iter()
                             .map(|port| port.to_string())
                             .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                });
+                            .join(", "),
+                    },
+                ));
             }
             Ok(_) => {}
             Err(details) => {
-                return Err(RunError::RuntimeEndpointDiscoveryFailed {
-                    task: task_name.to_string(),
-                    listener: listener_name.to_string(),
-                    details,
-                });
+                return Err(runtime_listener_bind_discovery_failed(
+                    task_name,
+                    listener_name,
+                    RuntimeListenerBindDiscoveryFailure::ProcessInspectionFailed { details },
+                ));
             }
         }
 
         if Instant::now() >= deadline {
-            return Err(RunError::RuntimeEndpointDiscoveryFailed {
-                task: task_name.to_string(),
-                listener: listener_name.to_string(),
-                details: String::from(
-                    "timed out waiting for the declared service listener to start listening",
-                ),
-            });
+            return Err(runtime_listener_bind_discovery_failed(
+                task_name,
+                listener_name,
+                RuntimeListenerBindDiscoveryFailure::TimedOut,
+            ));
         }
 
         thread::sleep(Duration::from_millis(100));
@@ -3640,22 +4190,85 @@ fn execute_container_task_command(
         });
     }
 
+    let listener_publications = task_runtime_listener_publications(runtime);
     match lifecycle {
-        Lifecycle::Ephemeral => execute_ephemeral_container_task_command(
-            task_name,
-            runtime,
-            context_name,
-            command,
-            working_dir,
-            env_overrides,
-            path_export,
-            secret_env_names,
-            image,
-            engine,
-            compose_networks,
-            publications,
-            mode,
-        ),
+        Lifecycle::Ephemeral => {
+            let has_auto_projection = listener_publications.iter().any(|(_, publication)| {
+                publication.host_port_mode == TaskRuntimeHostPortMode::Auto
+            });
+            let max_attempts = if has_auto_projection {
+                CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS
+            } else {
+                1
+            };
+
+            let mut attempt = 0usize;
+            loop {
+                let projection = prepare_container_runtime_projection(
+                    task_name,
+                    runtime,
+                    publications,
+                    &listener_publications,
+                    true,
+                )?;
+                let mut resolved_env = env_overrides.clone();
+                resolved_env.extend(projection.env.clone());
+
+                let output = execute_ephemeral_container_task_command(
+                    task_name,
+                    runtime,
+                    context_name,
+                    command,
+                    working_dir,
+                    &resolved_env,
+                    path_export,
+                    secret_env_names,
+                    image,
+                    engine,
+                    compose_networks,
+                    &projection.publications,
+                    &projection.listener_publications,
+                    &projection.expected_host_ports,
+                    mode,
+                )?;
+
+                if output.exit_code == 0 {
+                    return Ok(output);
+                }
+
+                if !has_auto_projection || attempt + 1 >= max_attempts {
+                    if has_auto_projection
+                        && is_container_host_publication_conflict(&output.stdout, &output.stderr)
+                        && let Some((listener_name, _)) =
+                            listener_publications.iter().find(|(_, publication)| {
+                                publication.host_port_mode == TaskRuntimeHostPortMode::Auto
+                            })
+                        && let Some((_, publication)) = projection
+                            .listener_publications
+                            .iter()
+                            .find(|(name, _)| name == listener_name)
+                        && let Some(port) = publication.host_port
+                    {
+                        return Err(RunError::HostPublicationConflict {
+                            task: task_name.to_string(),
+                            listener: listener_name.clone(),
+                            address: publication.host_address.clone(),
+                            port,
+                        });
+                    }
+                    return Ok(output);
+                }
+
+                if !is_container_host_publication_conflict(&output.stdout, &output.stderr) {
+                    return Ok(output);
+                }
+
+                if let Some(target) = output.target.as_deref() {
+                    let _ = remove_persistent_container(engine, target, task_name);
+                }
+                attempt += 1;
+            }
+        }
         Lifecycle::Persistent => execute_persistent_container_task_command(
             task_name,
             runtime,
@@ -3669,6 +4282,7 @@ fn execute_container_task_command(
             engine,
             compose_networks,
             publications,
+            &listener_publications,
             mode,
         ),
     }
@@ -3708,11 +4322,14 @@ fn execute_ephemeral_container_task_command(
     engine: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
+    listener_publications: &[(String, ContainerPortPublication)],
+    expected_host_ports: &BTreeMap<String, u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let identity_seed = container_identity_seed(context_name, publications);
     let container_name =
         ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
+    preflight_container_host_publications(task_name, listener_publications)?;
     let mut create = Command::new(engine);
     create
         .arg("create")
@@ -3747,10 +4364,24 @@ fn execute_ephemeral_container_task_command(
         source,
     })?;
     if !create_status.status.success() {
+        let stdout = String::from_utf8_lossy(&create_status.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&create_status.stderr).into_owned();
+        if let Some(port) = parse_container_host_port_conflict(&stderr)
+            && let Some((listener_name, publication)) = listener_publications
+                .iter()
+                .find(|(_, publication)| publication.host_port == Some(port))
+        {
+            return Err(RunError::HostPublicationConflict {
+                task: task_name.to_string(),
+                listener: listener_name.clone(),
+                address: publication.host_address.clone(),
+                port,
+            });
+        }
         return Ok(TaskCommandOutput {
             exit_code: create_status.status.code().unwrap_or(1),
-            stdout: String::from_utf8_lossy(&create_status.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&create_status.stderr).into_owned(),
+            stdout,
+            stderr,
             target: Some(container_name.clone()),
             runtime: None,
         });
@@ -3775,8 +4406,13 @@ fn execute_ephemeral_container_task_command(
                 task: task_name.to_string(),
                 source,
             })?;
-            let resolved_runtime =
-                resolve_container_task_runtime(runtime, engine, &container_name, task_name)?;
+            let resolved_runtime = resolve_container_task_runtime(
+                runtime,
+                engine,
+                &container_name,
+                task_name,
+                expected_host_ports,
+            )?;
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
@@ -3800,8 +4436,13 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-            let resolved_runtime =
-                resolve_container_task_runtime(runtime, engine, &container_name, task_name)?;
+            let resolved_runtime = resolve_container_task_runtime(
+                runtime,
+                engine,
+                &container_name,
+                task_name,
+                expected_host_ports,
+            )?;
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
@@ -3828,6 +4469,7 @@ fn execute_persistent_container_task_command(
     engine: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
+    listener_publications: &[(String, ContainerPortPublication)],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let identity_seed = container_identity_seed(context_name, publications);
@@ -3842,14 +4484,24 @@ fn execute_persistent_container_task_command(
         &container_name,
         compose_networks,
         publications,
+        listener_publications,
     )? {
         return Ok(failure);
     }
 
+    let fixed_expected_host_ports = fixed_listener_host_ports(listener_publications);
+    let (resolved_runtime, resolved_env) = persistent_container_runtime_projection(
+        runtime,
+        engine,
+        &container_name,
+        task_name,
+        &fixed_expected_host_ports,
+        env_overrides,
+    )?;
     let output = exec_persistent_container_task_command(
         task_name,
         command,
-        env_overrides,
+        &resolved_env,
         path_export,
         secret_env_names,
         engine,
@@ -3869,14 +4521,23 @@ fn execute_persistent_container_task_command(
             &container_name,
             compose_networks,
             publications,
+            listener_publications,
         )?;
         if create.exit_code != 0 {
             return Ok(container_command_failure(create, container_name.clone()));
         }
+        let (resolved_runtime, resolved_env) = persistent_container_runtime_projection(
+            runtime,
+            engine,
+            &container_name,
+            task_name,
+            &fixed_expected_host_ports,
+            env_overrides,
+        )?;
         let output = exec_persistent_container_task_command(
             task_name,
             command,
-            env_overrides,
+            &resolved_env,
             path_export,
             secret_env_names,
             engine,
@@ -3884,15 +4545,53 @@ fn execute_persistent_container_task_command(
             &container_name,
         )?;
         return Ok(TaskCommandOutput {
-            runtime: resolve_container_task_runtime(runtime, engine, &container_name, task_name)?,
+            runtime: resolved_runtime,
             ..output
         });
     }
 
     Ok(TaskCommandOutput {
-        runtime: resolve_container_task_runtime(runtime, engine, &container_name, task_name)?,
+        runtime: resolved_runtime,
         ..output
     })
+}
+
+fn fixed_listener_host_ports(
+    listener_publications: &[(String, ContainerPortPublication)],
+) -> BTreeMap<String, u16> {
+    listener_publications
+        .iter()
+        .filter_map(|(listener_name, publication)| {
+            (publication.host_port_mode == TaskRuntimeHostPortMode::Fixed).then_some(
+                publication
+                    .host_port
+                    .map(|port| (listener_name.clone(), port)),
+            )
+        })
+        .flatten()
+        .collect()
+}
+
+fn persistent_container_runtime_projection(
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+    expected_host_ports: &BTreeMap<String, u16>,
+    env_overrides: &BTreeMap<String, String>,
+) -> Result<(Option<ResolvedTaskRuntime>, BTreeMap<String, String>), RunError> {
+    let resolved_runtime = resolve_container_task_runtime(
+        runtime,
+        engine,
+        container_name,
+        task_name,
+        expected_host_ports,
+    )?;
+    let mut resolved_env = env_overrides.clone();
+    if let Some(runtime) = resolved_runtime.as_ref() {
+        resolved_env.extend(runtime_public_env_from_resolved_runtime(runtime));
+    }
+    Ok((resolved_runtime, resolved_env))
 }
 
 fn ensure_persistent_container_ready(
@@ -3903,6 +4602,7 @@ fn ensure_persistent_container_ready(
     container_name: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
+    listener_publications: &[(String, ContainerPortPublication)],
 ) -> Result<Option<TaskCommandOutput>, RunError> {
     let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
     if inspect.exit_code != 0 {
@@ -3914,6 +4614,7 @@ fn ensure_persistent_container_ready(
             container_name,
             compose_networks,
             publications,
+            listener_publications,
         )?;
         if status.exit_code != 0 {
             return Ok(Some(container_command_failure(
@@ -3960,8 +4661,21 @@ fn ensure_persistent_container_ready(
                 container_name,
                 compose_networks,
                 publications,
+                listener_publications,
             )?;
             if create.exit_code != 0 {
+                if let Some(port) = parse_container_host_port_conflict(&create.stderr)
+                    && let Some((listener_name, publication)) = listener_publications
+                        .iter()
+                        .find(|(_, publication)| publication.host_port == Some(port))
+                {
+                    return Err(RunError::HostPublicationConflict {
+                        task: task_name.to_string(),
+                        listener: listener_name.clone(),
+                        address: publication.host_address.clone(),
+                        port,
+                    });
+                }
                 return Ok(Some(container_command_failure(
                     create,
                     container_name.to_string(),
@@ -4008,7 +4722,9 @@ fn create_persistent_container(
     container_name: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
+    listener_publications: &[(String, ContainerPortPublication)],
 ) -> Result<ContainerCommandOutput, RunError> {
+    preflight_container_host_publications(task_name, listener_publications)?;
     let mut args = vec![
         "run".to_string(),
         "-d".to_string(),
@@ -4082,6 +4798,7 @@ fn resolve_container_task_runtime(
     engine: &str,
     container_name: &str,
     task_name: &str,
+    expected_host_ports: &BTreeMap<String, u16>,
 ) -> Result<Option<ResolvedTaskRuntime>, RunError> {
     let Some(runtime) = runtime else {
         return Ok(None);
@@ -4098,6 +4815,7 @@ fn resolve_container_task_runtime(
                 .expect("validated container listener should have a fixed bind port");
             let resolved = match listener.project.host.as_ref() {
                 Some(host) => {
+                    let transport = listener.protocol.network_protocol();
                     let port = container_published_port(
                         engine,
                         container_name,
@@ -4105,13 +4823,28 @@ fn resolve_container_task_runtime(
                         listener.protocol,
                         task_name,
                     )?
-                    .ok_or_else(|| RunError::RuntimeEndpointDiscoveryFailed {
-                        task: task_name.to_string(),
-                        listener: listener_name.clone(),
-                        details: format!(
-                            "the container engine did not report a published host port for `{container_name}`"
-                        ),
+                    .ok_or_else(|| {
+                        runtime_listener_host_publication_failed(
+                            task_name,
+                            listener_name,
+                            container_name,
+                            bind_port,
+                            transport,
+                        )
                     })?;
+                    if let Some(expected_port) = expected_host_ports.get(listener_name)
+                        && *expected_port != port
+                    {
+                        return Err(runtime_listener_host_publication_mismatch_failed(
+                            task_name,
+                            listener_name,
+                            container_name,
+                            bind_port,
+                            transport,
+                            *expected_port,
+                            port,
+                        ));
+                    }
                     Some(ResolvedTaskRuntimeResolution {
                         host: Some(ResolvedTaskRuntimeHost {
                             address: host.address.trim().to_string(),
@@ -4143,10 +4876,7 @@ fn resolve_container_task_runtime(
         })
         .collect::<Result<BTreeMap<_, _>, RunError>>()?;
 
-    Ok(Some(ResolvedTaskRuntime {
-        kind: runtime.kind,
-        listeners,
-    }))
+    Ok(Some(build_resolved_runtime(runtime, listeners)))
 }
 
 fn container_published_port(
@@ -4491,6 +5221,7 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::env;
     use std::fs;
     use std::path::Path;
@@ -4501,15 +5232,23 @@ mod tests {
     use crate::test_support::env_mutex_lock;
 
     use super::{
-        CapturedRunOutcome, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
-        ResolvedExecutionBackend, RunError, TaskExecutionMode, TaskExecutionRelation, TaskRunState,
-        clean_execution, contract_working_dir, current_os, execute_task_with_hooks,
-        persistent_container_name, plan_task_execution, preparing_loader_label,
-        resolve_execution_backend, resolve_task_env, resolve_task_env_details, run_task,
-        run_task_captured, run_task_with_args, run_task_with_overrides, run_task_with_progress,
-        running_loader_label, running_loader_label_for_backend,
+        CapturedRunOutcome, ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep,
+        ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend, RunError,
+        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, TaskExecutionMode,
+        TaskExecutionRelation, TaskRunState, clean_execution, contract_working_dir, current_os,
+        execute_task_with_hooks, persistent_cleanup_targets, persistent_container_name,
+        plan_task_execution, preflight_container_host_publications,
+        prepare_container_runtime_projection, preparing_loader_label, resolve_execution_backend,
+        resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
+        run_task_with_args, run_task_with_overrides, run_task_with_progress, running_loader_label,
+        running_loader_label_for_backend,
     };
-    use crate::schema::{Backend, Lifecycle};
+    use crate::schema::{
+        Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
+        TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec,
+        TaskRuntimePortMode, TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
+        TaskRuntimeSpec,
+    };
 
     #[test]
     fn plans_dependencies_once_in_deterministic_order() {
@@ -5598,7 +6337,9 @@ execution:
 tasks:
   dev:
     context: app
-    run: printf ready > prepared.txt
+    run: |
+      printf '%s|%s|%s|%s' "$OTA_PUBLIC_URL" "$OTA_PUBLIC_HOST" "$OTA_PUBLIC_PORT" "$OTA_PUBLIC_URL_HTTP" > runtime-env.txt
+      printf ready > prepared.txt
     runtime:
       kind: service
       listeners:
@@ -5667,8 +6408,297 @@ tasks:
         assert_eq!(listener.bind.address, "0.0.0.0");
         assert_eq!(listener.bind.port, 3000);
         assert_eq!(host.address, "127.0.0.1");
-        assert_eq!(host.port, 49153);
-        assert_eq!(host.url.as_deref(), Some("http://127.0.0.1:49153/"));
+        assert!(host.port > 0);
+        let expected_url = format!("http://127.0.0.1:{}/", host.port);
+        assert_eq!(host.url.as_deref(), Some(expected_url.as_str()));
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            format!("{expected_url}|127.0.0.1|{}|{expected_url}", host.port)
+        );
+        assert_eq!(runtime.primary_listener.as_deref(), Some("http"));
+        assert_eq!(
+            runtime
+                .primary_endpoint
+                .as_ref()
+                .map(|endpoint| endpoint.listener.as_str()),
+            Some("http")
+        );
+        assert_eq!(runtime.exposed_endpoints.len(), 1);
+        assert!(runtime.exposed_endpoints[0].primary);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_reports_multi_listener_primary_and_secondary_endpoints() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: |
+      printf '%s|%s|%s|%s|%s' "$OTA_PUBLIC_URL" "$OTA_PUBLIC_HOST" "$OTA_PUBLIC_PORT" "$OTA_PUBLIC_URL_HTTP" "$OTA_PUBLIC_URL_METRICS" > runtime-env.txt
+      printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: auto
+              path: /
+        metrics:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /metrics
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+
+        let runtime = outcome
+            .runtime
+            .expect("multi-listener container service task should report runtime metadata");
+        assert_eq!(runtime.primary_listener.as_deref(), Some("http"));
+        assert_eq!(runtime.exposed_endpoints.len(), 2);
+        assert!(
+            runtime
+                .exposed_endpoints
+                .iter()
+                .any(|endpoint| endpoint.primary)
+        );
+
+        let http_listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let http_host = http_listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("http listener should resolve a host endpoint");
+        let metrics_listener = runtime
+            .listeners
+            .get("metrics")
+            .expect("metrics listener should be present");
+        let metrics_host = metrics_listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("metrics listener should resolve a host endpoint");
+
+        let http_url = format!("http://127.0.0.1:{}/", http_host.port);
+        let metrics_url = format!("http://127.0.0.1:{}/metrics", metrics_host.port);
+        assert_eq!(
+            runtime
+                .primary_endpoint
+                .as_ref()
+                .and_then(|endpoint| endpoint.host.url.as_deref()),
+            Some(http_url.as_str())
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            format!(
+                "{http_url}|127.0.0.1|{}|{http_url}|{metrics_url}",
+                http_host.port
+            )
+        );
+
+        let runtime_json =
+            serde_json::to_value(&runtime).expect("runtime should serialize to json");
+        assert_eq!(runtime_json["primary_listener"], "http");
+        assert_eq!(
+            runtime_json["primary_endpoint"]["listener"],
+            serde_json::Value::String(String::from("http"))
+        );
+        assert_eq!(
+            runtime_json["exposed_endpoints"]
+                .as_array()
+                .expect("exposed_endpoints should serialize as an array")
+                .len(),
+            2
+        );
+        assert_eq!(
+            runtime_json["exposed_endpoints"][0]["primary"],
+            serde_json::Value::Bool(true)
+        );
+        assert_eq!(
+            runtime_json["exposed_endpoints"][1]["primary"],
+            serde_json::Value::Bool(false)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_retries_auto_container_host_publication_conflict() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf '%s' "$OTA_PUBLIC_URL" > runtime-env.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+state_dir="${OTA_TEST_STATE_DIR:-.ota-test-state}"
+mkdir -p "$state_dir"
+if [ "$1" = "create" ] && [ ! -f "$state_dir/create-conflict-once" ]; then
+  : > "$state_dir/create-conflict-once"
+  printf "Bind for 0.0.0.0 failed: port is already allocated\n" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let runtime = outcome
+            .runtime
+            .expect("auto container service task should report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("auto container listener should resolve a host endpoint");
+        assert!(host.port > 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            format!("http://127.0.0.1:{}/", host.port)
+        );
     }
 
     #[test]
@@ -6611,6 +7641,94 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn reuses_persistent_container_backend_with_auto_publication_across_runs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: |
+      printf '%s' "$OTA_PUBLIC_URL" > runtime-env.txt
+      printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "dev").unwrap();
+        let second = run_task(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "readyready"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            "http://127.0.0.1:49153/"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn recreates_stopped_persistent_container_before_exec() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -7318,6 +8436,240 @@ tasks:
                 .unwrap()
                 .contains("rm\n")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleans_legacy_and_named_container_context_backends() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+  contexts:
+    web:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    run: printf legacy >> prepared.txt
+  dev:
+    context: web
+    run: printf app >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let cleanup_targets = persistent_cleanup_targets(&fixture.contract).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(cleanup_targets.len(), 2);
+        assert_eq!(
+            cleanup_targets
+                .iter()
+                .filter_map(|(context_name, _, _, _)| context_name.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["web", LEGACY_EXECUTION_CONTEXT_NAME]
+        );
+    }
+
+    #[test]
+    fn prepare_container_runtime_projection_reports_bind_reservation_failure_for_auto_host_port() {
+        let runtime = TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                TaskRuntimeListenerSpec {
+                    protocol: TaskRuntimeProtocol::Http,
+                    bind: TaskRuntimeBindSpec {
+                        address: String::from("0.0.0.0"),
+                        port: TaskRuntimePortSpec {
+                            mode: TaskRuntimePortMode::Fixed,
+                            value: Some(3000),
+                        },
+                    },
+                    project: TaskRuntimeProjectionSpec {
+                        host: Some(TaskRuntimeHostProjectionSpec {
+                            address: String::from("192.0.2.1"),
+                            port: TaskRuntimeHostPortSpec {
+                                mode: TaskRuntimeHostPortMode::Auto,
+                                value: None,
+                            },
+                            primary: false,
+                            path: None,
+                        }),
+                    },
+                },
+            )]),
+        };
+        let publication = ContainerPortPublication {
+            bind_port: 3000,
+            host_address: String::from("192.0.2.1"),
+            host_port_mode: TaskRuntimeHostPortMode::Auto,
+            host_port: None,
+            protocol: TaskRuntimeProtocol::Http,
+        };
+        let publications = vec![publication.clone()];
+        let listener_publications = vec![("http".to_string(), publication)];
+
+        let error = prepare_container_runtime_projection(
+            "dev",
+            Some(&runtime),
+            &publications,
+            &listener_publications,
+            true,
+        )
+        .unwrap_err();
+
+        match error {
+            RunError::RuntimeListenerResolutionFailed {
+                task,
+                listener,
+                kind:
+                    RuntimeListenerResolutionKind::HostPublication(
+                        RuntimeListenerHostPublicationFailure::BindReservationFailed {
+                            address,
+                            details,
+                        },
+                    ),
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "http");
+                assert_eq!(address, "192.0.2.1");
+                assert!(details.contains("could not reserve an ephemeral host port"));
+            }
+            other => panic!("expected bind reservation failure, got {other}"),
+        }
+    }
+
+    #[test]
+    fn prepare_container_runtime_projection_keeps_auto_ports_unresolved_when_disabled() {
+        let runtime = TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                TaskRuntimeListenerSpec {
+                    protocol: TaskRuntimeProtocol::Http,
+                    bind: TaskRuntimeBindSpec {
+                        address: String::from("0.0.0.0"),
+                        port: TaskRuntimePortSpec {
+                            mode: TaskRuntimePortMode::Fixed,
+                            value: Some(3000),
+                        },
+                    },
+                    project: TaskRuntimeProjectionSpec {
+                        host: Some(TaskRuntimeHostProjectionSpec {
+                            address: String::from("127.0.0.1"),
+                            port: TaskRuntimeHostPortSpec {
+                                mode: TaskRuntimeHostPortMode::Auto,
+                                value: None,
+                            },
+                            primary: false,
+                            path: None,
+                        }),
+                    },
+                },
+            )]),
+        };
+        let publication = ContainerPortPublication {
+            bind_port: 3000,
+            host_address: String::from("127.0.0.1"),
+            host_port_mode: TaskRuntimeHostPortMode::Auto,
+            host_port: None,
+            protocol: TaskRuntimeProtocol::Http,
+        };
+        let projection = prepare_container_runtime_projection(
+            "dev",
+            Some(&runtime),
+            std::slice::from_ref(&publication),
+            &[(String::from("http"), publication.clone())],
+            false,
+        )
+        .expect("persistent projection should keep auto host ports unresolved");
+
+        let prepared_listener = projection
+            .listener_publications
+            .first()
+            .map(|(_, publication)| publication)
+            .expect("listener projection should exist");
+        assert_eq!(
+            prepared_listener.host_port_mode,
+            TaskRuntimeHostPortMode::Auto
+        );
+        assert_eq!(prepared_listener.host_port, None);
+        assert!(projection.expected_host_ports.is_empty());
+        assert!(projection.env.is_empty());
+    }
+
+    #[test]
+    fn preflight_container_host_publications_reports_bind_reservation_failure_for_fixed_host_port()
+    {
+        let publication = ContainerPortPublication {
+            bind_port: 3000,
+            host_address: String::from("192.0.2.1"),
+            host_port_mode: TaskRuntimeHostPortMode::Fixed,
+            host_port: Some(3000),
+            protocol: TaskRuntimeProtocol::Http,
+        };
+
+        let error =
+            preflight_container_host_publications("dev", &[("http".to_string(), publication)])
+                .unwrap_err();
+
+        match error {
+            RunError::RuntimeListenerResolutionFailed {
+                task,
+                listener,
+                kind:
+                    RuntimeListenerResolutionKind::HostPublication(
+                        RuntimeListenerHostPublicationFailure::BindReservationFailed {
+                            address,
+                            details,
+                        },
+                    ),
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "http");
+                assert_eq!(address, "192.0.2.1");
+                assert!(details.contains("could not bind host port `3000`"));
+            }
+            other => panic!("expected bind reservation failure, got {other}"),
+        }
     }
 
     #[cfg(unix)]
