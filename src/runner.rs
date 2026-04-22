@@ -1363,10 +1363,12 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     }
 
     for engine in available_container_engines() {
-        for volume_name in
-            dependency_isolation_volume_names_for_project("clean", &engine, &project_name)?
+        if let Ok(volume_names) =
+            dependency_isolation_volume_names_for_project("clean", &engine, &project_name)
         {
-            cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+            for volume_name in volume_names {
+                cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+            }
         }
     }
 
