@@ -2692,6 +2692,60 @@ fn prepare_container_runtime_projection(
     })
 }
 
+fn resolve_container_task_runtime_from_publications(
+    runtime: Option<&TaskRuntimeSpec>,
+    listener_publications: &[(String, ContainerPortPublication)],
+) -> Option<ResolvedTaskRuntime> {
+    let runtime = runtime?;
+    let publication_index = listener_publications
+        .iter()
+        .map(|(listener_name, publication)| (listener_name.as_str(), publication))
+        .collect::<BTreeMap<_, _>>();
+
+    let listeners = runtime
+        .listeners
+        .iter()
+        .map(|(listener_name, listener)| {
+            let bind_port = listener
+                .bind
+                .port
+                .value
+                .expect("validated container listener should have a fixed bind port");
+            let resolved = listener.project.host.as_ref().and_then(|host| {
+                let publication = publication_index.get(listener_name.as_str())?;
+                let host_port = publication.host_port?;
+                Some(ResolvedTaskRuntimeResolution {
+                    host: Some(ResolvedTaskRuntimeHost {
+                        address: host.address.trim().to_string(),
+                        port: host_port,
+                        url: listener.protocol.url_scheme().map(|scheme| {
+                            format!(
+                                "{scheme}://{}:{host_port}{}",
+                                host.address.trim(),
+                                normalized_runtime_path(host.path.as_deref())
+                            )
+                        }),
+                    }),
+                })
+            });
+
+            (
+                listener_name.clone(),
+                ResolvedTaskRuntimeListener {
+                    protocol: listener.protocol,
+                    bind: ResolvedTaskRuntimeBind {
+                        address: listener.bind.address.trim().to_string(),
+                        port: bind_port,
+                    },
+                    resolved,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    Some(build_resolved_runtime(runtime, listeners))
+}
+
 fn runtime_public_env_from_resolved_runtime(
     runtime: &ResolvedTaskRuntime,
 ) -> BTreeMap<String, String> {
@@ -2727,6 +2781,18 @@ fn runtime_public_env_from_resolved_runtime(
     }
 
     env
+}
+
+fn runtime_public_endpoint_line(runtime_env: &BTreeMap<String, String>) -> Option<String> {
+    runtime_env
+        .get("OTA_PUBLIC_URL")
+        .map(|endpoint| format!("Endpoint: {endpoint}"))
+}
+
+fn print_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
+    if let Some(line) = runtime_public_endpoint_line(runtime_env) {
+        eprintln!("{line}");
+    }
 }
 
 fn resolved_runtime_host_endpoint_text(host: &ResolvedTaskRuntimeHost) -> String {
@@ -4214,6 +4280,9 @@ fn execute_container_task_command(
                 )?;
                 let mut resolved_env = env_overrides.clone();
                 resolved_env.extend(projection.env.clone());
+                if matches!(mode, TaskExecutionMode::Stream { .. }) {
+                    print_runtime_public_endpoint(&projection.env);
+                }
 
                 let output = execute_ephemeral_container_task_command(
                     task_name,
@@ -4229,7 +4298,6 @@ fn execute_container_task_command(
                     compose_networks,
                     &projection.publications,
                     &projection.listener_publications,
-                    &projection.expected_host_ports,
                     mode,
                 )?;
 
@@ -4337,13 +4405,14 @@ fn execute_ephemeral_container_task_command(
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
-    expected_host_ports: &BTreeMap<String, u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let identity_seed = container_identity_seed(context_name, publications);
     let container_name =
         ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
     preflight_container_host_publications(task_name, listener_publications)?;
+    let prepared_runtime =
+        resolve_container_task_runtime_from_publications(runtime, listener_publications);
     let mut create = Command::new(engine);
     create
         .arg("create")
@@ -4408,13 +4477,6 @@ fn execute_ephemeral_container_task_command(
                 task: task_name.to_string(),
                 source,
             })?;
-            let resolved_runtime = resolve_container_task_runtime(
-                runtime,
-                engine,
-                &container_name,
-                task_name,
-                expected_host_ports,
-            )?;
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
@@ -4422,7 +4484,7 @@ fn execute_ephemeral_container_task_command(
                 stdout: String::new(),
                 stderr: String::new(),
                 target: Some(container_name.clone()),
-                runtime: resolved_runtime.clone(),
+                runtime: prepared_runtime.clone(),
             })
         }
         TaskExecutionMode::Capture => {
@@ -4438,13 +4500,6 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-            let resolved_runtime = resolve_container_task_runtime(
-                runtime,
-                engine,
-                &container_name,
-                task_name,
-                expected_host_ports,
-            )?;
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
@@ -4452,7 +4507,7 @@ fn execute_ephemeral_container_task_command(
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name),
-                runtime: resolved_runtime,
+                runtime: prepared_runtime,
             })
         }
     }
@@ -4500,6 +4555,9 @@ fn execute_persistent_container_task_command(
         &fixed_expected_host_ports,
         env_overrides,
     )?;
+    if matches!(mode, TaskExecutionMode::Stream { .. }) {
+        print_runtime_public_endpoint(&resolved_env);
+    }
     let output = exec_persistent_container_task_command(
         task_name,
         command,
@@ -5243,7 +5301,7 @@ mod tests {
         prepare_container_runtime_projection, preparing_loader_label, resolve_execution_backend,
         resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
         run_task_with_args, run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend,
+        running_loader_label_for_backend, runtime_public_endpoint_line,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -6317,6 +6375,20 @@ tasks:
         assert_eq!(host.url.as_deref(), Some(expected_url.as_str()));
     }
 
+    #[test]
+    fn runtime_public_endpoint_line_uses_resolved_public_url() {
+        let mut runtime_env = BTreeMap::new();
+        runtime_env.insert(
+            String::from("OTA_PUBLIC_URL"),
+            String::from("http://127.0.0.1:49153/"),
+        );
+
+        assert_eq!(
+            runtime_public_endpoint_line(&runtime_env).as_deref(),
+            Some("Endpoint: http://127.0.0.1:49153/")
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn run_task_captured_reports_auto_container_runtime_endpoint_after_start() {
@@ -6370,13 +6442,17 @@ tasks:
         fs::set_permissions(&docker_path, permissions).unwrap();
 
         let original_path = env::var_os("PATH");
+        let original_state_dir = env::var_os("OTA_TEST_STATE_DIR");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
+        let state_dir = fixture.dir.path().join("docker-wrapper-state");
+        fs::create_dir_all(&state_dir).unwrap();
         unsafe {
             env::set_var("PATH", &joined_path);
+            env::set_var("OTA_TEST_STATE_DIR", &state_dir);
         }
 
         let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
@@ -6387,6 +6463,14 @@ tasks:
             },
             None => unsafe {
                 env::remove_var("PATH");
+            },
+        }
+        match original_state_dir {
+            Some(path) => unsafe {
+                env::set_var("OTA_TEST_STATE_DIR", path);
+            },
+            None => unsafe {
+                env::remove_var("OTA_TEST_STATE_DIR");
             },
         }
 
@@ -6427,6 +6511,111 @@ tasks:
         );
         assert_eq!(runtime.exposed_endpoints.len(), 1);
         assert!(runtime.exposed_endpoints[0].primary);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_keeps_prepared_auto_container_runtime_when_port_lookup_disappears() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf '%s' "$OTA_PUBLIC_URL" > runtime-env.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+if [ "$1" = "port" ]; then
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let runtime = outcome
+            .runtime
+            .expect("auto container service task should still report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("prepared publication should keep the host endpoint available");
+        let expected_url = format!("http://127.0.0.1:{}/", host.port);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            expected_url
+        );
     }
 
     #[cfg(unix)]
@@ -6773,13 +6962,17 @@ exec "$(dirname "$0")/docker-real" "$@"
         fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
 
         let original_path = env::var_os("PATH");
+        let original_state_dir = env::var_os("OTA_TEST_STATE_DIR");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
+        let state_dir = fixture.dir.path().join("docker-wrapper-state");
+        fs::create_dir_all(&state_dir).unwrap();
         unsafe {
             env::set_var("PATH", &joined_path);
+            env::set_var("OTA_TEST_STATE_DIR", &state_dir);
         }
 
         let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap_err();
@@ -6790,6 +6983,14 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
             None => unsafe {
                 env::remove_var("PATH");
+            },
+        }
+        match original_state_dir {
+            Some(path) => unsafe {
+                env::set_var("OTA_TEST_STATE_DIR", path);
+            },
+            None => unsafe {
+                env::remove_var("OTA_TEST_STATE_DIR");
             },
         }
 
@@ -6880,13 +7081,17 @@ exec "$(dirname "$0")/docker-real" "$@"
         fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
 
         let original_path = env::var_os("PATH");
+        let original_state_dir = env::var_os("OTA_TEST_STATE_DIR");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
+        let state_dir = fixture.dir.path().join("docker-wrapper-state");
+        fs::create_dir_all(&state_dir).unwrap();
         unsafe {
             env::set_var("PATH", &joined_path);
+            env::set_var("OTA_TEST_STATE_DIR", &state_dir);
         }
 
         let error = run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
@@ -6898,6 +7103,14 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
             None => unsafe {
                 env::remove_var("PATH");
+            },
+        }
+        match original_state_dir {
+            Some(path) => unsafe {
+                env::set_var("OTA_TEST_STATE_DIR", path);
+            },
+            None => unsafe {
+                env::remove_var("OTA_TEST_STATE_DIR");
             },
         }
 
