@@ -491,6 +491,7 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             )));
         }
 
+        let mut normalized_isolated_paths = BTreeSet::new();
         for isolated_path in &context.attachments.isolated_paths {
             if isolated_path.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -498,9 +499,15 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
                 continue;
             }
-            if normalize_dependency_isolated_path(isolated_path).is_none() {
+            let Some(normalized_path) = normalize_dependency_isolated_path(isolated_path) else {
                 errors.push(ValidationError::new(format!(
                     "`execution.contexts.{name}.attachments.isolated_paths` entries must be relative paths without `..` or absolute prefixes"
+                )));
+                continue;
+            };
+            if !normalized_isolated_paths.insert(normalized_path) {
+                errors.push(ValidationError::new(format!(
+                    "`execution.contexts.{name}.attachments.isolated_paths` must not contain duplicate normalized paths"
                 )));
             }
         }
@@ -2454,6 +2461,78 @@ tasks:
             error
                 .to_string()
                 .contains("`execution.contexts.host.attachments.isolated_paths` requires `backend: container`")
+        }));
+    }
+
+    #[test]
+    fn rejects_duplicate_normalized_isolated_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .\\node_modules
+tasks:
+  setup:
+    context: app
+    run: echo ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.contexts.app.attachments.isolated_paths` must not contain duplicate normalized paths",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_windows_absolute_isolated_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+      attachments:
+        isolated_paths:
+          - C:\node_modules
+          - ./C:/cache
+tasks:
+  setup:
+    context: app
+    run: echo ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.contexts.app.attachments.isolated_paths` entries must be relative paths without `..` or absolute prefixes",
+            )
         }));
     }
 

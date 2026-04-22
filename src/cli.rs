@@ -5083,6 +5083,31 @@ case "$command" in
     grep -Fx "$network" "$state_dir/$name.networks" >/dev/null || printf "%s\n" "$network" >> "$state_dir/$name.networks"
     exit 0
     ;;
+  volume)
+    subcommand="$1"
+    shift
+    case "$subcommand" in
+      inspect)
+        volume_name="$1"
+        [ -f "$state_dir/volume.$volume_name" ] || exit 1
+        exit 0
+        ;;
+      create)
+        volume_name="$1"
+        : > "$state_dir/volume.$volume_name"
+        printf "%s\n" "$volume_name"
+        exit 0
+        ;;
+      rm)
+        [ "$1" = "-f" ] && shift
+        volume_name="$1"
+        [ -f "$state_dir/volume.$volume_name" ] || exit 1
+        rm -f "$state_dir/volume.$volume_name"
+        exit 0
+        ;;
+    esac
+    exit 1
+    ;;
   rm)
     shift
     [ "$1" = "-f" ] && shift

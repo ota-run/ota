@@ -305,7 +305,7 @@ Current validation rule:
   - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
   - optional `requirements.<runtimes|tools>` to scope readiness checks to that context
   - optional `attachments.compose` to attach container workloads to compose project networks
-  - optional `attachments.isolated_paths` to mount Ota-managed container-local dependency storage over workspace-relative paths such as `node_modules`
+  - optional `attachments.isolated_paths` to mount Ota-managed, engine-owned named volumes over workspace-relative dependency paths such as `node_modules`
 
 Current implementation:
 
@@ -313,7 +313,7 @@ Current implementation:
 - `execution.contexts` are used for context-scoped requirement checks and receipts
 - `tasks.<name>.context` lets a task declare a non-default execution context
 - `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
-- the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed cache directories, and runs task bodies with `sh -lc`
+- the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
 - `ota up` now runs the `setup` task in the task's resolved context backend
 - `ota run` supports remote execution when the resolved context or legacy `execution.backends.remote` declares `provider` and `target`
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
@@ -334,7 +334,8 @@ Current command behavior:
 - `ota run` can also override execution mode and lifecycle for one invocation with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - `ota up` can also override execution mode and lifecycle for the `setup` phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
-- `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`, including Ota-managed dependency isolation caches for those container contexts
+- `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`, including Ota-managed dependency isolation volumes for those container contexts
+- `ota clean` also removes Ota-managed dependency isolation volumes for container contexts that declare `attachments.isolated_paths`, even when those contexts run with `lifecycle: ephemeral`
 - `ota clean` currently has no remote cleanup action; remote-backed repos report `No cleanup needed` today
 - `ota doctor` checks the required backend CLI for the selected execution context or preferred backend and reports unsupported shipped remote providers early
 - `ota doctor` warns on suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` not starting `pod/`)

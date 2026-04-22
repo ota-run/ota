@@ -20,7 +20,8 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::path::{Component, Path};
+use std::collections::BTreeSet;
+use std::path::Path;
 
 use crate::doctor::command_available;
 use crate::schema::{Backend, ContainerBackend, Contract, Execution, Lifecycle, RemoteBackend};
@@ -45,22 +46,37 @@ pub(crate) fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
 pub(crate) fn context_dependency_isolation_paths(
     context: &crate::schema::ExecutionContext,
 ) -> Vec<String> {
-    context
-        .attachments
-        .isolated_paths
-        .iter()
-        .filter_map(|path| normalize_dependency_isolated_path(path))
-        .collect()
+    let mut normalized_paths = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in &context.attachments.isolated_paths {
+        let Some(normalized_path) = normalize_dependency_isolated_path(path) else {
+            continue;
+        };
+        if seen.insert(normalized_path.clone()) {
+            normalized_paths.push(normalized_path);
+        }
+    }
+    normalized_paths
 }
 
 pub(crate) fn normalize_dependency_isolated_path(value: &str) -> Option<String> {
+    let normalized_value = value.trim().replace('\\', "/");
+    if normalized_value.is_empty() || normalized_value.starts_with('/') {
+        return None;
+    }
+
     let mut normalized = Vec::new();
-    for component in Path::new(value.trim()).components() {
-        match component {
-            Component::CurDir => continue,
-            Component::Normal(part) => normalized.push(part.to_string_lossy().to_string()),
-            _ => return None,
+    for component in normalized_value.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
         }
+        if component == ".." {
+            return None;
+        }
+        if normalized.is_empty() && is_windows_drive_prefix(component) {
+            return None;
+        }
+        normalized.push(component.to_string());
     }
 
     if normalized.is_empty() {
@@ -68,6 +84,11 @@ pub(crate) fn normalize_dependency_isolated_path(value: &str) -> Option<String> 
     } else {
         Some(normalized.join("/"))
     }
+}
+
+fn is_windows_drive_prefix(component: &str) -> bool {
+    let bytes = component.as_bytes();
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 pub(crate) fn execution_target(
@@ -260,4 +281,36 @@ fn selected_remote_backend(execution: Option<&Execution>) -> Option<&RemoteBacke
                 .and_then(|execution| execution.backends.as_ref())
                 .and_then(|backends| backends.remote.as_ref())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_dependency_isolated_path;
+
+    #[test]
+    fn normalizes_windows_separator_isolated_paths() {
+        assert_eq!(
+            normalize_dependency_isolated_path(r"node_modules\.pnpm\store"),
+            Some(String::from("node_modules/.pnpm/store"))
+        );
+    }
+
+    #[test]
+    fn rejects_windows_absolute_isolated_paths() {
+        assert_eq!(normalize_dependency_isolated_path(r"C:\node_modules"), None);
+        assert_eq!(
+            normalize_dependency_isolated_path("./C:/node_modules"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_and_parent_relative_isolated_paths() {
+        assert_eq!(normalize_dependency_isolated_path("/node_modules"), None);
+        assert_eq!(normalize_dependency_isolated_path("../node_modules"), None);
+        assert_eq!(
+            normalize_dependency_isolated_path("node_modules/../cache"),
+            None
+        );
+    }
 }

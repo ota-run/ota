@@ -24,11 +24,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -462,6 +462,16 @@ pub enum RunError {
         address: String,
         port: u16,
     },
+    #[error(
+        "task `{task}` could not {action} dependency-isolation volume `{volume}` using container engine `{engine}`: {details}"
+    )]
+    DependencyIsolationVolumeFailure {
+        task: String,
+        action: String,
+        volume: String,
+        engine: String,
+        details: String,
+    },
     #[error("container backend `{engine}` could not list stale ota containers: {details}")]
     StaleContainerQueryFailed { engine: String, details: String },
     #[error("could not compose environment variable `{name}` as a PATH: {source}")]
@@ -694,6 +704,8 @@ pub struct StaleContainerCleanupReport {
 
 const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
 const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
+const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
+const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
@@ -1291,15 +1303,21 @@ pub fn run_task_captured_with_args_with_overrides_with_policy(
 
 pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
     let cleanup_targets = persistent_cleanup_targets(contract)?;
-    if cleanup_targets.is_empty() {
-        return Ok(false);
-    }
 
     let working_dir = contract_working_dir(contract_path);
+    let project_name = contract.project.name.clone();
     let mut cleaned = false;
     let mut visited = BTreeSet::new();
-    let mut visited_dependency_isolation_roots = BTreeSet::new();
-    for (context_name, image, engine, publications, dependency_isolation_paths) in cleanup_targets {
+    let mut dependency_isolation_volumes_to_remove = BTreeSet::new();
+    for (
+        context_name,
+        image,
+        engine,
+        publications,
+        dependency_isolation_paths,
+        cleanup_container,
+    ) in cleanup_targets
+    {
         let identity_seed = container_identity_seed(
             context_name.as_deref(),
             &publications,
@@ -1315,24 +1333,19 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
             continue;
         }
 
-        if let Some(execution) = contract.execution.as_ref()
-            && let Some(context_name) = context_name.as_deref()
-            && let Some(context) = execution.contexts.get(context_name)
-            && context.backend == Backend::Container
-        {
-            if !dependency_isolation_paths.is_empty()
-                && let Some(root) = container_dependency_isolation_root(
-                    working_dir,
-                    Some(context_name),
-                    &image,
-                    &engine,
-                )
-            {
-                let root_key = root.display().to_string();
-                if visited_dependency_isolation_roots.insert(root_key) {
-                    cleaned |= remove_dependency_isolation_root("clean", &root)?;
-                }
-            }
+        let dependency_volume_names = container_dependency_isolation_volume_names(
+            working_dir,
+            context_name.as_deref(),
+            &image,
+            &engine,
+            &project_name,
+            &dependency_isolation_paths,
+        );
+        for volume_name in dependency_volume_names {
+            dependency_isolation_volumes_to_remove.insert((engine.clone(), volume_name));
+        }
+        if !cleanup_container {
+            continue;
         }
 
         let inspect_exit_code =
@@ -1343,6 +1356,18 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         let remove_exit_code =
             container_command_exit_code(&engine, &["rm", "-f", &container_name], None, "clean")?;
         cleaned |= remove_exit_code == 0;
+    }
+
+    for (engine, volume_name) in dependency_isolation_volumes_to_remove {
+        cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+    }
+
+    for engine in available_container_engines() {
+        for volume_name in
+            dependency_isolation_volume_names_for_project("clean", &engine, &project_name)?
+        {
+            cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+        }
     }
 
     Ok(cleaned)
@@ -1357,15 +1382,14 @@ fn persistent_cleanup_targets(
         String,
         Vec<ContainerPortPublication>,
         Vec<String>,
+        bool,
     )>,
     RunError,
 > {
     let mut targets = Vec::new();
     if let Some(execution) = contract.execution.as_ref() {
         for (name, context) in &execution.contexts {
-            if context.backend != Backend::Container
-                || context.lifecycle != Some(Lifecycle::Persistent)
-            {
+            if context.backend != Backend::Container {
                 continue;
             }
             let Some(container) = context.container.as_ref() else {
@@ -1382,13 +1406,27 @@ fn persistent_cleanup_targets(
                     }
                 })?;
             let dependency_isolation_paths = context_dependency_isolation_paths(context);
-            for publications in task_container_publication_sets_for_context(contract, Some(name)) {
+            if context.lifecycle == Some(Lifecycle::Persistent) {
+                for publications in
+                    task_container_publication_sets_for_context(contract, Some(name))
+                {
+                    targets.push((
+                        Some(name.clone()),
+                        container.image.clone(),
+                        engine.clone(),
+                        publications,
+                        dependency_isolation_paths.clone(),
+                        true,
+                    ));
+                }
+            } else if !dependency_isolation_paths.is_empty() {
                 targets.push((
                     Some(name.clone()),
                     container.image.clone(),
                     engine.clone(),
-                    publications,
+                    Vec::new(),
                     dependency_isolation_paths.clone(),
+                    false,
                 ));
             }
         }
@@ -1414,6 +1452,7 @@ fn persistent_cleanup_targets(
                 engine.clone(),
                 publications,
                 Vec::new(),
+                true,
             );
             if !targets.contains(&target) {
                 targets.push(target);
@@ -1966,6 +2005,7 @@ fn execute_task_with_hooks(
         Some(task),
         execution.body,
         working_dir,
+        &contract.project.name,
         &combined_env,
         path_export.as_deref(),
         &secret_env_names,
@@ -2223,6 +2263,7 @@ fn execute_task_command(
     task: Option<&TaskSpec>,
     command: &str,
     working_dir: &Path,
+    project_name: &str,
     env_overrides: &BTreeMap<String, String>,
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
@@ -2251,6 +2292,7 @@ fn execute_task_command(
             task_name,
             task.and_then(TaskSpec::service_runtime),
             context_name.as_deref(),
+            project_name,
             command,
             working_dir,
             env_overrides,
@@ -2307,6 +2349,7 @@ pub(crate) fn run_backend_command_captured(
         None,
         command,
         working_dir,
+        "",
         &BTreeMap::new(),
         None,
         &BTreeSet::new(),
@@ -2822,7 +2865,7 @@ fn projected_runtime_public_endpoint_line(
 ) -> Option<String> {
     runtime_env
         .get("OTA_PUBLIC_URL")
-        .map(|endpoint| format!("Endpoint (planned): {endpoint}"))
+        .map(|endpoint| format!("⭑ Endpoint (planned): {endpoint}"))
 }
 
 fn print_projected_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
@@ -4288,6 +4331,7 @@ fn execute_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
+    project_name: &str,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -4342,6 +4386,7 @@ fn execute_container_task_command(
                     task_name,
                     runtime,
                     context_name,
+                    project_name,
                     command,
                     working_dir,
                     &resolved_env,
@@ -4410,6 +4455,7 @@ fn execute_container_task_command(
             task_name,
             runtime,
             context_name,
+            project_name,
             command,
             working_dir,
             env_overrides,
@@ -4451,6 +4497,7 @@ fn execute_ephemeral_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
+    project_name: &str,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -4486,17 +4533,18 @@ fn execute_ephemeral_container_task_command(
     if let Some(network) = compose_networks.first() {
         create.arg("--network").arg(network);
     }
-    for (host_path, container_path) in container_dependency_isolation_mounts(
+    for (volume_name, container_path) in container_dependency_isolation_mounts(
         task_name,
         working_dir,
         context_name,
         image,
         engine,
+        project_name,
         dependency_isolation_paths,
     )? {
         create
             .arg("-v")
-            .arg(format!("{}:{}", host_path.display(), container_path));
+            .arg(format!("{volume_name}:{container_path}"));
     }
     append_container_publication_args(&mut create, publications);
     for (name, value) in env_overrides {
@@ -4587,6 +4635,7 @@ fn execute_persistent_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
+    project_name: &str,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -4609,6 +4658,7 @@ fn execute_persistent_container_task_command(
         task_name,
         working_dir,
         context_name,
+        project_name,
         image,
         engine,
         &container_name,
@@ -4651,6 +4701,7 @@ fn execute_persistent_container_task_command(
             task_name,
             working_dir,
             context_name,
+            project_name,
             image,
             engine,
             &container_name,
@@ -4734,6 +4785,7 @@ fn ensure_persistent_container_ready(
     task_name: &str,
     working_dir: &Path,
     context_name: Option<&str>,
+    project_name: &str,
     image: &str,
     engine: &str,
     container_name: &str,
@@ -4748,6 +4800,7 @@ fn ensure_persistent_container_ready(
             task_name,
             working_dir,
             context_name,
+            project_name,
             image,
             engine,
             container_name,
@@ -4797,6 +4850,7 @@ fn ensure_persistent_container_ready(
                 task_name,
                 working_dir,
                 context_name,
+                project_name,
                 image,
                 engine,
                 container_name,
@@ -4860,6 +4914,7 @@ fn create_persistent_container(
     task_name: &str,
     working_dir: &Path,
     context_name: Option<&str>,
+    project_name: &str,
     image: &str,
     engine: &str,
     container_name: &str,
@@ -4889,16 +4944,17 @@ fn create_persistent_container(
         args.push("--network".to_string());
         args.push(network.clone());
     }
-    for (host_path, container_path) in container_dependency_isolation_mounts(
+    for (volume_name, container_path) in container_dependency_isolation_mounts(
         task_name,
         working_dir,
         context_name,
         image,
         engine,
+        project_name,
         dependency_isolation_paths,
     )? {
         args.push("-v".to_string());
-        args.push(format!("{}:{}", host_path.display(), container_path));
+        args.push(format!("{volume_name}:{container_path}"));
     }
     append_container_publication_vec(&mut args, publications);
     args.push(image.to_string());
@@ -5322,24 +5378,21 @@ fn ephemeral_container_name_for_seed(
     format!("ota-ephemeral-{:x}", hasher.finish())
 }
 
-fn container_dependency_isolation_root(
+fn container_dependency_isolation_volume_name(
     working_dir: &Path,
     context_name: Option<&str>,
     image: &str,
     engine: &str,
-) -> Option<PathBuf> {
+    isolated_path: &str,
+) -> Option<String> {
     let context_name = context_name?;
     let mut hasher = DefaultHasher::new();
     working_dir.display().to_string().hash(&mut hasher);
     context_name.hash(&mut hasher);
     image.hash(&mut hasher);
     engine.hash(&mut hasher);
-    Some(
-        working_dir
-            .join(".ota")
-            .join("container-cache")
-            .join(format!("{:x}", hasher.finish())),
-    )
+    isolated_path.hash(&mut hasher);
+    Some(format!("ota-isolated-{:x}", hasher.finish()))
 }
 
 fn container_dependency_isolation_mounts(
@@ -5348,37 +5401,193 @@ fn container_dependency_isolation_mounts(
     context_name: Option<&str>,
     image: &str,
     engine: &str,
+    project_name: &str,
     isolated_paths: &[String],
-) -> Result<Vec<(PathBuf, String)>, RunError> {
-    let Some(root) = container_dependency_isolation_root(working_dir, context_name, image, engine)
-    else {
-        return Ok(Vec::new());
-    };
-
+) -> Result<Vec<(String, String)>, RunError> {
     let mut mounts = Vec::new();
     for path in isolated_paths {
         let normalized = crate::execution::normalize_dependency_isolated_path(path)
             .expect("validated dependency isolation path should be relative");
-        let host_path = root.join(&normalized);
-        fs::create_dir_all(&host_path).map_err(|source| RunError::SpawnFailed {
-            task: task_name.to_string(),
-            source,
-        })?;
-        mounts.push((host_path, format!("/workspace/{normalized}")));
+        let Some(volume_name) = container_dependency_isolation_volume_name(
+            working_dir,
+            context_name,
+            image,
+            engine,
+            &normalized,
+        ) else {
+            continue;
+        };
+        let labels = dependency_isolation_volume_labels(project_name, context_name, &normalized);
+        ensure_dependency_isolation_volume(task_name, engine, &volume_name, &labels)?;
+        mounts.push((volume_name, format!("/workspace/{normalized}")));
     }
 
     Ok(mounts)
 }
 
-fn remove_dependency_isolation_root(task_name: &str, root: &Path) -> Result<bool, RunError> {
-    match fs::remove_dir_all(root) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(RunError::SpawnFailed {
-            task: task_name.to_string(),
-            source,
-        }),
+fn container_dependency_isolation_volume_names(
+    working_dir: &Path,
+    context_name: Option<&str>,
+    image: &str,
+    engine: &str,
+    _project_name: &str,
+    isolated_paths: &[String],
+) -> Vec<String> {
+    isolated_paths
+        .iter()
+        .filter_map(|path| {
+            crate::execution::normalize_dependency_isolated_path(path)
+                .and_then(|normalized| {
+                    container_dependency_isolation_volume_name(
+                        working_dir,
+                        context_name,
+                        image,
+                        engine,
+                        &normalized,
+                    )
+                })
+                .map(|volume_name| volume_name.to_string())
+        })
+        .collect()
+}
+
+fn ensure_dependency_isolation_volume(
+    task_name: &str,
+    engine: &str,
+    volume_name: &str,
+    labels: &[String],
+) -> Result<(), RunError> {
+    let inspect =
+        container_command_output(engine, &["volume", "inspect", volume_name], None, task_name)?;
+    if inspect.exit_code == 0 {
+        return Ok(());
     }
+
+    let mut args = vec!["volume".to_string(), "create".to_string()];
+    for label in labels {
+        args.push("--label".to_string());
+        args.push(label.clone());
+    }
+    args.push(volume_name.to_string());
+    let create_args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let create = container_command_output(engine, &create_args, None, task_name)?;
+    if create.exit_code == 0 {
+        return Ok(());
+    }
+
+    Err(RunError::DependencyIsolationVolumeFailure {
+        task: task_name.to_string(),
+        action: String::from("prepare"),
+        volume: volume_name.to_string(),
+        engine: engine.to_string(),
+        details: container_command_failure_details(engine, &create_args, &create),
+    })
+}
+
+fn remove_dependency_isolation_volume(
+    task_name: &str,
+    engine: &str,
+    volume_name: &str,
+) -> Result<bool, RunError> {
+    let inspect =
+        container_command_output(engine, &["volume", "inspect", volume_name], None, task_name)?;
+    if inspect.exit_code != 0 {
+        return Ok(false);
+    }
+
+    let remove = container_command_output(
+        engine,
+        &["volume", "rm", "-f", volume_name],
+        None,
+        task_name,
+    )?;
+    if remove.exit_code == 0 {
+        return Ok(true);
+    }
+
+    Err(RunError::DependencyIsolationVolumeFailure {
+        task: task_name.to_string(),
+        action: String::from("remove"),
+        volume: volume_name.to_string(),
+        engine: engine.to_string(),
+        details: container_command_failure_details(
+            engine,
+            &["volume", "rm", "-f", volume_name],
+            &remove,
+        ),
+    })
+}
+
+fn dependency_isolation_volume_labels(
+    project_name: &str,
+    context_name: Option<&str>,
+    isolated_path: &str,
+) -> Vec<String> {
+    let mut labels = vec![
+        OTA_MANAGED_VOLUME_LABEL.to_string(),
+        OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL.to_string(),
+        format!("dev.ota.project={project_name}"),
+        format!("dev.ota.path={isolated_path}"),
+    ];
+    if let Some(context_name) = context_name {
+        labels.push(format!("dev.ota.context={context_name}"));
+    }
+    labels
+}
+
+fn dependency_isolation_volume_names_for_project(
+    task_name: &str,
+    engine: &str,
+    project_name: &str,
+) -> Result<Vec<String>, RunError> {
+    let project_filter = format!("label=dev.ota.project={project_name}");
+    let args = [
+        "volume",
+        "ls",
+        "-q",
+        "--filter",
+        OTA_MANAGED_VOLUME_LABEL,
+        "--filter",
+        OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL,
+        "--filter",
+        project_filter.as_str(),
+    ];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::DependencyIsolationVolumeFailure {
+            task: task_name.to_string(),
+            action: String::from("list"),
+            volume: project_name.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    Ok(output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|volume_name| !volume_name.is_empty())
+        .map(ToString::to_string)
+        .collect())
+}
+
+fn container_command_failure_details(
+    engine: &str,
+    args: &[&str],
+    output: &ContainerCommandOutput,
+) -> String {
+    if !output.stderr.trim().is_empty() {
+        return output.stderr.trim().to_string();
+    }
+    if !output.stdout.trim().is_empty() {
+        return output.stdout.trim().to_string();
+    }
+    format!(
+        "`{engine} {}` exited with status {}",
+        args.join(" "),
+        output.exit_code
+    )
 }
 
 fn contract_working_dir(contract_path: &Path) -> &Path {
@@ -6540,7 +6749,7 @@ tasks:
 
         assert_eq!(
             projected_runtime_public_endpoint_line(&runtime_env).as_deref(),
-            Some("Endpoint (planned): http://127.0.0.1:49153/")
+            Some("⭑ Endpoint (planned): http://127.0.0.1:49153/")
         );
     }
 
@@ -8941,7 +9150,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn cleans_container_dependency_isolation_cache_for_named_context() {
+    fn cleans_container_dependency_isolation_volumes_for_named_context() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_mutex_lock();
@@ -8990,15 +9199,18 @@ tasks:
         let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
 
         let mounts = fs::read_to_string(fixture.dir.path().join("docker-mounts.txt")).unwrap();
-        assert!(mounts.contains(":/workspace/node_modules"));
-
-        let cache_root = fs::read_dir(fixture.dir.path().join(".ota").join("container-cache"))
-            .unwrap()
-            .next()
-            .expect("isolated cache root should exist")
-            .unwrap()
-            .path();
-        assert!(cache_root.join("node_modules").exists());
+        let volume_mount = mounts
+            .lines()
+            .find(|line| line.ends_with(":/workspace/node_modules"))
+            .expect("isolated dependency volume mount should exist");
+        let volume_name = volume_mount
+            .split_once(':')
+            .expect("mount should include source and target")
+            .0
+            .to_string();
+        let state_dir = bin_dir.join("docker-state");
+        let volume_marker = state_dir.join(format!("volume.{volume_name}"));
+        assert!(volume_marker.exists());
 
         let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
 
@@ -9012,7 +9224,159 @@ tasks:
         }
 
         assert!(cleaned);
-        assert!(!cache_root.exists());
+        assert!(!volume_marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleans_container_dependency_isolation_volumes_for_ephemeral_contexts() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+
+        let mounts = fs::read_to_string(fixture.dir.path().join("docker-mounts.txt")).unwrap();
+        let volume_mount = mounts
+            .lines()
+            .find(|line| line.ends_with(":/workspace/node_modules"))
+            .expect("isolated dependency volume mount should exist");
+        let volume_name = volume_mount
+            .split_once(':')
+            .expect("mount should include source and target")
+            .0
+            .to_string();
+        let state_dir = bin_dir.join("docker-state");
+        let volume_marker = state_dir.join(format!("volume.{volume_name}"));
+        assert!(volume_marker.exists());
+
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(!volume_marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleans_dependency_isolation_volumes_by_label_after_contract_drift() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let stale_volume = "ota-isolated-stale";
+        fs::write(state_dir.join(format!("volume.{stale_volume}")), "").unwrap();
+        fs::write(
+            state_dir.join(format!("volume.{stale_volume}.labels")),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.project=ota\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(!state_dir.join(format!("volume.{stale_volume}")).exists());
+        assert!(
+            !state_dir
+                .join(format!("volume.{stale_volume}.labels"))
+                .exists()
+        );
     }
 
     #[cfg(unix)]
@@ -9163,7 +9527,7 @@ tasks:
         assert_eq!(
             cleanup_targets
                 .iter()
-                .filter_map(|(context_name, _, _, _, _)| context_name.as_deref())
+                .filter_map(|(context_name, _, _, _, _, _)| context_name.as_deref())
                 .collect::<Vec<_>>(),
             vec!["web", LEGACY_EXECUTION_CONTEXT_NAME]
         );
@@ -9744,6 +10108,104 @@ case "$command" in
     touch "$state_dir/$name.networks"
     grep -Fx "$network" "$state_dir/$name.networks" >/dev/null || printf "%s\n" "$network" >> "$state_dir/$name.networks"
     exit 0
+    ;;
+  volume)
+    subcommand="$1"
+    shift
+    case "$subcommand" in
+      inspect)
+        volume_name="$1"
+        [ -f "$state_dir/volume.$volume_name" ] || exit 1
+        exit 0
+        ;;
+      ls)
+        label_filters=""
+        name_filter=""
+        quiet=0
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            -q)
+              quiet=1
+              shift
+              ;;
+            --filter)
+              case "$2" in
+                label=*)
+                  label_filters="${label_filters}${2#label=}
+"
+                  ;;
+                name=*)
+                  name_filter="${2#name=}"
+                  ;;
+              esac
+              shift 2
+              ;;
+            *)
+              shift
+              ;;
+          esac
+        done
+        for volume_path in "$state_dir"/volume.*; do
+          [ -e "$volume_path" ] || continue
+          volume_name=${volume_path##*/volume.}
+          if [ -n "$name_filter" ] && ! printf "%s" "$volume_name" | grep -F "$name_filter" >/dev/null; then
+            continue
+          fi
+          if [ -n "$label_filters" ]; then
+            [ -f "$state_dir/volume.$volume_name.labels" ] || continue
+            matched=1
+            while IFS= read -r label_filter; do
+              [ -n "$label_filter" ] || continue
+              grep -Fx "$label_filter" "$state_dir/volume.$volume_name.labels" >/dev/null || matched=0
+            done <<EOF
+$label_filters
+EOF
+            [ "$matched" = "1" ] || continue
+          fi
+          if [ "$quiet" = "1" ]; then
+            printf "%s\n" "$volume_name"
+          else
+            printf "%s\n" "$volume_name"
+          fi
+        done
+        exit 0
+        ;;
+      create)
+        labels=""
+        volume_name="$1"
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --label)
+              labels="${labels}${2}
+"
+              shift 2
+              ;;
+            *)
+              volume_name="$1"
+              shift
+              break
+              ;;
+          esac
+        done
+        : > "$state_dir/volume.$volume_name"
+        if [ -n "$labels" ]; then
+          printf "%s" "$labels" > "$state_dir/volume.$volume_name.labels"
+        fi
+        printf "volume-create %s\n" "$volume_name" >> "$state_dir/volume-log.txt"
+        printf "%s\n" "$volume_name"
+        exit 0
+        ;;
+      rm)
+        [ "$1" = "-f" ] && shift
+        volume_name="$1"
+        [ -f "$state_dir/volume.$volume_name" ] || exit 1
+        rm -f "$state_dir/volume.$volume_name"
+        rm -f "$state_dir/volume.$volume_name.labels"
+        printf "volume-rm %s\n" "$volume_name" >> "$state_dir/volume-log.txt"
+        exit 0
+        ;;
+    esac
+    exit 1
     ;;
   rm)
     shift
