@@ -32,8 +32,8 @@ use crate::runner::{
     load_declared_env_sources, load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{
-    AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
-    TaskInputSpec, TaskSpec, TaskVariantView,
+    AgentConfig, Backend, Contract, Execution, ExecutionContext, ExtensionSpec, Lifecycle,
+    ServiceSpec, TaskInputSpec, TaskSpec, TaskVariantView,
 };
 use crate::workspace::{WorkspaceExecutionSummary, WorkspaceRepoDoctorReport};
 
@@ -1755,6 +1755,8 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
@@ -1779,25 +1781,34 @@ pub struct TaskSummary<'a> {
     pub safe_for_agent: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<TaskVariantView<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub modes: Vec<TaskModeView<'a>>,
 }
 
 impl<'a> TaskSummary<'a> {
-    pub fn from_spec(name: &'a str, task: &'a TaskSpec, current_os: &str) -> Self {
-        let execution = task
-            .resolved_execution(current_os)
+    pub fn from_spec(
+        name: &'a str,
+        task: &'a TaskSpec,
+        current_os: &str,
+        execution: Option<&'a Execution>,
+    ) -> Self {
+        let selected_backend = resolved_task_summary_backend(task, execution);
+        let resolved_execution = task
+            .resolved_execution_for_backend(selected_backend, current_os)
             .expect("validated task must resolve to a default or variant execution");
         Self {
             name,
-            context: task.context.as_deref(),
+            context: resolved_task_summary_context(task, execution, selected_backend),
+            default_mode: task.mode_default_backend().map(task_mode_name),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),
             env: &task.env,
             inputs: &task.inputs,
-            kind: execution.kind,
-            run: (execution.kind == "run").then_some(execution.body),
-            script: (execution.kind == "script").then_some(execution.body),
-            selected_variant_os: execution.os,
+            kind: resolved_execution.kind,
+            run: (resolved_execution.kind == "run").then_some(resolved_execution.body),
+            script: (resolved_execution.kind == "script").then_some(resolved_execution.body),
+            selected_variant_os: resolved_execution.os,
             depends_on: &task.depends_on,
             requires_services: &task.requires_services,
             after_success: &task.after_success,
@@ -1820,7 +1831,112 @@ impl<'a> TaskSummary<'a> {
                     script: variant.script.as_deref(),
                 })
                 .collect(),
+            modes: task
+                .execution
+                .as_ref()
+                .map(|execution| {
+                    execution
+                        .modes
+                        .iter()
+                        .map(|(backend, branch)| {
+                            let branch_execution = branch.execution();
+                            TaskModeView {
+                                mode: task_mode_name(backend),
+                                context: branch.context.as_deref(),
+                                lifecycle: branch.lifecycle.map(format_lifecycle),
+                                kind: branch_execution.map(|execution| execution.kind),
+                                run: branch.run.as_deref(),
+                                script: branch.script.as_deref(),
+                                has_runtime: branch.runtime.is_some(),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
+    }
+}
+
+fn resolved_task_summary_backend(task: &TaskSpec, execution: Option<&Execution>) -> Backend {
+    task.mode_default_backend()
+        .or_else(|| {
+            task.context.as_deref().and_then(|context_name| {
+                execution
+                    .and_then(|execution| execution.contexts.get(context_name))
+                    .map(|context| context.backend)
+            })
+        })
+        .or_else(|| {
+            execution.and_then(|execution| {
+                execution
+                    .default_context()
+                    .map(|(_, context)| context.backend)
+            })
+        })
+        .or_else(|| execution.and_then(|execution| execution.preferred))
+        .unwrap_or(Backend::Native)
+}
+
+fn resolved_task_summary_context<'a>(
+    task: &'a TaskSpec,
+    execution: Option<&'a Execution>,
+    backend: Backend,
+) -> Option<&'a str> {
+    if let Some(branch) = task.mode_execution_branch(backend) {
+        return branch
+            .context
+            .as_deref()
+            .or_else(|| {
+                task.context.as_deref().filter(|context_name| {
+                    execution
+                        .and_then(|execution| execution.contexts.get(*context_name))
+                        .is_some_and(|context| context.backend == backend)
+                })
+            })
+            .or_else(|| {
+                execution.and_then(|execution| {
+                    execution
+                        .default_context()
+                        .and_then(|(name, context)| (context.backend == backend).then_some(name))
+                })
+            })
+            .or_else(|| {
+                execution.and_then(|execution| {
+                    execution
+                        .contexts
+                        .iter()
+                        .find(|(_, context)| context.backend == backend)
+                        .map(|(name, _)| name.as_str())
+                })
+            });
+    }
+
+    task.context.as_deref().or_else(|| {
+        execution.and_then(|execution| execution.default_context().map(|(name, _)| name))
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaskModeView<'a> {
+    pub mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<&'a str>,
+    pub has_runtime: bool,
+}
+
+fn task_mode_name(mode: Backend) -> &'static str {
+    match mode {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
     }
 }
 

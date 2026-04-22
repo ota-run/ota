@@ -55,6 +55,7 @@
               "name": { "type": "string" },
               "description": { "type": "string" },
               "category": { "type": "string" },
+              "default_mode": { "enum": ["native", "container", "remote"] },
               "kind": { "enum": ["run", "script"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
@@ -79,6 +80,23 @@
                     "kind": { "enum": ["run", "script"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" }
+                  }
+                }
+              },
+              "modes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["mode", "has_runtime"],
+                  "properties": {
+                    "mode": { "enum": ["native", "container", "remote"] },
+                    "context": { "type": "string" },
+                    "lifecycle": { "enum": ["persistent", "ephemeral"] },
+                    "kind": { "enum": ["run", "script"] },
+                    "run": { "type": "string" },
+                    "script": { "type": "string" },
+                    "has_runtime": { "type": "boolean" }
                   }
                 }
               }
@@ -139,6 +157,7 @@
                     "name": { "type": "string" },
                     "description": { "type": "string" },
                     "category": { "type": "string" },
+                    "default_mode": { "enum": ["native", "container", "remote"] },
                     "kind": { "enum": ["run", "script"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
@@ -163,6 +182,23 @@
                           "kind": { "enum": ["run", "script"] },
                           "run": { "type": "string" },
                           "script": { "type": "string" }
+                        }
+                      }
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["mode", "has_runtime"],
+                        "properties": {
+                          "mode": { "enum": ["native", "container", "remote"] },
+                          "context": { "type": "string" },
+                          "lifecycle": { "enum": ["persistent", "ephemeral"] },
+                          "kind": { "enum": ["run", "script"] },
+                          "run": { "type": "string" },
+                          "script": { "type": "string" },
+                          "has_runtime": { "type": "boolean" }
                         }
                       }
                     }

@@ -42,16 +42,16 @@ use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
     container_engine_candidates_from_backend, context_dependency_isolation_paths, execution_image,
-    matching_execution_context_name, selected_container_engine,
-    selected_container_engine_from_backend,
+    matching_declared_execution_context_name, matching_execution_context_name,
+    selected_container_engine, selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
     LoadPolicyPackError, PolicyPackSource, load_org_policy_pack_auto_details,
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
-    ExtensionKind, Lifecycle, RemoteBackend, TaskRuntimeHostPortMode, TaskRuntimeKind,
-    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    ExtensionKind, Lifecycle, RemoteBackend, TaskModeBranchSpec, TaskRuntimeHostPortMode,
+    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
 };
 
 #[derive(Clone)]
@@ -439,6 +439,8 @@ pub enum RunError {
         "task `{task}` does not define a default execution and no variant matches the current os `{os}`"
     )]
     NoMatchingTaskVariant { task: String, os: String },
+    #[error("task `{task}` does not declare an execution branch for mode `{mode}`")]
+    MissingTaskModeExecution { task: String, mode: String },
     #[error("failed to start task `{task}`: {source}")]
     SpawnFailed {
         task: String,
@@ -1742,6 +1744,15 @@ pub(crate) enum ResolvedExecutionBackend {
     },
 }
 
+fn resolved_execution_backend_kind(backend: &ResolvedExecutionBackend) -> Backend {
+    match backend {
+        ResolvedExecutionBackend::Native => Backend::Native,
+        ResolvedExecutionBackend::Container { .. } => Backend::Container,
+        ResolvedExecutionBackend::Remote { .. }
+        | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
+    }
+}
+
 fn run_task_internal(
     contract: &Contract,
     contract_path: &Path,
@@ -2001,20 +2012,34 @@ fn execute_task_with_hooks(
         }
     }
 
-    let execution = if let Some(execution) = task.resolved_execution(current_os) {
-        execution
-    } else if task.variants.is_empty() {
-        return Err(RunError::InvalidTaskExecution {
+    let backend_kind = resolved_execution_backend_kind(backend);
+    if task
+        .execution
+        .as_ref()
+        .is_some_and(|execution| execution.modes.any())
+        && task.mode_execution_branch(backend_kind).is_none()
+    {
+        return Err(RunError::MissingTaskModeExecution {
             task: task_name.to_string(),
+            mode: backend_mode_name(backend_kind).to_string(),
         });
-    } else {
-        return Err(RunError::NoMatchingTaskVariant {
-            task: task_name.to_string(),
-            os: current_os.to_string(),
-        });
-    };
+    }
+    let execution =
+        if let Some(execution) = task.resolved_execution_for_backend(backend_kind, current_os) {
+            execution
+        } else if task.variants.is_empty() {
+            return Err(RunError::InvalidTaskExecution {
+                task: task_name.to_string(),
+            });
+        } else {
+            return Err(RunError::NoMatchingTaskVariant {
+                task: task_name.to_string(),
+                os: current_os.to_string(),
+            });
+        };
+    let task_env = task.env_for_backend(backend_kind);
     let env_details =
-        resolve_task_env_details_with_policy(contract, contract_path, Some(&task.env), policy_env)?;
+        resolve_task_env_details_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
     let secret_env_names: BTreeSet<String> = env_details
         .iter()
         .filter(|(_, value)| value.secret)
@@ -2027,7 +2052,7 @@ fn execute_task_with_hooks(
         });
     }
     let env_overrides =
-        resolve_task_env_with_policy(contract, contract_path, Some(&task.env), policy_env)?;
+        resolve_task_env_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
     let path_export = match backend {
         ResolvedExecutionBackend::Container { .. } => env_details
             .get("PATH")
@@ -2040,9 +2065,10 @@ fn execute_task_with_hooks(
     }
     let mut combined_env = env_overrides;
     combined_env.extend(input_overrides);
+    let runtime = task.service_runtime_for_backend(backend_kind);
     let command_output = execute_task_command(
         task_name,
-        Some(task),
+        runtime,
         execution.body,
         working_dir,
         contract.project.name.as_str(),
@@ -2300,7 +2326,7 @@ fn hook_generation_for_task(
 
 fn execute_task_command(
     task_name: &str,
-    task: Option<&TaskSpec>,
+    runtime: Option<&TaskRuntimeSpec>,
     command: &str,
     working_dir: &Path,
     project_name: &str,
@@ -2313,7 +2339,7 @@ fn execute_task_command(
     match backend {
         ResolvedExecutionBackend::Native => execute_native_task_command(
             task_name,
-            task.and_then(TaskSpec::service_runtime),
+            runtime,
             command,
             working_dir,
             env_overrides,
@@ -2330,7 +2356,7 @@ fn execute_task_command(
             dependency_isolation_paths,
         } => execute_container_task_command(
             task_name,
-            task.and_then(TaskSpec::service_runtime),
+            runtime,
             context_name.as_deref(),
             project_name,
             command,
@@ -2585,6 +2611,14 @@ pub fn effective_execution(
     (backend, lifecycle)
 }
 
+fn backend_mode_name(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct EffectiveTaskExecution<'a> {
     pub context_name: Option<&'a str>,
@@ -2594,7 +2628,18 @@ pub(crate) struct EffectiveTaskExecution<'a> {
     pub remote: Option<&'a RemoteBackend>,
 }
 
-fn selected_task_context<'a>(
+fn selected_task_mode_branch<'a>(
+    contract: &'a Contract,
+    task_name: &str,
+    backend: Backend,
+) -> Option<&'a TaskModeBranchSpec> {
+    contract
+        .tasks
+        .get(task_name)
+        .and_then(|task| task.mode_execution_branch(backend))
+}
+
+fn selected_task_declared_context<'a>(
     contract: &'a Contract,
     task_name: &str,
 ) -> Option<(&'a str, &'a ExecutionContext)> {
@@ -2604,6 +2649,43 @@ fn selected_task_context<'a>(
         .get(task_name)
         .and_then(|task| task.context.as_deref());
     let context_name = task_context.or(execution.default_context.as_deref())?;
+    execution
+        .contexts
+        .get_key_value(context_name)
+        .map(|(name, context)| (name.as_str(), context))
+}
+
+fn selected_task_context_for_backend<'a>(
+    contract: &'a Contract,
+    task_name: &str,
+    backend: Backend,
+) -> Option<(&'a str, &'a ExecutionContext)> {
+    let execution = contract.execution.as_ref()?;
+    let task = contract.tasks.get(task_name)?;
+    let context_name = if let Some(branch) = task.mode_execution_branch(backend) {
+        branch
+            .context
+            .as_deref()
+            .or_else(|| {
+                task.context.as_deref().filter(|context_name| {
+                    execution
+                        .contexts
+                        .get(*context_name)
+                        .is_some_and(|context| context.backend == backend)
+                })
+            })
+            .or_else(|| {
+                matching_declared_execution_context_name(
+                    contract.execution.as_ref(),
+                    backend,
+                    branch.lifecycle,
+                )
+            })
+    } else {
+        task.context
+            .as_deref()
+            .or_else(|| execution.default_context.as_deref())
+    }?;
     execution
         .contexts
         .get_key_value(context_name)
@@ -2644,7 +2726,8 @@ fn task_container_publications(
     contract: &Contract,
     task_name: &str,
 ) -> Vec<ContainerPortPublication> {
-    task_container_publication_details(contract, task_name)
+    let effective = effective_task_execution(contract, task_name, ExecutionOverrides::default());
+    task_container_publication_details(contract, task_name, effective.backend)
         .into_iter()
         .map(|(_, publication)| publication)
         .collect()
@@ -2653,11 +2736,12 @@ fn task_container_publications(
 fn task_container_publication_details(
     contract: &Contract,
     task_name: &str,
+    backend: Backend,
 ) -> Vec<(String, ContainerPortPublication)> {
     let Some(task) = contract.tasks.get(task_name) else {
         return Vec::new();
     };
-    let Some(runtime) = task.service_runtime() else {
+    let Some(runtime) = task.service_runtime_for_backend(backend) else {
         return Vec::new();
     };
 
@@ -3205,15 +3289,21 @@ pub(crate) fn effective_task_execution<'a>(
     overrides: ExecutionOverrides,
 ) -> EffectiveTaskExecution<'a> {
     let execution = contract.execution.as_ref();
-    let selected_context = selected_task_context(contract, task_name);
-    let context = selected_context.map(|(_, context)| context);
+    let declared_context = selected_task_declared_context(contract, task_name);
+    let task = contract.tasks.get(task_name);
+    let declared_backend = declared_context.map(|(_, context)| context.backend);
     let backend = overrides
         .backend
-        .or_else(|| context.map(|context| context.backend))
+        .or_else(|| task.and_then(TaskSpec::mode_default_backend))
+        .or(declared_backend)
         .or_else(|| execution.and_then(|execution| execution.preferred))
         .unwrap_or(Backend::Native);
+    let selected_context = selected_task_context_for_backend(contract, task_name, backend);
+    let context = selected_context.map(|(_, context)| context);
+    let mode_branch = selected_task_mode_branch(contract, task_name, backend);
     let lifecycle = overrides
         .lifecycle
+        .or_else(|| mode_branch.and_then(|branch| branch.lifecycle))
         .or_else(|| {
             context
                 .filter(|context| context.backend == backend)
@@ -3265,6 +3355,18 @@ pub(crate) fn resolve_execution_backend(
     let effective = effective_task_execution(contract, task_name, overrides);
     let preferred = effective.backend;
     let lifecycle = effective.lifecycle;
+    if let Some(task) = contract.tasks.get(task_name)
+        && task
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.modes.any())
+        && task.mode_execution_branch(preferred).is_none()
+    {
+        return Err(RunError::MissingTaskModeExecution {
+            task: task_name.to_string(),
+            mode: backend_mode_name(preferred).to_string(),
+        });
+    }
 
     match preferred {
         Backend::Native => Ok(ResolvedExecutionBackend::Native),
@@ -3289,18 +3391,22 @@ pub(crate) fn resolve_execution_backend(
             })?;
 
             let context_name = effective.context_name.map(str::to_string);
-            let publications = task_container_publications(contract, task_name);
-            let dependency_isolation_paths = selected_task_context(contract, task_name)
-                .filter(|(_, context)| context.backend == Backend::Container)
-                .map(|(_, context)| context_dependency_isolation_paths(context))
-                .unwrap_or_default();
+            let publications = task_container_publication_details(contract, task_name, preferred)
+                .into_iter()
+                .map(|(_, publication)| publication)
+                .collect::<Vec<_>>();
+            let dependency_isolation_paths =
+                selected_task_context_for_backend(contract, task_name, preferred)
+                    .filter(|(_, context)| context.backend == Backend::Container)
+                    .map(|(_, context)| context_dependency_isolation_paths(context))
+                    .unwrap_or_default();
 
             Ok(ResolvedExecutionBackend::Container {
                 context_name,
                 image: container.image.clone(),
                 engine,
                 lifecycle,
-                compose_networks: selected_task_context(contract, task_name)
+                compose_networks: selected_task_context_for_backend(contract, task_name, preferred)
                     .filter(|(_, context)| context.backend == Backend::Container)
                     .map(|(_, context)| compose_networks_for_context(context))
                     .unwrap_or_default(),
@@ -5743,9 +5849,9 @@ mod tests {
         ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend, RunError,
         RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, TaskExecutionMode,
         TaskExecutionRelation, TaskRunState, clean_execution, container_identity_seed,
-        contract_working_dir, current_os, ephemeral_container_stream_command,
-        execute_task_with_hooks, persistent_cleanup_targets, persistent_container_name,
-        persistent_container_name_for_seed, plan_task_execution,
+        contract_working_dir, current_os, effective_task_execution,
+        ephemeral_container_stream_command, execute_task_with_hooks, persistent_cleanup_targets,
+        persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, projected_runtime_public_endpoint_line, resolve_execution_backend,
         resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
@@ -8769,6 +8875,143 @@ tasks:
                 .unwrap()
                 .contains("run-ephemeral")
         );
+    }
+
+    #[test]
+    fn effective_task_execution_prefers_task_default_mode_branch() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    context: host
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          lifecycle: ephemeral
+          run: echo container
+"#,
+        );
+
+        let effective =
+            effective_task_execution(&fixture.contract, "start", ExecutionOverrides::default());
+        assert_eq!(effective.backend, Backend::Container);
+        assert_eq!(effective.context_name, Some("app"));
+        assert_eq!(effective.lifecycle, Some(Lifecycle::Ephemeral));
+    }
+
+    #[test]
+    fn effective_task_execution_avoids_incompatible_base_context_for_mode_branch() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    context: host
+    execution:
+      default_mode: container
+      modes:
+        container:
+          run: echo container
+"#,
+        );
+
+        let effective =
+            effective_task_execution(&fixture.contract, "start", ExecutionOverrides::default());
+        assert_eq!(effective.backend, Backend::Container);
+        assert_eq!(effective.context_name, Some("app"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_uses_mode_branch_execution_and_env() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    env:
+      BASE: base
+    execution:
+      default_mode: native
+      modes:
+        native:
+          env:
+            BASE: native
+            BRANCH: yes
+          run: printf "%s|%s" "$BASE" "$BRANCH" > mode-output.txt
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "start").unwrap();
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("mode-output.txt")).unwrap(),
+            "native|yes"
+        );
+    }
+
+    #[test]
+    fn run_task_fails_when_requested_mode_branch_is_missing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          run: echo native
+"#,
+        );
+
+        let error = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "start",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: None,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::MissingTaskModeExecution { task, mode }
+                if task == "start" && mode == "container"
+        ));
     }
 
     #[cfg(unix)]

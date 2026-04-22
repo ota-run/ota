@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added task-level mode-aware execution branches under `tasks.<name>.execution` so one task can declare mode-specific `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`, with `execution.default_mode` support, clear run-time errors for missing mode branches, and updated `ota tasks` JSON/text branch rendering
 - replaced the generic task-exit banner for container host-port bind conflicts with a specific `Host publication failed` error that names the blocked host port and points at `project.host.port.mode`
 - made `ota explain` and `ota workspace explain` show `BLOCKED` when the plan contains actionable remediation steps, instead of a misleading `READY` banner
 - made invalid task listener bindings render as field-specific contract errors with direct `Next:` guidance across `ota validate`, `ota doctor`, `ota explain`, and `ota receipt` instead of falling back to generic load or repair banners

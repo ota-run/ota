@@ -766,11 +766,32 @@ Fields:
 - `context`: optional execution context name
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
+- `execution`: optional mode-aware execution branches for one task intent
 - `runtime`: optional long-running workload shape for endpoint-bearing tasks
 - `variants`: optional list of conditional task executions
 - `requires_services`: optional list of service names that must be ready before the task body runs
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
+
+`execution` fields:
+
+- `default_mode`: optional `native`, `container`, or `remote`
+- `modes`: optional backend map
+- `modes.<mode>.context`: optional context override for that mode
+- `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
+- `modes.<mode>.env`: optional env map merged over task-level `env`
+- `modes.<mode>.run`: optional single-line command override for that mode
+- `modes.<mode>.script`: optional multiline script override for that mode
+- `modes.<mode>.runtime`: optional runtime/listener override for that mode
+
+`execution` mode rules:
+
+- `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
+- if `default_mode` is declared, the matching `modes.<default_mode>` branch must exist
+- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`
+- when a selected branch omits `run`/`script`, ota falls back to the task-level execution body (including OS variants)
+- if a task declares mode branches and the selected mode has no matching branch, `ota run` fails clearly instead of silently picking another mode
+- `modes.native.lifecycle` and `modes.remote.lifecycle` are invalid; lifecycle is only valid for container execution
 
 `runtime` fields:
 
@@ -811,6 +832,7 @@ Use cases:
 - use `env` when a task needs fixed environment values that should override repo-level env for that task
 - use `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`
 - use `context` when one task should run in a different execution plane from the repo default
+- use `execution.modes` when one task intent should run differently across modes (for example `start` container by default and `start --mode native` on host) without splitting into `start` and `start:host`
 - use `runtime.kind: service` when a task is a long-running workload that should publish a deterministic host endpoint
 - use `bind.port.mode: fixed` when the app should stay on one known internal port
 - use `bind.port.mode: discover` when a native dev server may choose its final port at runtime
@@ -901,6 +923,54 @@ Input rules:
 - `allowed` values must be non-empty
 - when `allowed` is declared, `default` must be one of the allowed values
 - `required: true` cannot be satisfied by an empty value
+
+Mode-aware task example:
+
+```yaml
+tasks:
+  start:
+    description: Start the app
+    requires_services:
+      - postgres
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          env:
+            DB_URL: jdbc:postgresql://127.0.0.1:5432/app
+          run: mvn spring-boot:run
+        container:
+          context: app
+          lifecycle: persistent
+          env:
+            DB_URL: jdbc:postgresql://postgres:5432/app
+          run: mvn spring-boot:run -Dspring-boot.run.arguments=--server.address=0.0.0.0,--server.port=8080
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 8080
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: auto
+                    path: /
+```
+
+Run it as:
+
+```bash
+ota run start
+ota run start --mode native
+ota run start --mode container
+```
 
 Example script forms:
 
