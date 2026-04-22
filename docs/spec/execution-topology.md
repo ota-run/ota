@@ -160,7 +160,7 @@ This makes orchestration tasks and workload tasks honest without forcing Docker 
 
 ### `execution.contexts.<name>.attachments.isolated_paths`
 
-Container contexts can keep platform-sensitive dependency trees isolated from the host tree by declaring workspace-relative paths that Ota should back with context-owned storage.
+Container contexts can keep platform-sensitive dependency trees isolated from the host tree by declaring workspace-relative paths that Ota should back with engine-managed named volumes.
 
 ```yaml
 execution:
@@ -178,6 +178,8 @@ execution:
 ```
 
 This is the right boundary for dependency trees like `node_modules`, `.venv`, or other install artifacts that should be built for the container platform instead of inheriting host-native binaries.
+Source still stays bind-mounted from the host at `/workspace`; only the declared dependency paths are overlaid with named volumes.
+`ota clean` removes these Ota-managed volumes so teams can reset container dependency state deterministically.
 
 ### `tasks.<name>.runtime.kind: service`
 
