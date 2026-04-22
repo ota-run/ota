@@ -28,7 +28,7 @@ use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -269,6 +269,28 @@ pub(crate) fn run_streaming_command_with_loader(
     command: &mut Command,
     label: &str,
 ) -> io::Result<i32> {
+    Ok(run_streaming_command_with_capture_with_loader(command, label)?.exit_code)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StreamingCommandOutput {
+    pub(crate) exit_code: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+}
+
+pub(crate) fn run_streaming_command_with_capture_with_loader(
+    command: &mut Command,
+    label: &str,
+) -> io::Result<StreamingCommandOutput> {
+    run_streaming_command_with_capture_with_loader_options(command, label, true)
+}
+
+pub(crate) fn run_streaming_command_with_capture_with_loader_options(
+    command: &mut Command,
+    label: &str,
+    echo_stderr: bool,
+) -> io::Result<StreamingCommandOutput> {
     let loader = StreamPhaseLoader::start(label);
     let notifier = loader.as_ref().map(|loader| loader.notifier());
     let mut child = command
@@ -279,20 +301,30 @@ pub(crate) fn run_streaming_command_with_loader(
 
     let stdout_notifier = notifier.clone();
     let stdout_handle = child.stdout.take().map(|stdout| {
-        thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, false))
+        thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, true))
     });
     let stderr_notifier = notifier;
     let stderr_handle = child.stderr.take().map(|stderr| {
-        thread::spawn(move || stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, false))
+        thread::spawn(move || {
+            if echo_stderr {
+                stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, true)
+            } else {
+                stream_reader_to_sink(stderr, io::sink(), stderr_notifier, true)
+            }
+        })
     });
 
     let status = child.wait()?;
-    let _ = join_stream_reader(stdout_handle)?;
-    let _ = join_stream_reader(stderr_handle)?;
+    let stdout = join_stream_reader(stdout_handle)?;
+    let stderr = join_stream_reader(stderr_handle)?;
     if let Some(loader) = loader {
         loader.stop();
     }
-    Ok(status.code().unwrap_or(1))
+    Ok(StreamingCommandOutput {
+        exit_code: status.code().unwrap_or(1),
+        stdout,
+        stderr,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -697,6 +729,8 @@ pub struct RunOutcome {
     pub executed_tasks: Vec<String>,
     pub task_steps: Vec<ExecutedTaskStep>,
     pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
     pub target: Option<String>,
     pub runtime: Option<ResolvedTaskRuntime>,
 }
@@ -738,11 +772,42 @@ pub struct StaleContainerCleanupReport {
     pub containers: Vec<StaleContainerCleanupTarget>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanExecutionReport {
+    pub removed_current_persistent_containers: usize,
+    pub removed_drift_persistent_containers: usize,
+    pub removed_current_dependency_isolation_volumes: usize,
+    pub removed_drift_dependency_isolation_volumes: usize,
+    pub skipped_ambiguous_persistent_containers: usize,
+    pub skipped_ambiguous_dependency_isolation_volumes: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queried_engines: Vec<String>,
+}
+
+impl CleanExecutionReport {
+    pub fn cleaned_any(&self) -> bool {
+        self.total_removed() > 0
+    }
+
+    pub fn total_removed(&self) -> usize {
+        self.removed_current_persistent_containers
+            + self.removed_drift_persistent_containers
+            + self.removed_current_dependency_isolation_volumes
+            + self.removed_drift_dependency_isolation_volumes
+    }
+
+    pub fn total_skipped_ambiguous(&self) -> usize {
+        self.skipped_ambiguous_persistent_containers
+            + self.skipped_ambiguous_dependency_isolation_volumes
+    }
+}
+
 const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
 const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
 const OTA_REPO_CONTAINER_LABEL_KEY: &str = "dev.ota.repo";
 const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
 const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
+const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
@@ -1280,6 +1345,8 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
         executed_tasks: outcome.executed_tasks,
         task_steps: outcome.task_steps,
         exit_code: outcome.exit_code,
+        stdout: outcome.stdout,
+        stderr: outcome.stderr,
         target: outcome.target,
         runtime: outcome.runtime,
     })
@@ -1360,13 +1427,22 @@ pub fn run_task_captured_with_args_with_overrides_with_policy(
 }
 
 pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
+    clean_execution_report(contract, contract_path).map(|report| report.cleaned_any())
+}
+
+pub fn clean_execution_report(
+    contract: &Contract,
+    contract_path: &Path,
+) -> Result<CleanExecutionReport, RunError> {
     let cleanup_targets = persistent_cleanup_targets(contract)?;
 
     let working_dir = contract_working_dir(contract_path);
     let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
-    let mut cleaned = false;
+    let mut report = CleanExecutionReport::default();
     let mut visited = BTreeSet::new();
+    let mut current_target_engines = BTreeSet::new();
     let mut relevant_engines = BTreeSet::new();
+    relevant_engines.extend(repo_managed_engines("clean", working_dir)?);
     let mut dependency_isolation_volumes_to_remove = BTreeSet::new();
     for (
         context_name,
@@ -1377,6 +1453,7 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         cleanup_container,
     ) in cleanup_targets
     {
+        current_target_engines.insert(engine.clone());
         relevant_engines.insert(engine.clone());
         let identity_seed = container_identity_seed(
             context_name.as_deref(),
@@ -1408,30 +1485,42 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
             continue;
         }
 
-        cleaned |= remove_persistent_container_if_present("clean", &engine, &container_name)?;
+        if remove_persistent_container_if_present("clean", &engine, &container_name)? {
+            report.removed_current_persistent_containers += 1;
+        }
     }
 
     for (engine, volume_name) in dependency_isolation_volumes_to_remove {
-        cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+        if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+            report.removed_current_dependency_isolation_volumes += 1;
+        }
     }
 
     let mut first_discovery_error = None;
-    let discovery_engines = if relevant_engines.is_empty() {
-        selected_container_engine(contract)
-            .into_iter()
-            .collect::<Vec<_>>()
+    let has_recorded_relevant_engines = !relevant_engines.is_empty();
+    let discovery_engines = if has_recorded_relevant_engines {
+        relevant_engines.into_iter().collect::<Vec<_>>()
+    } else if !current_target_engines.is_empty() {
+        current_target_engines.iter().cloned().collect::<Vec<_>>()
     } else {
-        relevant_engines.into_iter().collect()
+        available_container_engines()
     };
+    let strict_discovery = has_recorded_relevant_engines || !current_target_engines.is_empty();
+    let mut successful_discovery_queries = 0usize;
+    let engines_to_track = BTreeSet::new();
+    report.queried_engines = discovery_engines.clone();
     for engine in discovery_engines {
+        let mut engine_query_succeeded = false;
         match persistent_container_names_for_repo("clean", &engine, &repo_ownership_token) {
             Ok(container_names) => {
+                engine_query_succeeded = true;
                 for container_name in container_names {
                     if !visited.insert((engine.clone(), container_name.clone())) {
                         continue;
                     }
-                    cleaned |=
-                        remove_persistent_container_if_present("clean", &engine, &container_name)?;
+                    if remove_persistent_container_if_present("clean", &engine, &container_name)? {
+                        report.removed_drift_persistent_containers += 1;
+                    }
                 }
             }
             Err(error) => {
@@ -1440,21 +1529,32 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         }
         match dependency_isolation_volume_names_for_repo("clean", &engine, &repo_ownership_token) {
             Ok(volume_names) => {
+                engine_query_succeeded = true;
                 for volume_name in volume_names {
-                    cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+                    if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+                        report.removed_drift_dependency_isolation_volumes += 1;
+                    }
                 }
             }
             Err(error) => {
                 first_discovery_error.get_or_insert(error);
             }
         }
+
+        if engine_query_succeeded {
+            successful_discovery_queries += 1;
+        }
     }
 
-    if let Some(error) = first_discovery_error {
+    if let Some(error) = first_discovery_error
+        && (strict_discovery || successful_discovery_queries == 0)
+    {
         return Err(error);
     }
 
-    Ok(cleaned)
+    write_repo_managed_engines("clean", working_dir, &engines_to_track)?;
+
+    Ok(report)
 }
 
 fn remove_persistent_container_if_present(
@@ -2203,7 +2303,6 @@ fn execute_task_with_hooks(
         runtime,
         execution.body,
         working_dir,
-        contract.project.name.as_str(),
         &combined_env,
         path_export.as_deref(),
         &secret_env_names,
@@ -2473,7 +2572,6 @@ fn execute_task_command(
     runtime: Option<&TaskRuntimeSpec>,
     command: &str,
     working_dir: &Path,
-    project_name: &str,
     env_overrides: &BTreeMap<String, String>,
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
@@ -2505,7 +2603,6 @@ fn execute_task_command(
             task_name,
             runtime,
             context_name.as_deref(),
-            project_name,
             command,
             working_dir,
             env_overrides,
@@ -2563,7 +2660,6 @@ pub(crate) fn run_backend_command_captured(
         None,
         command,
         working_dir,
-        "",
         &BTreeMap::new(),
         None,
         &BTreeSet::new(),
@@ -2869,12 +2965,12 @@ pub(crate) fn reported_task_context_for_backend<'a>(
     let task = contract.tasks.get(task_name)?;
 
     if let Some(branch) = task.mode_execution_branch(backend) {
-        return branch.context.as_deref().and_then(|context_name| {
-            execution
-                .contexts
-                .get_key_value(context_name)
-                .and_then(|(name, context)| (context.backend == backend).then_some(name.as_str()))
-        });
+        if let Some(context_name) = branch.context.as_deref()
+            && let Some((name, context)) = execution.contexts.get_key_value(context_name)
+            && context.backend == backend
+        {
+            return Some(name.as_str());
+        }
     }
 
     if let Some(context_name) = task.context.as_deref() {
@@ -3182,35 +3278,10 @@ fn prepare_container_runtime_projection(
         }
     }
 
-    let mut publication_index = BTreeMap::<(String, u16, String), u16>::new();
-    for (_, publication) in &prepared_listeners {
-        if publication.host_port_mode != TaskRuntimeHostPortMode::Fixed {
-            continue;
-        }
-        let Some(host_port) = publication.host_port else {
-            continue;
-        };
-        publication_index.insert(
-            (
-                publication.host_address.clone(),
-                publication.bind_port,
-                publication.protocol.network_protocol().to_string(),
-            ),
-            host_port,
-        );
-    }
-
-    let mut prepared_publications = publications.to_vec();
-    for publication in &mut prepared_publications {
-        if let Some(host_port) = publication_index.get(&(
-            publication.host_address.clone(),
-            publication.bind_port,
-            publication.protocol.network_protocol().to_string(),
-        )) {
-            publication.host_port_mode = TaskRuntimeHostPortMode::Fixed;
-            publication.host_port = Some(*host_port);
-        }
-    }
+    let prepared_publications = prepared_listeners
+        .iter()
+        .map(|(_, publication)| publication.clone())
+        .collect::<Vec<_>>();
 
     let mut expected_host_ports = BTreeMap::new();
     for (listener_name, publication) in &prepared_listeners {
@@ -4817,7 +4888,6 @@ fn execute_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
-    project_name: &str,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -4832,6 +4902,7 @@ fn execute_container_task_command(
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    let repo_ownership_token = repo_ownership_token_for_working_dir(task_name, working_dir)?;
     if let Some(issue) = probe_container_backend(engine, task_name)? {
         return Ok(TaskCommandOutput {
             exit_code: 1,
@@ -4877,7 +4948,7 @@ fn execute_container_task_command(
                     task_name,
                     runtime,
                     context_name,
-                    project_name,
+                    &repo_ownership_token,
                     command,
                     working_dir,
                     &resolved_env,
@@ -4954,13 +5025,10 @@ fn execute_container_task_command(
                 false,
                 host_port_override,
             )?;
-            let repo_ownership_token =
-                repo_ownership_token_for_working_dir(task_name, working_dir)?;
             execute_persistent_container_task_command(
                 task_name,
                 runtime,
                 context_name,
-                project_name,
                 &repo_ownership_token,
                 command,
                 working_dir,
@@ -5004,7 +5072,7 @@ fn execute_ephemeral_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
-    project_name: &str,
+    repo_ownership_token: &str,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -5046,7 +5114,7 @@ fn execute_ephemeral_container_task_command(
         context_name,
         image,
         engine,
-        project_name,
+        repo_ownership_token,
         dependency_isolation_paths,
     )? {
         create
@@ -5094,9 +5162,10 @@ fn execute_ephemeral_container_task_command(
         TaskExecutionMode::Stream { .. } => {
             let mut container =
                 shell_command(&ephemeral_container_stream_command(engine, &container_name));
-            let exit_code = run_streaming_command_with_loader(
+            let output = run_streaming_command_with_capture_with_loader_options(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
+                false,
             )
             .map_err(|source| RunError::SpawnFailed {
                 task: task_name.to_string(),
@@ -5105,9 +5174,9 @@ fn execute_ephemeral_container_task_command(
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
-                exit_code,
-                stdout: String::new(),
-                stderr: String::new(),
+                exit_code: output.exit_code,
+                stdout: output.stdout,
+                stderr: output.stderr,
                 target: Some(container_name.clone()),
                 runtime: prepared_runtime.clone(),
             })
@@ -5142,7 +5211,6 @@ fn execute_persistent_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
-    project_name: &str,
     repo_ownership_token: &str,
     command: &str,
     working_dir: &Path,
@@ -5166,7 +5234,6 @@ fn execute_persistent_container_task_command(
         task_name,
         working_dir,
         context_name,
-        project_name,
         repo_ownership_token,
         image,
         engine,
@@ -5198,7 +5265,6 @@ fn execute_persistent_container_task_command(
                 task_name,
                 working_dir,
                 context_name,
-                project_name,
                 repo_ownership_token,
                 image,
                 engine,
@@ -5243,7 +5309,6 @@ fn execute_persistent_container_task_command(
             task_name,
             working_dir,
             context_name,
-            project_name,
             repo_ownership_token,
             image,
             engine,
@@ -5339,7 +5404,6 @@ fn ensure_persistent_container_ready(
     task_name: &str,
     working_dir: &Path,
     context_name: Option<&str>,
-    project_name: &str,
     repo_ownership_token: &str,
     image: &str,
     engine: &str,
@@ -5355,7 +5419,6 @@ fn ensure_persistent_container_ready(
             task_name,
             working_dir,
             context_name,
-            project_name,
             repo_ownership_token,
             image,
             engine,
@@ -5406,7 +5469,6 @@ fn ensure_persistent_container_ready(
                 task_name,
                 working_dir,
                 context_name,
-                project_name,
                 repo_ownership_token,
                 image,
                 engine,
@@ -5471,7 +5533,6 @@ fn create_persistent_container(
     task_name: &str,
     working_dir: &Path,
     context_name: Option<&str>,
-    project_name: &str,
     repo_ownership_token: &str,
     image: &str,
     engine: &str,
@@ -5482,6 +5543,7 @@ fn create_persistent_container(
     dependency_isolation_paths: &[String],
 ) -> Result<ContainerCommandOutput, RunError> {
     preflight_container_host_publications(task_name, listener_publications)?;
+    record_repo_managed_engine(task_name, working_dir, engine)?;
     let mut args = vec![
         "run".to_string(),
         "-d".to_string(),
@@ -5510,7 +5572,7 @@ fn create_persistent_container(
         context_name,
         image,
         engine,
-        project_name,
+        repo_ownership_token,
         dependency_isolation_paths,
     )? {
         args.push("-v".to_string());
@@ -5971,6 +6033,7 @@ fn container_dependency_isolation_mounts(
         let labels =
             dependency_isolation_volume_labels(repo_ownership_token, context_name, &normalized);
         ensure_dependency_isolation_volume(task_name, engine, &volume_name, &labels)?;
+        record_repo_managed_engine(task_name, working_dir, engine)?;
         mounts.push((volume_name, format!("/workspace/{normalized}")));
     }
 
@@ -6231,6 +6294,78 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
+fn repo_ota_dir(working_dir: &Path) -> PathBuf {
+    working_dir.join(".ota")
+}
+
+fn repo_managed_engines_path(working_dir: &Path) -> PathBuf {
+    repo_ota_dir(working_dir).join(OTA_MANAGED_ENGINES_FILE)
+}
+
+fn repo_managed_engines(
+    _task_name: &str,
+    working_dir: &Path,
+) -> Result<BTreeSet<String>, RunError> {
+    let path = repo_managed_engines_path(working_dir);
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return Ok(BTreeSet::new());
+    };
+
+    Ok(contents
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+        .collect())
+}
+
+fn write_repo_managed_engines(
+    task_name: &str,
+    working_dir: &Path,
+    engines: &BTreeSet<String>,
+) -> Result<(), RunError> {
+    let ota_dir = repo_ota_dir(working_dir);
+    let path = repo_managed_engines_path(working_dir);
+    fs::create_dir_all(&ota_dir).map_err(|source| {
+        RunError::DependencyIsolationOwnershipFailure {
+            task: task_name.to_string(),
+            action: String::from("create"),
+            path: path.display().to_string(),
+            details: source.to_string(),
+        }
+    })?;
+
+    if engines.is_empty() {
+        let _ = fs::remove_file(&path);
+        return Ok(());
+    }
+
+    let mut contents = String::new();
+    for engine in engines {
+        contents.push_str(engine);
+        contents.push('\n');
+    }
+
+    fs::write(&path, contents).map_err(|source| RunError::DependencyIsolationOwnershipFailure {
+        task: task_name.to_string(),
+        action: String::from("write"),
+        path: path.display().to_string(),
+        details: source.to_string(),
+    })
+}
+
+fn record_repo_managed_engine(
+    task_name: &str,
+    working_dir: &Path,
+    engine: &str,
+) -> Result<(), RunError> {
+    let mut engines = repo_managed_engines(task_name, working_dir)?;
+    if engines.insert(engine.to_string()) {
+        write_repo_managed_engines(task_name, working_dir, &engines)?;
+    }
+    Ok(())
+}
+
 fn repo_ownership_token(task_name: &str, contract_path: &Path) -> Result<String, RunError> {
     let working_dir = contract_working_dir(contract_path);
     repo_ownership_token_for_working_dir(task_name, working_dir)
@@ -6240,7 +6375,7 @@ fn repo_ownership_token_for_working_dir(
     task_name: &str,
     working_dir: &Path,
 ) -> Result<String, RunError> {
-    let ota_dir = working_dir.join(".ota");
+    let ota_dir = repo_ota_dir(working_dir);
     let token_path = ota_dir.join("ownership-id");
 
     if let Ok(token) = fs::read_to_string(&token_path) {
@@ -6342,8 +6477,8 @@ mod tests {
         CapturedRunOutcome, ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep,
         ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend, RunError,
         RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, TaskExecutionMode,
-        TaskExecutionRelation, TaskRunState, clean_execution, container_identity_seed,
-        contract_working_dir, current_os, effective_task_execution,
+        TaskExecutionRelation, TaskRunState, clean_execution, clean_execution_report,
+        container_identity_seed, contract_working_dir, current_os, effective_task_execution,
         ephemeral_container_stream_command, execute_task_with_hooks, persistent_cleanup_targets,
         persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
         preflight_container_host_publications, prepare_container_runtime_projection,
@@ -7693,6 +7828,390 @@ tasks:
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
             format!("{expected_url}|127.0.0.1|4000|{expected_url}")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_host_port_override_uses_overridden_engine_publication_port() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: |
+      printf '%s|%s|%s|%s' "$OTA_PUBLIC_URL" "$OTA_PUBLIC_HOST" "$OTA_PUBLIC_PORT" "$OTA_PUBLIC_URL_HTTP" > runtime-env.txt
+      printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+if [ "$1" = "create" ]; then
+  joined="$*"
+  case "$joined" in
+    *"-p 127.0.0.1:3000:3000/tcp"*)
+      printf "Error response from daemon: failed to set up container networking: Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+      exit 1
+      ;;
+  esac
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(3003),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("override publication should avoid occupied default host port");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        let runtime = outcome
+            .runtime
+            .expect("override run should report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("http listener should resolve a host endpoint");
+        assert_eq!(host.port, 3003);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            "http://127.0.0.1:3003/|127.0.0.1|3003|http://127.0.0.1:3003/"
+        );
+        let runtime_json = serde_json::to_value(&runtime).expect("runtime should serialize");
+        assert_eq!(runtime_json["primary_endpoint"]["host"]["port"], 3003);
+        assert_eq!(
+            runtime_json["listeners"]["http"]["resolved"]["host"]["port"],
+            3003
+        );
+
+        let state_dir = bin_dir.join("docker-state");
+        let publication_snapshots = fs::read_dir(&state_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.ends_with(".publish")
+                    .then(|| fs::read_to_string(entry.path()).ok())
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            publication_snapshots
+                .iter()
+                .any(|snapshot| snapshot.contains("127.0.0.1:3003:3000/tcp")),
+            "expected create publication args to use the override: {publication_snapshots:?}"
+        );
+        assert!(
+            publication_snapshots
+                .iter()
+                .all(|snapshot| !snapshot.contains("127.0.0.1:3000:3000/tcp")),
+            "engine publication args should not keep the contract default when override is set: {publication_snapshots:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_host_port_override_conflict_reports_overridden_port() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+if [ "$1" = "create" ]; then
+  joined="$*"
+  case "$joined" in
+    *"-p 127.0.0.1:3003:3000/tcp"*)
+      printf "Error response from daemon: failed to set up container networking: Bind for 127.0.0.1:3003 failed: port is already allocated\n" >&2
+      exit 1
+      ;;
+  esac
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(3003),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("occupied override host port should fail cleanly");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::HostPublicationConflict {
+                task,
+                listener,
+                address,
+                port,
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "http");
+                assert_eq!(address, "127.0.0.1");
+                assert_eq!(port, 3003);
+            }
+            other => panic!("expected host publication conflict, got {other}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_without_host_port_override_keeps_declared_fixed_host_port() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+if [ "$1" = "create" ]; then
+  joined="$*"
+  case "$joined" in
+    *"-p 127.0.0.1:3000:3000/tcp"*)
+      printf "Error response from daemon: failed to set up container networking: Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+      exit 1
+      ;;
+  esac
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect_err("without override, declared fixed host port should still be used");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::HostPublicationConflict {
+                task,
+                listener,
+                address,
+                port,
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "http");
+                assert_eq!(address, "127.0.0.1");
+                assert_eq!(port, 3000);
+            }
+            other => panic!("expected host publication conflict, got {other}"),
+        }
     }
 
     #[test]
@@ -10626,6 +11145,261 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn clean_execution_uses_recorded_engine_for_drift_cleanup_after_engine_change() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let initial_contract = r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - docker
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#;
+        let fixture = ContractFixture::new(initial_contract);
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        let mounts = fs::read_to_string(fixture.dir.path().join("docker-mounts.txt")).unwrap();
+        let volume_mount = mounts
+            .lines()
+            .find(|line| line.ends_with(":/workspace/node_modules"))
+            .expect("isolated dependency volume mount should exist");
+        let volume_name = volume_mount
+            .split_once(':')
+            .expect("mount should include source and target")
+            .0
+            .to_string();
+        let state_dir = bin_dir.join("docker-state");
+        let volume_marker = state_dir.join(format!("volume.{volume_name}"));
+        assert!(volume_marker.exists());
+
+        let changed_contract = r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#;
+        fs::write(fixture.file_path(), changed_contract.trim_start()).unwrap();
+        let changed =
+            parse_contract_str(fixture.file_path(), changed_contract.trim_start()).unwrap();
+        let report = clean_execution_report(&changed, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report.removed_drift_dependency_isolation_volumes >= 1,
+            "unexpected cleanup report: {report:?}"
+        );
+        assert!(
+            !volume_marker.exists(),
+            "volume should be removed: {report:?}"
+        );
+        assert!(
+            !ota_dir.join(super::OTA_MANAGED_ENGINES_FILE).exists(),
+            "recorded engines should be cleared after cleanup"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_ignores_unscoped_legacy_managed_container_without_deleting_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            state_dir.join("legacy-ambiguous.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("legacy-ambiguous.labels"),
+            "dev.ota.managed=true\ndev.ota.lifecycle=persistent\n",
+        )
+        .unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let report = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(report.total_removed(), 0);
+        assert_eq!(report.skipped_ambiguous_persistent_containers, 0);
+        assert!(state_dir.join("legacy-ambiguous.path").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_clears_recorded_engines_when_no_repo_owned_state_remains() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.stale-repo-1.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let report = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(report.removed_drift_dependency_isolation_volumes >= 1);
+        assert!(!ota_dir.join(super::OTA_MANAGED_ENGINES_FILE).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn clean_execution_handles_engines_that_reject_volume_label_filters() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -10669,6 +11443,7 @@ tasks:
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
         fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
         fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.stale-repo-1.labels"),
@@ -11738,6 +12513,28 @@ case "$command" in
           printf "}\n"
         else
           printf "{}\n"
+        fi
+        exit 0
+      fi
+      if [ "$format" = "{{json .Config.Labels}}" ]; then
+        if [ -f "$state_dir/$name.labels" ]; then
+          labels_json="{"
+          first_label=1
+          while IFS= read -r label_entry; do
+            [ -n "$label_entry" ] || continue
+            key="${label_entry%%=*}"
+            value="${label_entry#*=}"
+            if [ "$first_label" = "1" ]; then
+              first_label=0
+            else
+              labels_json="${labels_json},"
+            fi
+            labels_json="${labels_json}\"$key\":\"$value\""
+          done < "$state_dir/$name.labels"
+          labels_json="${labels_json}}"
+          printf "%s\n" "$labels_json"
+        else
+          printf "null\n"
         fi
         exit 0
       fi

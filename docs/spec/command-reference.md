@@ -1471,8 +1471,14 @@ Current behavior:
 - validates the contract first
 - when a root contract declares `workspace.type: monorepo`, plain `ota clean` reports the root cleanup result and grouped member cleanup results
 - when `--member` is set, targets those merged member contracts in the provided order
-- when the effective execution mode is `container` with `lifecycle: persistent`, removes the named persistent container for that repo
-- when a container context declares `attachments.isolated_paths`, also removes Ota-managed dependency-isolation named volumes for those paths, and rediscovers older Ota-managed isolation volumes for the repo via the repo ownership token stored under `.ota/ownership-id` even if the current contract no longer re-derives them
+- removes current contract-derived Ota-managed persistent containers and dependency-isolation volumes
+- rediscovers and removes drifted Ota-managed persistent containers and dependency-isolation volumes for the same repo via ownership labels (`dev.ota.managed`, cleanup kind/lifecycle labels, and repo ownership token)
+- repo identity for cleanup is anchored by `.ota/ownership-id` (not `project.name`)
+- tracks repo-used container engines in `.ota/managed-engines` so drift cleanup can still query a previously used engine after contract engine changes
+- scopes discovery to relevant engines (current contract targets plus recorded repo-used engines) and does not fail because an unrelated installed engine is unavailable
+- when no relevant engine evidence exists for the repo, falls back to best-effort discovery across locally available container engines and only fails if none of those discovery probes succeed
+- fails explicitly when discovery for a relevant engine fails; it does not downgrade to `No cleanup needed`
+- reports ownership-ambiguous Ota-managed state as skipped (not removed) when repo ownership cannot be proven
 - `ota clean --stale` does not require `ota.yaml`; it scans available local container engines for exited ota-managed containers from any repo
 - stale cleanup uses ota ownership labels first and falls back to legacy `ota-*` container names for older persistent backends
 - if a local container engine cannot answer `ps`, stale cleanup continues with other available engines and only fails when none of them can be queried
@@ -1480,7 +1486,7 @@ Current behavior:
 - `ota clean --stale --json` emits the matched engines, containers, and cleanup counts for automation
 - `ota clean --stale` has its own exit-code contract and is separate from repo-scoped `ota clean`
 - remote backends do not currently define cleanup semantics; they report `No cleanup needed`
-- reports `No cleanup needed` when there is no persistent container state to remove
+- reports `No cleanup needed` only when no owned cleanup target is found and no relevant-engine discovery failed
 - does not stop services or perform workspace-wide cleanup
 
 ## `ota detect`

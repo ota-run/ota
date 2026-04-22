@@ -211,6 +211,7 @@ execution:
 This is the right boundary for dependency trees like `node_modules`, `.venv`, or other install artifacts that should be built for the container platform instead of inheriting host-native binaries.
 Source still stays bind-mounted from the host at `/workspace`; only the declared dependency paths are overlaid with named volumes.
 Ota labels those volumes with a stable repo ownership token stored under `.ota/ownership-id`, and `ota clean` rediscovers and removes them even if the repo path, image, engine, or declared isolated paths drift later.
+Ota also records repo-used engines under `.ota/managed-engines` so `ota clean` can keep drift cleanup scoped to the engines that actually owned this repo's managed state.
 
 ### `tasks.<name>.runtime.kind: service`
 

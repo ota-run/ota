@@ -96,11 +96,11 @@ use crate::provisioning::{
     ProvisioningOutputMode, apply_provisioning_request_with_target,
 };
 use crate::runner::{
-    DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
-    ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
+    CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
+    ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
-    RuntimeListenerResolutionKind, StaleContainerOwnership, TaskExecutionRelation, clean_execution,
-    clean_stale_execution, effective_execution, effective_task_execution,
+    RuntimeListenerResolutionKind, StaleContainerOwnership, TaskExecutionRelation,
+    clean_execution_report, clean_stale_execution, effective_execution, effective_task_execution,
     env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
     named_execution_context, persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
@@ -424,6 +424,18 @@ fn execution_context_from_summary_block(summary_block: Option<&str>) -> Option<S
     plain.lines().find_map(|line| {
         line.trim_start()
             .strip_prefix("Context:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn container_from_summary_block(summary_block: Option<&str>) -> Option<String> {
+    let summary_block = summary_block?;
+    let plain = strip_ansi_codes(summary_block);
+    plain.lines().find_map(|line| {
+        line.trim_start()
+            .strip_prefix("Container:")
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
@@ -8162,7 +8174,7 @@ pub fn clean(
                 if let Some(workspace) = target.contract.workspace.as_ref() {
                     let mut sections = match render_clean_text(
                         &text_path_display,
-                        clean_execution(&target.contract, &target.contract_path),
+                        clean_execution_report(&target.contract, &target.contract_path),
                     ) {
                         Ok(section) => vec![section],
                         Err(error) => {
@@ -8281,7 +8293,10 @@ pub fn clean(
                             };
                         match render_clean_text(
                             &display_contract_target(&compact_path_display, Some(member.as_str())),
-                            clean_execution(&member_target.contract, &member_target.contract_path),
+                            clean_execution_report(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                            ),
                         ) {
                             Ok(section) => sections.push(section),
                             Err(error) => {
@@ -8298,7 +8313,7 @@ pub fn clean(
                 } else {
                     match render_clean_text(
                         &text_path_display,
-                        clean_execution(&target.contract, &target.contract_path),
+                        clean_execution_report(&target.contract, &target.contract_path),
                     ) {
                         Ok(text) => CommandOutput::success(text),
                         Err(error) => CommandOutput::failure(command_message_failure_text(
@@ -8418,7 +8433,7 @@ pub fn clean(
                         };
                     match render_clean_text(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
-                        clean_execution(&target.contract, &target.contract_path),
+                        clean_execution_report(&target.contract, &target.contract_path),
                     ) {
                         Ok(section) => sections.push(section),
                         Err(error) => {
@@ -8512,10 +8527,69 @@ pub fn clean(
     )
 }
 
-fn render_clean_text<E: ToString>(path: &str, result: Result<bool, E>) -> Result<String, String> {
+fn render_clean_text<E: ToString>(
+    path: &str,
+    result: Result<CleanExecutionReport, E>,
+) -> Result<String, String> {
     match result {
-        Ok(true) => Ok(format!("Cleaned {path}")),
-        Ok(false) => Ok(format!("No cleanup needed for {path}")),
+        Ok(report) => {
+            if report.total_removed() == 0 && report.total_skipped_ambiguous() == 0 {
+                return Ok(format!("No cleanup needed for {path}"));
+            }
+
+            let header = if report.total_removed() > 0 {
+                format!("Cleaned {path}")
+            } else {
+                format!("Reviewed cleanup for {path}")
+            };
+            let mut lines = vec![header];
+            if report.removed_current_persistent_containers > 0 {
+                lines.push(format!(
+                    "  {} removed current persistent containers: {}",
+                    summary_bullet(),
+                    report.removed_current_persistent_containers
+                ));
+            }
+            if report.removed_drift_persistent_containers > 0 {
+                lines.push(format!(
+                    "  {} removed drifted persistent containers: {}",
+                    summary_bullet(),
+                    report.removed_drift_persistent_containers
+                ));
+            }
+            if report.removed_current_dependency_isolation_volumes > 0 {
+                lines.push(format!(
+                    "  {} removed current dependency-isolation volumes: {}",
+                    summary_bullet(),
+                    report.removed_current_dependency_isolation_volumes
+                ));
+            }
+            if report.removed_drift_dependency_isolation_volumes > 0 {
+                lines.push(format!(
+                    "  {} removed drifted dependency-isolation volumes: {}",
+                    summary_bullet(),
+                    report.removed_drift_dependency_isolation_volumes
+                ));
+            }
+            if report.skipped_ambiguous_persistent_containers > 0
+                || report.skipped_ambiguous_dependency_isolation_volumes > 0
+            {
+                lines.push(format!(
+                    "  {} skipped ownership-ambiguous state (not removed): {} containers, {} volumes",
+                    summary_bullet(),
+                    report.skipped_ambiguous_persistent_containers,
+                    report.skipped_ambiguous_dependency_isolation_volumes
+                ));
+            }
+            if !report.queried_engines.is_empty() {
+                lines.push(format!(
+                    "  {} queried engines: {}",
+                    summary_bullet(),
+                    report.queried_engines.join(", ")
+                ));
+            }
+            Ok(lines.join("\n"))
+        }
         Err(error) => Err(error.to_string()),
     }
 }
@@ -21026,7 +21100,7 @@ mod tests {
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         build_up_preview, compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
-        execution_receipt_step, render_detect_comparison_section,
+        execution_receipt_step, render_clean_text, render_detect_comparison_section,
         render_execution_receipt_summary_block, render_execution_receipt_text,
         render_report_section, render_up_result, render_up_section_from_parts,
         render_windows_uninstall_pending, run_execution_receipt, strip_ansi_codes,
@@ -21043,7 +21117,9 @@ mod tests {
         ProvisioningBackendRequest, ProvisioningPlan, ProvisioningTargetKind,
     };
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
-    use crate::runner::{ExecutedTaskStep, ExecutionOverrides, TaskExecutionRelation};
+    use crate::runner::{
+        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, TaskExecutionRelation,
+    };
     use crate::schema::{Backend, Lifecycle};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
@@ -21263,6 +21339,30 @@ tasks:
         assert!(!output.contains("rerun `ota validate ./ota.yaml`"));
 
         env::set_current_dir(cwd).expect("restore current dir");
+    }
+
+    #[test]
+    fn clean_text_uses_reviewed_header_when_only_ambiguous_state_is_reported() {
+        let report = CleanExecutionReport {
+            skipped_ambiguous_persistent_containers: 2,
+            skipped_ambiguous_dependency_isolation_volumes: 1,
+            queried_engines: vec![String::from("docker")],
+            ..CleanExecutionReport::default()
+        };
+
+        let text = render_clean_text::<String>("./ota.yaml", Ok(report)).expect("clean text");
+        let plain = strip_ansi_codes(&text);
+
+        assert!(
+            plain.starts_with("Reviewed cleanup for ./ota.yaml"),
+            "{plain}"
+        );
+        assert!(!plain.starts_with("Cleaned ./ota.yaml"), "{plain}");
+        assert!(
+            plain.contains(
+                "skipped ownership-ambiguous state (not removed): 2 containers, 1 volumes"
+            )
+        );
     }
 
     #[test]
@@ -24380,7 +24480,7 @@ tasks:
     }
 
     #[test]
-    fn run_execution_receipt_omits_context_for_mode_branch_without_matching_context() {
+    fn run_execution_receipt_reports_context_for_mode_branch_without_explicit_context() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -24428,15 +24528,15 @@ tasks:
         );
 
         assert_eq!(receipt.backend.as_deref(), Some("container"));
-        assert_eq!(receipt.context.as_deref(), None);
-        assert_eq!(receipt.lifecycle.as_deref(), None);
+        assert_eq!(receipt.context.as_deref(), Some("app"));
         let rendered =
             render_execution_receipt_summary_block(&receipt, Some("test"), "RUN SUMMARY");
-        assert!(!rendered.contains("Context:"));
+        assert!(rendered.contains("Context:"));
+        assert!(rendered.contains("app"));
     }
 
     #[test]
-    fn task_summary_omits_context_for_mode_branch_without_matching_context() {
+    fn task_summary_reports_context_for_mode_branch_without_explicit_context() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -24473,9 +24573,9 @@ tasks:
         );
 
         assert_eq!(summary.default_mode, Some("container"));
-        assert_eq!(summary.context, None);
+        assert_eq!(summary.context, Some("app"));
         assert_eq!(summary.modes.len(), 1);
-        assert_eq!(summary.modes[0].context, None);
+        assert_eq!(summary.modes[0].context, Some("app"));
     }
 
     #[test]
@@ -26755,56 +26855,49 @@ fn run_single_contract_target_streaming(
         }
         Ok(outcome) => {
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
-            Err(RunCommandFailure {
-                message: format!(
-                    "task `{failed_task_name}` failed with exit code {}",
-                    outcome.exit_code,
-                ),
-                summary: Some(render_execution_receipt_summary_block(
-                    &run_execution_receipt(
-                        &target.contract,
-                        &target.contract_path,
-                        overrides,
-                        task_name.as_str(),
-                        member,
-                        &outcome.task_steps,
-                        outcome.exit_code,
-                        false,
-                        outcome.target.clone(),
-                        outcome.runtime.clone(),
-                        Some(format!(
-                            "{}; {}",
-                            format!(
-                                "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`"
-                            ),
-                            details_footer
-                        )),
+            let receipt = run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name.as_str(),
+                member,
+                &outcome.task_steps,
+                outcome.exit_code,
+                false,
+                outcome.target.clone(),
+                outcome.runtime.clone(),
+                Some(format!(
+                    "{}; {}",
+                    format!(
+                        "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`"
                     ),
-                    Some(task_name.as_str()),
-                    "RUN SUMMARY",
+                    details_footer
                 )),
+            );
+            let summary = render_execution_receipt_summary_block(
+                &receipt,
+                Some(task_name.as_str()),
+                "RUN SUMMARY",
+            );
+            let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
+            Err(RunCommandFailure {
+                message: render_run_captured_failure_text(
+                    &target.contract,
+                    &target.contract_path,
+                    &display_contract_target(&compact_contract_path(&target.contract_path), member),
+                    &failed_task_name,
+                    task_name.as_str(),
+                    member,
+                    overrides,
+                    outcome.exit_code,
+                    &outcome.stdout,
+                    &outcome.stderr,
+                    receipt_text.as_deref(),
+                    &summary,
+                ),
+                summary: None,
                 exit_code: outcome.exit_code,
-                receipt: show_receipt.then(|| {
-                    render_execution_receipt_text(&run_execution_receipt(
-                        &target.contract,
-                        &target.contract_path,
-                        overrides,
-                        task_name.as_str(),
-                        member,
-                        &outcome.task_steps,
-                        outcome.exit_code,
-                        false,
-                        outcome.target.clone(),
-                        outcome.runtime.clone(),
-                        Some(format!(
-                            "{}; {}",
-                            format!(
-                                "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`"
-                            ),
-                            details_footer
-                        )),
-                    ))
-                }),
+                receipt: None,
             })
         }
         Err(error) => {
@@ -26937,10 +27030,13 @@ fn run_single_contract_target_captured(
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_captured_failure_text(
+                    &target.contract,
                     &target.contract_path,
                     &display_contract_target(&compact_contract_path(&target.contract_path), member),
                     &failed_task_name,
+                    task_name.as_str(),
                     member,
+                    overrides,
                     outcome.exit_code,
                     &outcome.stdout,
                     &outcome.stderr,
@@ -27053,22 +27149,27 @@ fn failed_task_name(executed_steps: &[ExecutedTaskStep], requested_task: &str) -
 }
 
 fn render_run_captured_failure_text(
+    contract: &Contract,
     contract_path: &Path,
     where_value: &str,
     task_name: &str,
+    requested_task_name: &str,
     member: Option<&str>,
+    overrides: ExecutionOverrides,
     exit_code: i32,
     stdout: &str,
     stderr: &str,
     receipt_text: Option<&str>,
     summary: &str,
 ) -> String {
-    if let Some(port) = parse_container_host_port_conflict(stderr) {
+    if let Some(conflict) = parse_container_host_port_conflict_detail(stderr) {
         return render_host_publication_failure_text(
+            contract,
             where_value,
             task_name,
-            member,
-            port,
+            requested_task_name,
+            overrides,
+            &conflict,
             &[],
             Some(summary),
             receipt_text,
@@ -27093,6 +27194,17 @@ fn render_run_captured_failure_text(
 }
 
 pub(crate) fn parse_container_host_port_conflict(stderr: &str) -> Option<u16> {
+    parse_container_host_port_conflict_detail(stderr).map(|conflict| conflict.port)
+}
+
+#[derive(Debug, Clone)]
+struct ContainerHostPortConflict {
+    address: String,
+    port: u16,
+    detail: String,
+}
+
+fn parse_container_host_port_conflict_detail(stderr: &str) -> Option<ContainerHostPortConflict> {
     let normalized = stderr.replace("\r\n", "\n");
     normalized.lines().find_map(|line| {
         let trimmed = line.trim();
@@ -27107,63 +27219,198 @@ pub(crate) fn parse_container_host_port_conflict(stderr: &str) -> Option<u16> {
             .1;
         let address = bind.split_once(" failed")?.0.trim();
         let port = address.rsplit_once(':')?.1.trim().parse::<u16>().ok()?;
-        Some(port)
+        Some(ContainerHostPortConflict {
+            address: address
+                .rsplit_once(':')
+                .map(|(host, _)| host.trim().to_string())
+                .unwrap_or_default(),
+            port,
+            detail: trimmed.to_string(),
+        })
+    })
+}
+
+fn conflict_listener_field_for_task(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    address: &str,
+    port: u16,
+) -> Option<(String, Option<String>, Option<TaskRuntimeHostPortMode>)> {
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    let Some(task) = contract.tasks.get(task_name) else {
+        return None;
+    };
+    let Some(runtime) = task.service_runtime_for_backend(backend) else {
+        return None;
+    };
+
+    let primary = runtime
+        .listeners
+        .iter()
+        .find_map(|(listener_name, listener)| {
+            let host = listener.project.host.as_ref()?;
+            host.primary
+                .then_some((listener_name.clone(), host.port.mode))
+        });
+    let exact = runtime
+        .listeners
+        .iter()
+        .find_map(|(listener_name, listener)| {
+            let host = listener.project.host.as_ref()?;
+            let host_address = host.address.trim();
+            if host_address != address {
+                return None;
+            }
+            match host.port.mode {
+                TaskRuntimeHostPortMode::Fixed if host.port.value == Some(port) => {
+                    Some((listener_name.clone(), host.port.mode))
+                }
+                _ => None,
+            }
+        });
+    let projected = runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener
+                .project
+                .host
+                .as_ref()
+                .map(|host| (listener_name.clone(), host.port.mode))
+        })
+        .collect::<Vec<_>>();
+
+    let listener = exact
+        .or(primary)
+        .or_else(|| (projected.len() == 1).then(|| projected[0].clone()));
+
+    match listener {
+        Some((listener_name, host_port_mode)) => Some((
+            format!("tasks.{task_name}.runtime.listeners.{listener_name}.project.host.port"),
+            Some(listener_name),
+            Some(host_port_mode),
+        )),
+        None => Some((format!("tasks.{task_name}.runtime.listeners"), None, None)),
+    }
+}
+
+fn conflict_listener_field(
+    contract: &Contract,
+    task_name: &str,
+    requested_task_name: &str,
+    overrides: ExecutionOverrides,
+    address: &str,
+    port: u16,
+) -> (String, Option<String>, Option<TaskRuntimeHostPortMode>) {
+    conflict_listener_field_for_task(contract, requested_task_name, overrides, address, port)
+        .or_else(|| conflict_listener_field_for_task(contract, task_name, overrides, address, port))
+        .unwrap_or_else(|| (format!("tasks.{task_name}.runtime.listeners"), None, None))
+}
+
+fn summary_with_note_override(summary_block: Option<&str>, note: &str) -> Option<String> {
+    summary_block.map(|summary| {
+        let mut replaced = false;
+        let lines = summary
+            .lines()
+            .map(|line| {
+                if line.starts_with("Note:") {
+                    replaced = true;
+                    summary_detail_line("Note:", note)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>();
+        if replaced {
+            lines.join("\n")
+        } else {
+            let mut lines = lines;
+            lines.push(summary_detail_line("Note:", note));
+            lines.join("\n")
+        }
     })
 }
 
 fn render_host_publication_failure_text(
+    contract: &Contract,
     where_value: &str,
     task_name: &str,
-    member: Option<&str>,
-    port: u16,
+    requested_task_name: &str,
+    overrides: ExecutionOverrides,
+    conflict: &ContainerHostPortConflict,
     next_steps: &[String],
     summary_block: Option<&str>,
     receipt_text: Option<&str>,
 ) -> String {
+    let (field, listener_name, host_port_mode) = conflict_listener_field(
+        contract,
+        task_name,
+        requested_task_name,
+        overrides,
+        conflict.address.as_str(),
+        conflict.port,
+    );
     let mut out = format!(
         "{}  {}",
         render_severity(FindingSeverity::Error),
         paint("Host publication failed", "1;37")
     );
     out.push_str(&format!(
-        "\n{}",
-        stylize_inline_text(&format!(
-            "task `{task_name}` could not publish host port `{port}`"
-        ))
-    ));
-    if let Some(context) = execution_context_from_summary_block(summary_block) {
-        out.push_str(&format!("\n{} {context}", paint_key("Context:")));
-    }
-    out.push_str(&format!(
         "\n{} {}",
         paint_key("Where:"),
         paint_code(where_value)
     ));
+    out.push_str(&format!("\n{} {}", paint_key("Field:"), paint_code(&field)));
+    let first_why = match container_from_summary_block(summary_block) {
+        Some(container) => format!(
+            "container `{container}` could not publish host port `{}`",
+            conflict.port
+        ),
+        None => format!("could not publish host port `{}`", conflict.port),
+    };
     append_error_detail_section(
         &mut out,
         "Why:",
         &[
-            format!("host port `{port}` is already allocated"),
-            String::from("the task requested a published host endpoint"),
+            first_why,
+            format!("container engine reported: {}", conflict.detail),
         ],
         None,
     );
     let mut next_steps = next_steps.to_vec();
-    next_steps.push(format!(
-        "stop the process or container using host port `{port}`"
-    ));
-    next_steps.push(format!(
-        "rerun {}",
-        paint_code(&repo_run_stream_command(task_name, member))
-    ));
-    next_steps.push(String::from("or change `project.host.port.mode` to `auto`"));
+    match host_port_mode {
+        Some(TaskRuntimeHostPortMode::Auto) => {
+            next_steps.push(format!(
+                "rerun `ota run {requested_task_name}` so ota can reserve a new host port"
+            ));
+        }
+        _ => {
+            next_steps.push(format!(
+                "rerun `ota run {requested_task_name} --host-port <free port>`"
+            ));
+            next_steps.push(format!("or set `{field}.mode` to `auto`"));
+        }
+    }
+    next_steps.push(format!("or free host port `{}`", conflict.port));
     append_error_detail_section(&mut out, "Next:", &next_steps, None);
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
     {
         out.push_str(receipt_text);
     }
-    append_summary_block(&mut out, summary_block);
+    let summary_note = match listener_name.as_deref() {
+        Some(listener_name) => format!(
+            "host publication failed for listener `{listener_name}` on `{}:{}`",
+            conflict.address, conflict.port
+        ),
+        None => format!(
+            "host publication failed on `{}:{}`",
+            conflict.address, conflict.port
+        ),
+    };
+    let summary_override = summary_with_note_override(summary_block, &summary_note);
+    append_summary_block(&mut out, summary_override.as_deref());
     out
 }
 

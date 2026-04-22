@@ -26,10 +26,10 @@
 
 ## Unreleased
 
-- fixed `ota clean` so drifted dependency-isolation cleanup only queries the repo’s actual container engines, preventing an unrelated dead Podman install from breaking Docker-owned cleanup
+- hardened `ota clean` cleanup integrity: drift rediscovery now keys off repo ownership labels plus `.ota/managed-engines`, falls back to best-effort local engine probing only when no repo engine evidence exists, and keeps ownership-ambiguous managed state visible without unsafe deletion
 - added `ota run --host-port <port>` as a one-run projected host/public port override for container workload listeners with `project.host.port.mode: fixed`, keeping internal bind ports unchanged while aligning runtime env (`OTA_PUBLIC_URL`/`OTA_PUBLIC_PORT`), summaries, and receipts to the overridden public URL
 - added task-level mode-aware execution branches under `tasks.<name>.execution` so one task can declare mode-specific `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`, with `execution.default_mode` support, clear run-time errors for missing mode branches, and updated `ota tasks` JSON/text branch rendering
-- replaced the generic task-exit banner for container host-port bind conflicts with a specific `Host publication failed` error that names the blocked host port and points at `project.host.port.mode`
+- replaced the generic task-exit banner for container host-port bind conflicts with a specific `Host publication failed` error across both captured and interactive runs, pointing at the owning listener field and carrying the ingress-specific run-summary note
 - made `ota explain` and `ota workspace explain` show `BLOCKED` when the plan contains actionable remediation steps, instead of a misleading `READY` banner
 - made invalid task listener bindings render as field-specific contract errors with direct `Next:` guidance across `ota validate`, `ota doctor`, `ota explain`, and `ota receipt` instead of falling back to generic load or repair banners
 - made shell-based task execution forward `Ctrl+C`/termination to the task process group so long-running container and native dev commands stop cleanly instead of leaving orphaned listeners behind
