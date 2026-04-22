@@ -261,6 +261,7 @@ This keeps the boundary honest:
 - `tasks.<name>.runtime.listeners` model app ingress like a dev server or Spring Boot API
 - with multiple projected listeners, mark exactly one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and the primary endpoint line
 - in container contexts with `project.host.port.mode: auto`, ota injects runtime URL env values before command execution; ephemeral runs pre-reserve host ports before start, while persistent runs resolve the existing published mapping
+- `ota run <task> --host-port <port>` overrides one run's published host/public port when the selected projected listener is `project.host.port.mode: fixed`; app bind ports stay unchanged
 - `ota run dev` records the same resolved host endpoint ota injected into runtime env
 - `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`
 - readiness remains separate from ingress projection
@@ -271,6 +272,7 @@ Ingress troubleshooting:
 - `task <name> declares multiple listeners with project.host.primary: true`: keep one primary and remove the rest
 - `loopback-only container bind address`: change the bind address to `0.0.0.0` before projecting to host
 - `could not publish host port`: keep `project.host.port.mode: auto` and rerun; for ephemeral runs ota retries bounded times and then fails clearly when host publication still conflicts
+- ``--host-port`` rejected: use it only with container tasks that project exactly one selected listener (`project.host.primary: true` when multiple) and keep that listener on `project.host.port.mode: fixed`
 
 ### `services.<name>.manager`
 

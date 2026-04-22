@@ -622,6 +622,7 @@ ota run api-automation-tests --base-url http://localhost:8080 --suite-mode contr
 ota run version:bump --version minor
 ota run version:bump --version 0.2.0
 ota run version:bump --version major
+ota run dev --host-port 4000
 ```
 
 - resolves task dependencies before execution
@@ -660,6 +661,9 @@ ota run version:bump --version major
 - `OTA_PUBLIC_URL_<LISTENER>`
 - when multiple listeners are projected, exactly one projected listener must set `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and summary endpoint rendering
 - for container listeners with `project.host.port.mode: auto`, `execution.lifecycle: ephemeral` pre-reserves a host port before spawn and retries bounded host-port conflicts; `execution.lifecycle: persistent` resolves the running container's published host mapping before exec
+- `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
+- `--host-port` is valid only when the selected task resolves to container execution and that selected primary listener uses `project.host.port.mode: fixed`
+- `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, and ambiguous multi-listener projections without one primary listener
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
 - execution receipts include backend, lifecycle, container image when relevant, remote target when set, acquired paths, env sources, step summary data, and resolved runtime listener endpoints; text receipts also print the winning env source for each resolved value

@@ -146,7 +146,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--mode`, and `--lifecycle` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, and `--host-port` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -159,6 +159,9 @@ enum Commands {
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Override the projected host/public port for this invocation.
+        #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
+        host_port: Option<u16>,
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
         ephemeral: bool,
@@ -1275,6 +1278,7 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
         "--task",
         "--mode",
         "--backend",
+        "--host-port",
         "--lifecycle",
         "--baseline",
         "--run",
@@ -2313,6 +2317,7 @@ enum RunFlagValueKind {
     Any,
     Enum(&'static [&'static str]),
     Usize,
+    U16,
 }
 
 struct RunFlagOccurrence {
@@ -2499,6 +2504,9 @@ fn parse_run_flag_occurrence(
         RunFlagValueKind::Usize => value
             .as_deref()
             .is_some_and(|candidate| candidate.parse::<usize>().is_ok()),
+        RunFlagValueKind::U16 => value
+            .as_deref()
+            .is_some_and(|candidate| candidate.parse::<u16>().is_ok_and(|port| port > 0)),
     };
 
     Some(RunFlagOccurrence {
@@ -2519,6 +2527,11 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             canonical: "mode",
             takes_value: true,
             value_kind: RunFlagValueKind::Enum(BACKENDS),
+        }),
+        "--host-port" => Some(RunFlagSpec {
+            canonical: "host-port",
+            takes_value: true,
+            value_kind: RunFlagValueKind::U16,
         }),
         "--lifecycle" => Some(RunFlagSpec {
             canonical: "lifecycle",
@@ -3623,6 +3636,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 } else {
                     lifecycle.map(Into::into)
                 },
+                host_port: None,
             },
             format_from_json(json),
             debug,
@@ -3631,6 +3645,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             task,
             backend,
             lifecycle,
+            host_port,
             ephemeral,
             receipt,
             stream,
@@ -3648,6 +3663,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 } else {
                     lifecycle.map(Into::into)
                 },
+                host_port,
             },
             &member,
             &inputs,
@@ -3752,6 +3768,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 } else {
                     lifecycle.map(Into::into)
                 },
+                host_port: None,
             },
             &member,
             format_from_json(json),
@@ -4093,6 +4110,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     } else {
                         lifecycle.map(Into::into)
                     },
+                    host_port: None,
                 },
                 format_from_json(json),
                 debug,
@@ -10581,6 +10599,30 @@ tasks:
     }
 
     #[test]
+    fn run_text_rejects_host_port_override_for_native_execution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: printf ready
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", "--host-port", "4000", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Host port override requires container execution"));
+        assert!(
+            stderr.contains("`--host-port` only applies to projected container host publication")
+        );
+        assert!(stderr.contains("ota run dev --mode container"));
+    }
+
+    #[test]
     fn run_text_reports_task_runtime_projection_field_when_host_port_value_is_missing() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -11645,7 +11687,7 @@ tasks:
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
-        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--mode`, and `--lifecycle` before task inputs."));
+        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, and `--host-port` before task inputs."));
         assert!(help.contains("ota run version:bump --stream --version patch"));
     }
 
@@ -12114,6 +12156,7 @@ tasks:
                 task: String::from("install-from-source"),
                 backend: None,
                 lifecycle: None,
+                host_port: None,
                 ephemeral: false,
                 receipt: false,
                 stream: false,
@@ -13059,6 +13102,7 @@ tasks:
             task: String::from("test"),
             backend: None,
             lifecycle: None,
+            host_port: None,
             ephemeral: false,
             receipt: false,
             stream: false,
