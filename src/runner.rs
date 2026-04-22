@@ -38,6 +38,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json;
 
+use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
     container_engine_candidates_from_backend, execution_image, matching_execution_context_name,
@@ -4236,6 +4237,19 @@ fn execute_container_task_command(
                     return Ok(output);
                 }
 
+                if let Some(port) = parse_container_host_port_conflict(&output.stderr)
+                    && let Some((listener_name, publication)) = listener_publications
+                        .iter()
+                        .find(|(_, publication)| publication.host_port == Some(port))
+                {
+                    return Err(RunError::HostPublicationConflict {
+                        task: task_name.to_string(),
+                        listener: listener_name.clone(),
+                        address: publication.host_address.clone(),
+                        port,
+                    });
+                }
+
                 if !has_auto_projection || attempt + 1 >= max_attempts {
                     if has_auto_projection
                         && is_container_host_publication_conflict(&output.stdout, &output.stderr)
@@ -4366,18 +4380,6 @@ fn execute_ephemeral_container_task_command(
     if !create_status.status.success() {
         let stdout = String::from_utf8_lossy(&create_status.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&create_status.stderr).into_owned();
-        if let Some(port) = parse_container_host_port_conflict(&stderr)
-            && let Some((listener_name, publication)) = listener_publications
-                .iter()
-                .find(|(_, publication)| publication.host_port == Some(port))
-        {
-            return Err(RunError::HostPublicationConflict {
-                task: task_name.to_string(),
-                listener: listener_name.clone(),
-                address: publication.host_address.clone(),
-                port,
-            });
-        }
         return Ok(TaskCommandOutput {
             exit_code: create_status.status.code().unwrap_or(1),
             stdout,
@@ -6699,6 +6701,220 @@ exec "$(dirname "$0")/docker-real" "$@"
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
             format!("http://127.0.0.1:{}/", host.port)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_reports_fixed_container_host_publication_conflict_on_create_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3002
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+state_dir="${OTA_TEST_STATE_DIR:-.ota-test-state}"
+mkdir -p "$state_dir"
+if [ "$1" = "create" ] && [ ! -f "$state_dir/create-conflict-once" ]; then
+  : > "$state_dir/create-conflict-once"
+  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-c78bddf26bebbeee (6534631e99da3861809826376d13bbf954ba5b059a27718cf84ed131d028cf4f): Bind for 127.0.0.1:3002 failed: port is already allocated\n" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::HostPublicationConflict {
+                task,
+                listener,
+                address,
+                port,
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "http");
+                assert_eq!(address, "127.0.0.1");
+                assert_eq!(port, 3002);
+            }
+            other => panic!("expected host publication conflict, got {other}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_with_progress_reports_fixed_container_host_publication_conflict_on_create_failure()
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3002
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+state_dir="${OTA_TEST_STATE_DIR:-.ota-test-state}"
+mkdir -p "$state_dir"
+if [ "$1" = "create" ] && [ ! -f "$state_dir/create-conflict-once" ]; then
+  : > "$state_dir/create-conflict-once"
+  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-c78bddf26bebbeee (6534631e99da3861809826376d13bbf954ba5b059a27718cf84ed131d028cf4f): Bind for 127.0.0.1:3002 failed: port is already allocated\n" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+            .unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::HostPublicationConflict {
+                task,
+                listener,
+                address,
+                port,
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "http");
+                assert_eq!(address, "127.0.0.1");
+                assert_eq!(port, 3002);
+            }
+            other => panic!("expected host publication conflict, got {other}"),
+        }
     }
 
     #[test]

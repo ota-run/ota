@@ -26731,7 +26731,7 @@ fn render_run_captured_failure_text(
     )
 }
 
-fn parse_container_host_port_conflict(stderr: &str) -> Option<u16> {
+pub(crate) fn parse_container_host_port_conflict(stderr: &str) -> Option<u16> {
     let normalized = stderr.replace("\r\n", "\n");
     normalized.lines().find_map(|line| {
         let trimmed = line.trim();
