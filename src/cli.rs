@@ -42,6 +42,7 @@ use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
 
 mod commands;
+pub(crate) use commands::parse_container_host_port_conflict;
 
 #[derive(Debug, Parser)]
 #[command(name = "ota")]
