@@ -2166,11 +2166,57 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
     )
 }
 
+fn listed_task_summaries<'a>(
+    contract: &'a Contract,
+    include_internal: bool,
+) -> Vec<TaskSummary<'a>> {
+    let mut tasks = contract
+        .tasks
+        .iter()
+        .filter(|(_, task)| include_internal || !task.internal)
+        .map(|(name, task)| {
+            TaskSummary::from_spec(name, task, current_os(), contract.execution.as_ref())
+        })
+        .collect::<Vec<_>>();
+
+    if !include_internal {
+        let visible_task_names = tasks
+            .iter()
+            .map(|task| task.name.to_string())
+            .collect::<BTreeSet<_>>();
+        for task in &mut tasks {
+            task.retain_visible_task_relationships(&visible_task_names);
+        }
+    }
+
+    tasks
+}
+
+fn listed_agent_summary<'a>(
+    contract: &'a Contract,
+    include_internal: bool,
+    tasks: &[TaskSummary<'a>],
+) -> Option<AgentSummary<'a>> {
+    let mut agent = contract
+        .agent
+        .as_ref()
+        .and_then(AgentSummary::from_config)?;
+    if !include_internal {
+        let visible_task_names = tasks
+            .iter()
+            .map(|task| task.name.to_string())
+            .collect::<BTreeSet<_>>();
+        agent.retain_visible_tasks(&visible_task_names);
+    }
+    (!agent.is_empty()).then_some(agent)
+}
+
 pub fn tasks(
     path: Option<&Path>,
     file_override: Option<&Path>,
     members: &[String],
     use_cmd: bool,
+    all: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -2231,24 +2277,8 @@ pub fn tasks(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let agent_summary = target
-                    .contract
-                    .agent
-                    .as_ref()
-                    .and_then(AgentSummary::from_config);
-                let task_summaries = target
-                    .contract
-                    .tasks
-                    .iter()
-                    .map(|(name, task)| {
-                        TaskSummary::from_spec(
-                            name,
-                            task,
-                            current_os(),
-                            target.contract.execution.as_ref(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                let task_summaries = listed_task_summaries(&target.contract, all);
+                let agent_summary = listed_agent_summary(&target.contract, all, &task_summaries);
 
                 if members.is_empty()
                     && target.contract_path == resolved_path
@@ -2312,24 +2342,9 @@ pub fn tasks(
                                         );
                                     }
                                 };
-                            let member_agent = member_target
-                                .contract
-                                .agent
-                                .as_ref()
-                                .and_then(AgentSummary::from_config);
-                            let member_tasks = member_target
-                                .contract
-                                .tasks
-                                .iter()
-                                .map(|(name, task)| {
-                                    TaskSummary::from_spec(
-                                        name,
-                                        task,
-                                        current_os(),
-                                        member_target.contract.execution.as_ref(),
-                                    )
-                                })
-                                .collect::<Vec<_>>();
+                            let member_tasks = listed_task_summaries(&member_target.contract, all);
+                            let member_agent =
+                                listed_agent_summary(&member_target.contract, all, &member_tasks);
                             text_sections.push(render_tasks_output_text(
                                 use_cmd,
                                 &display_contract_target(
@@ -2425,24 +2440,8 @@ pub fn tasks(
                                 );
                             }
                         };
-                    let agent = target
-                        .contract
-                        .agent
-                        .as_ref()
-                        .and_then(AgentSummary::from_config);
-                    let tasks = target
-                        .contract
-                        .tasks
-                        .iter()
-                        .map(|(name, task)| {
-                            TaskSummary::from_spec(
-                                name,
-                                task,
-                                current_os(),
-                                target.contract.execution.as_ref(),
-                            )
-                        })
-                        .collect::<Vec<_>>();
+                    let tasks = listed_task_summaries(&target.contract, all);
+                    let agent = listed_agent_summary(&target.contract, all, &tasks);
                     text_sections.push(render_tasks_output_text(
                         use_cmd,
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
@@ -10493,13 +10492,29 @@ pub fn workspace_tasks(
                         };
                     }
 
+                    let visible_task_names = contract
+                        .tasks
+                        .iter()
+                        .filter(|(_, task)| !task.internal)
+                        .map(|(name, _)| name.as_str())
+                        .collect::<BTreeSet<_>>();
                     let tasks = contract
                         .tasks
                         .iter()
+                        .filter(|(_, task)| !task.internal)
                         .map(|(name, task)| {
                             let execution = task.resolved_execution(current_os()).expect(
                                 "validated task must resolve to a default or variant execution",
                             );
+                            let filter_relationships = |relationships: &[String]| {
+                                relationships
+                                    .iter()
+                                    .filter(|dependency| {
+                                        visible_task_names.contains(dependency.as_str())
+                                    })
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                            };
                             WorkspaceTaskSummary {
                                 name: name.clone(),
                                 kind: execution.kind.to_string(),
@@ -10507,11 +10522,11 @@ pub fn workspace_tasks(
                                 run: (execution.kind == "run").then(|| execution.body.to_string()),
                                 script: (execution.kind == "script")
                                     .then(|| execution.body.to_string()),
-                                depends_on: task.depends_on.clone(),
+                                depends_on: filter_relationships(&task.depends_on),
                                 requires_services: task.requires_services.clone(),
-                                after_success: task.after_success.clone(),
-                                after_failure: task.after_failure.clone(),
-                                after_always: task.after_always.clone(),
+                                after_success: filter_relationships(&task.after_success),
+                                after_failure: filter_relationships(&task.after_failure),
+                                after_always: filter_relationships(&task.after_always),
                             }
                         })
                         .collect();
@@ -16860,6 +16875,9 @@ fn render_tasks_text(
             paint_key("Safe For Agent:"),
             if task.safe_for_agent { "true" } else { "false" }
         ));
+        if task.internal {
+            output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
+        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Selected OS:"),
@@ -16886,17 +16904,17 @@ fn render_tasks_text(
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("After Success:"),
-            render_task_relationships(task.after_success)
+            render_task_relationships(&task.after_success)
         ));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("After Failure:"),
-            render_task_relationships(task.after_failure)
+            render_task_relationships(&task.after_failure)
         ));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("After Always:"),
-            render_task_relationships(task.after_always)
+            render_task_relationships(&task.after_always)
         ));
         if let Some(notes) = task.notes {
             output.push_str(&format!(
@@ -16980,6 +16998,9 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint_key("Mode Branches:"),
             render_task_mode_branches(task)
         ));
+        if task.internal {
+            output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
+        }
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
@@ -20306,28 +20327,28 @@ fn render_doctor_agent_summary_text(
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Safe tasks:"),
-            &render_inline_code_list(agent.safe_tasks),
+            &render_inline_code_list(&agent.safe_tasks),
         ));
     }
     if !agent.verify_after_changes.is_empty() {
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Verify after changes:"),
-            &render_inline_code_list(agent.verify_after_changes),
+            &render_inline_code_list(&agent.verify_after_changes),
         ));
     }
     if !agent.writable_paths.is_empty() {
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Writable paths:"),
-            &render_inline_code_list(agent.writable_paths),
+            &render_inline_code_list(&agent.writable_paths),
         ));
     }
     if !agent.protected_paths.is_empty() {
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Protected paths:"),
-            &render_inline_code_list(agent.protected_paths),
+            &render_inline_code_list(&agent.protected_paths),
         ));
     }
     if agent
@@ -20397,13 +20418,13 @@ fn render_agents_markdown(
             output.push_str("`)\n");
         }
         if !agent.safe_tasks.is_empty() {
-            render_agents_task_list(&mut output, "safe_tasks", agent.safe_tasks);
+            render_agents_task_list(&mut output, "safe_tasks", &agent.safe_tasks);
         }
         if !agent.verify_after_changes.is_empty() {
             render_agents_task_list(
                 &mut output,
                 "verify_after_changes",
-                agent.verify_after_changes,
+                &agent.verify_after_changes,
             );
         }
         if !agent.writable_paths.is_empty() {
@@ -24156,10 +24177,10 @@ execution:
         let agent = crate::output::AgentSummary {
             entrypoint: Some("setup"),
             default_task: Some("ci"),
-            safe_tasks: &safe_tasks,
-            verify_after_changes: &verify_after_changes,
-            writable_paths: &writable_paths,
-            protected_paths: &protected_paths,
+            safe_tasks,
+            verify_after_changes,
+            writable_paths,
+            protected_paths,
             bootstrap: None,
             notes: None,
         };
@@ -30663,7 +30684,7 @@ fn render_execution_receipt_summary_block(
             .map(|step| step.label.as_str())
             .unwrap_or("setup")
     });
-    let note = match (mode.as_str(), receipt.lifecycle.as_deref()) {
+    let mut note = match (mode.as_str(), receipt.lifecycle.as_deref()) {
         ("container", Some("persistent")) => persistent_container_note_from_receipt(receipt, task)
             .unwrap_or_else(|| String::from("reusing persistent container backend")),
         ("container", Some("ephemeral")) => {
@@ -30675,6 +30696,11 @@ fn render_execution_receipt_summary_block(
         ("native", _) => String::from("running on the host environment"),
         (other, _) => format!("executing through the `{other}` backend"),
     };
+    if let Some(internal_note) = internal_task_note_from_receipt(receipt, task)
+        && !note.contains(internal_note.as_str())
+    {
+        note = format!("{note}; {internal_note}");
+    }
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
@@ -30733,6 +30759,19 @@ fn persistent_container_note_from_receipt(
         let note = detail.strip_prefix("requested task; ").unwrap_or(detail);
         note.contains("persistent container")
             .then(|| note.to_string())
+    })
+}
+
+fn internal_task_note_from_receipt(receipt: &ExecutionReceipt, task: &str) -> Option<String> {
+    receipt.steps.iter().find_map(|step| {
+        if step.label != task {
+            return None;
+        }
+        let detail = step.detail.as_deref()?;
+        let note = detail.strip_prefix("requested task; ").unwrap_or(detail);
+        note.split("; ")
+            .find(|part| part.contains("marked internal"))
+            .map(str::to_string)
     })
 }
 

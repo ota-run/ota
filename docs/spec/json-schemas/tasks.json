@@ -69,6 +69,7 @@
                 "items": { "type": "string" }
               },
               "safe_for_agent": { "type": "boolean" },
+              "internal": { "type": "boolean" },
               "variants": {
                 "type": "array",
                 "items": {
@@ -171,6 +172,7 @@
                       "items": { "type": "string" }
                     },
                     "safe_for_agent": { "type": "boolean" },
+                    "internal": { "type": "boolean" },
                     "variants": {
                       "type": "array",
                       "items": {

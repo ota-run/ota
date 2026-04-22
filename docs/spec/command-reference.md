@@ -238,6 +238,7 @@ List tasks from a validated contract.
 ```bash
 ota tasks [PATH]
 ota tasks --json [PATH]
+ota tasks --all [PATH]
 ota tasks --member api [PATH]
 ota tasks --member api --member web --json [PATH]
 ```
@@ -248,6 +249,7 @@ Current behavior:
 - when a root contract declares `workspace.type: monorepo`, plain `ota tasks` lists root tasks and grouped summaries for each declared member
 - when `--member` is set, lists tasks from the merged member contract
 - repeated `--member` values list tasks for those members in the provided order
+- hides `internal: true` tasks by default and includes them only when `--all` is set
 - prints tasks in deterministic order
 - resolves the execution form for the current OS
 - includes task metadata when present
@@ -257,6 +259,7 @@ Current behavior:
 - includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
 - `--use` keeps the usage line but also shows `description` and `notes` when present
+- `--all` includes orchestration tasks marked `internal: true`; those entries carry `internal: true` in JSON output
 
 Text output:
 
@@ -1759,7 +1762,7 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - validates workspace shape and present repo contracts
 - preserves workspace dependency order in output
-- lists task declarations for each acquired repo contract, including task descriptions and declared `after_success`, `after_failure`, and `after_always` hook relationships when the repo contract declares them
+- lists non-internal task declarations for each acquired repo contract, including task descriptions and declared `after_success`, `after_failure`, and `after_always` hook relationships when the repo contract declares them
 - reports non-acquired repos with `acquired: false` and empty task lists
 - does not execute tasks
 

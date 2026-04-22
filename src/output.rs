@@ -22,7 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
@@ -1668,14 +1668,14 @@ pub struct AgentSummary<'a> {
     pub entrypoint: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_task: Option<&'a str>,
-    #[serde(skip_serializing_if = "slice_is_empty")]
-    pub safe_tasks: &'a [String],
-    #[serde(skip_serializing_if = "slice_is_empty")]
-    pub verify_after_changes: &'a [String],
-    #[serde(skip_serializing_if = "slice_is_empty")]
-    pub writable_paths: &'a [String],
-    #[serde(skip_serializing_if = "slice_is_empty")]
-    pub protected_paths: &'a [String],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub safe_tasks: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub verify_after_changes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub writable_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub protected_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bootstrap: Option<AgentBootstrapSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1687,10 +1687,10 @@ impl<'a> AgentSummary<'a> {
         let summary = Self {
             entrypoint: agent.entrypoint.as_deref(),
             default_task: agent.default_task.as_deref(),
-            safe_tasks: &agent.safe_tasks,
-            verify_after_changes: &agent.verify_after_changes,
-            writable_paths: &agent.writable_paths,
-            protected_paths: &agent.protected_paths,
+            safe_tasks: agent.safe_tasks.clone(),
+            verify_after_changes: agent.verify_after_changes.clone(),
+            writable_paths: agent.writable_paths.clone(),
+            protected_paths: agent.protected_paths.clone(),
             bootstrap: agent
                 .bootstrap
                 .as_ref()
@@ -1698,15 +1698,37 @@ impl<'a> AgentSummary<'a> {
             notes: agent.notes.as_deref(),
         };
 
-        (summary.entrypoint.is_some()
-            || summary.default_task.is_some()
-            || !summary.safe_tasks.is_empty()
-            || !summary.verify_after_changes.is_empty()
-            || !summary.writable_paths.is_empty()
-            || !summary.protected_paths.is_empty()
-            || summary.bootstrap.is_some()
-            || summary.notes.is_some())
-        .then_some(summary)
+        (!summary.is_empty()).then_some(summary)
+    }
+
+    pub fn retain_visible_tasks(&mut self, visible_task_names: &BTreeSet<String>) {
+        if self
+            .entrypoint
+            .is_some_and(|entrypoint| !visible_task_names.contains(entrypoint))
+        {
+            self.entrypoint = None;
+        }
+        if self
+            .default_task
+            .is_some_and(|default_task| !visible_task_names.contains(default_task))
+        {
+            self.default_task = None;
+        }
+        self.safe_tasks
+            .retain(|task| visible_task_names.contains(task.as_str()));
+        self.verify_after_changes
+            .retain(|task| visible_task_names.contains(task.as_str()));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entrypoint.is_none()
+            && self.default_task.is_none()
+            && self.safe_tasks.is_empty()
+            && self.verify_after_changes.is_empty()
+            && self.writable_paths.is_empty()
+            && self.protected_paths.is_empty()
+            && self.bootstrap.is_none()
+            && self.notes.is_none()
     }
 }
 
@@ -1773,12 +1795,14 @@ pub struct TaskSummary<'a> {
     pub script: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_variant_os: Option<&'a str>,
-    pub depends_on: &'a [String],
-    pub requires_services: &'a [String],
-    pub after_success: &'a [String],
-    pub after_failure: &'a [String],
-    pub after_always: &'a [String],
+    pub depends_on: Vec<String>,
+    pub requires_services: Vec<String>,
+    pub after_success: Vec<String>,
+    pub after_failure: Vec<String>,
+    pub after_always: Vec<String>,
     pub safe_for_agent: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub internal: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<TaskVariantView<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1810,12 +1834,13 @@ impl<'a> TaskSummary<'a> {
             run: (resolved_execution.kind == "run").then_some(resolved_execution.body),
             script: (resolved_execution.kind == "script").then_some(resolved_execution.body),
             selected_variant_os: resolved_execution.os,
-            depends_on: &task.depends_on,
-            requires_services: &task.requires_services,
-            after_success: &task.after_success,
-            after_failure: &task.after_failure,
-            after_always: &task.after_always,
+            depends_on: task.depends_on.clone(),
+            requires_services: task.requires_services.clone(),
+            after_success: task.after_success.clone(),
+            after_failure: task.after_failure.clone(),
+            after_always: task.after_always.clone(),
             safe_for_agent: task.safe_for_agent,
+            internal: task.internal,
             variants: task
                 .variants
                 .iter()
@@ -1859,6 +1884,17 @@ impl<'a> TaskSummary<'a> {
                 })
                 .unwrap_or_default(),
         }
+    }
+
+    pub fn retain_visible_task_relationships(&mut self, visible_task_names: &BTreeSet<String>) {
+        self.depends_on
+            .retain(|task| visible_task_names.contains(task.as_str()));
+        self.after_success
+            .retain(|task| visible_task_names.contains(task.as_str()));
+        self.after_failure
+            .retain(|task| visible_task_names.contains(task.as_str()));
+        self.after_always
+            .retain(|task| visible_task_names.contains(task.as_str()));
     }
 }
 

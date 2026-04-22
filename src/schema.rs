@@ -758,6 +758,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub safe_for_agent: bool,
     #[serde(default)]
+    pub internal: bool,
+    #[serde(default)]
     pub variants: Vec<TaskVariantSpec>,
     #[serde(default)]
     pub execution: Option<TaskModeExecutionSpec>,
