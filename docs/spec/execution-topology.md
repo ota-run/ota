@@ -158,6 +158,27 @@ tasks:
 This makes orchestration tasks and workload tasks honest without forcing Docker into the app image.
 `requires_services` lets a task declare that canonical services must be ready before its body runs, while ownership still stays with `services.<name>.manager`.
 
+### `execution.contexts.<name>.attachments.isolated_paths`
+
+Container contexts can keep platform-sensitive dependency trees isolated from the host tree by declaring workspace-relative paths that Ota should back with context-owned storage.
+
+```yaml
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24
+      attachments:
+        compose:
+          - local
+        isolated_paths:
+          - node_modules
+```
+
+This is the right boundary for dependency trees like `node_modules`, `.venv`, or other install artifacts that should be built for the container platform instead of inheriting host-native binaries.
+
 ### `tasks.<name>.runtime.kind: service`
 
 Long-running app workloads should keep their ingress declaration with the task that owns the process.
@@ -306,6 +327,7 @@ That keeps `doctor` honest and prevents false failures like “docker missing fr
 - validate requirements for each referenced context
 - validate service-manager availability in the control plane
 - validate endpoint projection for referenced services
+- surface `attachments.isolated_paths` in execution summaries so operators can see when a container context owns its dependency tree
 - validate readiness from the declared context
 - fail with topology errors when the contract describes an impossible communication path
 
@@ -325,7 +347,7 @@ That should fail explicitly instead of falling back to a guessed host path.
 1. resolve the contexts needed by the setup flow
 2. start required services through their managers in the control plane
 3. ensure workload attachments are valid
-4. run `setup` in the task context
+4. run `setup` in the task context with the same dependency-isolation mounts that task context declares
 5. re-check readiness from the declared contexts
 6. surface workload endpoints for any runtime-bearing task `ota up` actually executes during preparation, without pretending arbitrary app tasks were started
 
@@ -335,6 +357,7 @@ That should fail explicitly instead of falling back to a guessed host path.
 
 - resolve the task context
 - attach the workload to declared service topology when needed
+- mount any declared dependency-isolation paths before process start when the task runs in a container context
 - inject resolved runtime URL env values before process start when the projection is known
 - execute inside that context
 - record the resolved workload endpoint when the task declares one

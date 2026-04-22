@@ -4883,6 +4883,8 @@ case "$command" in
     ;;
   create)
     mount=""
+    workspace_mount=""
+    mounts=""
     name=""
     network=""
     env_entries=""
@@ -4905,6 +4907,13 @@ case "$command" in
           ;;
         -v)
           mount="$2"
+          mounts="${mounts}${2}
+"
+          case "$2" in
+            *:/workspace)
+              workspace_mount="$2"
+              ;;
+          esac
           shift 2
           ;;
         -w)
@@ -4935,7 +4944,8 @@ case "$command" in
           ;;
       esac
     done
-    host_dir="${mount%%:*}"
+    host_dir="${workspace_mount%%:*}"
+    printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$host_dir" > "$state_dir/$name.path"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ -n "$network" ]; then
@@ -4966,6 +4976,8 @@ case "$command" in
   run)
     detached=0
     mount=""
+    workspace_mount=""
+    mounts=""
     name=""
     labels=""
     network=""
@@ -4997,6 +5009,13 @@ case "$command" in
           ;;
         -v)
           mount="$2"
+          mounts="${mounts}${2}
+"
+          case "$2" in
+            *:/workspace)
+              workspace_mount="$2"
+              ;;
+          esac
           shift 2
           ;;
         -w)
@@ -5018,7 +5037,8 @@ case "$command" in
           ;;
       esac
     done
-    host_dir="${mount%%:*}"
+    host_dir="${workspace_mount%%:*}"
+    printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"

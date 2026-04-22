@@ -491,6 +491,8 @@ pub struct ExecutionEnvSummary<'a> {
 pub struct ExecutionContextAttachmentsSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub compose: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub isolated_paths: Vec<&'a str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -629,15 +631,21 @@ fn summarize_execution_context<'a>(
                 target: remote.target.as_deref(),
                 cwd: remote.cwd.as_deref(),
             }),
-        attachments: (!context.attachments.compose.is_empty()).then(|| {
-            ExecutionContextAttachmentsSummary {
-                compose: context
-                    .attachments
-                    .compose
-                    .iter()
-                    .map(String::as_str)
-                    .collect(),
-            }
+        attachments: (!context.attachments.compose.is_empty()
+            || !context.attachments.isolated_paths.is_empty())
+        .then(|| ExecutionContextAttachmentsSummary {
+            compose: context
+                .attachments
+                .compose
+                .iter()
+                .map(String::as_str)
+                .collect(),
+            isolated_paths: context
+                .attachments
+                .isolated_paths
+                .iter()
+                .map(String::as_str)
+                .collect(),
         }),
     }
 }

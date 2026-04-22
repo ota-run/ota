@@ -1461,6 +1461,7 @@ Current behavior:
 - when a root contract declares `workspace.type: monorepo`, plain `ota clean` reports the root cleanup result and grouped member cleanup results
 - when `--member` is set, targets those merged member contracts in the provided order
 - when the effective execution mode is `container` with `lifecycle: persistent`, removes the named persistent container for that repo
+- when a container context declares `attachments.isolated_paths`, also removes the Ota-managed dependency cache for those paths
 - `ota clean --stale` does not require `ota.yaml`; it scans available local container engines for exited ota-managed containers from any repo
 - stale cleanup uses ota ownership labels first and falls back to legacy `ota-*` container names for older persistent backends
 - if a local container engine cannot answer `ps`, stale cleanup continues with other available engines and only fails when none of them can be queried

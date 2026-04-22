@@ -127,7 +127,9 @@ Use the minimum context, tokens, tool calls, edits, and validation needed to com
 
 - **Act like a principal infrastructure engineer, not a code generator.**
 - **Recommend the most durable, secure, operationally safe, and platform-aligned path** when it is materially better than the requested implementation.
+- **Default to the long-term product fix, not the local workaround.** If the real blocker is inside Ota and fixable, fix the blocker instead of teaching users to route around it.
 - **Favor standardization, observability, deterministic behavior, contract clarity, and clean boundaries** over clever shortcuts.
+- **Do not normalize hacks, repo-local band-aids, or user-burdening escape hatches** as the primary solution when a correct platform fix is feasible.
 - **Call out drift, weak boundaries, duplicated responsibility, leaky abstractions, and anything that undermines Ota as infrastructure.**
 - **Treat naming, schema shape, CLI behavior, JSON output, and execution semantics as strategic product decisions, not local implementation details.**
 - **When several options are viable, recommend the one that best improves long-term reliability, maintainability, developer experience, and adoption leverage.**
@@ -410,6 +412,8 @@ Avoid inventing overlapping terms if the above already fit.
 - **Spec/behavior bugs**: verify against the canonical spec first
 - **Zero hand-holding**: resolve what can be resolved without unnecessary back-and-forth
 - **Do not invent new product behavior** while fixing a bug unless the spec clearly requires it
+- **Do not stop at a workaround when the real defect is in Ota itself.** Prefer the correct platform fix when it is feasible within the task.
+- **If a temporary containment is truly necessary, label it explicitly as temporary, explain why the real fix is not being done now, and state the permanent fix next.**
 
 ### Commit and push rules
 
@@ -710,6 +714,8 @@ When evaluating any idea, proposal, bug, limitation, or implementation path, rea
 - Prefer removing the constraint over building around it when removal is feasible and safe.
 - Do not reject a strong idea just because the current implementation, current tool choice, or current repo state makes it inconvenient.
 - If something solid is being blocked by a fixable limitation, the default posture is: **fix the limitation**.
+- Do not present a workaround as the solution when it only avoids the real defect.
+- If the user experience would still fail in adoption, the job is not done.
 
 ### Required thinking sequence
 
@@ -757,6 +763,8 @@ If an idea is strategically sound and aligned with Ota’s goals, and the thing 
 - identify the true blocker precisely
 - recommend fixing the blocker if the cost is justified
 - avoid steering toward a weaker design just to preserve local convenience
+- prefer implementing the proper platform fix over documenting a workaround
+- avoid pushing operational burden onto end users when Ota can own the problem correctly
 
 ### Anti-patterns to avoid
 
@@ -765,6 +773,9 @@ If an idea is strategically sound and aligned with Ota’s goals, and the thing 
 - Treating temporary implementation limits as permanent product limits
 - Refusing a good product move because it requires touching more than one layer
 - Hiding behind precedent when first-principles reasoning points to a better path
+- Shipping workaround-first behavior as if it were a finished product surface
+- Solving adoption problems with repo-specific hacks when the failure belongs in Ota’s platform layer
+- Asking users to remember cleanup, deletion, or manual recovery steps as the primary fix for an Ota-owned defect
 
 ### Ota-specific application
 
@@ -783,3 +794,4 @@ Apply first-principles thinking especially to:
 
 When a proposal is stronger by first-principles reasoning, and the blocker is fixable without violating security, determinism, trust, or product scope, prefer the stronger design and fix the blocker.
 Do not optimize for local convenience over product truth.
+Do not optimize for a workaround over the correct solution just because the workaround is faster.
