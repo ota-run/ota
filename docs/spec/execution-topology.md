@@ -179,7 +179,7 @@ execution:
 
 This is the right boundary for dependency trees like `node_modules`, `.venv`, or other install artifacts that should be built for the container platform instead of inheriting host-native binaries.
 Source still stays bind-mounted from the host at `/workspace`; only the declared dependency paths are overlaid with named volumes.
-`ota clean` removes these Ota-managed volumes so teams can reset container dependency state deterministically.
+Ota labels those volumes with a stable repo ownership token stored under `.ota/ownership-id`, and `ota clean` rediscovers and removes them even if the repo path, image, engine, or declared isolated paths drift later.
 
 ### `tasks.<name>.runtime.kind: service`
 

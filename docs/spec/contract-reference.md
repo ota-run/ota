@@ -335,7 +335,7 @@ Current command behavior:
 - `ota up` can also override execution mode and lifecycle for the `setup` phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
 - `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`, including Ota-managed dependency isolation volumes for those container contexts
-- `ota clean` also removes Ota-managed dependency isolation volumes for container contexts that declare `attachments.isolated_paths`, even when those contexts run with `lifecycle: ephemeral`
+- `ota clean` also rediscovers and removes Ota-managed dependency isolation volumes for container contexts that declare `attachments.isolated_paths`, even when those contexts run with `lifecycle: ephemeral` or the contract has drifted away from the original isolated-path declaration; the cleanup sweep keys off the repo ownership token stored under `.ota/ownership-id`
 - `ota clean` currently has no remote cleanup action; remote-backed repos report `No cleanup needed` today
 - `ota doctor` checks the required backend CLI for the selected execution context or preferred backend and reports unsupported shipped remote providers early
 - `ota doctor` warns on suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` not starting `pod/`)

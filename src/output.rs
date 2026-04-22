@@ -1753,6 +1753,8 @@ impl<'a> AgentBootstrapTargetSummary<'a> {
 pub struct TaskSummary<'a> {
     pub name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
@@ -1786,6 +1788,7 @@ impl<'a> TaskSummary<'a> {
             .expect("validated task must resolve to a default or variant execution");
         Self {
             name,
+            context: task.context.as_deref(),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),
