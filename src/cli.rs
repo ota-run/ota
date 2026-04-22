@@ -102,6 +102,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Include internal task nodes used for orchestration.
+        #[arg(long, action = ArgAction::SetTrue)]
+        all: bool,
         /// Print compact runnable usage lines for each task.
         #[arg(long = "use", action = ArgAction::SetTrue)]
         use_cmd: bool,
@@ -1287,6 +1290,7 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
     ];
     const SWITCHES: &[&str] = &[
         "--json",
+        "--all",
         "--use",
         "--write",
         "--stream",
@@ -1574,8 +1578,9 @@ fn shared_task_candidates_from_contracts(
     for contract in &contracts {
         let task_names = contract
             .tasks
-            .keys()
-            .cloned()
+            .iter()
+            .filter(|(_, task)| !task.internal)
+            .map(|(name, _)| name.clone())
             .collect::<std::collections::BTreeSet<_>>();
         shared = Some(match shared {
             Some(existing) => existing.intersection(&task_names).cloned().collect(),
@@ -3584,6 +3589,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Tasks {
             json,
+            all,
             use_cmd,
             member,
             path,
@@ -3592,6 +3598,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             &member,
             use_cmd,
+            all,
             format_from_json(json),
             debug,
         ),
@@ -12262,6 +12269,51 @@ tasks:
     }
 
     #[test]
+    fn run_executes_internal_dependencies() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    internal: true
+    run: echo ready > .ota-internal-marker
+  dev:
+    depends_on:
+      - setup
+    run: echo dev
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", "--receipt", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        assert!(fixture.dir.path().join(".ota-internal-marker").exists());
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("depends_on for `dev`"));
+    }
+
+    #[test]
+    fn run_reports_when_requested_task_is_internal() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("marked internal"));
+    }
+
+    #[test]
     fn run_success_followup_command_keeps_repo_target_for_default_contracts() {
         let _guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
@@ -13328,6 +13380,190 @@ tasks:
             json["tasks"][1]["notes"],
             "Use this to verify the code before merging.\n"
         );
+    }
+
+    #[test]
+    fn tasks_omit_internal_tasks_by_default() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+  dev:
+    depends_on:
+      - setup
+    run: echo dev
+"#,
+        );
+
+        let text_output = run_with(["ota", "tasks", fixture.path()]);
+        assert_eq!(text_output.exit_code, 0);
+        let text = strip_ansi(&text_output.stdout);
+        assert!(text.contains("ota run dev"));
+        assert!(!text.contains("ota run setup"));
+
+        let json_output = run_with(["ota", "tasks", "--json", fixture.path()]);
+        assert_eq!(json_output.exit_code, 0);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        let tasks = json["tasks"].as_array().expect("tasks array");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["name"], "dev");
+    }
+
+    #[test]
+    fn tasks_all_includes_internal_tasks_and_marks_json() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+  dev:
+    depends_on:
+      - setup
+    run: echo dev
+"#,
+        );
+
+        let use_output = run_with(["ota", "tasks", "--use", "--all", fixture.path()]);
+        assert_eq!(use_output.exit_code, 0);
+        let use_text = strip_ansi(&use_output.stdout);
+        assert!(use_text.contains("Command: `ota run setup`"));
+        assert!(use_text.contains("Visibility: internal"));
+
+        let json_output = run_with(["ota", "tasks", "--all", "--json", fixture.path()]);
+        assert_eq!(json_output.exit_code, 0);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        let tasks = json["tasks"].as_array().expect("tasks array");
+        assert_eq!(tasks.len(), 2);
+        let setup = tasks
+            .iter()
+            .find(|task| task["name"] == "setup")
+            .expect("setup task in --all listing");
+        assert_eq!(setup["internal"], true);
+    }
+
+    #[test]
+    fn tasks_default_listing_omits_internal_task_relationships() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+  dev:
+    depends_on:
+      - setup
+    after_success:
+      - setup
+    after_failure:
+      - setup
+    after_always:
+      - setup
+    run: echo dev
+"#,
+        );
+
+        let json_output = run_with(["ota", "tasks", "--json", fixture.path()]);
+        assert_eq!(json_output.exit_code, 0);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        let task = json["tasks"]
+            .as_array()
+            .and_then(|tasks| tasks.first())
+            .expect("dev task should be present");
+        assert_eq!(task["name"], "dev");
+        assert_eq!(task["depends_on"], json!([]));
+        assert_eq!(task["after_success"], json!([]));
+        assert_eq!(task["after_failure"], json!([]));
+        assert_eq!(task["after_always"], json!([]));
+
+        let text_output = run_with(["ota", "tasks", fixture.path()]);
+        assert_eq!(text_output.exit_code, 0);
+        let text = strip_ansi(&text_output.stdout);
+        assert!(text.contains("Depends On: -"));
+        assert!(text.contains("After Success: -"));
+        assert!(text.contains("After Failure: -"));
+        assert!(text.contains("After Always: -"));
+    }
+
+    #[test]
+    fn tasks_default_listing_filters_internal_agent_task_references() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+  dev:
+    run: echo dev
+agent:
+  entrypoint: setup
+  default_task: setup
+  safe_tasks:
+    - setup
+    - dev
+  verify_after_changes:
+    - setup
+    - dev
+"#,
+        );
+
+        let json_output = run_with(["ota", "tasks", "--json", fixture.path()]);
+        assert_eq!(json_output.exit_code, 0);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert!(json["agent"]["entrypoint"].is_null());
+        assert!(json["agent"]["default_task"].is_null());
+        assert_eq!(json["agent"]["safe_tasks"], json!(["dev"]));
+        assert_eq!(json["agent"]["verify_after_changes"], json!(["dev"]));
+
+        let all_output = run_with(["ota", "tasks", "--all", "--json", fixture.path()]);
+        assert_eq!(all_output.exit_code, 0);
+        let all_json: Value = serde_json::from_str(&all_output.stdout).unwrap();
+        assert_eq!(all_json["agent"]["entrypoint"], "setup");
+        assert_eq!(all_json["agent"]["default_task"], "setup");
+        assert_eq!(all_json["agent"]["safe_tasks"], json!(["setup", "dev"]));
+        assert_eq!(
+            all_json["agent"]["verify_after_changes"],
+            json!(["setup", "dev"])
+        );
+    }
+
+    #[test]
+    fn tasks_use_omits_internal_tasks_by_default() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+  dev:
+    depends_on:
+      - setup
+    run: echo dev
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--use", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Command: `ota run dev`"));
+        assert!(!text.contains("Command: `ota run setup`"));
     }
 
     #[test]
@@ -23498,6 +23734,32 @@ tasks:
     }
 
     #[test]
+    fn repo_run_task_completion_hides_internal_tasks() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: completion-demo
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+  dev:
+    run: npm run dev
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "run".into(), "".into()],
+        });
+
+        let values = completion_values(complete_repo_run_task_candidates(std::ffi::OsStr::new("")));
+        assert!(values.contains(&String::from("dev")));
+        assert!(!values.contains(&String::from("setup")));
+    }
+
+    #[test]
     fn repo_run_task_completion_preserves_colon_task_names() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -28300,6 +28562,47 @@ tasks:
         assert_eq!(json["repos"][0]["tasks"][0]["requires_services"], json!([]));
         assert_eq!(json["repos"][1]["name"], "api");
         assert_eq!(json["repos"][1]["depends_on"][0], "db");
+    }
+
+    #[test]
+    fn workspace_tasks_hides_internal_tasks() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  setup:
+    internal: true
+    run: echo setup
+  dev:
+    depends_on:
+      - setup
+    after_success:
+      - setup
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let db_tasks = json["repos"][0]["tasks"]
+            .as_array()
+            .expect("db tasks should be an array");
+        assert_eq!(db_tasks.len(), 1);
+        assert_eq!(db_tasks[0]["name"], "dev");
+        assert_eq!(db_tasks[0]["depends_on"], json!([]));
+        assert_eq!(db_tasks[0]["after_success"], json!([]));
+        assert_eq!(json["summary"]["task_count"], 2);
     }
 
     #[test]

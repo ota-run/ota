@@ -2429,9 +2429,21 @@ fn execute_task_with_hooks(
     if state.target.is_none() {
         state.target = command_output.target;
     }
+    let requested_execution_note = if requested_relation {
+        let mut notes = Vec::new();
+        if task.internal {
+            notes.push(format!("task `{task_name}` is marked internal"));
+        }
+        if let Some(note) = command_output.execution_note.clone() {
+            notes.push(note);
+        }
+        (!notes.is_empty()).then(|| notes.join("; "))
+    } else {
+        None
+    };
     if requested_relation {
         state.runtime = command_output.runtime;
-        if let Some(note) = command_output.execution_note.clone() {
+        if let Some(note) = requested_execution_note.clone() {
             state.execution_note = Some(note);
         }
     }
@@ -2440,11 +2452,7 @@ fn execute_task_with_hooks(
         exit_code: command_output.exit_code,
         relation,
         generation,
-        execution_note: if requested_relation {
-            command_output.execution_note.clone()
-        } else {
-            None
-        },
+        execution_note: requested_execution_note,
     });
 
     let hook_exit_code = execute_post_hooks(
@@ -8858,6 +8866,43 @@ tasks:
                 if task == "dev" && backend == "native"
         ));
         assert!(!fixture.dir.path().join("dependency.txt").exists());
+    }
+
+    #[test]
+    fn run_task_captured_rejects_host_port_override_before_requires_services_side_effects() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    start: printf started > service.txt
+    healthcheck: test -f service.txt
+tasks:
+  dev:
+    requires_services:
+      - postgres
+    run: echo ok
+"#,
+        );
+
+        let error = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(4000),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("native execution should reject --host-port override");
+        assert!(matches!(
+            error,
+            RunError::HostPortOverrideUnsupportedBackend { task, backend }
+                if task == "dev" && backend == "native"
+        ));
+        assert!(!fixture.dir.path().join("service.txt").exists());
     }
 
     #[cfg(unix)]

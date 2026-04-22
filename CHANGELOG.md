@@ -27,6 +27,8 @@
 ## Unreleased
 
 - hardened `ota clean` cleanup integrity: drift rediscovery now keys off repo ownership labels plus `.ota/managed-engines`, falls back to best-effort local engine probing only when no repo engine evidence exists, and keeps ownership-ambiguous managed state visible without unsafe deletion
+- added `tasks.<name>.internal: true` as an orchestration visibility boundary: internal tasks still run normally in dependency/hook graphs and via direct `ota run`, while default `ota tasks`/`ota tasks --use` omit them unless `--all` is requested (with `internal: true` surfaced in JSON for included internal entries)
+- aligned task discovery surfaces with `internal: true`: `ota run` shell completion and `ota workspace tasks` now hide internal task nodes by default so operator-facing listings stay consistent
 - fixed ephemeral container `ota run <task> --host-port <port>` execution truth so the override now drives the actual engine `-p` publication args (not just projected metadata), with aligned runtime env/receipt/summary port reporting
 - hardened persistent container execution into a reconciled model: ota now reuses named containers when the resolved execution shape is equivalent, recreates them when image/publication/dependency-isolation shape drifts, and records that reuse/recreate truth in run summaries and receipts
 - fixed persistent reconciliation and cleanup tracking for legacy unlabeled containers: ota now detects repo-scoped legacy persistent containers during reconciliation to clear conflicting old host publications, and `ota clean` now retains `.ota/managed-engines` when repo-scoped ambiguous managed state still exists on an engine

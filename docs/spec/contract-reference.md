@@ -773,6 +773,7 @@ Fields:
 - `requires_services`: optional list of service names that must be ready before the task body runs
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
+- `internal`: optional boolean; marks orchestration plumbing tasks that stay in the graph but are hidden from default `ota tasks` discovery surfaces
 
 `execution` fields:
 
@@ -1040,6 +1041,7 @@ Current execution model:
 - `after_failure` runs only when the task body exits non-zero
 - `after_always` runs after either branch, but only when the task body actually ran
 - hook tasks run in declared order
+- tasks marked `internal: true` remain normal graph nodes for `depends_on` and hooks, but `ota tasks` hides them unless `--all` is requested
 - hook failures affect the final task result for the parent task
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec
