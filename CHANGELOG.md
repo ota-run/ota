@@ -27,6 +27,7 @@
 ## Unreleased
 
 - hardened `ota clean` cleanup integrity: drift rediscovery now keys off repo ownership labels plus `.ota/managed-engines`, falls back to best-effort local engine probing only when no repo engine evidence exists, and keeps ownership-ambiguous managed state visible without unsafe deletion
+- fixed ephemeral container `ota run <task> --host-port <port>` execution truth so the override now drives the actual engine `-p` publication args (not just projected metadata), with aligned runtime env/receipt/summary port reporting
 - added `ota run --host-port <port>` as a one-run projected host/public port override for container workload listeners with `project.host.port.mode: fixed`, keeping internal bind ports unchanged while aligning runtime env (`OTA_PUBLIC_URL`/`OTA_PUBLIC_PORT`), summaries, and receipts to the overridden public URL
 - added task-level mode-aware execution branches under `tasks.<name>.execution` so one task can declare mode-specific `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`, with `execution.default_mode` support, clear run-time errors for missing mode branches, and updated `ota tasks` JSON/text branch rendering
 - replaced the generic task-exit banner for container host-port bind conflicts with a specific `Host publication failed` error across both captured and interactive runs, pointing at the owning listener field and carrying the ingress-specific run-summary note
