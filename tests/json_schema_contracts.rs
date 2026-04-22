@@ -173,6 +173,11 @@ fn up_schema_keeps_aggregate_member_output_separate_from_repo_receipts() {
     );
     assert!(aggregate["properties"].get("receipt").is_none());
     assert!(
+        aggregate_member_variants[0]["properties"]
+            .get("stderr")
+            .is_some()
+    );
+    assert!(
         aggregate_member_variants[1]["properties"]
             .get("contract_identity")
             .is_some()
@@ -664,10 +669,13 @@ fn up_schema_includes_member_grouping() {
     assert!(preview_properties.get("dry_run").is_some());
     assert!(preview_properties.get("execution").is_some());
     assert!(preview_properties.get("plan").is_some());
+    assert!(preview_properties.get("stderr").is_some());
+    assert!(runtime_properties.get("stderr").is_some());
     assert!(runtime_properties.get("members").is_some());
     assert!(runtime_member_properties.get("member").is_some());
     assert!(runtime_member_properties.get("status").is_some());
     assert!(runtime_member_properties.get("phase").is_some());
+    assert!(runtime_member_properties.get("stderr").is_some());
     assert!(preview_member_properties.get("dry_run").is_some());
     assert!(preview_member_properties.get("plan").is_some());
     assert_eq!(validate_failure_ref, "./validate.json#/oneOf/1");
