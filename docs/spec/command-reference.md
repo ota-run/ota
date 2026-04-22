@@ -644,7 +644,8 @@ ota run dev --host-port 4000
   - `execution.default_context`
   - legacy `execution.preferred` / `execution.backends`
 - for container tasks, runs through the first available configured container engine CLI, falling back to `docker` when no engines are listed
-- for container tasks, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
+- for container tasks, `execution.lifecycle: ephemeral` uses a fresh container
+- for container tasks, `execution.lifecycle: persistent` reconciles a named container: ota reuses it when the resolved execution shape is equivalent and recreates it when image/publication/isolation shape drifts
 - supports remote execution when the resolved task/context backend declares `provider` and `target`
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
 - remote target guidance:
@@ -660,7 +661,7 @@ ota run dev --host-port 4000
 - `OTA_PUBLIC_PORT`
 - `OTA_PUBLIC_URL_<LISTENER>`
 - when multiple listeners are projected, exactly one projected listener must set `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and summary endpoint rendering
-- for container listeners with `project.host.port.mode: auto`, `execution.lifecycle: ephemeral` pre-reserves a host port before spawn and retries bounded host-port conflicts; `execution.lifecycle: persistent` resolves the running container's published host mapping before exec
+- for container listeners with `project.host.port.mode: auto`, `execution.lifecycle: ephemeral` pre-reserves a host port before spawn and retries bounded host-port conflicts; `execution.lifecycle: persistent` resolves the reconciled container's published host mapping before exec
 - `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
 - `--host-port` is valid only when the selected task resolves to container execution and that selected primary listener uses `project.host.port.mode: fixed`
 - `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, and ambiguous multi-listener projections without one primary listener

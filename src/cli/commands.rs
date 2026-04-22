@@ -22359,6 +22359,7 @@ tasks:
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
                 generation: 0,
+                execution_note: None,
             }],
             0,
             true,
@@ -24246,6 +24247,7 @@ tasks:
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
                 generation: 0,
+                execution_note: None,
             }],
             0,
             true,
@@ -24299,6 +24301,7 @@ tasks:
                 exit_code: 127,
                 relation: TaskExecutionRelation::Requested,
                 generation: 0,
+                execution_note: None,
             }],
             127,
             false,
@@ -24318,6 +24321,52 @@ tasks:
         assert!(rendered.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(!rendered.contains("Why: 🦦 RUN SUMMARY"));
         assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nScope:"));
+    }
+
+    #[test]
+    fn run_summary_uses_persistent_execution_note_from_receipt_step() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: Some(String::from(
+                    "persistent container recreated (execution shape changed)",
+                )),
+            }],
+            0,
+            true,
+            Some(String::from("container")),
+            None,
+            None,
+        );
+
+        let rendered = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        assert!(rendered.contains("persistent container recreated (execution shape changed)"));
     }
 
     #[test]
@@ -24366,6 +24415,7 @@ tasks:
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
                 generation: 0,
+                execution_note: None,
             }],
             0,
             true,
@@ -24431,6 +24481,7 @@ tasks:
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
                 generation: 0,
+                execution_note: None,
             }],
             0,
             true,
@@ -24456,6 +24507,7 @@ tasks:
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
                 generation: 0,
+                execution_note: None,
             }],
             0,
             true,
@@ -24519,6 +24571,7 @@ tasks:
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
                 generation: 0,
+                execution_note: None,
             }],
             0,
             true,
@@ -24608,6 +24661,7 @@ tasks:
                     exit_code: 0,
                     relation: TaskExecutionRelation::Requested,
                     generation: 0,
+                    execution_note: None,
                 },
                 ExecutedTaskStep {
                     name: String::from("build"),
@@ -24616,6 +24670,7 @@ tasks:
                         parent: String::from("version:bump"),
                     },
                     generation: 1,
+                    execution_note: None,
                 },
                 ExecutedTaskStep {
                     name: String::from("setup"),
@@ -24624,6 +24679,7 @@ tasks:
                         parent: String::from("build"),
                     },
                     generation: 1,
+                    execution_note: None,
                 },
             ],
             0,
@@ -28330,6 +28386,15 @@ fn run_execution_receipt(
 }
 
 fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) -> Option<String> {
+    if let Some(note) = step.execution_note.as_deref() {
+        return match &step.relation {
+            TaskExecutionRelation::Requested if step.name == requested_task => {
+                Some(format!("requested task; {note}"))
+            }
+            _ => Some(note.to_string()),
+        };
+    }
+
     match &step.relation {
         TaskExecutionRelation::Requested => {
             if step.name == requested_task {
@@ -30591,8 +30656,16 @@ fn render_execution_receipt_summary_block(
         .unwrap_or("native")
         .trim()
         .to_string();
+    let task = task.unwrap_or_else(|| {
+        receipt
+            .steps
+            .first()
+            .map(|step| step.label.as_str())
+            .unwrap_or("setup")
+    });
     let note = match (mode.as_str(), receipt.lifecycle.as_deref()) {
-        ("container", Some("persistent")) => String::from("reusing persistent container backend"),
+        ("container", Some("persistent")) => persistent_container_note_from_receipt(receipt, task)
+            .unwrap_or_else(|| String::from("reusing persistent container backend")),
         ("container", Some("ephemeral")) => {
             String::from("using a fresh container image for this run")
         }
@@ -30602,13 +30675,6 @@ fn render_execution_receipt_summary_block(
         ("native", _) => String::from("running on the host environment"),
         (other, _) => format!("executing through the `{other}` backend"),
     };
-    let task = task.unwrap_or_else(|| {
-        receipt
-            .steps
-            .first()
-            .map(|step| step.label.as_str())
-            .unwrap_or("setup")
-    });
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
@@ -30653,6 +30719,21 @@ fn render_execution_receipt_summary_block(
     ));
     lines.push(summary_detail_line("Note:", &note));
     lines.join("\n")
+}
+
+fn persistent_container_note_from_receipt(
+    receipt: &ExecutionReceipt,
+    task: &str,
+) -> Option<String> {
+    receipt.steps.iter().find_map(|step| {
+        if step.label != task {
+            return None;
+        }
+        let detail = step.detail.as_deref()?;
+        let note = detail.strip_prefix("requested task; ").unwrap_or(detail);
+        note.contains("persistent container")
+            .then(|| note.to_string())
+    })
 }
 
 fn summary_detail_line(label: &str, value: &str) -> String {
