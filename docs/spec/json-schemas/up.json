@@ -98,6 +98,7 @@
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/finding" }
         },
+        "stderr": { "type": "string" },
         "members": {
           "type": "array",
           "items": {
@@ -216,6 +217,7 @@
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/finding" }
         },
+        "stderr": { "type": "string" },
         "receipt": {
           "type": "object",
           "additionalProperties": false,
@@ -344,6 +346,7 @@
         },
         "service": { "type": "string" },
         "task": { "type": "string" },
+        "stderr": { "type": "string" },
         "exit_code": { "type": "integer" },
         "members": {
           "type": "array",
@@ -362,6 +365,7 @@
                     "type": "array",
                     "items": { "$ref": "./shared.json#/$defs/finding" }
                   },
+                  "stderr": { "type": "string" },
                   "service": { "type": "string" },
                   "task": { "type": "string" },
                   "exit_code": { "type": "integer" }
@@ -500,6 +504,7 @@
                     "type": "array",
                     "items": { "$ref": "./shared.json#/$defs/finding" }
                   },
+                  "stderr": { "type": "string" },
                   "service": { "type": "string" },
                   "task": { "type": "string" },
                   "exit_code": { "type": "integer" }
