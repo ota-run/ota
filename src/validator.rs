@@ -22,6 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::execution::normalize_dependency_isolated_path;
 use crate::schema::{
     AgentConfig, Backend, Contract, EnvConfig, ExtensionKind, RuntimeRequirement, ServiceSpec,
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
@@ -480,6 +481,26 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             if compose_target.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
                     "`execution.contexts.{name}.attachments.compose` must not contain empty values"
+                )));
+            }
+        }
+
+        if context.backend != Backend::Container && !context.attachments.isolated_paths.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "`execution.contexts.{name}.attachments.isolated_paths` requires `backend: container`"
+            )));
+        }
+
+        for isolated_path in &context.attachments.isolated_paths {
+            if isolated_path.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`execution.contexts.{name}.attachments.isolated_paths` must not contain empty values"
+                )));
+                continue;
+            }
+            if normalize_dependency_isolated_path(isolated_path).is_none() {
+                errors.push(ValidationError::new(format!(
+                    "`execution.contexts.{name}.attachments.isolated_paths` entries must be relative paths without `..` or absolute prefixes"
                 )));
             }
         }
@@ -2402,6 +2423,37 @@ services:
             error
                 .to_string()
                 .contains("`execution.contexts.app.attachments.compose` references unknown compose manager `local`")
+        }));
+    }
+
+    #[test]
+    fn rejects_isolated_paths_on_non_container_contexts() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  setup:
+    run: echo ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("`execution.contexts.host.attachments.isolated_paths` requires `backend: container`")
         }));
     }
 

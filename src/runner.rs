@@ -24,11 +24,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::File;
+use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -41,8 +41,9 @@ use serde_json;
 use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
-    container_engine_candidates_from_backend, execution_image, matching_execution_context_name,
-    selected_container_engine, selected_container_engine_from_backend,
+    container_engine_candidates_from_backend, context_dependency_isolation_paths, execution_image,
+    matching_execution_context_name, selected_container_engine,
+    selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
     LoadPolicyPackError, PolicyPackSource, load_org_policy_pack_auto_details,
@@ -1297,8 +1298,13 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     let working_dir = contract_working_dir(contract_path);
     let mut cleaned = false;
     let mut visited = BTreeSet::new();
-    for (context_name, image, engine, publications) in cleanup_targets {
-        let identity_seed = container_identity_seed(context_name.as_deref(), &publications);
+    let mut visited_dependency_isolation_roots = BTreeSet::new();
+    for (context_name, image, engine, publications, dependency_isolation_paths) in cleanup_targets {
+        let identity_seed = container_identity_seed(
+            context_name.as_deref(),
+            &publications,
+            &dependency_isolation_paths,
+        );
         let container_name = persistent_container_name_for_seed(
             working_dir,
             &image,
@@ -1308,6 +1314,27 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         if !visited.insert((engine.clone(), container_name.clone())) {
             continue;
         }
+
+        if let Some(execution) = contract.execution.as_ref()
+            && let Some(context_name) = context_name.as_deref()
+            && let Some(context) = execution.contexts.get(context_name)
+            && context.backend == Backend::Container
+        {
+            if !dependency_isolation_paths.is_empty()
+                && let Some(root) = container_dependency_isolation_root(
+                    working_dir,
+                    Some(context_name),
+                    &image,
+                    &engine,
+                )
+            {
+                let root_key = root.display().to_string();
+                if visited_dependency_isolation_roots.insert(root_key) {
+                    cleaned |= remove_dependency_isolation_root("clean", &root)?;
+                }
+            }
+        }
+
         let inspect_exit_code =
             container_command_exit_code(&engine, &["inspect", &container_name], None, "clean")?;
         if inspect_exit_code != 0 {
@@ -1329,6 +1356,7 @@ fn persistent_cleanup_targets(
         String,
         String,
         Vec<ContainerPortPublication>,
+        Vec<String>,
     )>,
     RunError,
 > {
@@ -1353,12 +1381,14 @@ fn persistent_cleanup_targets(
                             .join(", "),
                     }
                 })?;
+            let dependency_isolation_paths = context_dependency_isolation_paths(context);
             for publications in task_container_publication_sets_for_context(contract, Some(name)) {
                 targets.push((
                     Some(name.clone()),
                     container.image.clone(),
                     engine.clone(),
                     publications,
+                    dependency_isolation_paths.clone(),
                 ));
             }
         }
@@ -1383,6 +1413,7 @@ fn persistent_cleanup_targets(
                 image.clone(),
                 engine.clone(),
                 publications,
+                Vec::new(),
             );
             if !targets.contains(&target) {
                 targets.push(target);
@@ -1617,6 +1648,7 @@ pub(crate) enum ResolvedExecutionBackend {
         lifecycle: Lifecycle,
         compose_networks: Vec<String>,
         publications: Vec<ContainerPortPublication>,
+        dependency_isolation_paths: Vec<String>,
     },
     Remote {
         provider: String,
@@ -2214,6 +2246,7 @@ fn execute_task_command(
             lifecycle,
             compose_networks,
             publications,
+            dependency_isolation_paths,
         } => execute_container_task_command(
             task_name,
             task.and_then(TaskSpec::service_runtime),
@@ -2228,6 +2261,7 @@ fn execute_task_command(
             *lifecycle,
             compose_networks,
             publications,
+            dependency_isolation_paths,
             mode,
         ),
         ResolvedExecutionBackend::Remote {
@@ -2788,7 +2822,7 @@ fn projected_runtime_public_endpoint_line(
 ) -> Option<String> {
     runtime_env
         .get("OTA_PUBLIC_URL")
-        .map(|endpoint| format!("Projected endpoint: {endpoint}"))
+        .map(|endpoint| format!("Endpoint (planned): {endpoint}"))
 }
 
 fn print_projected_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
@@ -3043,6 +3077,7 @@ fn task_container_publication_sets_for_context(
 fn container_identity_seed(
     context_name: Option<&str>,
     publications: &[ContainerPortPublication],
+    isolated_paths: &[String],
 ) -> Option<String> {
     let context_name = context_name?;
     let mut seed = context_name.to_string();
@@ -3064,6 +3099,16 @@ fn container_identity_seed(
                         publication.protocol as u8,
                     )
                 })
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    if !isolated_paths.is_empty() {
+        seed.push('|');
+        seed.push_str(
+            &isolated_paths
+                .iter()
+                .map(String::as_str)
                 .collect::<Vec<_>>()
                 .join(","),
         );
@@ -3162,6 +3207,10 @@ pub(crate) fn resolve_execution_backend(
 
             let context_name = effective.context_name.map(str::to_string);
             let publications = task_container_publications(contract, task_name);
+            let dependency_isolation_paths = selected_task_context(contract, task_name)
+                .filter(|(_, context)| context.backend == Backend::Container)
+                .map(|(_, context)| context_dependency_isolation_paths(context))
+                .unwrap_or_default();
 
             Ok(ResolvedExecutionBackend::Container {
                 context_name,
@@ -3173,6 +3222,7 @@ pub(crate) fn resolve_execution_backend(
                     .map(|(_, context)| compose_networks_for_context(context))
                     .unwrap_or_default(),
                 publications,
+                dependency_isolation_paths,
             })
         }
         Backend::Remote => effective
@@ -3272,6 +3322,7 @@ pub(crate) fn resolve_context_execution_backend(
                 lifecycle,
                 compose_networks: compose_networks_for_context(context),
                 publications: Vec::new(),
+                dependency_isolation_paths: context_dependency_isolation_paths(context),
             })
         }
         Backend::Remote => {
@@ -4247,6 +4298,7 @@ fn execute_container_task_command(
     lifecycle: Lifecycle,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
+    dependency_isolation_paths: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     if let Some(issue) = probe_container_backend(engine, task_name)? {
@@ -4300,6 +4352,7 @@ fn execute_container_task_command(
                     compose_networks,
                     &projection.publications,
                     &projection.listener_publications,
+                    dependency_isolation_paths,
                     mode,
                 )?;
 
@@ -4367,6 +4420,7 @@ fn execute_container_task_command(
             compose_networks,
             publications,
             &listener_publications,
+            dependency_isolation_paths,
             mode,
         ),
     }
@@ -4407,9 +4461,11 @@ fn execute_ephemeral_container_task_command(
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
+    dependency_isolation_paths: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let identity_seed = container_identity_seed(context_name, publications);
+    let identity_seed =
+        container_identity_seed(context_name, publications, dependency_isolation_paths);
     let container_name =
         ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
     preflight_container_host_publications(task_name, listener_publications)?;
@@ -4429,6 +4485,18 @@ fn execute_ephemeral_container_task_command(
         .arg("/workspace");
     if let Some(network) = compose_networks.first() {
         create.arg("--network").arg(network);
+    }
+    for (host_path, container_path) in container_dependency_isolation_mounts(
+        task_name,
+        working_dir,
+        context_name,
+        image,
+        engine,
+        dependency_isolation_paths,
+    )? {
+        create
+            .arg("-v")
+            .arg(format!("{}:{}", host_path.display(), container_path));
     }
     append_container_publication_args(&mut create, publications);
     for (name, value) in env_overrides {
@@ -4529,21 +4597,25 @@ fn execute_persistent_container_task_command(
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
+    dependency_isolation_paths: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let identity_seed = container_identity_seed(context_name, publications);
+    let identity_seed =
+        container_identity_seed(context_name, publications, dependency_isolation_paths);
     let container_name =
         persistent_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
 
     if let Some(failure) = ensure_persistent_container_ready(
         task_name,
         working_dir,
+        context_name,
         image,
         engine,
         &container_name,
         compose_networks,
         publications,
         listener_publications,
+        dependency_isolation_paths,
     )? {
         return Ok(failure);
     }
@@ -4578,12 +4650,14 @@ fn execute_persistent_container_task_command(
         let create = create_persistent_container(
             task_name,
             working_dir,
+            context_name,
             image,
             engine,
             &container_name,
             compose_networks,
             publications,
             listener_publications,
+            dependency_isolation_paths,
         )?;
         if create.exit_code != 0 {
             return Ok(container_command_failure(create, container_name.clone()));
@@ -4659,24 +4733,28 @@ fn persistent_container_runtime_projection(
 fn ensure_persistent_container_ready(
     task_name: &str,
     working_dir: &Path,
+    context_name: Option<&str>,
     image: &str,
     engine: &str,
     container_name: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
+    dependency_isolation_paths: &[String],
 ) -> Result<Option<TaskCommandOutput>, RunError> {
     let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
     if inspect.exit_code != 0 {
         let status = create_persistent_container(
             task_name,
             working_dir,
+            context_name,
             image,
             engine,
             container_name,
             compose_networks,
             publications,
             listener_publications,
+            dependency_isolation_paths,
         )?;
         if status.exit_code != 0 {
             return Ok(Some(container_command_failure(
@@ -4718,12 +4796,14 @@ fn ensure_persistent_container_ready(
             let create = create_persistent_container(
                 task_name,
                 working_dir,
+                context_name,
                 image,
                 engine,
                 container_name,
                 compose_networks,
                 publications,
                 listener_publications,
+                dependency_isolation_paths,
             )?;
             if create.exit_code != 0 {
                 if let Some(port) = parse_container_host_port_conflict(&create.stderr)
@@ -4779,12 +4859,14 @@ fn ensure_persistent_container_ready(
 fn create_persistent_container(
     task_name: &str,
     working_dir: &Path,
+    context_name: Option<&str>,
     image: &str,
     engine: &str,
     container_name: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
+    dependency_isolation_paths: &[String],
 ) -> Result<ContainerCommandOutput, RunError> {
     preflight_container_host_publications(task_name, listener_publications)?;
     let mut args = vec![
@@ -4806,6 +4888,17 @@ fn create_persistent_container(
     if let Some(network) = compose_networks.first() {
         args.push("--network".to_string());
         args.push(network.clone());
+    }
+    for (host_path, container_path) in container_dependency_isolation_mounts(
+        task_name,
+        working_dir,
+        context_name,
+        image,
+        engine,
+        dependency_isolation_paths,
+    )? {
+        args.push("-v".to_string());
+        args.push(format!("{}:{}", host_path.display(), container_path));
     }
     append_container_publication_vec(&mut args, publications);
     args.push(image.to_string());
@@ -5229,6 +5322,65 @@ fn ephemeral_container_name_for_seed(
     format!("ota-ephemeral-{:x}", hasher.finish())
 }
 
+fn container_dependency_isolation_root(
+    working_dir: &Path,
+    context_name: Option<&str>,
+    image: &str,
+    engine: &str,
+) -> Option<PathBuf> {
+    let context_name = context_name?;
+    let mut hasher = DefaultHasher::new();
+    working_dir.display().to_string().hash(&mut hasher);
+    context_name.hash(&mut hasher);
+    image.hash(&mut hasher);
+    engine.hash(&mut hasher);
+    Some(
+        working_dir
+            .join(".ota")
+            .join("container-cache")
+            .join(format!("{:x}", hasher.finish())),
+    )
+}
+
+fn container_dependency_isolation_mounts(
+    task_name: &str,
+    working_dir: &Path,
+    context_name: Option<&str>,
+    image: &str,
+    engine: &str,
+    isolated_paths: &[String],
+) -> Result<Vec<(PathBuf, String)>, RunError> {
+    let Some(root) = container_dependency_isolation_root(working_dir, context_name, image, engine)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut mounts = Vec::new();
+    for path in isolated_paths {
+        let normalized = crate::execution::normalize_dependency_isolated_path(path)
+            .expect("validated dependency isolation path should be relative");
+        let host_path = root.join(&normalized);
+        fs::create_dir_all(&host_path).map_err(|source| RunError::SpawnFailed {
+            task: task_name.to_string(),
+            source,
+        })?;
+        mounts.push((host_path, format!("/workspace/{normalized}")));
+    }
+
+    Ok(mounts)
+}
+
+fn remove_dependency_isolation_root(task_name: &str, root: &Path) -> Result<bool, RunError> {
+    match fs::remove_dir_all(root) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(RunError::SpawnFailed {
+            task: task_name.to_string(),
+            source,
+        }),
+    }
+}
+
 fn contract_working_dir(contract_path: &Path) -> &Path {
     contract_path
         .parent()
@@ -5297,13 +5449,13 @@ mod tests {
         CapturedRunOutcome, ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep,
         ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend, RunError,
         RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, TaskExecutionMode,
-        TaskExecutionRelation, TaskRunState, clean_execution, contract_working_dir, current_os,
-        execute_task_with_hooks, persistent_cleanup_targets, persistent_container_name,
-        plan_task_execution, preflight_container_host_publications,
-        prepare_container_runtime_projection, preparing_loader_label,
-        projected_runtime_public_endpoint_line, resolve_execution_backend, resolve_task_env,
-        resolve_task_env_details, run_task, run_task_captured, run_task_with_args,
-        run_task_with_overrides, run_task_with_progress, running_loader_label,
+        TaskExecutionRelation, TaskRunState, clean_execution, container_identity_seed,
+        contract_working_dir, current_os, execute_task_with_hooks, persistent_cleanup_targets,
+        persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
+        preflight_container_host_publications, prepare_container_runtime_projection,
+        preparing_loader_label, projected_runtime_public_endpoint_line, resolve_execution_backend,
+        resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
+        run_task_with_args, run_task_with_overrides, run_task_with_progress, running_loader_label,
         running_loader_label_for_backend,
     };
     use crate::schema::{
@@ -6388,7 +6540,7 @@ tasks:
 
         assert_eq!(
             projected_runtime_public_endpoint_line(&runtime_env).as_deref(),
-            Some("Projected endpoint: http://127.0.0.1:49153/")
+            Some("Endpoint (planned): http://127.0.0.1:49153/")
         );
     }
 
@@ -7161,6 +7313,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                     lifecycle: Lifecycle::Ephemeral,
                     compose_networks: Vec::new(),
                     publications: Vec::new(),
+                    dependency_isolation_paths: Vec::new(),
                 }
             ),
             "Running test (container)"
@@ -8788,6 +8941,82 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn cleans_container_dependency_isolation_cache_for_named_context() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+
+        let mounts = fs::read_to_string(fixture.dir.path().join("docker-mounts.txt")).unwrap();
+        assert!(mounts.contains(":/workspace/node_modules"));
+
+        let cache_root = fs::read_dir(fixture.dir.path().join(".ota").join("container-cache"))
+            .unwrap()
+            .next()
+            .expect("isolated cache root should exist")
+            .unwrap()
+            .path();
+        assert!(cache_root.join("node_modules").exists());
+
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(!cache_root.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn cleans_unpublished_persistent_container_when_context_also_has_projected_workload() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -8934,9 +9163,33 @@ tasks:
         assert_eq!(
             cleanup_targets
                 .iter()
-                .filter_map(|(context_name, _, _, _)| context_name.as_deref())
+                .filter_map(|(context_name, _, _, _, _)| context_name.as_deref())
                 .collect::<Vec<_>>(),
             vec!["web", LEGACY_EXECUTION_CONTEXT_NAME]
+        );
+    }
+
+    #[test]
+    fn persistent_container_identity_changes_when_dependency_isolation_paths_change() {
+        let base_seed = container_identity_seed(Some("app"), &[], &[]).expect("seed should exist");
+        let isolated_seed =
+            container_identity_seed(Some("app"), &[], &[String::from("node_modules")])
+                .expect("seed should exist");
+
+        assert_ne!(base_seed, isolated_seed);
+        assert_ne!(
+            persistent_container_name_for_seed(
+                Path::new("/repo"),
+                "ghcr.io/ota/test:latest",
+                "docker",
+                Some(&base_seed),
+            ),
+            persistent_container_name_for_seed(
+                Path::new("/repo"),
+                "ghcr.io/ota/test:latest",
+                "docker",
+                Some(&isolated_seed),
+            )
         );
     }
 
@@ -9292,6 +9545,8 @@ case "$command" in
     ;;
   create)
     mount=""
+    workspace_mount=""
+    mounts=""
     name=""
     network=""
     env_entries=""
@@ -9314,6 +9569,13 @@ case "$command" in
           ;;
         -v)
           mount="$2"
+          mounts="${mounts}${2}
+"
+          case "$2" in
+            *:/workspace)
+              workspace_mount="$2"
+              ;;
+          esac
           shift 2
           ;;
         -w)
@@ -9344,7 +9606,8 @@ case "$command" in
           ;;
       esac
     done
-    host_dir="${mount%%:*}"
+    host_dir="${workspace_mount%%:*}"
+    printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$host_dir" > "$state_dir/$name.path"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ -n "$network" ]; then
@@ -9375,6 +9638,8 @@ case "$command" in
   run)
     detached=0
     mount=""
+    workspace_mount=""
+    mounts=""
     name=""
     labels=""
     network=""
@@ -9406,6 +9671,13 @@ case "$command" in
           ;;
         -v)
           mount="$2"
+          mounts="${mounts}${2}
+"
+          case "$2" in
+            *:/workspace)
+              workspace_mount="$2"
+              ;;
+          esac
           shift 2
           ;;
         -w)
@@ -9427,7 +9699,8 @@ case "$command" in
           ;;
       esac
     done
-    host_dir="${mount%%:*}"
+    host_dir="${workspace_mount%%:*}"
+    printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"

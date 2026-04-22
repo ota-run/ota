@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crate::doctor::command_available;
 use crate::schema::{Backend, ContainerBackend, Contract, Execution, Lifecycle, RemoteBackend};
@@ -39,6 +39,34 @@ pub(crate) fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
     match lifecycle {
         Lifecycle::Persistent => "persistent",
         Lifecycle::Ephemeral => "ephemeral",
+    }
+}
+
+pub(crate) fn context_dependency_isolation_paths(
+    context: &crate::schema::ExecutionContext,
+) -> Vec<String> {
+    context
+        .attachments
+        .isolated_paths
+        .iter()
+        .filter_map(|path| normalize_dependency_isolated_path(path))
+        .collect()
+}
+
+pub(crate) fn normalize_dependency_isolated_path(value: &str) -> Option<String> {
+    let mut normalized = Vec::new();
+    for component in Path::new(value.trim()).components() {
+        match component {
+            Component::CurDir => continue,
+            Component::Normal(part) => normalized.push(part.to_string_lossy().to_string()),
+            _ => return None,
+        }
+    }
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.join("/"))
     }
 }
 

@@ -211,6 +211,8 @@ pub struct ExecutionContextRequirements {
 pub struct ExecutionContextAttachments {
     #[serde(default)]
     pub compose: Vec<String>,
+    #[serde(default)]
+    pub isolated_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

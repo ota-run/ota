@@ -140,6 +140,8 @@ case "$command" in
     ;;
   run)
     mount=""
+    mounts=""
+    workspace_mount=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --rm|-i)
@@ -153,6 +155,13 @@ case "$command" in
           ;;
         -v)
           mount="$2"
+          mounts="${mounts}${2}
+"
+          case "$2" in
+            *:/workspace)
+              workspace_mount="$2"
+              ;;
+          esac
           shift 2
           ;;
         -w)
@@ -165,7 +174,8 @@ case "$command" in
           ;;
       esac
     done
-    host_dir="${mount%%:*}"
+    host_dir="${workspace_mount%%:*}"
+    printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     PATH="/usr/bin:/bin"
     export PATH

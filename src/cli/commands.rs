@@ -19824,6 +19824,11 @@ fn format_execution_context_brief(context: &ExecutionContextSummary<'_>) -> Stri
     {
         details.push(format!("compose={}", attachments.compose.join("+")));
     }
+    if let Some(attachments) = context.attachments.as_ref()
+        && !attachments.isolated_paths.is_empty()
+    {
+        details.push(format!("isolated={}", attachments.isolated_paths.join("+")));
+    }
 
     format!("{} ({})", context.name, details.join(", "))
 }
@@ -23487,6 +23492,7 @@ policies:
                     remote: None,
                     attachments: Some(crate::output::ExecutionContextAttachmentsSummary {
                         compose: vec!["local"],
+                        isolated_paths: vec!["node_modules"],
                     }),
                 },
                 crate::output::ExecutionContextSummary {
@@ -23528,7 +23534,7 @@ policies:
         assert!(rendered.contains("\n→ Lifecycle: ephemeral"));
         assert!(rendered.contains("\n→ Image: rust:1.94-bookworm"));
         assert!(rendered.contains(
-            "\n→ Contexts: app (container, ephemeral, image=rust:1.94-bookworm, compose=local), host (native), remote-build (remote, provider=ssh, target=devbox)"
+            "\n→ Contexts: app (container, ephemeral, image=rust:1.94-bookworm, compose=local, isolated=node_modules), host (native), remote-build (remote, provider=ssh, target=devbox)"
         ));
         assert!(rendered.contains("\n→ Env precedence:"));
         assert!(rendered.contains("\n→ Env:"));
@@ -23560,6 +23566,7 @@ policies:
                     remote: None,
                     attachments: Some(crate::output::ExecutionContextAttachmentsSummary {
                         compose: vec!["local"],
+                        isolated_paths: vec!["node_modules"],
                     }),
                 },
                 crate::output::ExecutionContextSummary {
@@ -23584,7 +23591,7 @@ policies:
         assert!(rendered.contains("\n »  Preferred: `container`"));
         assert!(rendered.contains("\n »  Image: `maven:3.9.14-eclipse-temurin-21-noble`"));
         assert!(rendered.contains(
-            "\n »  Contexts: app (container, persistent, image=maven:3.9.14-eclipse-temurin-21-noble, compose=local), host (native)"
+            "\n »  Contexts: app (container, persistent, image=maven:3.9.14-eclipse-temurin-21-noble, compose=local, isolated=node_modules), host (native)"
         ));
     }
 
