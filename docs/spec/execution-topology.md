@@ -208,7 +208,7 @@ This keeps the boundary honest:
 - with multiple projected listeners, mark exactly one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and the primary endpoint line
 - in container contexts with `project.host.port.mode: auto`, ota injects runtime URL env values before command execution; ephemeral runs pre-reserve host ports before start, while persistent runs resolve the existing published mapping
 - `ota run dev` records the same resolved host endpoint ota injected into runtime env
-- `ota up` can prepare and report resolvable workload endpoints from persistent container contexts without pretending the app is a dependency service
+- `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`
 - readiness remains separate from ingress projection
 
 Ingress troubleshooting:
@@ -327,7 +327,7 @@ That should fail explicitly instead of falling back to a guessed host path.
 3. ensure workload attachments are valid
 4. run `setup` in the task context
 5. re-check readiness from the declared contexts
-6. surface resolvable workload endpoints for runtime-bearing tasks so the host can see the published URL without guessing container port mappings
+6. surface workload endpoints for any runtime-bearing task `ota up` actually executes during preparation, without pretending arbitrary app tasks were started
 
 ### `ota run`
 

@@ -832,7 +832,7 @@ Task input semantics:
 - `requires_services` resolves declared services before the task body and keeps lifecycle ownership with `services.<name>.manager`
 - `runtime.listeners` keep workload ingress with the task instead of overloading `services`
 - `ota run` records the resolved runtime endpoint in receipts and JSON output when ota can authoritatively resolve it
-- `ota up` prepares and reports resolvable workload endpoints from the selected topology without turning workload ingress into a service definition
+- `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`
 - container runtime listeners export these env values before process start when host projection resolves:
 - `OTA_PUBLIC_URL`
 - `OTA_PUBLIC_HOST`
