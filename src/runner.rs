@@ -42,8 +42,8 @@ use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
     container_engine_candidates_from_backend, context_dependency_isolation_paths, execution_image,
-    matching_declared_execution_context_name, matching_execution_context_name,
-    selected_container_engine, selected_container_engine_from_backend,
+    matching_execution_context_name, selected_container_engine,
+    selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
     LoadPolicyPackError, PolicyPackSource, load_org_policy_pack_auto_details,
@@ -1340,6 +1340,7 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
     let mut cleaned = false;
     let mut visited = BTreeSet::new();
+    let mut relevant_engines = BTreeSet::new();
     let mut dependency_isolation_volumes_to_remove = BTreeSet::new();
     for (
         context_name,
@@ -1350,6 +1351,7 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         cleanup_container,
     ) in cleanup_targets
     {
+        relevant_engines.insert(engine.clone());
         let identity_seed = container_identity_seed(
             context_name.as_deref(),
             &publications,
@@ -1395,7 +1397,14 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     }
 
     let mut first_discovery_error = None;
-    for engine in available_container_engines() {
+    let discovery_engines = if relevant_engines.is_empty() {
+        selected_container_engine(contract)
+            .into_iter()
+            .collect::<Vec<_>>()
+    } else {
+        relevant_engines.into_iter().collect()
+    };
+    for engine in discovery_engines {
         match dependency_isolation_volume_names_for_repo("clean", &engine, &repo_ownership_token) {
             Ok(volume_names) => {
                 for volume_name in volume_names {
@@ -2663,33 +2672,90 @@ fn selected_task_context_for_backend<'a>(
     let execution = contract.execution.as_ref()?;
     let task = contract.tasks.get(task_name)?;
     let context_name = if let Some(branch) = task.mode_execution_branch(backend) {
-        branch
-            .context
-            .as_deref()
-            .or_else(|| {
-                task.context.as_deref().filter(|context_name| {
-                    execution
-                        .contexts
-                        .get(*context_name)
-                        .is_some_and(|context| context.backend == backend)
-                })
-            })
-            .or_else(|| {
-                matching_declared_execution_context_name(
-                    contract.execution.as_ref(),
-                    backend,
-                    branch.lifecycle,
-                )
-            })
+        branch.context.as_deref().filter(|context_name| {
+            execution
+                .contexts
+                .get(*context_name)
+                .is_some_and(|context| context.backend == backend)
+        })?
+    } else if let Some(context_name) = task.context.as_deref() {
+        if execution
+            .contexts
+            .get(context_name)
+            .is_some_and(|context| context.backend == backend)
+        {
+            context_name
+        } else if execution
+            .default_context()
+            .is_some_and(|(_, context)| context.backend == backend)
+        {
+            execution.default_context().map(|(name, _)| name)?
+        } else {
+            execution
+                .contexts
+                .iter()
+                .find(|(_, context)| context.backend == backend)
+                .map(|(name, _)| name.as_str())?
+        }
+    } else if let Some((name, context)) = execution.default_context() {
+        if context.backend == backend {
+            name
+        } else {
+            execution
+                .contexts
+                .iter()
+                .find(|(_, context)| context.backend == backend)
+                .map(|(name, _)| name.as_str())?
+        }
     } else {
-        task.context
-            .as_deref()
-            .or_else(|| execution.default_context.as_deref())
-    }?;
+        execution
+            .contexts
+            .iter()
+            .find(|(_, context)| context.backend == backend)
+            .map(|(name, _)| name.as_str())?
+    };
     execution
         .contexts
         .get_key_value(context_name)
         .map(|(name, context)| (name.as_str(), context))
+}
+
+pub(crate) fn reported_task_context_for_backend<'a>(
+    contract: &'a Contract,
+    task_name: &str,
+    backend: Backend,
+) -> Option<&'a str> {
+    let execution = contract.execution.as_ref()?;
+    let task = contract.tasks.get(task_name)?;
+
+    if let Some(branch) = task.mode_execution_branch(backend) {
+        return branch.context.as_deref().and_then(|context_name| {
+            execution
+                .contexts
+                .get_key_value(context_name)
+                .and_then(|(name, context)| (context.backend == backend).then_some(name.as_str()))
+        });
+    }
+
+    if let Some(context_name) = task.context.as_deref() {
+        if let Some((name, context)) = execution.contexts.get_key_value(context_name)
+            && context.backend == backend
+        {
+            return Some(name.as_str());
+        }
+    }
+
+    if let Some((name, context)) = execution.default_context()
+        && context.backend == backend
+    {
+        return Some(name);
+    }
+
+    execution
+        .contexts
+        .iter()
+        .find(|(_, context)| context.backend == backend)
+        .map(|(name, _)| name.as_str())
 }
 
 pub(crate) fn named_execution_context<'a>(
@@ -5687,18 +5753,7 @@ fn dependency_isolation_volume_names_for_repo(
     engine: &str,
     repo_ownership_token: &str,
 ) -> Result<Vec<String>, RunError> {
-    let repo_filter = format!("label=dev.ota.repo={repo_ownership_token}");
-    let args = [
-        "volume",
-        "ls",
-        "-q",
-        "--filter",
-        OTA_MANAGED_VOLUME_LABEL,
-        "--filter",
-        OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL,
-        "--filter",
-        repo_filter.as_str(),
-    ];
+    let args = ["volume", "ls", "-q"];
     let output = container_command_output(engine, &args, None, task_name)?;
     if output.exit_code != 0 {
         return Err(RunError::DependencyIsolationVolumeFailure {
@@ -5710,13 +5765,106 @@ fn dependency_isolation_volume_names_for_repo(
         });
     }
 
-    Ok(output
+    let candidate_names = output
         .stdout
         .lines()
         .map(str::trim)
         .filter(|volume_name| !volume_name.is_empty())
         .map(ToString::to_string)
-        .collect())
+        .collect::<Vec<_>>();
+
+    let mut matching = Vec::new();
+    for volume_name in candidate_names {
+        let labels = dependency_isolation_volume_labels_for_name(task_name, engine, &volume_name)?;
+        if dependency_isolation_volume_is_owned_by_repo(&labels, repo_ownership_token) {
+            matching.push(volume_name);
+        }
+    }
+
+    Ok(matching)
+}
+
+fn dependency_isolation_volume_labels_for_name(
+    task_name: &str,
+    engine: &str,
+    volume_name: &str,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let args = ["volume", "inspect", volume_name];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::DependencyIsolationVolumeFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            volume: volume_name.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    let inspect_json: serde_json::Value =
+        serde_json::from_str(output.stdout.trim()).map_err(|source| {
+            RunError::DependencyIsolationVolumeFailure {
+                task: task_name.to_string(),
+                action: String::from("inspect"),
+                volume: volume_name.to_string(),
+                engine: engine.to_string(),
+                details: format!("invalid `volume inspect` JSON response: {source}"),
+            }
+        })?;
+
+    let mut labels = BTreeMap::new();
+    match inspect_json {
+        serde_json::Value::Array(entries) => {
+            if let Some(labels_value) = entries
+                .first()
+                .and_then(|entry| entry.get("Labels"))
+                .and_then(serde_json::Value::as_object)
+            {
+                for (key, value) in labels_value {
+                    if let Some(value) = value.as_str() {
+                        labels.insert(key.to_string(), value.to_string());
+                    }
+                }
+            }
+        }
+        serde_json::Value::Object(entry) => {
+            if let Some(labels_value) = entry.get("Labels").and_then(serde_json::Value::as_object) {
+                for (key, value) in labels_value {
+                    if let Some(value) = value.as_str() {
+                        labels.insert(key.to_string(), value.to_string());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(labels)
+}
+
+fn dependency_isolation_volume_is_owned_by_repo(
+    labels: &BTreeMap<String, String>,
+    repo_ownership_token: &str,
+) -> bool {
+    dependency_isolation_volume_has_label(labels, OTA_MANAGED_VOLUME_LABEL)
+        && dependency_isolation_volume_has_label(labels, OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL)
+        && labels
+            .get("dev.ota.repo")
+            .map(String::as_str)
+            .is_some_and(|value| value == repo_ownership_token)
+}
+
+fn dependency_isolation_volume_has_label(
+    labels: &BTreeMap<String, String>,
+    expected: &str,
+) -> bool {
+    let Some((key, value)) = expected.split_once('=') else {
+        return false;
+    };
+    labels
+        .get(key)
+        .map(String::as_str)
+        .is_some_and(|actual| actual == value)
 }
 
 fn container_command_failure_details(
@@ -9651,7 +9799,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn cleans_dependency_isolation_volumes_by_label_after_contract_drift() {
+    fn cleans_dependency_isolation_volumes_by_ownership_metadata_after_contract_drift() {
         use std::os::unix::fs::PermissionsExt;
         use std::os::unix::fs::symlink;
 
@@ -9754,6 +9902,261 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn clean_execution_handles_engines_that_reject_volume_label_filters() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.stale-repo-1.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+        fs::write(state_dir.join("volume.user-data"), "").unwrap();
+        fs::write(state_dir.join("volume-ls.reject-label-filters"), "").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(!state_dir.join("volume.stale-repo-1").exists());
+        assert!(!state_dir.join("volume.stale-repo-1.labels").exists());
+        assert!(state_dir.join("volume.user-data").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_ignores_unrelated_engine_discovery_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        fs::write(
+            &podman_path,
+            r#"#!/bin/sh
+if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+  echo "Cannot connect to Podman" >&2
+  exit 125
+fi
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.stale-repo-1.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(!state_dir.join("volume.stale-repo-1").exists());
+        assert!(!state_dir.join("volume.stale-repo-1.labels").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_ignores_unrelated_engine_discovery_failure_for_legacy_container_repo() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+      engines:
+        - docker
+        - podman
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        fs::write(
+            &podman_path,
+            r#"#!/bin/sh
+if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+  echo "Cannot connect to Podman" >&2
+  exit 125
+fi
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.stale-repo-1.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(!state_dir.join("volume.stale-repo-1").exists());
+        assert!(!state_dir.join("volume.stale-repo-1.labels").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn clean_execution_surfaces_dependency_isolation_volume_discovery_failure() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -9829,6 +10232,84 @@ tasks:
                 assert_eq!(action, "list");
             }
             other => panic!("expected discovery failure, got {other}"),
+        }
+        assert!(state_dir.join("volume.repo-1").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_surfaces_dependency_isolation_volume_inspection_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(state_dir.join("volume.repo-1"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.repo-1.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+        fs::write(state_dir.join("volume-inspect.fail"), "").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = clean_execution(&fixture.contract, fixture.file_path()).unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::DependencyIsolationVolumeFailure { action, .. } => {
+                assert_eq!(action, "inspect");
+            }
+            other => panic!("expected inspection failure, got {other}"),
         }
         assert!(state_dir.join("volume.repo-1").exists());
     }
@@ -10568,8 +11049,30 @@ case "$command" in
     shift
     case "$subcommand" in
       inspect)
+        if [ -f "$state_dir/volume-inspect.fail" ]; then
+          echo "volume inspect failed" >&2
+          exit 1
+        fi
         volume_name="$1"
         [ -f "$state_dir/volume.$volume_name" ] || exit 1
+        labels_json="null"
+        if [ -f "$state_dir/volume.$volume_name.labels" ]; then
+          labels_json="{"
+          first_label=1
+          while IFS= read -r label_entry; do
+            [ -n "$label_entry" ] || continue
+            key="${label_entry%%=*}"
+            value="${label_entry#*=}"
+            if [ "$first_label" = "1" ]; then
+              first_label=0
+            else
+              labels_json="${labels_json},"
+            fi
+            labels_json="${labels_json}\"$key\":\"$value\""
+          done < "$state_dir/volume.$volume_name.labels"
+          labels_json="${labels_json}}"
+        fi
+        printf '[{"Name":"%s","Labels":%s}]\n' "$volume_name" "$labels_json"
         exit 0
         ;;
       ls)
@@ -10580,6 +11083,7 @@ case "$command" in
         label_filters=""
         name_filter=""
         quiet=0
+        saw_label_filter=0
         while [ "$#" -gt 0 ]; do
           case "$1" in
             -q)
@@ -10591,6 +11095,7 @@ case "$command" in
                 label=*)
                   label_filters="${label_filters}${2#label=}
 "
+                  saw_label_filter=1
                   ;;
                 name=*)
                   name_filter="${2#name=}"
@@ -10603,6 +11108,10 @@ case "$command" in
               ;;
           esac
         done
+        if [ "$saw_label_filter" = "1" ] && [ -f "$state_dir/volume-ls.reject-label-filters" ]; then
+          echo "Error response from daemon: invalid filter 'dev.ota.kind'" >&2
+          exit 1
+        fi
         for volume_path in "$state_dir"/volume.*; do
           [ -e "$volume_path" ] || continue
           volume_name=${volume_path##*/volume.}

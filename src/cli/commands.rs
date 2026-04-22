@@ -102,10 +102,11 @@ use crate::runner::{
     RuntimeListenerResolutionKind, StaleContainerOwnership, TaskExecutionRelation, clean_execution,
     clean_stale_execution, effective_execution, effective_task_execution,
     env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
-    named_execution_context, persistent_container_name, resolve_declared_env_source_value,
-    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
-    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
-    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
+    named_execution_context, persistent_container_name, reported_task_context_for_backend,
+    resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
+    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
+    run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
+    run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{
     Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskRuntimeHostPortMode, TaskSpec,
@@ -3869,6 +3870,37 @@ fn repo_contract_load_text(
         &where_value,
         summary,
         &[compact_backticked_paths(error)],
+        next_steps,
+    )
+}
+
+fn clean_repo_contract_load_text(
+    command: &str,
+    target_path: &Path,
+    error: &str,
+    next_steps: &[String],
+) -> String {
+    let where_value = compact_contract_path(target_path);
+    if let Some(text) = runtime_projection_load_text(
+        command,
+        &where_value,
+        error,
+        &[format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_repo_contract_target("ota clean", target_path)
+            ))
+        )],
+    ) {
+        return text;
+    }
+
+    repo_contract_load_text(
+        command,
+        target_path,
+        "Contract could not be loaded",
+        error,
         next_steps,
     )
 }
@@ -8191,11 +8223,10 @@ pub fn clean(
                                 Err(ContractProblem::Load(error)) => {
                                     return finalize_debug(
                                         match format {
-                                            OutputFormat::Text => {
-                                                CommandOutput::failure(repo_contract_load_text(
+                                            OutputFormat::Text => CommandOutput::failure(
+                                                clean_repo_contract_load_text(
                                                     "CLEAN",
                                                     &resolved_path,
-                                                    "Contract could not be loaded",
                                                     &error.to_string(),
                                                     &[
                                                         format!(
@@ -8228,8 +8259,8 @@ pub fn clean(
                                                             ))
                                                         ),
                                                     ],
-                                                ))
-                                            }
+                                                ),
+                                            ),
                                             OutputFormat::Json => {
                                                 CommandOutput::failure(to_json(&ValidateFailure {
                                                     summary: None,
@@ -8332,10 +8363,9 @@ pub fn clean(
                                 return finalize_debug(
                                     match format {
                                         OutputFormat::Text => {
-                                            CommandOutput::failure(repo_contract_load_text(
+                                            CommandOutput::failure(clean_repo_contract_load_text(
                                                 "CLEAN",
                                                 &resolved_path,
-                                                "Contract could not be loaded",
                                                 &error.to_string(),
                                                 &[
                                                     format!(
@@ -8440,10 +8470,9 @@ pub fn clean(
                 format,
             ),
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                OutputFormat::Text => CommandOutput::failure(clean_repo_contract_load_text(
                     "CLEAN",
                     &resolved_path,
-                    "Contract could not be loaded",
                     &error.to_string(),
                     &[
                         format!(
@@ -21003,7 +21032,7 @@ mod tests {
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
         DetectComparison, DetectComparisonRemoval, ExecutionReceipt, ExecutionReceiptSummary,
-        ExecutionSummary,
+        ExecutionSummary, TaskSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -21154,6 +21183,83 @@ mod tests {
             compact_contract_file_path_relative_to(&contract_path, "ota.yaml", Some(outer.path())),
             outer_contract.display().to_string()
         );
+    }
+
+    #[test]
+    fn clean_text_reports_single_runtime_projection_load_issue_concisely() {
+        let _guard = cwd_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        std::fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port: {}
+"#,
+        )
+        .expect("write contract");
+
+        let cwd = env::current_dir().expect("current dir");
+        env::set_current_dir(repo.path()).expect("set current dir");
+
+        let output = strip_ansi_codes(
+            super::clean(
+                Some(repo.path()),
+                None,
+                &[],
+                false,
+                false,
+                OutputFormat::Text,
+                false,
+            )
+            .stderr
+            .as_deref()
+            .expect("stderr"),
+        );
+
+        assert!(
+            output.contains("Field: tasks.dev.runtime.listeners.http.project.host.port.mode"),
+            "{output}"
+        );
+        assert!(
+            output.contains("task `dev` listener `http` host publication port is missing `mode`")
+        );
+        assert!(output.contains(
+            "set `project.host.port.mode` to `auto` if you want Ota to choose the host port"
+        ));
+        assert!(output.contains("rerun `ota clean .`") || output.contains("rerun `ota clean`"));
+        assert!(!output.contains("inspect ./ota.yaml"));
+        assert!(!output.contains("rerun `ota validate ./ota.yaml`"));
+
+        env::set_current_dir(cwd).expect("restore current dir");
     }
 
     #[test]
@@ -24132,6 +24238,16 @@ execution:
 tasks:
   test:
     context: app
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: echo test-native
+        container:
+          context: app
+          lifecycle: persistent
+          run: echo test-container
     run: echo test
 "#,
         )
@@ -24172,7 +24288,7 @@ tasks:
     }
 
     #[test]
-    fn run_execution_receipt_uses_implicit_legacy_app_context() {
+    fn run_execution_receipt_reports_truthful_context_for_native_and_container_overrides() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -24180,14 +24296,110 @@ version: 1
 project:
   name: ota
 execution:
-  preferred: container
-  lifecycle: persistent
-  backends:
-    container:
-      image: ghcr.io/ota/dev:latest
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
 tasks:
   test:
+    context: app
     run: echo test
+"#,
+        )
+        .unwrap();
+
+        let native_receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+            },
+            "test",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+            }],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(native_receipt.backend.as_deref(), Some("native"));
+        assert_eq!(native_receipt.context.as_deref(), Some("host"));
+
+        let container_receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: Some(Lifecycle::Persistent),
+            },
+            "test",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+            }],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(container_receipt.backend.as_deref(), Some("container"));
+        assert_eq!(container_receipt.context.as_deref(), Some("app"));
+        assert_eq!(container_receipt.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(
+            container_receipt.image.as_deref(),
+            Some("ghcr.io/ota/dev:latest")
+        );
+        assert!(
+            container_receipt
+                .target
+                .as_deref()
+                .is_some_and(|target| target.starts_with("ota-"))
+        );
+    }
+
+    #[test]
+    fn run_execution_receipt_omits_context_for_mode_branch_without_matching_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    context: host
+    execution:
+      default_mode: container
+      modes:
+        container:
+          run: echo test
 "#,
         )
         .unwrap();
@@ -24211,9 +24423,54 @@ tasks:
         );
 
         assert_eq!(receipt.backend.as_deref(), Some("container"));
-        assert_eq!(receipt.context.as_deref(), Some("app"));
-        assert_eq!(receipt.lifecycle.as_deref(), Some("persistent"));
-        assert_eq!(receipt.image.as_deref(), Some("ghcr.io/ota/dev:latest"));
+        assert_eq!(receipt.context.as_deref(), None);
+        assert_eq!(receipt.lifecycle.as_deref(), None);
+        let rendered =
+            render_execution_receipt_summary_block(&receipt, Some("test"), "RUN SUMMARY");
+        assert!(!rendered.contains("Context:"));
+    }
+
+    #[test]
+    fn task_summary_omits_context_for_mode_branch_without_matching_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    context: host
+    execution:
+      default_mode: container
+      modes:
+        container:
+          run: echo test
+"#,
+        )
+        .unwrap();
+
+        let summary = TaskSummary::from_spec(
+            "test",
+            contract.tasks.get("test").unwrap(),
+            std::env::consts::OS,
+            contract.execution.as_ref(),
+        );
+
+        assert_eq!(summary.default_mode, Some("container"));
+        assert_eq!(summary.context, None);
+        assert_eq!(summary.modes.len(), 1);
+        assert_eq!(summary.modes[0].context, None);
     }
 
     #[test]
@@ -27690,7 +27947,8 @@ fn run_execution_receipt(
         contract_identity: Some(repo_contract_identity(contract)),
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
-        context: effective.context_name.map(str::to_string),
+        context: reported_task_context_for_backend(contract, task_name, backend)
+            .map(str::to_string),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image,
         target,
@@ -31897,7 +32155,8 @@ fn task_phase_execution_context(
     let effective = effective_task_execution(contract, task_name, overrides);
     let mut context = PhaseExecutionContext {
         backend: Some(format_backend(effective.backend).to_string()),
-        context: effective.context_name.map(str::to_string),
+        context: reported_task_context_for_backend(contract, task_name, effective.backend)
+            .map(str::to_string),
         lifecycle: effective
             .lifecycle
             .map(format_lifecycle)
@@ -32850,7 +33109,8 @@ fn build_up_preview(
         contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
             backend: format_backend(backend).to_string(),
-            context: effective.context_name.map(str::to_string),
+            context: reported_task_context_for_backend(contract, "setup", backend)
+                .map(str::to_string),
             lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
             image: effective
                 .container
@@ -33007,7 +33267,11 @@ fn up_remote_execution_blocker(
             return Some((
                 task_phase_execution_context(contract, resolved_path, "setup", overrides, None),
                 Some("setup"),
-                remote_up_blocker_finding(Some("setup"), effective.context_name, effective.remote),
+                remote_up_blocker_finding(
+                    Some("setup"),
+                    reported_task_context_for_backend(contract, "setup", effective.backend),
+                    effective.remote,
+                ),
             ));
         }
     } else {
