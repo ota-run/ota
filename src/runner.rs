@@ -2783,14 +2783,16 @@ fn runtime_public_env_from_resolved_runtime(
     env
 }
 
-fn runtime_public_endpoint_line(runtime_env: &BTreeMap<String, String>) -> Option<String> {
+fn projected_runtime_public_endpoint_line(
+    runtime_env: &BTreeMap<String, String>,
+) -> Option<String> {
     runtime_env
         .get("OTA_PUBLIC_URL")
-        .map(|endpoint| format!("Endpoint: {endpoint}"))
+        .map(|endpoint| format!("Projected endpoint: {endpoint}"))
 }
 
-fn print_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
-    if let Some(line) = runtime_public_endpoint_line(runtime_env) {
+fn print_projected_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
+    if let Some(line) = projected_runtime_public_endpoint_line(runtime_env) {
         eprintln!("{line}");
     }
 }
@@ -4281,7 +4283,7 @@ fn execute_container_task_command(
                 let mut resolved_env = env_overrides.clone();
                 resolved_env.extend(projection.env.clone());
                 if matches!(mode, TaskExecutionMode::Stream { .. }) {
-                    print_runtime_public_endpoint(&projection.env);
+                    print_projected_runtime_public_endpoint(&projection.env);
                 }
 
                 let output = execute_ephemeral_container_task_command(
@@ -4556,7 +4558,7 @@ fn execute_persistent_container_task_command(
         env_overrides,
     )?;
     if matches!(mode, TaskExecutionMode::Stream { .. }) {
-        print_runtime_public_endpoint(&resolved_env);
+        print_projected_runtime_public_endpoint(&resolved_env);
     }
     let output = exec_persistent_container_task_command(
         task_name,
@@ -5298,10 +5300,11 @@ mod tests {
         TaskExecutionRelation, TaskRunState, clean_execution, contract_working_dir, current_os,
         execute_task_with_hooks, persistent_cleanup_targets, persistent_container_name,
         plan_task_execution, preflight_container_host_publications,
-        prepare_container_runtime_projection, preparing_loader_label, resolve_execution_backend,
-        resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
-        run_task_with_args, run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend, runtime_public_endpoint_line,
+        prepare_container_runtime_projection, preparing_loader_label,
+        projected_runtime_public_endpoint_line, resolve_execution_backend, resolve_task_env,
+        resolve_task_env_details, run_task, run_task_captured, run_task_with_args,
+        run_task_with_overrides, run_task_with_progress, running_loader_label,
+        running_loader_label_for_backend,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -6376,7 +6379,7 @@ tasks:
     }
 
     #[test]
-    fn runtime_public_endpoint_line_uses_resolved_public_url() {
+    fn projected_runtime_public_endpoint_line_uses_resolved_public_url() {
         let mut runtime_env = BTreeMap::new();
         runtime_env.insert(
             String::from("OTA_PUBLIC_URL"),
@@ -6384,8 +6387,8 @@ tasks:
         );
 
         assert_eq!(
-            runtime_public_endpoint_line(&runtime_env).as_deref(),
-            Some("Endpoint: http://127.0.0.1:49153/")
+            projected_runtime_public_endpoint_line(&runtime_env).as_deref(),
+            Some("Projected endpoint: http://127.0.0.1:49153/")
         );
     }
 
