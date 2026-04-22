@@ -13428,6 +13428,115 @@ tasks:
     }
 
     #[test]
+    fn tasks_json_reports_mode_aware_execution_branches() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    run: echo base
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          run: echo native
+        container:
+          context: app
+          lifecycle: persistent
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 3000
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 3000
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let task = &json["tasks"][0];
+        assert_eq!(task["default_mode"], "container");
+        assert_eq!(task["context"], "app");
+        let modes = task["modes"].as_array().expect("modes should be an array");
+        assert_eq!(modes.len(), 2);
+        let container = modes
+            .iter()
+            .find(|mode| mode["mode"] == "container")
+            .expect("container mode should be present");
+        assert_eq!(container["context"], "app");
+        assert_eq!(container["lifecycle"], "persistent");
+        assert_eq!(container["kind"], "run");
+        assert_eq!(container["has_runtime"], true);
+    }
+
+    #[test]
+    fn tasks_json_does_not_infer_default_mode_from_mode_list() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    context: host
+    run: echo host
+    execution:
+      modes:
+        native:
+          context: host
+          run: echo native
+        container:
+          context: app
+          run: echo container
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let task = &json["tasks"][0];
+        assert!(task.get("default_mode").is_none());
+        assert_eq!(task["context"], "host");
+        assert_eq!(task["run"], "echo native");
+    }
+
+    #[test]
     fn tasks_text_reports_script_kind() {
         let fixture = ContractFixture::new(
             r#"

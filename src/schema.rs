@@ -759,6 +759,8 @@ pub struct TaskSpec {
     pub safe_for_agent: bool,
     #[serde(default)]
     pub variants: Vec<TaskVariantSpec>,
+    #[serde(default)]
+    pub execution: Option<TaskModeExecutionSpec>,
 }
 
 impl TaskSpec {
@@ -792,10 +794,149 @@ impl TaskSpec {
             })
     }
 
+    pub fn mode_default_backend(&self) -> Option<Backend> {
+        self.execution
+            .as_ref()
+            .and_then(|execution| execution.default_mode)
+    }
+
+    pub fn mode_execution_branch(&self, backend: Backend) -> Option<&TaskModeBranchSpec> {
+        self.execution
+            .as_ref()
+            .and_then(|execution| execution.modes.branch_for_backend(backend))
+    }
+
+    pub fn resolved_execution_for_backend(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<TaskExecution<'_>> {
+        self.mode_execution_branch(backend)
+            .and_then(TaskModeBranchSpec::execution)
+            .or_else(|| self.resolved_execution(os))
+    }
+
+    pub fn runtime_for_backend(&self, backend: Backend) -> Option<&TaskRuntimeSpec> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.runtime.as_ref())
+            .or(self.runtime.as_ref())
+    }
+
+    pub fn env_for_backend(&self, backend: Backend) -> BTreeMap<String, String> {
+        let mut merged = self.env.clone();
+        if let Some(branch) = self.mode_execution_branch(backend) {
+            merged.extend(branch.env.clone());
+        }
+        merged
+    }
+
+    pub fn context_for_backend<'a>(
+        &'a self,
+        execution: Option<&'a Execution>,
+        backend: Backend,
+    ) -> Option<&'a str> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.context.as_deref())
+            .or(self.context.as_deref())
+            .or_else(|| execution.and_then(|spec| spec.default_context.as_deref()))
+    }
+
     pub fn service_runtime(&self) -> Option<&TaskRuntimeSpec> {
         self.runtime
             .as_ref()
             .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+    }
+
+    pub fn service_runtime_for_backend(&self, backend: Backend) -> Option<&TaskRuntimeSpec> {
+        self.runtime_for_backend(backend)
+            .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TaskModeExecutionSpec {
+    #[serde(default)]
+    pub default_mode: Option<Backend>,
+    #[serde(default)]
+    pub modes: TaskModeBranchesSpec,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TaskModeBranchesSpec {
+    #[serde(default)]
+    pub native: Option<TaskModeBranchSpec>,
+    #[serde(default)]
+    pub container: Option<TaskModeBranchSpec>,
+    #[serde(default)]
+    pub remote: Option<TaskModeBranchSpec>,
+}
+
+impl TaskModeBranchesSpec {
+    pub fn branch_for_backend(&self, backend: Backend) -> Option<&TaskModeBranchSpec> {
+        match backend {
+            Backend::Native => self.native.as_ref(),
+            Backend::Container => self.container.as_ref(),
+            Backend::Remote => self.remote.as_ref(),
+        }
+    }
+
+    pub fn any(&self) -> bool {
+        self.native.is_some() || self.container.is_some() || self.remote.is_some()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Backend, &TaskModeBranchSpec)> {
+        [
+            (Backend::Native, self.native.as_ref()),
+            (Backend::Container, self.container.as_ref()),
+            (Backend::Remote, self.remote.as_ref()),
+        ]
+        .into_iter()
+        .filter_map(|(backend, branch)| branch.map(|branch| (backend, branch)))
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TaskModeBranchSpec {
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub lifecycle: Option<Lifecycle>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub run: Option<String>,
+    #[serde(default)]
+    pub script: Option<String>,
+    #[serde(default)]
+    pub runtime: Option<TaskRuntimeSpec>,
+}
+
+impl TaskModeBranchSpec {
+    pub fn execution_kind(&self) -> Option<&'static str> {
+        match (self.run.as_ref(), self.script.as_ref()) {
+            (Some(_), None) => Some("run"),
+            (None, Some(_)) => Some("script"),
+            _ => None,
+        }
+    }
+
+    pub fn execution_body(&self) -> Option<&str> {
+        match (self.run.as_deref(), self.script.as_deref()) {
+            (Some(run), None) => Some(run),
+            (None, Some(script)) => Some(script),
+            _ => None,
+        }
+    }
+
+    pub fn execution(&self) -> Option<TaskExecution<'_>> {
+        Some(TaskExecution {
+            kind: self.execution_kind()?,
+            body: self.execution_body()?,
+            os: None,
+        })
     }
 }
 

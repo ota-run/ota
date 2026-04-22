@@ -46,7 +46,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("requires_services").is_some());
     assert!(task_properties.get("variants").is_some());
+    assert!(task_properties.get("default_mode").is_some());
+    assert!(task_properties.get("modes").is_some());
     assert!(member_task_properties.get("requires_services").is_some());
+    assert!(member_task_properties.get("default_mode").is_some());
+    assert!(member_task_properties.get("modes").is_some());
 }
 
 #[test]

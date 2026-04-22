@@ -158,6 +158,37 @@ tasks:
 This makes orchestration tasks and workload tasks honest without forcing Docker into the app image.
 `requires_services` lets a task declare that canonical services must be ready before its body runs, while ownership still stays with `services.<name>.manager`.
 
+### `tasks.<name>.execution.modes`
+
+Use mode branches when one task intent should run across multiple execution planes without duplicating task names.
+
+```yaml
+tasks:
+  start:
+    execution:
+      default_mode: container
+      modes:
+        native:
+          context: host
+          env:
+            DB_URL: jdbc:postgresql://127.0.0.1:5432/app
+          run: mvn spring-boot:run
+        container:
+          context: app
+          lifecycle: persistent
+          env:
+            DB_URL: jdbc:postgresql://postgres:5432/app
+          run: mvn spring-boot:run -Dspring-boot.run.arguments=--server.address=0.0.0.0,--server.port=8080
+```
+
+This keeps task identity stable:
+
+- `ota run start` uses `default_mode` when declared
+- `ota run start --mode native` selects `modes.native`
+- `ota run start --mode container` selects `modes.container`
+- mode branches can override `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`
+- if a selected mode branch is missing, ota fails clearly instead of guessing another mode
+
 ### `execution.contexts.<name>.attachments.isolated_paths`
 
 Container contexts can keep platform-sensitive dependency trees isolated from the host tree by declaring workspace-relative paths that Ota should back with engine-managed named volumes.

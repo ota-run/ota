@@ -22,7 +22,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::execution::normalize_dependency_isolated_path;
+use crate::execution::{
+    matching_declared_execution_context_name, normalize_dependency_isolated_path,
+};
 use crate::schema::{
     AgentConfig, Backend, Contract, EnvConfig, ExtensionKind, RuntimeRequirement, ServiceSpec,
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
@@ -860,6 +862,10 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
 
         let has_base_fields = task.run.is_some() || task.script.is_some();
+        let has_mode_branches = task
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.modes.any());
         match (task.run.as_deref(), task.script.as_deref()) {
             (Some(run), None) if run.trim().is_empty() => errors.push(ValidationError::new(
                 format!("task `{name}` must declare a non-empty `run` command"),
@@ -874,13 +880,29 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             (None, None) => {}
         }
 
-        if !has_base_fields && task.variants.is_empty() {
+        if !has_base_fields && task.variants.is_empty() && !has_mode_branches {
             errors.push(ValidationError::new(format!(
                 "task `{name}` must declare exactly one of `run` or `script`"
             )));
         }
-
-        validate_task_runtime(contract, name, task, errors);
+        if let Some(mode_execution) = task.execution.as_ref() {
+            validate_task_mode_execution(
+                contract,
+                name,
+                task,
+                has_base_fields || !task.variants.is_empty(),
+                mode_execution,
+                errors,
+            );
+        }
+        if let Some(runtime) = task.runtime.as_ref() {
+            validate_task_runtime(
+                name,
+                runtime,
+                task_execution_backend(contract, task, Backend::Native),
+                errors,
+            );
+        }
 
         let mut seen_variant_os = BTreeSet::new();
         for (index, variant) in task.variants.iter().enumerate() {
@@ -973,16 +995,110 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
     detect_task_cycles(tasks, errors);
 }
 
-fn validate_task_runtime(
+fn validate_task_mode_execution(
     contract: &Contract,
     task_name: &str,
     task: &TaskSpec,
+    has_fallback_execution: bool,
+    mode_execution: &crate::schema::TaskModeExecutionSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    let Some(runtime) = task.runtime.as_ref() else {
+    if !mode_execution.modes.any() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` `execution` must declare at least one mode branch under `execution.modes`"
+        )));
         return;
-    };
+    }
 
+    if let Some(default_mode) = mode_execution.default_mode
+        && mode_execution
+            .modes
+            .branch_for_backend(default_mode)
+            .is_none()
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` declares `execution.default_mode: {}` but `execution.modes.{}` is missing",
+            backend_mode_name(default_mode),
+            backend_mode_name(default_mode),
+        )));
+    }
+    let effective_default_mode = task_execution_backend(contract, task, Backend::Native);
+    if mode_execution
+        .modes
+        .branch_for_backend(effective_default_mode)
+        .is_none()
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` resolves to default mode `{}` but does not declare `execution.modes.{}`; add that mode branch or set `execution.default_mode` explicitly",
+            backend_mode_name(effective_default_mode),
+            backend_mode_name(effective_default_mode),
+        )));
+    }
+
+    for (mode, branch) in mode_execution.modes.iter() {
+        let mode_name = backend_mode_name(mode);
+        if let Some(context_name) = branch.context.as_deref() {
+            if context_name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` mode `{mode_name}` must not declare an empty `context`"
+                )));
+            } else if let Some(context) = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get(context_name))
+            {
+                if context.backend != mode {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` mode `{mode_name}` declares `context: {context_name}` with backend `{}`; mode `{mode_name}` requires a `{mode_name}` context",
+                        backend_mode_name(context.backend)
+                    )));
+                }
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` mode `{mode_name}` references unknown `context: {context_name}`; declare it under `execution.contexts`"
+                )));
+            }
+        }
+
+        if branch.lifecycle.is_some() && mode != Backend::Container {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must not declare `lifecycle`; lifecycle is only valid for container mode"
+            )));
+        }
+
+        match (branch.run.as_deref(), branch.script.as_deref()) {
+            (Some(run), None) if run.trim().is_empty() => errors.push(ValidationError::new(
+                format!(
+                    "task `{task_name}` mode `{mode_name}` must declare a non-empty `run` command"
+                ),
+            )),
+            (None, Some(script)) if script.trim().is_empty() => errors.push(ValidationError::new(
+                format!(
+                    "task `{task_name}` mode `{mode_name}` must declare a non-empty `script` body"
+                ),
+            )),
+            (Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run` or `script`"
+            ))),
+            (None, None) if !has_fallback_execution => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run` or `script` because the task has no base execution to inherit"
+            ))),
+            _ => {}
+        }
+
+        if let Some(runtime) = branch.runtime.as_ref() {
+            let backend = task_execution_backend(contract, task, mode);
+            validate_task_runtime(task_name, runtime, backend, errors);
+        }
+    }
+}
+
+fn validate_task_runtime(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    backend: Backend,
+    errors: &mut Vec<ValidationError>,
+) {
     if runtime.kind != TaskRuntimeKind::Service {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` runtime kind is not supported"
@@ -996,7 +1112,6 @@ fn validate_task_runtime(
         )));
     }
 
-    let backend = task_execution_backend(contract, task);
     let discover_listener_count = runtime
         .listeners
         .values()
@@ -1093,12 +1208,11 @@ fn validate_task_runtime(
 
         if let Some(host) = listener.project.host.as_ref() {
             validate_task_runtime_host_projection(
-                contract,
                 task_name,
-                task,
                 listener_name,
                 listener.protocol,
                 host,
+                backend,
                 errors,
             );
 
@@ -1183,12 +1297,11 @@ fn runtime_listener_env_suffix(listener_name: &str) -> String {
 }
 
 fn validate_task_runtime_host_projection(
-    contract: &Contract,
     task_name: &str,
-    task: &TaskSpec,
     listener_name: &str,
     protocol: TaskRuntimeProtocol,
     host: &TaskRuntimeHostProjectionSpec,
+    backend: Backend,
     errors: &mut Vec<ValidationError>,
 ) {
     if host.address.trim().is_empty() {
@@ -1224,7 +1337,7 @@ fn validate_task_runtime_host_projection(
         )));
     }
 
-    if task_execution_backend(contract, task) == Backend::Remote {
+    if backend == Backend::Remote {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` runtime host projection is not supported on remote execution contexts yet"
         )));
@@ -1238,62 +1351,108 @@ fn validate_container_runtime_publication_conflicts(
     let mut seen = BTreeMap::<(String, u16), (String, TaskRuntimeProtocol, String, String)>::new();
 
     for (task_name, task) in &contract.tasks {
-        let Some(runtime) = task.service_runtime() else {
-            continue;
-        };
-        if task_execution_backend(contract, task) != Backend::Container {
-            continue;
-        }
-
-        let context_name = task_execution_context_name(contract, task)
-            .unwrap_or("$legacy")
-            .to_string();
-        for (listener_name, listener) in &runtime.listeners {
-            let Some(host) = listener.project.host.as_ref() else {
-                continue;
-            };
-            let Some(container_port) = listener.bind.port.value else {
-                continue;
-            };
-            let publication_key = (context_name.clone(), container_port);
-            let signature = (
-                listener_name.clone(),
-                listener.protocol,
-                host.address.trim().to_string(),
-                match host.port.mode {
-                    TaskRuntimeHostPortMode::Fixed => match host.port.value {
-                        Some(value) => format!("fixed:{value}"),
-                        None => continue,
-                    },
-                    TaskRuntimeHostPortMode::Auto => String::from("auto"),
-                },
+        let base_backend = task_execution_backend(contract, task, Backend::Native);
+        let base_runtime_overridden = task
+            .mode_execution_branch(base_backend)
+            .and_then(|branch| branch.runtime.as_ref())
+            .is_some();
+        if let Some(runtime) = task.service_runtime()
+            && base_backend == Backend::Container
+            && !base_runtime_overridden
+        {
+            let context_name = task_execution_context_name(contract, task, Backend::Native)
+                .unwrap_or("$legacy")
+                .to_string();
+            record_container_runtime_publication_conflicts(
+                task_name,
+                runtime,
+                &context_name,
+                &mut seen,
+                errors,
             );
-
-            if let Some((existing_listener, existing_protocol, existing_address, existing_port)) =
-                seen.get(&publication_key)
-                && (existing_protocol != &signature.1
-                    || existing_address != &signature.2
-                    || existing_port != &signature.3)
-            {
-                errors.push(ValidationError::new(format!(
-                    "container context `{}` publishes internal port `{container_port}` more than once with conflicting host projection settings (`{task_name}.{listener_name}` conflicts with `{existing_listener}`)",
-                    context_name
-                )));
-            } else {
-                seen.insert(publication_key, signature);
+        }
+        if let Some(mode_execution) = task.execution.as_ref() {
+            for (mode, branch) in mode_execution.modes.iter() {
+                let Some(runtime) = branch.runtime.as_ref() else {
+                    continue;
+                };
+                if task_execution_backend(contract, task, mode) != Backend::Container {
+                    continue;
+                }
+                let context_name = task_execution_context_name(contract, task, mode)
+                    .unwrap_or("$legacy")
+                    .to_string();
+                let branch_name = format!("{task_name}[{}]", backend_mode_name(mode));
+                record_container_runtime_publication_conflicts(
+                    &branch_name,
+                    runtime,
+                    &context_name,
+                    &mut seen,
+                    errors,
+                );
             }
         }
     }
 }
 
-fn task_execution_backend(contract: &Contract, task: &TaskSpec) -> Backend {
-    if let Some(context_name) = task_execution_context_name(contract, task)
+fn record_container_runtime_publication_conflicts(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    context_name: &str,
+    seen: &mut BTreeMap<(String, u16), (String, TaskRuntimeProtocol, String, String)>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (listener_name, listener) in &runtime.listeners {
+        let Some(host) = listener.project.host.as_ref() else {
+            continue;
+        };
+        let Some(container_port) = listener.bind.port.value else {
+            continue;
+        };
+        let publication_key = (context_name.to_string(), container_port);
+        let signature = (
+            format!("{task_name}.{listener_name}"),
+            listener.protocol,
+            host.address.trim().to_string(),
+            match host.port.mode {
+                TaskRuntimeHostPortMode::Fixed => match host.port.value {
+                    Some(value) => format!("fixed:{value}"),
+                    None => continue,
+                },
+                TaskRuntimeHostPortMode::Auto => String::from("auto"),
+            },
+        );
+
+        if let Some((existing_listener, existing_protocol, existing_address, existing_port)) =
+            seen.get(&publication_key)
+            && (existing_protocol != &signature.1
+                || existing_address != &signature.2
+                || existing_port != &signature.3)
+        {
+            errors.push(ValidationError::new(format!(
+                "container context `{}` publishes internal port `{container_port}` more than once with conflicting host projection settings (`{}` conflicts with `{existing_listener}`)",
+                context_name, signature.0
+            )));
+        } else {
+            seen.insert(publication_key, signature);
+        }
+    }
+}
+
+fn task_execution_backend(contract: &Contract, task: &TaskSpec, backend_hint: Backend) -> Backend {
+    if let Some(context_name) = task_execution_context_name(contract, task, backend_hint)
         && let Some(context) = contract
             .execution
             .as_ref()
             .and_then(|execution| execution.contexts.get(context_name))
     {
         return context.backend;
+    }
+    if task.mode_execution_branch(backend_hint).is_some() {
+        return backend_hint;
+    }
+    if let Some(default_mode) = task.mode_default_backend() {
+        return default_mode;
     }
 
     contract
@@ -1303,10 +1462,43 @@ fn task_execution_backend(contract: &Contract, task: &TaskSpec) -> Backend {
         .unwrap_or(Backend::Native)
 }
 
-fn task_execution_context_name<'a>(contract: &'a Contract, task: &'a TaskSpec) -> Option<&'a str> {
+fn task_execution_context_name<'a>(
+    contract: &'a Contract,
+    task: &'a TaskSpec,
+    backend_hint: Backend,
+) -> Option<&'a str> {
+    let execution = contract.execution.as_ref()?;
+    if let Some(branch) = task.mode_execution_branch(backend_hint) {
+        return branch
+            .context
+            .as_deref()
+            .or_else(|| {
+                task.context.as_deref().filter(|context_name| {
+                    execution
+                        .contexts
+                        .get(*context_name)
+                        .is_some_and(|context| context.backend == backend_hint)
+                })
+            })
+            .or_else(|| {
+                matching_declared_execution_context_name(
+                    contract.execution.as_ref(),
+                    backend_hint,
+                    branch.lifecycle,
+                )
+            });
+    }
     task.context
         .as_deref()
-        .or_else(|| contract.execution.as_ref()?.default_context.as_deref())
+        .or_else(|| execution.default_context.as_deref())
+}
+
+fn backend_mode_name(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    }
 }
 
 fn is_loopback_only_address(value: &str) -> bool {
@@ -3057,6 +3249,120 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task `setup` must not declare multiple variants for `when.os: macos`"
+        );
+    }
+
+    #[test]
+    fn allows_mode_aware_task_with_mode_only_execution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          run: echo native
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_mode_default_without_matching_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    run: echo start
+    execution:
+      default_mode: container
+      modes:
+        native:
+          run: echo native
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `start` declares `execution.default_mode: container` but `execution.modes.container` is missing"
+        );
+    }
+
+    #[test]
+    fn rejects_mode_lifecycle_for_non_container_modes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          lifecycle: ephemeral
+          run: echo native
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `start` mode `native` must not declare `lifecycle`; lifecycle is only valid for container mode"
+        );
+    }
+
+    #[test]
+    fn rejects_mode_execution_when_effective_default_mode_branch_is_missing() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    execution:
+      modes:
+        container:
+          run: echo container
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `start` resolves to default mode `native` but does not declare `execution.modes.native`; add that mode branch or set `execution.default_mode` explicitly"
         );
     }
 

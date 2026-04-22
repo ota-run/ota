@@ -1162,6 +1162,18 @@ fn execution_backend_resolution_lines(
             format!("this contract sets `execution.preferred: {backend_label}`"),
         ];
     }
+    if let Some(task_name) = task_name
+        && contract
+            .tasks
+            .get(task_name)
+            .and_then(|task| task.mode_default_backend())
+            == Some(backend)
+    {
+        return vec![
+            format!("task `{task_name}` resolves to {backend_label} execution by default"),
+            format!("this task sets `tasks.{task_name}.execution.default_mode: {backend_label}`"),
+        ];
+    }
 
     let subject = task_name
         .map(|task| format!("task `{task}`"))
@@ -2212,7 +2224,14 @@ pub fn tasks(
                     .contract
                     .tasks
                     .iter()
-                    .map(|(name, task)| TaskSummary::from_spec(name, task, current_os()))
+                    .map(|(name, task)| {
+                        TaskSummary::from_spec(
+                            name,
+                            task,
+                            current_os(),
+                            target.contract.execution.as_ref(),
+                        )
+                    })
                     .collect::<Vec<_>>();
 
                 if members.is_empty()
@@ -2287,7 +2306,12 @@ pub fn tasks(
                                 .tasks
                                 .iter()
                                 .map(|(name, task)| {
-                                    TaskSummary::from_spec(name, task, current_os())
+                                    TaskSummary::from_spec(
+                                        name,
+                                        task,
+                                        current_os(),
+                                        member_target.contract.execution.as_ref(),
+                                    )
                                 })
                                 .collect::<Vec<_>>();
                             text_sections.push(render_tasks_output_text(
@@ -2394,7 +2418,14 @@ pub fn tasks(
                         .contract
                         .tasks
                         .iter()
-                        .map(|(name, task)| TaskSummary::from_spec(name, task, current_os()))
+                        .map(|(name, task)| {
+                            TaskSummary::from_spec(
+                                name,
+                                task,
+                                current_os(),
+                                target.contract.execution.as_ref(),
+                            )
+                        })
                         .collect::<Vec<_>>();
                     text_sections.push(render_tasks_output_text(
                         use_cmd,
@@ -16676,6 +16707,11 @@ fn render_tasks_text(
             paint_key("Context:"),
             task.context.unwrap_or("-")
         ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Default Mode:"),
+            task.default_mode.unwrap_or("-")
+        ));
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
@@ -16708,6 +16744,11 @@ fn render_tasks_text(
             output.push_str(&format!("\n  {} {}", paint_key("Env:"), env));
         }
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Mode Branches:"),
+            render_task_mode_branches(task)
+        ));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Safe For Agent:"),
@@ -16771,6 +16812,37 @@ fn render_task_relationships(values: &[String]) -> String {
     }
 }
 
+fn render_task_mode_branches(task: &TaskSummary<'_>) -> String {
+    if task.modes.is_empty() {
+        return String::from("-");
+    }
+
+    task.modes
+        .iter()
+        .map(|mode| {
+            let mut details = Vec::new();
+            if let Some(context) = mode.context {
+                details.push(format!("context={context}"));
+            }
+            if let Some(lifecycle) = mode.lifecycle {
+                details.push(format!("lifecycle={lifecycle}"));
+            }
+            if let Some(kind) = mode.kind {
+                details.push(format!("kind={kind}"));
+            }
+            if mode.has_runtime {
+                details.push(String::from("runtime=yes"));
+            }
+            if details.is_empty() {
+                mode.mode.to_string()
+            } else {
+                format!("{} ({})", mode.mode, details.join(", "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     let mut output = format_command_header("TASKS", path);
     output.push('\n');
@@ -16788,9 +16860,19 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             task.context.unwrap_or("-")
         ));
         output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Default Mode:"),
+            task.default_mode.unwrap_or("-")
+        ));
+        output.push_str(&format!(
             "\n  {} `{}`",
             paint_key("Command:"),
             paint_code(&usage)
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Mode Branches:"),
+            render_task_mode_branches(task)
         ));
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
@@ -24659,7 +24741,7 @@ execution:
 
         assert!(rendered.contains("Mode:      container"));
         assert!(rendered.contains("Image:     ghcr.io/ota/dev:latest"));
-        assert!(!rendered.contains("Target:"));
+        assert!(rendered.contains("Container:"));
     }
 
     #[test]
@@ -24758,7 +24840,7 @@ execution:
         assert!(rendered.contains("container"));
         assert!(rendered.contains("Image:"));
         assert!(rendered.contains("ghcr.io/ota/dev:latest"));
-        assert!(!rendered.contains("Target:"));
+        assert!(!rendered.contains("Container:"));
     }
 
     #[test]
@@ -27229,10 +27311,19 @@ fn render_run_structured_error_text(
             address,
             port,
         } => {
+            let task_backend = effective_task_execution(
+                contract,
+                task.as_str(),
+                ExecutionOverrides {
+                    backend: overrides.backend,
+                    lifecycle: None,
+                },
+            )
+            .backend;
             let is_auto_projection = contract
                 .tasks
                 .get(task.as_str())
-                .and_then(|task_spec| task_spec.service_runtime())
+                .and_then(|task_spec| task_spec.service_runtime_for_backend(task_backend))
                 .and_then(|runtime| runtime.listeners.get(listener.as_str()))
                 .and_then(|listener_spec| listener_spec.project.host.as_ref())
                 .is_some_and(|host| host.port.mode == TaskRuntimeHostPortMode::Auto);
@@ -29930,13 +30021,15 @@ fn render_execution_receipt_summary_block(
     if let Some(image) = receipt.image.as_deref() {
         lines.push(summary_detail_line("Image:", image));
     }
-    if let Some(target) = receipt.target.as_deref()
-        && !matches!(
+    if let Some(target) = receipt.target.as_deref() {
+        if receipt.backend.as_deref() == Some("container") {
+            lines.push(summary_detail_line("Container:", target));
+        } else if !matches!(
             (receipt.backend.as_deref(), receipt.lifecycle.as_deref()),
             (Some("container"), Some("ephemeral"))
-        )
-    {
-        lines.push(summary_detail_line("Target:", target));
+        ) {
+            lines.push(summary_detail_line("Target:", target));
+        }
     }
     if let Some(endpoint) = primary_receipt_endpoint(receipt) {
         lines.push(summary_detail_line("Endpoint:", &endpoint));
@@ -36761,10 +36854,16 @@ fn render_up_run_error(contract_path: &Path, error: RunError) -> String {
             let is_auto_projection = load_contract(contract_path)
                 .ok()
                 .and_then(|contract| {
+                    let task_backend = effective_task_execution(
+                        &contract,
+                        task.as_str(),
+                        ExecutionOverrides::default(),
+                    )
+                    .backend;
                     contract
                         .tasks
                         .get(task.as_str())
-                        .and_then(|task_spec| task_spec.service_runtime())
+                        .and_then(|task_spec| task_spec.service_runtime_for_backend(task_backend))
                         .and_then(|runtime| runtime.listeners.get(listener.as_str()))
                         .and_then(|listener_spec| listener_spec.project.host.as_ref())
                         .map(|host| host.port.mode == TaskRuntimeHostPortMode::Auto)

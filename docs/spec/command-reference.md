@@ -631,7 +631,14 @@ ota run version:bump --version major
 - hook task failures affect the final `ota run` exit code for the parent task
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
+- supports mode-aware task branches under `tasks.<name>.execution.modes`
+- when `tasks.<name>.execution.default_mode` is declared and `--mode` is omitted, `ota run` uses that mode branch
+- when `--mode` is set, `ota run` uses the matching mode branch for the task
+- if the selected mode has no declared task branch, `ota run` fails clearly
+- selected mode branches can override task `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`
 - resolves task execution backend from:
+  - `tasks.<name>.execution.default_mode` when set
+  - selected mode branch context when `tasks.<name>.execution.modes.<mode>.context` is set
   - `tasks.<name>.context` when set
   - `execution.default_context`
   - legacy `execution.preferred` / `execution.backends`
