@@ -465,12 +465,36 @@ pub enum RunError {
         port: u16,
     },
     #[error(
+        "task `{task}` cannot apply `--host-port` because no projected host listener is declared"
+    )]
+    HostPortOverrideNoProjectedListener { task: String },
+    #[error(
+        "task `{task}` cannot apply `--host-port` to listener `{listener}` because `project.host.port.mode` is `auto`"
+    )]
+    HostPortOverrideRequiresFixedProjectedPort { task: String, listener: String },
+    #[error(
+        "task `{task}` cannot apply `--host-port` because projected listeners are ambiguous: {listeners}"
+    )]
+    HostPortOverrideAmbiguousProjectedListener { task: String, listeners: String },
+    #[error("task `{task}` cannot apply `--host-port` when execution resolves to `{backend}`")]
+    HostPortOverrideUnsupportedBackend { task: String, backend: &'static str },
+    #[error(
         "task `{task}` could not {action} dependency-isolation volume `{volume}` using container engine `{engine}`: {details}"
     )]
     DependencyIsolationVolumeFailure {
         task: String,
         action: String,
         volume: String,
+        engine: String,
+        details: String,
+    },
+    #[error(
+        "task `{task}` could not {action} persistent container `{container}` using container engine `{engine}`: {details}"
+    )]
+    PersistentContainerCleanupFailure {
+        task: String,
+        action: String,
+        container: String,
         engine: String,
         details: String,
     },
@@ -692,6 +716,7 @@ pub struct CapturedRunOutcome {
 pub struct ExecutionOverrides {
     pub backend: Option<Backend>,
     pub lifecycle: Option<Lifecycle>,
+    pub host_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -715,6 +740,7 @@ pub struct StaleContainerCleanupReport {
 
 const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
 const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
+const OTA_REPO_CONTAINER_LABEL_KEY: &str = "dev.ota.repo";
 const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
 const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
@@ -1382,14 +1408,7 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
             continue;
         }
 
-        let inspect_exit_code =
-            container_command_exit_code(&engine, &["inspect", &container_name], None, "clean")?;
-        if inspect_exit_code != 0 {
-            continue;
-        }
-        let remove_exit_code =
-            container_command_exit_code(&engine, &["rm", "-f", &container_name], None, "clean")?;
-        cleaned |= remove_exit_code == 0;
+        cleaned |= remove_persistent_container_if_present("clean", &engine, &container_name)?;
     }
 
     for (engine, volume_name) in dependency_isolation_volumes_to_remove {
@@ -1405,6 +1424,20 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         relevant_engines.into_iter().collect()
     };
     for engine in discovery_engines {
+        match persistent_container_names_for_repo("clean", &engine, &repo_ownership_token) {
+            Ok(container_names) => {
+                for container_name in container_names {
+                    if !visited.insert((engine.clone(), container_name.clone())) {
+                        continue;
+                    }
+                    cleaned |=
+                        remove_persistent_container_if_present("clean", &engine, &container_name)?;
+                }
+            }
+            Err(error) => {
+                first_discovery_error.get_or_insert(error);
+            }
+        }
         match dependency_isolation_volume_names_for_repo("clean", &engine, &repo_ownership_token) {
             Ok(volume_names) => {
                 for volume_name in volume_names {
@@ -1422,6 +1455,30 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     }
 
     Ok(cleaned)
+}
+
+fn remove_persistent_container_if_present(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<bool, RunError> {
+    let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
+    if inspect.exit_code != 0 {
+        return Ok(false);
+    }
+
+    let remove = container_command_output(engine, &["rm", "-f", container_name], None, task_name)?;
+    if remove.exit_code == 0 {
+        return Ok(true);
+    }
+
+    Err(RunError::PersistentContainerCleanupFailure {
+        task: task_name.to_string(),
+        action: String::from("remove"),
+        container: container_name.to_string(),
+        engine: engine.to_string(),
+        details: container_command_failure_details(engine, &["rm", "-f", container_name], &remove),
+    })
 }
 
 fn persistent_cleanup_targets(
@@ -1632,6 +1689,56 @@ fn container_ps_names(engine: &str, args: &[&str]) -> Result<Vec<String>, RunErr
         .collect())
 }
 
+fn persistent_container_names_for_repo(
+    task_name: &str,
+    engine: &str,
+    repo_ownership_token: &str,
+) -> Result<Vec<String>, RunError> {
+    let repo_label = format!("{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}");
+    let repo_owned = container_names_for_label(task_name, engine, &repo_label)?;
+    let managed = container_names_for_label(task_name, engine, OTA_MANAGED_CONTAINER_LABEL)?;
+    let persistent = container_names_for_label(task_name, engine, OTA_PERSISTENT_CONTAINER_LABEL)?;
+
+    Ok(repo_owned
+        .into_iter()
+        .filter(|name| managed.contains(name) && persistent.contains(name))
+        .collect())
+}
+
+fn container_names_for_label(
+    task_name: &str,
+    engine: &str,
+    label: &str,
+) -> Result<BTreeSet<String>, RunError> {
+    let filter = format!("label={label}");
+    let args = [
+        "ps",
+        "-a",
+        "--filter",
+        filter.as_str(),
+        "--format",
+        "{{.Names}}",
+    ];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("list"),
+            container: label.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    Ok(output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+        .collect())
+}
+
 #[derive(Debug, Clone, Copy)]
 enum TaskExecutionMode {
     Stream { emit_progress: bool },
@@ -1799,6 +1906,19 @@ fn run_task_internal(
             return Err(error);
         }
     };
+    if let Some(task) = contract.tasks.get(task_name)
+        && let Err(error) = preflight_host_port_override(
+            task_name,
+            task.service_runtime_for_backend(resolved_execution_backend_kind(&backend)),
+            &backend,
+            overrides.host_port,
+        )
+    {
+        if let Some(loader) = preflight_loader.take() {
+            loader.stop();
+        }
+        return Err(error);
+    }
     let current_os = current_os();
     let mut state = TaskRunState::default();
     if let Some(loader) = preflight_loader.take() {
@@ -1809,6 +1929,7 @@ fn run_task_internal(
         contract_path,
         task_name,
         input_args,
+        overrides.host_port,
         policy_env,
         &backend,
         mode,
@@ -1957,6 +2078,7 @@ fn execute_task_with_hooks(
     contract_path: &Path,
     task_name: &str,
     input_args: &[String],
+    host_port_override: Option<u16>,
     policy_env: Option<&BTreeMap<String, String>>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -2005,6 +2127,7 @@ fn execute_task_with_hooks(
             contract_path,
             dependency,
             &[],
+            host_port_override,
             policy_env,
             backend,
             mode,
@@ -2085,6 +2208,11 @@ fn execute_task_with_hooks(
         path_export.as_deref(),
         &secret_env_names,
         backend,
+        if matches!(relation, TaskExecutionRelation::Requested) {
+            host_port_override
+        } else {
+            None
+        },
         mode,
     )?;
 
@@ -2108,6 +2236,7 @@ fn execute_task_with_hooks(
         contract_path,
         task_name,
         task,
+        host_port_override,
         policy_env,
         backend,
         mode,
@@ -2215,6 +2344,7 @@ fn execute_post_hooks(
     contract_path: &Path,
     task_name: &str,
     task: &TaskSpec,
+    host_port_override: Option<u16>,
     policy_env: Option<&BTreeMap<String, String>>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -2232,6 +2362,7 @@ fn execute_post_hooks(
             contract_path,
             &task.after_success,
             task_name,
+            host_port_override,
             policy_env,
             backend,
             mode,
@@ -2248,6 +2379,7 @@ fn execute_post_hooks(
             contract_path,
             &task.after_failure,
             task_name,
+            host_port_override,
             policy_env,
             backend,
             mode,
@@ -2264,6 +2396,7 @@ fn execute_post_hooks(
         contract_path,
         &task.after_always,
         task_name,
+        host_port_override,
         policy_env,
         backend,
         mode,
@@ -2284,6 +2417,7 @@ fn run_hook_tasks(
     contract_path: &Path,
     hooks: &[String],
     task_name: &str,
+    host_port_override: Option<u16>,
     policy_env: Option<&BTreeMap<String, String>>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -2301,6 +2435,7 @@ fn run_hook_tasks(
             contract_path,
             hook,
             &[],
+            host_port_override,
             policy_env,
             backend,
             mode,
@@ -2343,8 +2478,11 @@ fn execute_task_command(
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     backend: &ResolvedExecutionBackend,
+    host_port_override: Option<u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+
     match backend {
         ResolvedExecutionBackend::Native => execute_native_task_command(
             task_name,
@@ -2379,6 +2517,7 @@ fn execute_task_command(
             compose_networks,
             publications,
             dependency_isolation_paths,
+            host_port_override,
             mode,
         ),
         ResolvedExecutionBackend::Remote {
@@ -2429,6 +2568,7 @@ pub(crate) fn run_backend_command_captured(
         None,
         &BTreeSet::new(),
         backend,
+        None,
         TaskExecutionMode::Capture,
     )
 }
@@ -2864,14 +3004,142 @@ fn task_runtime_listener_publications(
         .collect()
 }
 
+fn selected_host_port_override_listener(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+) -> Result<String, RunError> {
+    let projected = runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener
+                .project
+                .host
+                .as_ref()
+                .map(|_| listener_name.clone())
+        })
+        .collect::<Vec<_>>();
+    if projected.is_empty() {
+        return Err(RunError::HostPortOverrideNoProjectedListener {
+            task: task_name.to_string(),
+        });
+    }
+
+    let primaries = runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener
+                .project
+                .host
+                .as_ref()
+                .is_some_and(|host| host.primary)
+                .then_some(listener_name.clone())
+        })
+        .collect::<Vec<_>>();
+    if primaries.len() == 1 {
+        return Ok(primaries[0].clone());
+    }
+    if projected.len() == 1 {
+        return Ok(projected[0].clone());
+    }
+
+    Err(RunError::HostPortOverrideAmbiguousProjectedListener {
+        task: task_name.to_string(),
+        listeners: projected.join(", "),
+    })
+}
+
+fn preflight_host_port_override(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    backend: &ResolvedExecutionBackend,
+    host_port_override: Option<u16>,
+) -> Result<(), RunError> {
+    if host_port_override.is_none() {
+        return Ok(());
+    }
+
+    if !matches!(backend, ResolvedExecutionBackend::Container { .. }) {
+        let backend = match backend {
+            ResolvedExecutionBackend::Native => "native",
+            ResolvedExecutionBackend::Container { .. } => "container",
+            ResolvedExecutionBackend::Remote { .. } => "remote",
+            ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
+        };
+        return Err(RunError::HostPortOverrideUnsupportedBackend {
+            task: task_name.to_string(),
+            backend,
+        });
+    }
+
+    let mut listener_publications = task_runtime_listener_publications(runtime);
+    apply_host_port_override_to_listener_publications(
+        task_name,
+        runtime,
+        &mut listener_publications,
+        host_port_override,
+    )?;
+    Ok(())
+}
+
+fn apply_host_port_override_to_listener_publications(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    listener_publications: &mut [(String, ContainerPortPublication)],
+    host_port_override: Option<u16>,
+) -> Result<(), RunError> {
+    let Some(host_port) = host_port_override else {
+        return Ok(());
+    };
+    let runtime = runtime.ok_or_else(|| RunError::HostPortOverrideNoProjectedListener {
+        task: task_name.to_string(),
+    })?;
+
+    let listener_name = selected_host_port_override_listener(task_name, runtime)?;
+    let listener = runtime
+        .listeners
+        .get(listener_name.as_str())
+        .expect("selected host-port override listener should exist");
+    let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+        RunError::HostPortOverrideNoProjectedListener {
+            task: task_name.to_string(),
+        }
+    })?;
+    if host_projection.port.mode != TaskRuntimeHostPortMode::Fixed {
+        return Err(RunError::HostPortOverrideRequiresFixedProjectedPort {
+            task: task_name.to_string(),
+            listener: listener_name,
+        });
+    }
+
+    let publication = listener_publications
+        .iter_mut()
+        .find(|(name, _)| name == listener_name.as_str())
+        .map(|(_, publication)| publication)
+        .ok_or_else(|| RunError::HostPortOverrideNoProjectedListener {
+            task: task_name.to_string(),
+        })?;
+    publication.host_port_mode = TaskRuntimeHostPortMode::Fixed;
+    publication.host_port = Some(host_port);
+
+    Ok(())
+}
+
 fn prepare_container_runtime_projection(
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     resolve_auto_host_ports: bool,
+    host_port_override: Option<u16>,
 ) -> Result<PreparedContainerRuntimeProjection, RunError> {
     if runtime.is_none() || listener_publications.is_empty() {
+        if host_port_override.is_some() {
+            return Err(RunError::HostPortOverrideNoProjectedListener {
+                task: task_name.to_string(),
+            });
+        }
         return Ok(PreparedContainerRuntimeProjection {
             publications: publications.to_vec(),
             listener_publications: listener_publications.to_vec(),
@@ -2881,6 +3149,12 @@ fn prepare_container_runtime_projection(
     }
 
     let mut prepared_listeners = listener_publications.to_vec();
+    apply_host_port_override_to_listener_publications(
+        task_name,
+        runtime,
+        &mut prepared_listeners,
+        host_port_override,
+    )?;
     for (listener_name, publication) in &mut prepared_listeners {
         if resolve_auto_host_ports && publication.host_port_mode == TaskRuntimeHostPortMode::Auto {
             let listener =
@@ -4555,6 +4829,7 @@ fn execute_container_task_command(
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     dependency_isolation_paths: &[String],
+    host_port_override: Option<u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     if let Some(issue) = probe_container_backend(engine, task_name)? {
@@ -4567,12 +4842,15 @@ fn execute_container_task_command(
         });
     }
 
-    let listener_publications = task_runtime_listener_publications(runtime);
+    let runtime_listener_publications = task_runtime_listener_publications(runtime);
     match lifecycle {
         Lifecycle::Ephemeral => {
-            let has_auto_projection = listener_publications.iter().any(|(_, publication)| {
-                publication.host_port_mode == TaskRuntimeHostPortMode::Auto
-            });
+            let has_auto_projection =
+                runtime_listener_publications
+                    .iter()
+                    .any(|(_, publication)| {
+                        publication.host_port_mode == TaskRuntimeHostPortMode::Auto
+                    });
             let max_attempts = if has_auto_projection {
                 CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS
             } else {
@@ -4585,8 +4863,9 @@ fn execute_container_task_command(
                     task_name,
                     runtime,
                     publications,
-                    &listener_publications,
+                    &runtime_listener_publications,
                     true,
+                    host_port_override,
                 )?;
                 let mut resolved_env = env_overrides.clone();
                 resolved_env.extend(projection.env.clone());
@@ -4618,7 +4897,8 @@ fn execute_container_task_command(
                 }
 
                 if let Some(port) = parse_container_host_port_conflict(&output.stderr)
-                    && let Some((listener_name, publication)) = listener_publications
+                    && let Some((listener_name, publication)) = projection
+                        .listener_publications
                         .iter()
                         .find(|(_, publication)| publication.host_port == Some(port))
                 {
@@ -4633,8 +4913,10 @@ fn execute_container_task_command(
                 if !has_auto_projection || attempt + 1 >= max_attempts {
                     if has_auto_projection
                         && is_container_host_publication_conflict(&output.stdout, &output.stderr)
-                        && let Some((listener_name, _)) =
-                            listener_publications.iter().find(|(_, publication)| {
+                        && let Some((listener_name, _)) = projection
+                            .listener_publications
+                            .iter()
+                            .find(|(_, publication)| {
                                 publication.host_port_mode == TaskRuntimeHostPortMode::Auto
                             })
                         && let Some((_, publication)) = projection
@@ -4663,24 +4945,37 @@ fn execute_container_task_command(
                 attempt += 1;
             }
         }
-        Lifecycle::Persistent => execute_persistent_container_task_command(
-            task_name,
-            runtime,
-            context_name,
-            project_name,
-            command,
-            working_dir,
-            env_overrides,
-            path_export,
-            secret_env_names,
-            image,
-            engine,
-            compose_networks,
-            publications,
-            &listener_publications,
-            dependency_isolation_paths,
-            mode,
-        ),
+        Lifecycle::Persistent => {
+            let projection = prepare_container_runtime_projection(
+                task_name,
+                runtime,
+                publications,
+                &runtime_listener_publications,
+                false,
+                host_port_override,
+            )?;
+            let repo_ownership_token =
+                repo_ownership_token_for_working_dir(task_name, working_dir)?;
+            execute_persistent_container_task_command(
+                task_name,
+                runtime,
+                context_name,
+                project_name,
+                &repo_ownership_token,
+                command,
+                working_dir,
+                env_overrides,
+                path_export,
+                secret_env_names,
+                image,
+                engine,
+                compose_networks,
+                &projection.publications,
+                &projection.listener_publications,
+                dependency_isolation_paths,
+                mode,
+            )
+        }
     }
 }
 
@@ -4848,6 +5143,7 @@ fn execute_persistent_container_task_command(
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
     project_name: &str,
+    repo_ownership_token: &str,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -4871,6 +5167,7 @@ fn execute_persistent_container_task_command(
         working_dir,
         context_name,
         project_name,
+        repo_ownership_token,
         image,
         engine,
         &container_name,
@@ -4883,14 +5180,47 @@ fn execute_persistent_container_task_command(
     }
 
     let fixed_expected_host_ports = fixed_listener_host_ports(listener_publications);
-    let (resolved_runtime, resolved_env) = persistent_container_runtime_projection(
+    let (resolved_runtime, resolved_env) = match persistent_container_runtime_projection(
         runtime,
         engine,
         &container_name,
         task_name,
         &fixed_expected_host_ports,
         env_overrides,
-    )?;
+    ) {
+        Ok(projection) => projection,
+        Err(error) if persistent_runtime_projection_host_port_mismatch(&error) => {
+            let remove = remove_persistent_container(engine, &container_name, task_name)?;
+            if remove.exit_code != 0 {
+                return Ok(container_command_failure(remove, container_name.clone()));
+            }
+            if let Some(failure) = ensure_persistent_container_ready(
+                task_name,
+                working_dir,
+                context_name,
+                project_name,
+                repo_ownership_token,
+                image,
+                engine,
+                &container_name,
+                compose_networks,
+                publications,
+                listener_publications,
+                dependency_isolation_paths,
+            )? {
+                return Ok(failure);
+            }
+            persistent_container_runtime_projection(
+                runtime,
+                engine,
+                &container_name,
+                task_name,
+                &fixed_expected_host_ports,
+                env_overrides,
+            )?
+        }
+        Err(error) => return Err(error),
+    };
     if matches!(mode, TaskExecutionMode::Stream { .. }) {
         print_projected_runtime_public_endpoint(&resolved_env);
     }
@@ -4909,11 +5239,12 @@ fn execute_persistent_container_task_command(
         if remove.exit_code != 0 {
             return Ok(container_command_failure(remove, container_name.clone()));
         }
-        let create = create_persistent_container(
+        if let Some(failure) = ensure_persistent_container_ready(
             task_name,
             working_dir,
             context_name,
             project_name,
+            repo_ownership_token,
             image,
             engine,
             &container_name,
@@ -4921,9 +5252,8 @@ fn execute_persistent_container_task_command(
             publications,
             listener_publications,
             dependency_isolation_paths,
-        )?;
-        if create.exit_code != 0 {
-            return Ok(container_command_failure(create, container_name.clone()));
+        )? {
+            return Ok(failure);
         }
         let (resolved_runtime, resolved_env) = persistent_container_runtime_projection(
             runtime,
@@ -4993,11 +5323,24 @@ fn persistent_container_runtime_projection(
     Ok((resolved_runtime, resolved_env))
 }
 
+fn persistent_runtime_projection_host_port_mismatch(error: &RunError) -> bool {
+    matches!(
+        error,
+        RunError::RuntimeListenerResolutionFailed {
+            kind: RuntimeListenerResolutionKind::HostPublication(
+                RuntimeListenerHostPublicationFailure::MismatchedPublishedPort { .. }
+            ),
+            ..
+        }
+    )
+}
+
 fn ensure_persistent_container_ready(
     task_name: &str,
     working_dir: &Path,
     context_name: Option<&str>,
     project_name: &str,
+    repo_ownership_token: &str,
     image: &str,
     engine: &str,
     container_name: &str,
@@ -5013,6 +5356,7 @@ fn ensure_persistent_container_ready(
             working_dir,
             context_name,
             project_name,
+            repo_ownership_token,
             image,
             engine,
             container_name,
@@ -5063,6 +5407,7 @@ fn ensure_persistent_container_ready(
                 working_dir,
                 context_name,
                 project_name,
+                repo_ownership_token,
                 image,
                 engine,
                 container_name,
@@ -5127,6 +5472,7 @@ fn create_persistent_container(
     working_dir: &Path,
     context_name: Option<&str>,
     project_name: &str,
+    repo_ownership_token: &str,
     image: &str,
     engine: &str,
     container_name: &str,
@@ -5145,6 +5491,8 @@ fn create_persistent_container(
         OTA_MANAGED_CONTAINER_LABEL.to_string(),
         "--label".to_string(),
         OTA_PERSISTENT_CONTAINER_LABEL.to_string(),
+        "--label".to_string(),
+        format!("{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}"),
         "--entrypoint".to_string(),
         "sh".to_string(),
         "-v".to_string(),
@@ -5507,15 +5855,6 @@ fn exec_persistent_container_task_command(
             })
         }
     }
-}
-
-fn container_command_exit_code(
-    engine: &str,
-    args: &[&str],
-    working_dir: Option<&Path>,
-    task_name: &str,
-) -> Result<i32, RunError> {
-    Ok(container_command_output(engine, args, working_dir, task_name)?.exit_code)
 }
 
 fn container_command_output(
@@ -5894,6 +6233,13 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
 
 fn repo_ownership_token(task_name: &str, contract_path: &Path) -> Result<String, RunError> {
     let working_dir = contract_working_dir(contract_path);
+    repo_ownership_token_for_working_dir(task_name, working_dir)
+}
+
+fn repo_ownership_token_for_working_dir(
+    task_name: &str,
+    working_dir: &Path,
+) -> Result<String, RunError> {
     let ota_dir = working_dir.join(".ota");
     let token_path = ota_dir.join("ownership-id");
 
@@ -7235,6 +7581,157 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn run_task_captured_applies_host_port_override_to_fixed_container_projection() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: |
+      printf '%s|%s|%s|%s' "$OTA_PUBLIC_URL" "$OTA_PUBLIC_HOST" "$OTA_PUBLIC_PORT" "$OTA_PUBLIC_URL_HTTP" > runtime-env.txt
+      printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 53123
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(4000),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("host-port override should succeed for fixed container projection");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        let runtime = outcome
+            .runtime
+            .expect("fixed container service task should report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("fixed container listener should resolve a host endpoint");
+        assert_eq!(listener.bind.port, 3000);
+        assert_eq!(host.address, "127.0.0.1");
+        assert_eq!(host.port, 4000);
+        let expected_url = "http://127.0.0.1:4000/";
+        assert_eq!(host.url.as_deref(), Some(expected_url));
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            format!("{expected_url}|127.0.0.1|4000|{expected_url}")
+        );
+    }
+
+    #[test]
+    fn run_task_captured_rejects_host_port_override_for_native_execution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  prepare:
+    run: echo dependency > dependency.txt
+  dev:
+    depends_on:
+      - prepare
+    run: echo ok
+"#,
+        );
+
+        let error = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(4000),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("native execution should reject --host-port override");
+        assert!(matches!(
+            error,
+            RunError::HostPortOverrideUnsupportedBackend { task, backend }
+                if task == "dev" && backend == "native"
+        ));
+        assert!(!fixture.dir.path().join("dependency.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_task_captured_keeps_prepared_auto_container_runtime_when_port_lookup_disappears() {
         use std::os::unix::fs::PermissionsExt;
         use std::path::PathBuf;
@@ -8061,6 +8558,7 @@ tasks:
             "build",
             &[],
             None,
+            None,
             &backend,
             TaskExecutionMode::Capture,
             working_dir,
@@ -8079,6 +8577,7 @@ tasks:
             fixture.file_path(),
             "build",
             &[],
+            None,
             None,
             &backend,
             TaskExecutionMode::Capture,
@@ -8787,6 +9286,7 @@ tasks:
         .unwrap();
         assert!(labels.contains(super::OTA_MANAGED_CONTAINER_LABEL));
         assert!(labels.contains(super::OTA_PERSISTENT_CONTAINER_LABEL));
+        assert!(labels.contains(super::OTA_REPO_CONTAINER_LABEL_KEY));
     }
 
     #[cfg(unix)]
@@ -8874,6 +9374,127 @@ tasks:
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_host_port_override_recreates_legacy_persistent_container_when_publication_differs()
+     {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    run: printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 53123
+              path: /
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: Some(Lifecycle::Persistent),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .unwrap();
+        let second = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: Some(Lifecycle::Persistent),
+                host_port: Some(53124),
+            },
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        let first_runtime = first
+            .runtime
+            .expect("first run should include runtime metadata");
+        let first_host = first_runtime
+            .listeners
+            .get("http")
+            .and_then(|listener| listener.resolved.as_ref())
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("first run host endpoint should resolve");
+        assert_eq!(first_host.port, 53123);
+        let second_runtime = second
+            .runtime
+            .expect("second run should include runtime metadata");
+        let second_host = second_runtime
+            .listeners
+            .get("http")
+            .and_then(|listener| listener.resolved.as_ref())
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("second run host endpoint should resolve");
+        assert_eq!(second_host.port, 53124);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "readyready"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 2);
+        assert_eq!(log.matches("rm").count(), 1);
         assert_eq!(log.matches("exec").count(), 2);
     }
 
@@ -9000,6 +9621,7 @@ tasks:
             ExecutionOverrides {
                 backend: Some(crate::schema::Backend::Container),
                 lifecycle: Some(crate::schema::Lifecycle::Ephemeral),
+                host_port: None,
             },
         )
         .unwrap();
@@ -9152,6 +9774,7 @@ tasks:
             ExecutionOverrides {
                 backend: Some(Backend::Container),
                 lifecycle: None,
+                host_port: None,
             },
         )
         .unwrap_err();
@@ -9638,6 +10261,107 @@ tasks:
             fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
                 .unwrap()
                 .contains("rm\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_discovers_repo_owned_persistent_container_created_with_host_port_override() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(4000),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        assert!(
+            fs::read_dir(&state_dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().ends_with(".path"))
+        );
+
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(
+            !fs::read_dir(&state_dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().ends_with(".path"))
         );
     }
 
@@ -10537,6 +11261,7 @@ tasks:
             &publications,
             &listener_publications,
             true,
+            None,
         )
         .unwrap_err();
 
@@ -10603,6 +11328,7 @@ tasks:
             std::slice::from_ref(&publication),
             &[(String::from("http"), publication.clone())],
             false,
+            None,
         )
         .expect("persistent projection should keep auto host ports unresolved");
 
@@ -10618,6 +11344,271 @@ tasks:
         assert_eq!(prepared_listener.host_port, None);
         assert!(projection.expected_host_ports.is_empty());
         assert!(projection.env.is_empty());
+    }
+
+    #[test]
+    fn prepare_container_runtime_projection_applies_fixed_host_port_override() {
+        let runtime = TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                TaskRuntimeListenerSpec {
+                    protocol: TaskRuntimeProtocol::Http,
+                    bind: TaskRuntimeBindSpec {
+                        address: String::from("0.0.0.0"),
+                        port: TaskRuntimePortSpec {
+                            mode: TaskRuntimePortMode::Fixed,
+                            value: Some(3000),
+                        },
+                    },
+                    project: TaskRuntimeProjectionSpec {
+                        host: Some(TaskRuntimeHostProjectionSpec {
+                            address: String::from("127.0.0.1"),
+                            port: TaskRuntimeHostPortSpec {
+                                mode: TaskRuntimeHostPortMode::Fixed,
+                                value: Some(3000),
+                            },
+                            primary: false,
+                            path: Some(String::from("/")),
+                        }),
+                    },
+                },
+            )]),
+        };
+        let publication = ContainerPortPublication {
+            bind_port: 3000,
+            host_address: String::from("127.0.0.1"),
+            host_port_mode: TaskRuntimeHostPortMode::Fixed,
+            host_port: Some(3000),
+            protocol: TaskRuntimeProtocol::Http,
+        };
+        let projection = prepare_container_runtime_projection(
+            "dev",
+            Some(&runtime),
+            std::slice::from_ref(&publication),
+            &[(String::from("http"), publication.clone())],
+            false,
+            Some(4000),
+        )
+        .expect("host-port override should apply to fixed projected listeners");
+
+        let prepared_listener = projection
+            .listener_publications
+            .first()
+            .map(|(_, publication)| publication)
+            .expect("listener projection should exist");
+        assert_eq!(
+            prepared_listener.host_port_mode,
+            TaskRuntimeHostPortMode::Fixed
+        );
+        assert_eq!(prepared_listener.host_port, Some(4000));
+        assert_eq!(prepared_listener.bind_port, 3000);
+        assert_eq!(projection.expected_host_ports.get("http"), Some(&4000));
+        assert_eq!(
+            projection.env.get("OTA_PUBLIC_URL").map(String::as_str),
+            Some("http://127.0.0.1:4000/")
+        );
+        assert_eq!(
+            projection.env.get("OTA_PUBLIC_PORT").map(String::as_str),
+            Some("4000")
+        );
+        assert_eq!(
+            projection
+                .env
+                .get("OTA_PUBLIC_URL_HTTP")
+                .map(String::as_str),
+            Some("http://127.0.0.1:4000/")
+        );
+    }
+
+    #[test]
+    fn prepare_container_runtime_projection_rejects_host_port_override_for_auto_projection() {
+        let runtime = TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                TaskRuntimeListenerSpec {
+                    protocol: TaskRuntimeProtocol::Http,
+                    bind: TaskRuntimeBindSpec {
+                        address: String::from("0.0.0.0"),
+                        port: TaskRuntimePortSpec {
+                            mode: TaskRuntimePortMode::Fixed,
+                            value: Some(3000),
+                        },
+                    },
+                    project: TaskRuntimeProjectionSpec {
+                        host: Some(TaskRuntimeHostProjectionSpec {
+                            address: String::from("127.0.0.1"),
+                            port: TaskRuntimeHostPortSpec {
+                                mode: TaskRuntimeHostPortMode::Auto,
+                                value: None,
+                            },
+                            primary: false,
+                            path: None,
+                        }),
+                    },
+                },
+            )]),
+        };
+        let publication = ContainerPortPublication {
+            bind_port: 3000,
+            host_address: String::from("127.0.0.1"),
+            host_port_mode: TaskRuntimeHostPortMode::Auto,
+            host_port: None,
+            protocol: TaskRuntimeProtocol::Http,
+        };
+
+        let error = prepare_container_runtime_projection(
+            "dev",
+            Some(&runtime),
+            std::slice::from_ref(&publication),
+            &[(String::from("http"), publication.clone())],
+            false,
+            Some(4000),
+        )
+        .expect_err("auto projected listeners must reject --host-port override");
+
+        assert!(matches!(
+            error,
+            RunError::HostPortOverrideRequiresFixedProjectedPort { task, listener }
+                if task == "dev" && listener == "http"
+        ));
+    }
+
+    #[test]
+    fn prepare_container_runtime_projection_rejects_host_port_override_without_projected_listener()
+    {
+        let runtime = TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                TaskRuntimeListenerSpec {
+                    protocol: TaskRuntimeProtocol::Http,
+                    bind: TaskRuntimeBindSpec {
+                        address: String::from("127.0.0.1"),
+                        port: TaskRuntimePortSpec {
+                            mode: TaskRuntimePortMode::Fixed,
+                            value: Some(3000),
+                        },
+                    },
+                    project: TaskRuntimeProjectionSpec { host: None },
+                },
+            )]),
+        };
+
+        let error = prepare_container_runtime_projection(
+            "dev",
+            Some(&runtime),
+            &[],
+            &[],
+            false,
+            Some(4000),
+        )
+        .expect_err("host-port override requires projected listeners");
+
+        assert!(matches!(
+            error,
+            RunError::HostPortOverrideNoProjectedListener { task } if task == "dev"
+        ));
+    }
+
+    #[test]
+    fn prepare_container_runtime_projection_rejects_ambiguous_host_port_override_listener() {
+        let runtime = TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([
+                (
+                    String::from("http"),
+                    TaskRuntimeListenerSpec {
+                        protocol: TaskRuntimeProtocol::Http,
+                        bind: TaskRuntimeBindSpec {
+                            address: String::from("0.0.0.0"),
+                            port: TaskRuntimePortSpec {
+                                mode: TaskRuntimePortMode::Fixed,
+                                value: Some(3000),
+                            },
+                        },
+                        project: TaskRuntimeProjectionSpec {
+                            host: Some(TaskRuntimeHostProjectionSpec {
+                                address: String::from("127.0.0.1"),
+                                port: TaskRuntimeHostPortSpec {
+                                    mode: TaskRuntimeHostPortMode::Fixed,
+                                    value: Some(3000),
+                                },
+                                primary: false,
+                                path: None,
+                            }),
+                        },
+                    },
+                ),
+                (
+                    String::from("metrics"),
+                    TaskRuntimeListenerSpec {
+                        protocol: TaskRuntimeProtocol::Http,
+                        bind: TaskRuntimeBindSpec {
+                            address: String::from("0.0.0.0"),
+                            port: TaskRuntimePortSpec {
+                                mode: TaskRuntimePortMode::Fixed,
+                                value: Some(9090),
+                            },
+                        },
+                        project: TaskRuntimeProjectionSpec {
+                            host: Some(TaskRuntimeHostProjectionSpec {
+                                address: String::from("127.0.0.1"),
+                                port: TaskRuntimeHostPortSpec {
+                                    mode: TaskRuntimeHostPortMode::Fixed,
+                                    value: Some(9090),
+                                },
+                                primary: false,
+                                path: None,
+                            }),
+                        },
+                    },
+                ),
+            ]),
+        };
+        let listener_publications = vec![
+            (
+                String::from("http"),
+                ContainerPortPublication {
+                    bind_port: 3000,
+                    host_address: String::from("127.0.0.1"),
+                    host_port_mode: TaskRuntimeHostPortMode::Fixed,
+                    host_port: Some(3000),
+                    protocol: TaskRuntimeProtocol::Http,
+                },
+            ),
+            (
+                String::from("metrics"),
+                ContainerPortPublication {
+                    bind_port: 9090,
+                    host_address: String::from("127.0.0.1"),
+                    host_port_mode: TaskRuntimeHostPortMode::Fixed,
+                    host_port: Some(9090),
+                    protocol: TaskRuntimeProtocol::Http,
+                },
+            ),
+        ];
+        let publications = listener_publications
+            .iter()
+            .map(|(_, publication)| publication.clone())
+            .collect::<Vec<_>>();
+
+        let error = prepare_container_runtime_projection(
+            "dev",
+            Some(&runtime),
+            &publications,
+            &listener_publications,
+            false,
+            Some(4000),
+        )
+        .expect_err("multiple projected listeners without one primary are ambiguous");
+
+        assert!(matches!(
+            error,
+            RunError::HostPortOverrideAmbiguousProjectedListener { task, listeners }
+                if task == "dev" && listeners == "http, metrics"
+        ));
     }
 
     #[test]

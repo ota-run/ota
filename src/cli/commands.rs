@@ -938,6 +938,9 @@ pub fn execution_plan(
             format_lifecycle(lifecycle)
         ));
     }
+    if let Some(host_port) = overrides.host_port {
+        debug_lines.push(format!("DEBUG host_port_override={host_port}"));
+    }
 
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
@@ -24319,6 +24322,7 @@ tasks:
             ExecutionOverrides {
                 backend: Some(Backend::Native),
                 lifecycle: None,
+                host_port: None,
             },
             "test",
             None,
@@ -24343,6 +24347,7 @@ tasks:
             ExecutionOverrides {
                 backend: Some(Backend::Container),
                 lifecycle: Some(Lifecycle::Persistent),
+                host_port: None,
             },
             "test",
             None,
@@ -27574,6 +27579,7 @@ fn render_run_structured_error_text(
                 ExecutionOverrides {
                     backend: overrides.backend,
                     lifecycle: None,
+                    host_port: overrides.host_port,
                 },
             )
             .backend;
@@ -27609,6 +27615,61 @@ fn render_run_structured_error_text(
                 next_steps,
             )
         }
+        RunError::HostPortOverrideNoProjectedListener { task } => (
+            String::from("Host port override is not applicable"),
+            vec![format!(
+                "task `{task}` does not declare any projected host listener under `runtime.listeners.*.project.host`"
+            )],
+            vec![
+                String::from(
+                    "add a projected host listener under `runtime.listeners` or rerun without `--host-port`",
+                ),
+                task_use_details_step(Some(contract_path), member),
+            ],
+        ),
+        RunError::HostPortOverrideRequiresFixedProjectedPort { task, listener } => (
+            String::from("Host port override requires fixed projected port mode"),
+            vec![format!(
+                "task `{task}` listener `{listener}` declares `project.host.port.mode: auto`, so ota cannot apply `--host-port`"
+            )],
+            vec![
+                format!(
+                    "set `tasks.{task}.runtime.listeners.{listener}.project.host.port.mode` to `fixed` when you need deterministic CLI host-port overrides"
+                ),
+                format!(
+                    "or rerun without `--host-port` so ota can continue resolving `auto` host ports"
+                ),
+            ],
+        ),
+        RunError::HostPortOverrideAmbiguousProjectedListener { task, listeners } => (
+            String::from("Host port override is ambiguous for multiple listeners"),
+            vec![format!(
+                "task `{task}` projects multiple listeners ({listeners}) and ota could not select exactly one listener for `--host-port`"
+            )],
+            vec![
+                String::from(
+                    "mark exactly one projected listener as primary with `project.host.primary: true`",
+                ),
+                String::from("or rerun without `--host-port`"),
+            ],
+        ),
+        RunError::HostPortOverrideUnsupportedBackend { task, backend } => (
+            String::from("Host port override requires container execution"),
+            vec![format!(
+                "task `{task}` resolved to `{backend}` execution, but `--host-port` only applies to projected container host publication"
+            )],
+            vec![
+                format!(
+                    "rerun with container mode if the contract supports it, for example {}",
+                    paint_code(&match member {
+                        Some(member) =>
+                            format!("ota run --member {member} {task} --mode container"),
+                        None => format!("ota run {task} --mode container"),
+                    })
+                ),
+                String::from("or rerun without `--host-port`"),
+            ],
+        ),
         RunError::MissingRemoteProvider { .. } => (
             String::from("Remote run is not configured"),
             run_execution_backend_why_lines(contract, overrides, task_name, Backend::Remote),
@@ -27773,6 +27834,44 @@ fn render_run_structured_error_text(
                 "RUN",
                 &text_path_display,
                 &runtime_listener_resolution.field,
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            return output;
+        }
+        RunError::HostPortOverrideRequiresFixedProjectedPort { task, listener } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!("tasks.{task}.runtime.listeners.{listener}.project.host.port.mode"),
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            return output;
+        }
+        RunError::HostPortOverrideAmbiguousProjectedListener { task, .. } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!("tasks.{task}.runtime.listeners"),
                 &summary,
                 &why_lines,
                 &next_steps,
@@ -31976,6 +32075,7 @@ fn doctor_mode_execution_overrides(mode: DoctorMode) -> ExecutionOverrides {
             DoctorMode::Remote => Backend::Remote,
         }),
         lifecycle: None,
+        host_port: None,
     }
 }
 

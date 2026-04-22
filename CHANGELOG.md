@@ -27,6 +27,7 @@
 ## Unreleased
 
 - fixed `ota clean` so drifted dependency-isolation cleanup only queries the repo’s actual container engines, preventing an unrelated dead Podman install from breaking Docker-owned cleanup
+- added `ota run --host-port <port>` as a one-run projected host/public port override for container workload listeners with `project.host.port.mode: fixed`, keeping internal bind ports unchanged while aligning runtime env (`OTA_PUBLIC_URL`/`OTA_PUBLIC_PORT`), summaries, and receipts to the overridden public URL
 - added task-level mode-aware execution branches under `tasks.<name>.execution` so one task can declare mode-specific `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`, with `execution.default_mode` support, clear run-time errors for missing mode branches, and updated `ota tasks` JSON/text branch rendering
 - replaced the generic task-exit banner for container host-port bind conflicts with a specific `Host publication failed` error that names the blocked host port and points at `project.host.port.mode`
 - made `ota explain` and `ota workspace explain` show `BLOCKED` when the plan contains actionable remediation steps, instead of a misleading `READY` banner
