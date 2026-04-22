@@ -24,7 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::File;
+use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::TcpListener;
@@ -470,6 +470,15 @@ pub enum RunError {
         action: String,
         volume: String,
         engine: String,
+        details: String,
+    },
+    #[error(
+        "task `{task}` could not {action} dependency-isolation ownership token at `{path}`: {details}"
+    )]
+    DependencyIsolationOwnershipFailure {
+        task: String,
+        action: String,
+        path: String,
         details: String,
     },
     #[error("container backend `{engine}` could not list stale ota containers: {details}")]
@@ -1326,7 +1335,7 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     let cleanup_targets = persistent_cleanup_targets(contract)?;
 
     let working_dir = contract_working_dir(contract_path);
-    let project_name = contract.project.name.clone();
+    let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
     let mut cleaned = false;
     let mut visited = BTreeSet::new();
     let mut dependency_isolation_volumes_to_remove = BTreeSet::new();
@@ -1359,7 +1368,7 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
             context_name.as_deref(),
             &image,
             &engine,
-            &project_name,
+            &repo_ownership_token,
             &dependency_isolation_paths,
         );
         for volume_name in dependency_volume_names {
@@ -1383,14 +1392,22 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
     }
 
+    let mut first_discovery_error = None;
     for engine in available_container_engines() {
-        if let Ok(volume_names) =
-            dependency_isolation_volume_names_for_project("clean", &engine, &project_name)
-        {
-            for volume_name in volume_names {
-                cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+        match dependency_isolation_volume_names_for_repo("clean", &engine, &repo_ownership_token) {
+            Ok(volume_names) => {
+                for volume_name in volume_names {
+                    cleaned |= remove_dependency_isolation_volume("clean", &engine, &volume_name)?;
+                }
+            }
+            Err(error) => {
+                first_discovery_error.get_or_insert(error);
             }
         }
+    }
+
+    if let Some(error) = first_discovery_error {
+        return Err(error);
     }
 
     Ok(cleaned)
@@ -2028,7 +2045,7 @@ fn execute_task_with_hooks(
         Some(task),
         execution.body,
         working_dir,
-        &contract.project.name,
+        contract.project.name.as_str(),
         &combined_env,
         path_export.as_deref(),
         &secret_env_names,
@@ -5424,7 +5441,7 @@ fn container_dependency_isolation_mounts(
     context_name: Option<&str>,
     image: &str,
     engine: &str,
-    project_name: &str,
+    repo_ownership_token: &str,
     isolated_paths: &[String],
 ) -> Result<Vec<(String, String)>, RunError> {
     let mut mounts = Vec::new();
@@ -5440,7 +5457,8 @@ fn container_dependency_isolation_mounts(
         ) else {
             continue;
         };
-        let labels = dependency_isolation_volume_labels(project_name, context_name, &normalized);
+        let labels =
+            dependency_isolation_volume_labels(repo_ownership_token, context_name, &normalized);
         ensure_dependency_isolation_volume(task_name, engine, &volume_name, &labels)?;
         mounts.push((volume_name, format!("/workspace/{normalized}")));
     }
@@ -5453,7 +5471,7 @@ fn container_dependency_isolation_volume_names(
     context_name: Option<&str>,
     image: &str,
     engine: &str,
-    _project_name: &str,
+    _repo_ownership_token: &str,
     isolated_paths: &[String],
 ) -> Vec<String> {
     isolated_paths
@@ -5542,14 +5560,14 @@ fn remove_dependency_isolation_volume(
 }
 
 fn dependency_isolation_volume_labels(
-    project_name: &str,
+    repo_ownership_token: &str,
     context_name: Option<&str>,
     isolated_path: &str,
 ) -> Vec<String> {
     let mut labels = vec![
         OTA_MANAGED_VOLUME_LABEL.to_string(),
         OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL.to_string(),
-        format!("dev.ota.project={project_name}"),
+        format!("dev.ota.repo={repo_ownership_token}"),
         format!("dev.ota.path={isolated_path}"),
     ];
     if let Some(context_name) = context_name {
@@ -5558,12 +5576,12 @@ fn dependency_isolation_volume_labels(
     labels
 }
 
-fn dependency_isolation_volume_names_for_project(
+fn dependency_isolation_volume_names_for_repo(
     task_name: &str,
     engine: &str,
-    project_name: &str,
+    repo_ownership_token: &str,
 ) -> Result<Vec<String>, RunError> {
-    let project_filter = format!("label=dev.ota.project={project_name}");
+    let repo_filter = format!("label=dev.ota.repo={repo_ownership_token}");
     let args = [
         "volume",
         "ls",
@@ -5573,14 +5591,14 @@ fn dependency_isolation_volume_names_for_project(
         "--filter",
         OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL,
         "--filter",
-        project_filter.as_str(),
+        repo_filter.as_str(),
     ];
     let output = container_command_output(engine, &args, None, task_name)?;
     if output.exit_code != 0 {
         return Err(RunError::DependencyIsolationVolumeFailure {
             task: task_name.to_string(),
             action: String::from("list"),
-            volume: project_name.to_string(),
+            volume: repo_ownership_token.to_string(),
             engine: engine.to_string(),
             details: container_command_failure_details(engine, &args, &output),
         });
@@ -5618,6 +5636,49 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
+}
+
+fn repo_ownership_token(task_name: &str, contract_path: &Path) -> Result<String, RunError> {
+    let working_dir = contract_working_dir(contract_path);
+    let ota_dir = working_dir.join(".ota");
+    let token_path = ota_dir.join("ownership-id");
+
+    if let Ok(token) = fs::read_to_string(&token_path) {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    fs::create_dir_all(&ota_dir).map_err(|source| {
+        RunError::DependencyIsolationOwnershipFailure {
+            task: task_name.to_string(),
+            action: String::from("create"),
+            path: token_path.display().to_string(),
+            details: source.to_string(),
+        }
+    })?;
+
+    let mut hasher = DefaultHasher::new();
+    working_dir.display().to_string().hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .hash(&mut hasher);
+    let token = format!("{:016x}", hasher.finish());
+
+    fs::write(&token_path, &token).map_err(|source| {
+        RunError::DependencyIsolationOwnershipFailure {
+            task: task_name.to_string(),
+            action: String::from("write"),
+            path: token_path.display().to_string(),
+            details: source.to_string(),
+        }
+    })?;
+
+    Ok(token)
 }
 
 fn current_os() -> &'static str {
@@ -6840,6 +6901,11 @@ tasks:
         let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
 
         let original_path = env::var_os("PATH");
         let original_state_dir = env::var_os("OTA_TEST_STATE_DIR");
@@ -6917,6 +6983,7 @@ tasks:
     #[test]
     fn run_task_captured_keeps_prepared_auto_container_runtime_when_port_lookup_disappears() {
         use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
 
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -6979,9 +7046,8 @@ exec "$(dirname "$0")/docker-real" "$@"
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
-        if let Some(existing) = original_path.as_ref() {
-            path_entries.extend(env::split_paths(existing));
-        }
+        path_entries.push(PathBuf::from("/usr/bin"));
+        path_entries.push(PathBuf::from("/bin"));
         let joined_path = env::join_paths(path_entries).unwrap();
         unsafe {
             env::set_var("PATH", &joined_path);
@@ -9344,6 +9410,7 @@ tasks:
     #[test]
     fn cleans_dependency_isolation_volumes_by_label_after_contract_drift() {
         use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::symlink;
 
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -9374,23 +9441,47 @@ tasks:
         let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+        for (name, target) in [
+            ("dirname", "/usr/bin/dirname"),
+            ("basename", "/usr/bin/basename"),
+            ("grep", "/usr/bin/grep"),
+            ("cat", "/bin/cat"),
+            ("rm", "/bin/rm"),
+            ("touch", "/usr/bin/touch"),
+            ("mkdir", "/bin/mkdir"),
+            ("printenv", "/usr/bin/printenv"),
+        ] {
+            let link_path = bin_dir.join(name);
+            let _ = symlink(target, &link_path);
+        }
 
         let state_dir = bin_dir.join("docker-state");
         fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
         let stale_volume = "ota-isolated-stale";
         fs::write(state_dir.join(format!("volume.{stale_volume}")), "").unwrap();
         fs::write(
             state_dir.join(format!("volume.{stale_volume}.labels")),
-            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.project=ota\ndev.ota.path=node_modules\n",
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
         )
         .unwrap();
+        fs::write(state_dir.join("volume.other-repo"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.other-repo.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-2\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+        fs::write(state_dir.join("volume.user-data"), "").unwrap();
 
         let original_path = env::var_os("PATH");
-        let mut path_entries = vec![bin_dir.clone()];
-        if let Some(existing) = original_path.as_ref() {
-            path_entries.extend(env::split_paths(existing));
-        }
-        let joined_path = env::join_paths(path_entries).unwrap();
+        let joined_path = env::join_paths([bin_dir.clone()]).unwrap();
         unsafe {
             env::set_var("PATH", &joined_path);
         }
@@ -9413,6 +9504,90 @@ tasks:
                 .join(format!("volume.{stale_volume}.labels"))
                 .exists()
         );
+        assert!(state_dir.join("volume.other-repo").exists());
+        assert!(state_dir.join("volume.other-repo.labels").exists());
+        assert!(state_dir.join("volume.user-data").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_surfaces_dependency_isolation_volume_discovery_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(state_dir.join("volume.repo-1"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.repo-1.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+        fs::write(state_dir.join("volume-ls.fail"), "").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = clean_execution(&fixture.contract, fixture.file_path()).unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::DependencyIsolationVolumeFailure { action, .. } => {
+                assert_eq!(action, "list");
+            }
+            other => panic!("expected discovery failure, got {other}"),
+        }
+        assert!(state_dir.join("volume.repo-1").exists());
     }
 
     #[cfg(unix)]
@@ -10155,6 +10330,10 @@ case "$command" in
         exit 0
         ;;
       ls)
+        if [ -f "$state_dir/volume-ls.fail" ]; then
+          echo "volume discovery failed" >&2
+          exit 1
+        fi
         label_filters=""
         name_filter=""
         quiet=0

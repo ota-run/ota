@@ -13526,10 +13526,17 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
 tasks:
   build:
+    context: app
     run: cargo build
   dev:
+    context: app
     run: cargo run
 "#,
         );
@@ -13542,6 +13549,7 @@ tasks:
         assert!(normalized.contains("/ota.yaml"));
         assert!(normalized.contains("build"));
         assert!(normalized.contains("dev"));
+        assert!(normalized.contains("Context: app"));
         assert!(!normalized.contains("- Task:"));
     }
 
@@ -13587,16 +13595,24 @@ policies:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
 tasks:
   dev:
+    context: app
     description: Start the dev server
     notes: |
       Use this for local development and manual verification.
     run: cargo run
   start:
+    context: app
     description: Start the release server
     run: cargo run --release
   typecheck:
+    context: app
     description: Type-check the crate
     run: cargo check
 "#,
@@ -13608,6 +13624,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("TASKS "));
         assert!(stdout.contains("✦ dev"));
+        assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Command: `ota run dev`"));
         assert!(stdout.contains("Description: Start the dev server"));
         assert!(stdout.contains("Notes:"));
@@ -13615,7 +13632,7 @@ tasks:
         assert!(stdout.contains("Command: `ota run start`"));
         assert!(stdout.contains("✦ typecheck"));
         assert!(stdout.contains("Command: `ota run typecheck`"));
-        assert!(!stdout.contains("verification.\n\n\n"));
+        assert!(stdout.contains("verification.\n\n✦ start"));
         assert!(!stdout.contains("Command Preview:"));
     }
 
@@ -16150,6 +16167,7 @@ tasks:
         assert!(stdout.contains("Contract env"));
         assert!(stdout.contains("Task env"));
         assert!(stdout.contains("DATABASE_URL"));
+        assert!(stdout.contains("\n\n✦ OTA_TEST_ENV_HOME"));
         assert!(stdout.contains("Source: task"));
         assert!(stdout.contains("OTA_TEST_ENV_HOME"));
         assert!(stdout.contains("Source: default"));

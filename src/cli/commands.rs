@@ -1926,8 +1926,8 @@ fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String
 }
 
 fn render_env_entry_text(entry: &EnvEntry) -> String {
-    let mut output = String::new();
-    output.push_str(&format!("\n{} {}", list_bullet(), paint(&entry.name, "1")));
+    let mut output = String::from("\n\n");
+    output.push_str(&format!("{} {}", list_bullet(), paint(&entry.name, "1")));
     output.push_str(&format!(
         "\n  {} {}",
         paint_key("Kind:"),
@@ -1966,9 +1966,9 @@ fn render_env_entry_text(entry: &EnvEntry) -> String {
 }
 
 fn render_env_source_text(source: &EnvSourceEntry) -> String {
-    let mut output = String::new();
+    let mut output = String::from("\n\n");
     output.push_str(&format!(
-        "\n{} {}:{}",
+        "{} {}:{}",
         list_bullet(),
         paint(&source.kind, "1"),
         source.path
@@ -16670,7 +16670,12 @@ fn render_tasks_text(
             })
             .unwrap_or_else(|| String::from("-"));
 
-        output.push_str(&format!("\n{} {}", list_bullet(), paint(task.name, "1")));
+        output.push_str(&format!("\n\n{} {}", list_bullet(), paint(task.name, "1")));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Context:"),
+            task.context.unwrap_or("-")
+        ));
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
@@ -16776,7 +16781,12 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
     for task in tasks {
         let usage = render_task_use_command(task);
-        output.push_str(&format!("\n{} {}", info_bullet(), paint(task.name, "1")));
+        output.push_str(&format!("\n\n{} {}", info_bullet(), paint(task.name, "1")));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Context:"),
+            task.context.unwrap_or("-")
+        ));
         output.push_str(&format!(
             "\n  {} `{}`",
             paint_key("Command:"),
