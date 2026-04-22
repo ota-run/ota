@@ -1049,6 +1049,27 @@ fn signal_forwarding_shell_script(command: String) -> String {
     command
 }
 
+#[cfg(unix)]
+fn ephemeral_container_stream_command(engine: &str, container_name: &str) -> String {
+    let engine = shell_quote(engine);
+    let container_name = shell_quote(container_name);
+    format!(
+        "cleanup() {{ {engine} rm -f {container_name} >/dev/null 2>&1 || true; }}; \
+trap 'cleanup; exit 130' INT TERM; \
+trap cleanup EXIT; \
+{engine} start -ai {container_name}; \
+status=$?; \
+exit $status"
+    )
+}
+
+#[cfg(windows)]
+fn ephemeral_container_stream_command(engine: &str, container_name: &str) -> String {
+    format!(
+        "\"{engine}\" start -ai \"{container_name}\" & set OTA_EXIT=%ERRORLEVEL% & \"{engine}\" rm -f \"{container_name}\" >NUL 2>&1 & exit /b %OTA_EXIT%"
+    )
+}
+
 fn policy_env_label(source: PolicyPackSource) -> String {
     match source {
         PolicyPackSource::WorkspacePolicy => String::from("workspace policy"),
@@ -4587,8 +4608,8 @@ fn execute_ephemeral_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let mut container = Command::new(engine);
-            container.arg("start").arg("-ai").arg(&container_name);
+            let mut container =
+                shell_command(&ephemeral_container_stream_command(engine, &container_name));
             let exit_code = run_streaming_command_with_loader(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
@@ -5661,8 +5682,9 @@ mod tests {
         ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend, RunError,
         RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, TaskExecutionMode,
         TaskExecutionRelation, TaskRunState, clean_execution, container_identity_seed,
-        contract_working_dir, current_os, execute_task_with_hooks, persistent_cleanup_targets,
-        persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
+        contract_working_dir, current_os, ephemeral_container_stream_command,
+        execute_task_with_hooks, persistent_cleanup_targets, persistent_container_name,
+        persistent_container_name_for_seed, plan_task_execution,
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, projected_runtime_public_endpoint_line, resolve_execution_backend,
         resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
@@ -6753,6 +6775,18 @@ tasks:
             projected_runtime_public_endpoint_line(&runtime_env).as_deref(),
             Some("⭑ Endpoint (planned): http://127.0.0.1:49153/")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_stream_command_cleans_up_container_on_exit() {
+        let command = ephemeral_container_stream_command("/usr/bin/docker", "ota-ephemeral-test");
+
+        assert!(command.contains("/usr/bin/docker"));
+        assert!(command.contains("start -ai"));
+        assert!(command.contains("rm -f"));
+        assert!(command.contains("trap 'cleanup; exit 130' INT TERM"));
+        assert!(command.contains("trap cleanup EXIT"));
     }
 
     #[cfg(unix)]
