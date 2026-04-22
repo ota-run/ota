@@ -980,6 +980,51 @@ fn validate_task_runtime(
         )));
     }
 
+    let projected_listeners = runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener
+                .project
+                .host
+                .as_ref()
+                .map(|_| listener_name.clone())
+        })
+        .collect::<Vec<_>>();
+    let primary_projected_listeners = runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener
+                .project
+                .host
+                .as_ref()
+                .and_then(|host| host.primary.then_some(listener_name.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    if projected_listeners.len() > 1 && primary_projected_listeners.is_empty() {
+        let listeners = projected_listeners
+            .iter()
+            .map(|listener_name| format!("`{listener_name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` declares multiple projected listeners ({listeners}) but none sets `project.host.primary: true`; mark exactly one projected listener as primary",
+        )));
+    }
+
+    if primary_projected_listeners.len() > 1 {
+        let listeners = primary_projected_listeners
+            .iter()
+            .map(|listener_name| format!("`{listener_name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` declares multiple listeners with `project.host.primary: true` ({listeners}); mark exactly one projected listener as primary",
+        )));
+    }
+
     for (listener_name, listener) in &runtime.listeners {
         if listener_name.trim().is_empty() {
             errors.push(ValidationError::new(format!(
@@ -1008,6 +1053,11 @@ fn validate_task_runtime(
                         "task `{task_name}` listener `{listener_name}` with `bind.port.mode: discover` must not declare `bind.port.value`"
                     )));
                 }
+            }
+            TaskRuntimePortMode::Auto => {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` listener `{listener_name}` with `bind.port.mode: auto` is invalid"
+                )));
             }
         }
 
@@ -1798,6 +1848,130 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
                 "with `project.host.port.mode: fixed` must declare `project.host.port.value`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_multi_listener_projection_without_an_explicit_primary() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+        metrics:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /metrics
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "declares multiple projected listeners (`http`, `metrics`) but none sets `project.host.primary: true`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_multi_listener_projection_with_multiple_primaries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: auto
+              path: /
+        metrics:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: auto
+              path: /metrics
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "declares multiple listeners with `project.host.primary: true` (`http`, `metrics`)",
             )
         }));
     }

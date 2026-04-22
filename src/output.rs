@@ -1360,6 +1360,8 @@ pub struct UpStatus<'a> {
     pub findings: &'a [Finding],
     pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<&'a str>,

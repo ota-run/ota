@@ -1,13 +1,16 @@
 🦦 EXPLAIN ./ota.yaml
 
-➤ NOT READY
+➤ BLOCKED
 
 Plan
  1. Fix version mismatches (1)
-  Why: one or more runtime or tool entries do
-       not match the contract
-  » node resolved `24.14.1`, requires `22`
-    Provenance: repo contract
+  Why:
+    » node resolved to `24.14.1` but the
+      contract requires `22`
+    » ota probed
+      `./bin/node`
+      with `node --version`
+  Provenance: repo contract
   Next: install compatible runtimes and tools,
         then rerun `ota doctor`
 

@@ -20,7 +20,6 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::*;
@@ -69,10 +68,14 @@ pub(super) fn workspace_explain_repos(
 }
 
 pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> String {
-    let mut stdout = String::from("\n\n");
-    stdout.push_str(&paint_section_title("Plan"));
     let groups = group_doctor_findings(findings.iter());
-    if groups.is_empty() {
+    let (blockers, notes): (Vec<_>, Vec<_>) = groups
+        .into_iter()
+        .partition(|group| group.severity != FindingSeverity::Info);
+
+    let mut stdout = String::from("\n\n");
+    if blockers.is_empty() && notes.is_empty() {
+        stdout.push_str(&paint_section_title("Plan"));
         if plain_mode() {
             stdout.push_str("\n* none");
         } else {
@@ -81,36 +84,168 @@ pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Pa
         return stdout;
     }
 
-    for (index, group) in groups.iter().enumerate() {
-        let finding_count = group.findings.len();
-        let per_finding_next = explain_group_uses_per_finding_nexts(group);
-        let render_items = explain_group_renders_items(group);
-        if index > 0 {
+    let mut next_index = 1usize;
+    if !blockers.is_empty() {
+        render_explain_group_section(
+            &mut stdout,
+            "Plan",
+            &blockers,
+            &mut next_index,
+            contract_path,
+        );
+    }
+
+    if !notes.is_empty() {
+        if !stdout.ends_with("\n\n") {
             stdout.push_str("\n\n");
+        }
+        render_explain_context_section(&mut stdout, &notes, contract_path);
+    }
+
+    stdout
+}
+
+fn render_explain_group_section(
+    output: &mut String,
+    section_title: &str,
+    groups: &[DoctorFindingGroup<'_>],
+    next_index: &mut usize,
+    contract_path: &Path,
+) {
+    output.push_str(&paint_section_title(section_title));
+    for (offset, group) in groups.iter().enumerate() {
+        if offset > 0 {
+            output.push_str("\n\n");
         } else {
-            stdout.push('\n');
+            output.push('\n');
         }
-        stdout.push_str(&format!(
-            " {}. {} {}",
-            index + 1,
-            render_finding_summary(group.severity, &explain_group_title(group)),
-            paint_group_meta(&format!("({finding_count})"))
-        ));
-        if !concise_mode() {
-            append_wrapped_labeled_text(
-                &mut stdout,
-                "Why:",
-                &explain_group_why(group),
-                "  ",
-                84,
-                false,
-                |_| explain_why_key(),
-                |value| render_backticked_text(value, Some(contract_path)),
-            );
+        render_explain_group(output, group, *next_index, contract_path);
+        *next_index += 1;
+    }
+}
+
+fn render_explain_context_section(
+    output: &mut String,
+    groups: &[DoctorFindingGroup<'_>],
+    contract_path: &Path,
+) {
+    output.push_str(&paint_section_title("Context"));
+
+    let shared_provenance = shared_group_provenance(groups);
+    let shared_next = shared_group_next(groups);
+
+    for (offset, group) in groups.iter().enumerate() {
+        if offset > 0 {
+            output.push_str("\n\n");
+        } else {
+            output.push('\n');
         }
+        render_explain_context_group(
+            output,
+            group,
+            contract_path,
+            shared_provenance.is_none(),
+            shared_next.is_none(),
+        );
+    }
+
+    if let Some(provenance) = shared_provenance {
+        append_wrapped_labeled_text(
+            output,
+            "Provenance:",
+            &provenance,
+            "",
+            84,
+            false,
+            paint_key,
+            |value| render_backticked_text(value, Some(contract_path)),
+        );
+    }
+    if let Some(next) = shared_next {
+        append_explain_next_text(output, &next, "", 84, contract_path);
+    }
+}
+
+fn render_explain_group(
+    output: &mut String,
+    group: &DoctorFindingGroup<'_>,
+    index: usize,
+    contract_path: &Path,
+) {
+    let finding_count = group.findings.len();
+    output.push_str(&format!(
+        " {}. {} {}",
+        index,
+        render_finding_summary(group.severity, &explain_group_title(group)),
+        paint_group_meta(&format!("({finding_count})"))
+    ));
+
+    if !concise_mode() {
+        let why_lines = explain_group_why_lines(group);
+        if !why_lines.is_empty() {
+            output.push_str("\n  ");
+            output.push_str(&explain_why_key());
+            for line in why_lines {
+                append_wrapped_bullet_text(output, summary_bullet(), &line, "    ", 84, |value| {
+                    render_backticked_text(value, Some(contract_path))
+                });
+            }
+        }
+    }
+
+    if let Some(provenance) = explain_group_provenance(group) {
+        append_wrapped_labeled_text(
+            output,
+            "Provenance:",
+            &provenance,
+            "  ",
+            84,
+            false,
+            paint_key,
+            |value| render_backticked_text(value, Some(contract_path)),
+        );
+    }
+    append_explain_next_text(
+        output,
+        &doctor_finding_group_next(&group.kind, &group.findings, None),
+        "  ",
+        84,
+        contract_path,
+    );
+}
+
+fn render_explain_context_group(
+    output: &mut String,
+    group: &DoctorFindingGroup<'_>,
+    contract_path: &Path,
+    show_provenance: bool,
+    show_next: bool,
+) {
+    let finding_count = group.findings.len();
+    output.push_str(&format!(
+        " {} {} {}",
+        list_bullet(),
+        render_finding_summary(group.severity, &explain_group_title(group)),
+        paint_group_meta(&format!("({finding_count})"))
+    ));
+
+    if !concise_mode() {
+        let why_lines = explain_group_why_lines(group);
+        if !why_lines.is_empty() {
+            output.push_str("\n  ");
+            output.push_str(&explain_why_key());
+            for line in why_lines {
+                append_wrapped_bullet_text(output, summary_bullet(), &line, "    ", 84, |value| {
+                    render_backticked_text(value, Some(contract_path))
+                });
+            }
+        }
+    }
+
+    if show_provenance {
         if let Some(provenance) = explain_group_provenance(group) {
             append_wrapped_labeled_text(
-                &mut stdout,
+                output,
                 "Provenance:",
                 &provenance,
                 "  ",
@@ -120,55 +255,20 @@ pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Pa
                 |value| render_backticked_text(value, Some(contract_path)),
             );
         }
-        if render_items {
-            for finding in &group.findings {
-                append_wrapped_bullet_text(
-                    &mut stdout,
-                    summary_bullet(),
-                    &explain_group_item_text(group, finding),
-                    "  ",
-                    84,
-                    |value| render_backticked_text(value, Some(contract_path)),
-                );
-                if let Some(provenance) = finding.provenance() {
-                    if matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) {
-                        continue;
-                    }
-                    append_wrapped_labeled_text(
-                        &mut stdout,
-                        "Provenance:",
-                        &provenance,
-                        "    ",
-                        84,
-                        false,
-                        paint_key,
-                        |value| render_backticked_text(value, Some(contract_path)),
-                    );
-                }
-                if per_finding_next {
-                    append_explain_next_text(&mut stdout, &finding.next, "    ", 84, contract_path);
-                }
-            }
-        }
-        if !per_finding_next {
-            append_explain_next_text(
-                &mut stdout,
-                &explain_group_next(group),
-                "  ",
-                84,
-                contract_path,
-            );
-        }
     }
 
-    stdout
+    if show_next {
+        append_explain_next_text(
+            output,
+            &doctor_finding_group_next(&group.kind, &group.findings, None),
+            "  ",
+            84,
+            contract_path,
+        );
+    }
 }
 
 fn explain_group_provenance(group: &DoctorFindingGroup<'_>) -> Option<String> {
-    if explain_group_renders_items(group) {
-        return None;
-    }
-
     let mut entries = group.findings.iter().map(|finding| {
         finding
             .provenance()
@@ -183,23 +283,40 @@ fn explain_group_provenance(group: &DoctorFindingGroup<'_>) -> Option<String> {
     }
 }
 
+fn shared_group_provenance(groups: &[DoctorFindingGroup<'_>]) -> Option<String> {
+    let mut entries = groups.iter().map(explain_group_provenance);
+    let first = entries.next().flatten()?;
+    if entries.all(|entry| entry == Some(first.clone())) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn shared_group_next(groups: &[DoctorFindingGroup<'_>]) -> Option<String> {
+    let mut entries = groups.iter().map(|group| {
+        compact_backticked_paths(&doctor_finding_group_next(
+            &group.kind,
+            &group.findings,
+            None,
+        ))
+    });
+    let first = entries.next()?;
+    if first.trim().is_empty() {
+        return None;
+    }
+    if entries.all(|entry| entry == first) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
 pub(super) fn explain_action_count(findings: &[Finding]) -> usize {
-    group_doctor_findings(findings.iter()).len()
-}
-
-fn explain_group_uses_per_finding_nexts(group: &DoctorFindingGroup<'_>) -> bool {
-    matches!(group.kind, DoctorFindingGroupKind::ToolingVersion)
-        && group
-            .findings
-            .iter()
-            .map(|finding| compact_backticked_paths(&finding.next))
-            .collect::<BTreeSet<_>>()
-            .len()
-            > 1
-}
-
-fn explain_group_renders_items(group: &DoctorFindingGroup<'_>) -> bool {
-    !(matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) && group.findings.len() == 1)
+    group_doctor_findings(findings.iter())
+        .into_iter()
+        .filter(|group| group.severity != FindingSeverity::Info)
+        .count()
 }
 
 fn explain_group_title(group: &DoctorFindingGroup<'_>) -> String {
@@ -211,42 +328,20 @@ fn explain_group_title(group: &DoctorFindingGroup<'_>) -> String {
     }
 }
 
-fn explain_group_why(group: &DoctorFindingGroup<'_>) -> String {
-    match group.kind {
-        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
-            group.findings[0].why.clone()
-        }
-        _ => doctor_finding_group_why(&group.kind, &group.findings),
-    }
-}
-
-fn explain_group_next(group: &DoctorFindingGroup<'_>) -> String {
-    match group.kind {
-        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
-            compact_backticked_paths(&group.findings[0].next)
-        }
-        _ => doctor_finding_group_next(&group.kind, &group.findings, None),
-    }
-}
-
-fn explain_group_item_text(group: &DoctorFindingGroup<'_>, finding: &Finding) -> String {
-    match group.kind {
-        DoctorFindingGroupKind::AdapterBootstrap => {
-            doctor_finding_group_item_text(&group.kind, finding, false)
-        }
-        DoctorFindingGroupKind::ToolingVersion => {
-            doctor_finding_group_item_text(&group.kind, finding, false)
-        }
-        DoctorFindingGroupKind::ContractDrift => {
-            doctor_finding_group_item_text(&group.kind, finding, false)
-        }
-        DoctorFindingGroupKind::PolicySurface
-        | DoctorFindingGroupKind::ServiceHealth
-        | DoctorFindingGroupKind::CheckFailure
-        | DoctorFindingGroupKind::EnvironmentValue
-        | DoctorFindingGroupKind::ExecutionBackend
-        | DoctorFindingGroupKind::SharedAction(_) => finding.summary.clone(),
-    }
+fn explain_group_why_lines(group: &DoctorFindingGroup<'_>) -> Vec<String> {
+    group
+        .findings
+        .iter()
+        .flat_map(|finding| {
+            finding
+                .why
+                .split(';')
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 pub(super) fn explain_summary(report: &DoctorReport) -> ExplainSummary {
@@ -285,4 +380,96 @@ pub(super) fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
             provenance_key: finding.provenance_key(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explain_steps_split_plan_and_notes_and_break_why_into_bullets() {
+        set_plain_mode(true);
+
+        let findings = vec![
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Service readiness failed: postgres"),
+                why: String::from(
+                    "service `postgres` did not pass its configured readiness probe from context `app`; projected endpoint is `postgres:5432`",
+                ),
+                next: String::from("run `ota up` and rerun `ota explain`"),
+            },
+            Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed version rules are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` declares approved repo version rules: runtime java (versions >=21), tool node (versions 24.14.1)",
+                ),
+                next: String::from("run `ota policy review`"),
+            },
+        ];
+
+        let text = render_explain_steps_text(&findings, Path::new("./ota.yaml"));
+        set_plain_mode(false);
+
+        assert!(text.contains("\nPlan\n"));
+        assert!(text.contains("\nContext\n"));
+        assert!(text.contains("Why:\n    - service `postgres` did not pass its configured readiness probe from context `app`"));
+        assert!(text.contains("    - projected endpoint is `postgres:5432`"));
+        assert!(text.contains("Policy-backed version rules are declared"));
+    }
+
+    #[test]
+    fn explain_context_section_shares_policy_footer_once() {
+        set_plain_mode(true);
+
+        let first = Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Policy-backed provisioning sources are declared"),
+            why: String::from(
+                "`.ota/org-policy.yaml` declares approved provisioning sources: curl via apt",
+            ),
+            next: String::from(
+                "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when provisioning or bootstrap needs a governed path",
+            ),
+        };
+        let second = Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Policy-backed provisioning sources are declared"),
+            why: String::from(
+                "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+            ),
+            next: String::from(
+                "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when provisioning or bootstrap needs a governed path",
+            ),
+        };
+
+        let groups = vec![
+            DoctorFindingGroup {
+                group_key: String::from("policy-surface-provisioning"),
+                action_key: String::from("policy-surface-provisioning"),
+                kind: DoctorFindingGroupKind::PolicySurface,
+                severity: FindingSeverity::Info,
+                findings: vec![&first],
+            },
+            DoctorFindingGroup {
+                group_key: String::from("policy-surface-bootstrap"),
+                action_key: String::from("policy-surface-bootstrap"),
+                kind: DoctorFindingGroupKind::PolicySurface,
+                severity: FindingSeverity::Info,
+                findings: vec![&second],
+            },
+        ];
+
+        let mut stdout = String::new();
+        render_explain_context_section(&mut stdout, &groups, Path::new("./ota.yaml"));
+        let text = strip_ansi_codes(&stdout);
+
+        assert!(text.contains("Context"));
+        assert!(text.contains("Review active policy surfaces"));
+        assert!(text.contains("approved provisioning sources"));
+        assert!(text.contains("can bootstrap missing adapter binaries"));
+        assert_eq!(text.matches("Provenance: org policy").count(), 1);
+        assert_eq!(text.matches("ota policy review").count(), 1);
+    }
 }

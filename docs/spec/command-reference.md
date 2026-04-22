@@ -646,9 +646,16 @@ ota run version:bump --version major
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
 - applies configured environment values, approved policy env values, and task input env variables
+- when `tasks.<name>.runtime.listeners` declare host projection, ota also injects runtime endpoint env values before process start when the projection is known:
+- `OTA_PUBLIC_URL`
+- `OTA_PUBLIC_HOST`
+- `OTA_PUBLIC_PORT`
+- `OTA_PUBLIC_URL_<LISTENER>`
+- when multiple listeners are projected, exactly one projected listener must set `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and summary endpoint rendering
+- for container listeners with `project.host.port.mode: auto`, ota reserves a host port before spawn, verifies the published mapping after start, and retries bounded times on host-port conflicts
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
-- execution receipts include backend, lifecycle, container image when relevant, remote target when set, acquired paths, env sources, and step summary data; text receipts also print the winning env source for each resolved value
+- execution receipts include backend, lifecycle, container image when relevant, remote target when set, acquired paths, env sources, step summary data, and resolved runtime listener endpoints; text receipts also print the winning env source for each resolved value
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.

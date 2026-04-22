@@ -781,6 +781,7 @@ Fields:
 - `listeners.<name>.project.host.address`: host-visible address for the projected listener
 - `listeners.<name>.project.host.port.mode`: `fixed` or `auto`
 - `listeners.<name>.project.host.port.value`: required when host port `mode: fixed`
+- `listeners.<name>.project.host.primary`: optional boolean; mark exactly one projected listener as primary when multiple listeners are projected
 - `listeners.<name>.project.host.path`: optional URL path for `http` and `https`
 
 `runtime` mode semantics:
@@ -788,7 +789,8 @@ Fields:
 - `bind.port.mode: fixed`: the task must listen on one explicit port inside its execution context
 - `bind.port.mode: discover`: ota discovers the final listening port after the task starts; use this only for native tasks where the process may auto-bump to a free port
 - `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
-- `project.host.port.mode: auto`: ota asks the backend for any free host port, then reports the resolved URL in receipts and JSON output
+- `project.host.port.mode: auto`: ota reserves a free host port in container contexts before process start, injects runtime URL env values, and reports the resolved URL in receipts and JSON output
+- with multiple projected listeners, mark one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and primary endpoint rendering
 
 Current execution rules:
 
@@ -798,6 +800,7 @@ Current execution rules:
 - container tasks may use `project.host.port.mode: fixed` or `auto`
 - remote execution contexts do not support `runtime.kind: service` host projection yet
 - loopback-only container binds such as `127.0.0.1` or `localhost` must not be projected to `host`
+- for container tasks with `project.host.port.mode: auto`, ota verifies the container engine published the reserved host port and retries bounded times on host-port conflict before failing
 
 Use cases:
 
@@ -830,6 +833,12 @@ Task input semantics:
 - `runtime.listeners` keep workload ingress with the task instead of overloading `services`
 - `ota run` records the resolved runtime endpoint in receipts and JSON output when ota can authoritatively resolve it
 - `ota up` prepares and reports resolvable workload endpoints from the selected topology without turning workload ingress into a service definition
+- container runtime listeners export these env values before process start when host projection resolves:
+- `OTA_PUBLIC_URL`
+- `OTA_PUBLIC_HOST`
+- `OTA_PUBLIC_PORT`
+- `OTA_PUBLIC_URL_<LISTENER>`
+- `OTA_PUBLIC_URL` is the primary projected listener URL; use `OTA_PUBLIC_URL_<LISTENER>` for secondary listeners
 
 Example:
 

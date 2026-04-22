@@ -26,11 +26,15 @@
 
 ## Unreleased
 
+- replaced the generic task-exit banner for container host-port bind conflicts with a specific `Host publication failed` error that names the blocked host port and points at `project.host.port.mode`
+- made `ota explain` and `ota workspace explain` show `BLOCKED` when the plan contains actionable remediation steps, instead of a misleading `READY` banner
+- made invalid task listener bindings render as field-specific contract errors with direct `Next:` guidance across `ota validate`, `ota doctor`, `ota explain`, and `ota receipt` instead of falling back to generic load or repair banners
 - made shell-based task execution forward `Ctrl+C`/termination to the task process group so long-running container and native dev commands stop cleanly instead of leaving orphaned listeners behind
 - turned malformed fixed host projections into a structured `ota run` contract error with an explicit `Field:` path instead of a validation panic
 - fixed auto-projected container endpoints so `ota run` resolves the published host port after the workload starts instead of failing before the engine has reported the mapping
 - fixed workload-endpoint projection boundaries so `ota up` no longer advertises task endpoints before the workload actually ran, task-scoped host publications no longer leak into unrelated container tasks, and persistent container cleanup/reuse now follows the same seeded identity as execution
 - added task-scoped workload endpoint projection through `tasks.<name>.runtime.kind: service`, including named listeners with bind plus host projection settings, validation for impossible native/container projection plans, resolved runtime endpoints in `ota run` receipts/JSON, and workload endpoint reporting in `ota up` summaries and receipts
+- polished multi-listener ingress output and validation: projected listeners now require one explicit `project.host.primary` when more than one endpoint is published, run/up/receipt summaries render a clear primary endpoint plus secondary count, and runtime JSON now carries stable `primary_listener`, `primary_endpoint`, and `exposed_endpoints` fields
 - updated the flagship adoption example and spec docs so containerized app ingress is modeled as task-owned workload topology instead of overloading `services`
 - expanded the contract reference so the workload listener section now explains `fixed`, `discover`, and `auto` mode semantics plus the current native/container support rules
 - fixed Windows-only test support utility compilation in `provisioning` command tests by centralizing shim executable setup, keeping executable behavior correct on Unix and avoiding brittle permission mutation on non-Unix platforms

@@ -2248,7 +2248,7 @@ fn container_mode_not_configured_finding() -> Finding {
             "container diagnosis requires `execution.backends.container.image` so Ota can inspect the execution image that actually runs tasks",
         ),
         next: String::from(
-            "add `execution.backends.container.image` and a supported container engine, or rerun `ota doctor` without `--mode container`",
+            "add `execution.backends.container.image`, then rerun `ota doctor --mode container`",
         ),
     }
 }
