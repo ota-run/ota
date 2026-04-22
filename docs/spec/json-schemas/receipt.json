@@ -156,7 +156,14 @@
                 "step_count": { "type": "integer", "minimum": 0 }
               }
             },
-            "next": { "type": "string" }
+            "next": { "type": "string" },
+            "runtime": { "$ref": "./shared.json#/$defs/resolvedTaskRuntime" },
+            "workloads": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "./shared.json#/$defs/resolvedTaskRuntime"
+              }
+            }
           }
         },
         "findings": {

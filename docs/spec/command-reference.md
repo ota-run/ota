@@ -652,7 +652,7 @@ ota run version:bump --version major
 - `OTA_PUBLIC_PORT`
 - `OTA_PUBLIC_URL_<LISTENER>`
 - when multiple listeners are projected, exactly one projected listener must set `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and summary endpoint rendering
-- for container listeners with `project.host.port.mode: auto`, ota reserves a host port before spawn, verifies the published mapping after start, and retries bounded times on host-port conflicts
+- for container listeners with `project.host.port.mode: auto`, `execution.lifecycle: ephemeral` pre-reserves a host port before spawn and retries bounded host-port conflicts; `execution.lifecycle: persistent` resolves the running container's published host mapping before exec
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
 - execution receipts include backend, lifecycle, container image when relevant, remote target when set, acquired paths, env sources, step summary data, and resolved runtime listener endpoints; text receipts also print the winning env source for each resolved value

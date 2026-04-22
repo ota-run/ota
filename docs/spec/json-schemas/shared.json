@@ -221,6 +221,74 @@
         "plan": { "$ref": "#/$defs/adapterBootstrapPlan" },
         "request": { "$ref": "#/$defs/provisioningBackendRequest" }
       }
+    },
+    "resolvedTaskRuntimeBind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "port"],
+      "properties": {
+        "address": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "resolvedTaskRuntimeHost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "port"],
+      "properties": {
+        "address": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "url": { "type": "string" }
+      }
+    },
+    "resolvedTaskRuntimeResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "$ref": "#/$defs/resolvedTaskRuntimeHost" }
+      }
+    },
+    "resolvedTaskRuntimeListener": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "bind"],
+      "properties": {
+        "protocol": { "enum": ["http", "https", "tcp"] },
+        "bind": { "$ref": "#/$defs/resolvedTaskRuntimeBind" },
+        "resolved": { "$ref": "#/$defs/resolvedTaskRuntimeResolution" }
+      }
+    },
+    "resolvedTaskRuntimeEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listener", "protocol", "bind", "host", "primary"],
+      "properties": {
+        "listener": { "type": "string" },
+        "protocol": { "enum": ["http", "https", "tcp"] },
+        "bind": { "$ref": "#/$defs/resolvedTaskRuntimeBind" },
+        "host": { "$ref": "#/$defs/resolvedTaskRuntimeHost" },
+        "primary": { "type": "boolean" }
+      }
+    },
+    "resolvedTaskRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "listeners"],
+      "properties": {
+        "kind": { "const": "service" },
+        "listeners": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/resolvedTaskRuntimeListener"
+          }
+        },
+        "primary_listener": { "type": "string" },
+        "primary_endpoint": { "$ref": "#/$defs/resolvedTaskRuntimeEndpoint" },
+        "exposed_endpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resolvedTaskRuntimeEndpoint" }
+        }
+      }
     }
   }
 }

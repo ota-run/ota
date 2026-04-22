@@ -206,7 +206,7 @@ This keeps the boundary honest:
 - `services` still model dependencies like Postgres
 - `tasks.<name>.runtime.listeners` model app ingress like a dev server or Spring Boot API
 - with multiple projected listeners, mark exactly one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and the primary endpoint line
-- in container contexts with `project.host.port.mode: auto`, ota reserves host ports before spawn, injects runtime URL env values, then starts the workload
+- in container contexts with `project.host.port.mode: auto`, ota injects runtime URL env values before command execution; ephemeral runs pre-reserve host ports before start, while persistent runs resolve the existing published mapping
 - `ota run dev` records the same resolved host endpoint ota injected into runtime env
 - `ota up` can prepare and report resolvable workload endpoints from persistent container contexts without pretending the app is a dependency service
 - readiness remains separate from ingress projection
@@ -216,7 +216,7 @@ Ingress troubleshooting:
 - `task <name> declares multiple projected listeners ... but none sets project.host.primary: true`: set `project.host.primary: true` on exactly one projected listener
 - `task <name> declares multiple listeners with project.host.primary: true`: keep one primary and remove the rest
 - `loopback-only container bind address`: change the bind address to `0.0.0.0` before projecting to host
-- `could not publish host port`: keep `project.host.port.mode: auto` and rerun; ota retries bounded times and then fails clearly when the host cannot reserve a port
+- `could not publish host port`: keep `project.host.port.mode: auto` and rerun; for ephemeral runs ota retries bounded times and then fails clearly when host publication still conflicts
 
 ### `services.<name>.manager`
 
@@ -339,7 +339,7 @@ That should fail explicitly instead of falling back to a guessed host path.
 - execute inside that context
 - record the resolved workload endpoint when the task declares one
 - verify container host publication matches reserved host projection ports
-- retry bounded times for `project.host.port.mode: auto` when host-port conflicts occur
+- retry bounded times for `project.host.port.mode: auto` when host-port conflicts occur in ephemeral container runs
 - emit receipts that report the resolved context and attached topology
 
 ## Container task semantics
