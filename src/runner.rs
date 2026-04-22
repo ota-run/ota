@@ -1969,6 +1969,19 @@ fn resolved_execution_backend_kind(backend: &ResolvedExecutionBackend) -> Backen
     }
 }
 
+fn execution_overrides_for_resolved_backend(
+    backend: &ResolvedExecutionBackend,
+) -> ExecutionOverrides {
+    ExecutionOverrides {
+        backend: Some(resolved_execution_backend_kind(backend)),
+        lifecycle: match backend {
+            ResolvedExecutionBackend::Container { lifecycle, .. } => Some(*lifecycle),
+            _ => None,
+        },
+        host_port: None,
+    }
+}
+
 fn run_task_internal(
     contract: &Contract,
     contract_path: &Path,
@@ -2199,6 +2212,11 @@ fn execute_task_with_hooks(
         .tasks
         .get(task_name)
         .expect("validated task execution should only reference known tasks");
+    let backend = resolve_execution_backend(
+        contract,
+        task_name,
+        execution_overrides_for_resolved_backend(backend),
+    )?;
     let input_overrides = if matches!(relation, TaskExecutionRelation::Requested) {
         resolve_task_inputs(task_name, task, input_args)?
     } else {
@@ -2229,7 +2247,7 @@ fn execute_task_with_hooks(
             &[],
             host_port_override,
             policy_env,
-            backend,
+            &backend,
             mode,
             working_dir,
             current_os,
@@ -2244,7 +2262,7 @@ fn execute_task_with_hooks(
         }
     }
 
-    let backend_kind = resolved_execution_backend_kind(backend);
+    let backend_kind = resolved_execution_backend_kind(&backend);
     if task
         .execution
         .as_ref()
@@ -2306,7 +2324,7 @@ fn execute_task_with_hooks(
         &combined_env,
         path_export.as_deref(),
         &secret_env_names,
-        backend,
+        &backend,
         if matches!(relation, TaskExecutionRelation::Requested) {
             host_port_override
         } else {
@@ -2337,7 +2355,7 @@ fn execute_task_with_hooks(
         task,
         host_port_override,
         policy_env,
-        backend,
+        &backend,
         mode,
         working_dir,
         current_os,
@@ -8103,6 +8121,148 @@ exec "$(dirname "$0")/docker-real" "$@"
             }
             other => panic!("expected host publication conflict, got {other}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_host_port_override_keeps_dependency_containers_unpublished() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    context: app
+    run: printf setup > setup.txt
+  dev:
+    context: app
+    depends_on:
+      - setup
+    run: printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+if [ "$1" = "create" ]; then
+  joined="$*"
+  case "$joined" in
+    *"-p 127.0.0.1:3000:3000/tcp"*)
+      printf "Error response from daemon: failed to set up container networking: Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+      exit 1
+      ;;
+  esac
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(3003),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("dependency tasks should not inherit requested task publications");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("setup.txt")).unwrap(),
+            "setup"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+
+        let state_dir = bin_dir.join("docker-state");
+        let publication_snapshots = fs::read_dir(&state_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.ends_with(".publish")
+                    .then(|| fs::read_to_string(entry.path()).ok())
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            publication_snapshots
+                .iter()
+                .any(|snapshot| snapshot.contains("127.0.0.1:3003:3000/tcp")),
+            "expected requested task publication args to use the override: {publication_snapshots:?}"
+        );
+        assert!(
+            publication_snapshots
+                .iter()
+                .all(|snapshot| !snapshot.contains("127.0.0.1:3000:3000/tcp")),
+            "dependency tasks should not inherit requested task runtime publication args: {publication_snapshots:?}"
+        );
     }
 
     #[cfg(unix)]
