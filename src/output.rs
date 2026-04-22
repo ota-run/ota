@@ -1883,37 +1883,42 @@ fn resolved_task_summary_context<'a>(
     backend: Backend,
 ) -> Option<&'a str> {
     if let Some(branch) = task.mode_execution_branch(backend) {
-        return branch
-            .context
-            .as_deref()
-            .or_else(|| {
-                task.context.as_deref().filter(|context_name| {
-                    execution
-                        .and_then(|execution| execution.contexts.get(*context_name))
-                        .is_some_and(|context| context.backend == backend)
-                })
+        return branch.context.as_deref().and_then(|context_name| {
+            execution.and_then(|execution| {
+                execution
+                    .contexts
+                    .get(context_name)
+                    .and_then(|context| (context.backend == backend).then_some(context_name))
             })
-            .or_else(|| {
-                execution.and_then(|execution| {
-                    execution
-                        .default_context()
-                        .and_then(|(name, context)| (context.backend == backend).then_some(name))
-                })
-            })
-            .or_else(|| {
-                execution.and_then(|execution| {
-                    execution
-                        .contexts
-                        .iter()
-                        .find(|(_, context)| context.backend == backend)
-                        .map(|(name, _)| name.as_str())
-                })
-            });
+        });
     }
 
-    task.context.as_deref().or_else(|| {
-        execution.and_then(|execution| execution.default_context().map(|(name, _)| name))
-    })
+    if let Some(context_name) = task.context.as_deref()
+        && execution.is_some_and(|execution| {
+            execution
+                .contexts
+                .get(context_name)
+                .is_some_and(|context| context.backend == backend)
+        })
+    {
+        return Some(context_name);
+    }
+
+    execution
+        .and_then(|execution| {
+            execution
+                .default_context()
+                .and_then(|(name, context)| (context.backend == backend).then_some(name))
+        })
+        .or_else(|| {
+            execution.and_then(|execution| {
+                execution
+                    .contexts
+                    .iter()
+                    .find(|(_, context)| context.backend == backend)
+                    .map(|(name, _)| name.as_str())
+            })
+        })
 }
 
 #[derive(Debug, Serialize)]

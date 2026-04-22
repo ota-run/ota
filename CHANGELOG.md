@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- fixed `ota clean` so drifted dependency-isolation cleanup only queries the repo’s actual container engines, preventing an unrelated dead Podman install from breaking Docker-owned cleanup
 - added task-level mode-aware execution branches under `tasks.<name>.execution` so one task can declare mode-specific `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`, with `execution.default_mode` support, clear run-time errors for missing mode branches, and updated `ota tasks` JSON/text branch rendering
 - replaced the generic task-exit banner for container host-port bind conflicts with a specific `Host publication failed` error that names the blocked host port and points at `project.host.port.mode`
 - made `ota explain` and `ota workspace explain` show `BLOCKED` when the plan contains actionable remediation steps, instead of a misleading `READY` banner
@@ -42,6 +43,7 @@
 - fixed JSON schema/runtime-ingress alignment by adding `receipt.runtime` + `receipt.workloads` schema coverage, making fixed-bind diagnostics accurately cover non-fixed modes, and rejecting projected listener name collisions that would overwrite `OTA_PUBLIC_URL_<LISTENER>`
 - added container dependency isolation for `execution.contexts.<name>.attachments.isolated_paths` using engine-managed named volumes, with deterministic mount naming and `ota clean` cleanup for both persistent and ephemeral container contexts
 - made container dependency-isolation volumes discoverable with Ota ownership labels plus a stable repo ownership token under `.ota/ownership-id` so `ota clean` can remove drifted isolation state even after the repo path, image, engine, or isolated-path declaration changes, and can safely distinguish volumes owned by different repos that share a `project.name`
+- hardened `ota clean` dependency-isolation rediscovery to avoid fragile `volume ls --filter label=...` behavior by listing candidate volumes broadly and validating ownership labels through per-volume inspect metadata before removal
 - updated the flagship adoption example and spec docs so containerized app ingress is modeled as task-owned workload topology instead of overloading `services`
 - expanded the contract reference so the workload listener section now explains `fixed`, `discover`, and `auto` mode semantics plus the current native/container support rules
 - fixed Windows-only test support utility compilation in `provisioning` command tests by centralizing shim executable setup, keeping executable behavior correct on Unix and avoiding brittle permission mutation on non-Unix platforms
