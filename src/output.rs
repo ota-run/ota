@@ -1796,6 +1796,7 @@ impl<'a> TaskSummary<'a> {
         let resolved_execution = task
             .resolved_execution_for_backend(selected_backend, current_os)
             .expect("validated task must resolve to a default or variant execution");
+        let repo_execution = execution;
         Self {
             name,
             context: resolved_task_summary_context(task, execution, selected_backend),
@@ -1842,7 +1843,11 @@ impl<'a> TaskSummary<'a> {
                             let branch_execution = branch.execution();
                             TaskModeView {
                                 mode: task_mode_name(backend),
-                                context: branch.context.as_deref(),
+                                context: resolved_task_summary_context(
+                                    task,
+                                    repo_execution,
+                                    backend,
+                                ),
                                 lifecycle: branch.lifecycle.map(format_lifecycle),
                                 kind: branch_execution.map(|execution| execution.kind),
                                 run: branch.run.as_deref(),
@@ -1883,14 +1888,16 @@ fn resolved_task_summary_context<'a>(
     backend: Backend,
 ) -> Option<&'a str> {
     if let Some(branch) = task.mode_execution_branch(backend) {
-        return branch.context.as_deref().and_then(|context_name| {
-            execution.and_then(|execution| {
+        if let Some(context_name) = branch.context.as_deref()
+            && execution.is_some_and(|execution| {
                 execution
                     .contexts
                     .get(context_name)
-                    .and_then(|context| (context.backend == backend).then_some(context_name))
+                    .is_some_and(|context| context.backend == backend)
             })
-        });
+        {
+            return Some(context_name);
+        }
     }
 
     if let Some(context_name) = task.context.as_deref()

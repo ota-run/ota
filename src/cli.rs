@@ -11799,6 +11799,11 @@ tasks:
   setup:
     context: app
     run: echo setup
+  dev:
+    context: app
+    depends_on:
+      - setup
+    run: echo dev
     runtime:
       kind: service
       listeners:
@@ -11816,11 +11821,6 @@ tasks:
                 mode: fixed
                 value: {host_port}
               path: /
-  dev:
-    context: app
-    depends_on:
-      - setup
-    run: echo dev
 "#
         );
         let fixture = ContractFixture::new(&fixture_text);
@@ -11838,12 +11838,13 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Host publication failed"));
-        assert!(stderr.contains("Field: tasks.setup.runtime.listeners.http.project.host.port"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.project.host.port"));
+        assert!(!stderr.starts_with("Error response from daemon:"));
         assert!(stderr.contains(&format!(
             "host port `{host_port}` on `127.0.0.1` is already allocated"
         )));
         assert!(stderr.contains(
-            "change `tasks.setup.runtime.listeners.http.project.host.port.mode` to `auto`"
+            "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
         ));
         assert!(!stderr.contains("Task Failed"));
         assert!(!fixture.dir.path().join("docker-log.txt").exists());
