@@ -717,11 +717,75 @@ pub enum TaskExecutionRelation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum PersistentContainerReconciliationAction {
+    Created,
+    Reused,
+    Recreated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PersistentContainerReconciliation {
+    action: PersistentContainerReconciliationAction,
+    reason: Option<String>,
+}
+
+impl PersistentContainerReconciliation {
+    fn created() -> Self {
+        Self {
+            action: PersistentContainerReconciliationAction::Created,
+            reason: None,
+        }
+    }
+
+    fn reused() -> Self {
+        Self {
+            action: PersistentContainerReconciliationAction::Reused,
+            reason: None,
+        }
+    }
+
+    fn reused_with_reason(reason: impl Into<String>) -> Self {
+        Self {
+            action: PersistentContainerReconciliationAction::Reused,
+            reason: Some(reason.into()),
+        }
+    }
+
+    fn recreated(reason: impl Into<String>) -> Self {
+        Self {
+            action: PersistentContainerReconciliationAction::Recreated,
+            reason: Some(reason.into()),
+        }
+    }
+
+    fn note(&self) -> String {
+        match (&self.action, self.reason.as_deref()) {
+            (PersistentContainerReconciliationAction::Created, _) => {
+                String::from("persistent container created")
+            }
+            (PersistentContainerReconciliationAction::Reused, Some(reason)) => {
+                format!("persistent container reused ({reason})")
+            }
+            (PersistentContainerReconciliationAction::Reused, None) => {
+                String::from("persistent container reused")
+            }
+            (PersistentContainerReconciliationAction::Recreated, Some(reason)) => {
+                format!("persistent container recreated ({reason})")
+            }
+            (PersistentContainerReconciliationAction::Recreated, None) => {
+                String::from("persistent container recreated")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutedTaskStep {
     pub name: String,
     pub exit_code: i32,
     pub relation: TaskExecutionRelation,
     pub generation: usize,
+    pub execution_note: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -733,6 +797,7 @@ pub struct RunOutcome {
     pub stderr: String,
     pub target: Option<String>,
     pub runtime: Option<ResolvedTaskRuntime>,
+    pub execution_note: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -744,6 +809,7 @@ pub struct CapturedRunOutcome {
     pub stderr: String,
     pub target: Option<String>,
     pub runtime: Option<ResolvedTaskRuntime>,
+    pub execution_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -805,6 +871,8 @@ impl CleanExecutionReport {
 const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
 const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
 const OTA_REPO_CONTAINER_LABEL_KEY: &str = "dev.ota.repo";
+const OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY: &str = "dev.ota.persistent.family";
+const OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY: &str = "dev.ota.persistent.shape";
 const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
 const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
@@ -1349,6 +1417,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
         stderr: outcome.stderr,
         target: outcome.target,
         runtime: outcome.runtime,
+        execution_note: outcome.execution_note,
     })
 }
 
@@ -1507,7 +1576,7 @@ pub fn clean_execution_report(
     };
     let strict_discovery = has_recorded_relevant_engines || !current_target_engines.is_empty();
     let mut successful_discovery_queries = 0usize;
-    let engines_to_track = BTreeSet::new();
+    let mut engines_to_track = BTreeSet::new();
     report.queried_engines = discovery_engines.clone();
     for engine in discovery_engines {
         let mut engine_query_succeeded = false;
@@ -1525,6 +1594,7 @@ pub fn clean_execution_report(
             }
             Err(error) => {
                 first_discovery_error.get_or_insert(error);
+                engines_to_track.insert(engine.clone());
             }
         }
         match dependency_isolation_volume_names_for_repo("clean", &engine, &repo_ownership_token) {
@@ -1538,6 +1608,21 @@ pub fn clean_execution_report(
             }
             Err(error) => {
                 first_discovery_error.get_or_insert(error);
+                engines_to_track.insert(engine.clone());
+            }
+        }
+
+        if engine_query_succeeded {
+            match repo_scoped_legacy_persistent_container_names("clean", &engine, working_dir) {
+                Ok(legacy) => {
+                    if !legacy.is_empty() {
+                        engines_to_track.insert(engine.clone());
+                    }
+                }
+                Err(error) => {
+                    first_discovery_error.get_or_insert(error);
+                    engines_to_track.insert(engine.clone());
+                }
             }
         }
 
@@ -1903,6 +1988,7 @@ pub(crate) struct TaskCommandOutput {
     pub(crate) stderr: String,
     pub(crate) target: Option<String>,
     pub(crate) runtime: Option<ResolvedTaskRuntime>,
+    pub(crate) execution_note: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -1916,6 +2002,7 @@ struct TaskRunState {
     stderr: String,
     target: Option<String>,
     runtime: Option<ResolvedTaskRuntime>,
+    execution_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2066,6 +2153,7 @@ fn run_task_internal(
         stderr: state.stderr,
         target: state.target,
         runtime: state.runtime,
+        execution_note: state.execution_note,
     })
 }
 
@@ -2137,6 +2225,7 @@ fn run_host_shell_command(
                     stderr: String::new(),
                     target: None,
                     runtime: None,
+                    execution_note: None,
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
         }
@@ -2153,6 +2242,7 @@ fn run_host_shell_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
                 runtime: None,
+                execution_note: None,
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }
@@ -2316,6 +2406,7 @@ fn execute_task_with_hooks(
     let mut combined_env = env_overrides;
     combined_env.extend(input_overrides);
     let runtime = task.service_runtime_for_backend(backend_kind);
+    let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
     let command_output = execute_task_command(
         task_name,
         runtime,
@@ -2325,7 +2416,7 @@ fn execute_task_with_hooks(
         path_export.as_deref(),
         &secret_env_names,
         &backend,
-        if matches!(relation, TaskExecutionRelation::Requested) {
+        if requested_relation {
             host_port_override
         } else {
             None
@@ -2338,14 +2429,22 @@ fn execute_task_with_hooks(
     if state.target.is_none() {
         state.target = command_output.target;
     }
-    if matches!(relation, TaskExecutionRelation::Requested) {
+    if requested_relation {
         state.runtime = command_output.runtime;
+        if let Some(note) = command_output.execution_note.clone() {
+            state.execution_note = Some(note);
+        }
     }
     state.task_steps.push(ExecutedTaskStep {
         name: task_name.to_string(),
         exit_code: command_output.exit_code,
         relation,
         generation,
+        execution_note: if requested_relation {
+            command_output.execution_note.clone()
+        } else {
+            None
+        },
     });
 
     let hook_exit_code = execute_post_hooks(
@@ -3418,7 +3517,7 @@ fn projected_runtime_public_endpoint_line(
 ) -> Option<String> {
     runtime_env
         .get("OTA_PUBLIC_URL")
-        .map(|endpoint| format!("⭑ Endpoint (planned): {endpoint}"))
+        .map(|endpoint| format!("\n🦦 Endpoint (planned): {endpoint}"))
 }
 
 fn print_projected_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
@@ -3710,6 +3809,41 @@ fn container_identity_seed(
         );
     }
     Some(seed)
+}
+
+fn persistent_container_family_token(task_name: &str, context_name: Option<&str>) -> String {
+    let mut hasher = DefaultHasher::new();
+    task_name.hash(&mut hasher);
+    context_name
+        .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
+        .hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+fn persistent_container_shape_token(
+    context_name: Option<&str>,
+    image: &str,
+    engine: &str,
+    publications: &[ContainerPortPublication],
+    isolated_paths: &[String],
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    context_name
+        .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
+        .hash(&mut hasher);
+    image.hash(&mut hasher);
+    engine.hash(&mut hasher);
+    for publication in publications {
+        publication.bind_port.hash(&mut hasher);
+        publication.host_address.hash(&mut hasher);
+        (publication.host_port_mode as u8).hash(&mut hasher);
+        publication.host_port.hash(&mut hasher);
+        (publication.protocol as u8).hash(&mut hasher);
+    }
+    for isolated_path in isolated_paths {
+        isolated_path.hash(&mut hasher);
+    }
+    format!("{:x}", hasher.finish())
 }
 
 pub(crate) fn effective_task_execution<'a>(
@@ -4073,6 +4207,7 @@ fn execute_remote_task_command(
                 stderr: String::new(),
                 target: Some(target.to_string()),
                 runtime: None,
+                execution_note: None,
             })
         }
         TaskExecutionMode::Capture => {
@@ -4093,6 +4228,7 @@ fn execute_remote_task_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(target.to_string()),
                 runtime: None,
+                execution_note: None,
             })
         }
     }
@@ -4412,6 +4548,7 @@ fn backend_provider_output(
         stderr: result.stderr,
         target: Some(result.target.unwrap_or_else(|| fallback_target.to_string())),
         runtime: None,
+        execution_note: None,
     })
 }
 
@@ -4581,6 +4718,7 @@ fn execute_native_task_command(
                     stderr: String::new(),
                     target: None,
                     runtime,
+                    execution_note: None,
                 })
             } else {
                 let mut child = process
@@ -4604,6 +4742,7 @@ fn execute_native_task_command(
                     stderr: String::new(),
                     target: None,
                     runtime,
+                    execution_note: None,
                 })
             }
         }
@@ -4647,6 +4786,7 @@ fn execute_native_task_command(
                 stderr,
                 target: None,
                 runtime,
+                execution_note: None,
             })
         }
     }
@@ -4928,6 +5068,7 @@ fn execute_container_task_command(
             stderr: issue,
             target: None,
             runtime: None,
+            execution_note: None,
         });
     }
 
@@ -5166,6 +5307,7 @@ fn execute_ephemeral_container_task_command(
             stderr,
             target: Some(container_name.clone()),
             runtime: None,
+            execution_note: None,
         });
     }
 
@@ -5197,6 +5339,7 @@ fn execute_ephemeral_container_task_command(
                 stderr: output.stderr,
                 target: Some(container_name.clone()),
                 runtime: prepared_runtime.clone(),
+                execution_note: None,
             })
         }
         TaskExecutionMode::Capture => {
@@ -5220,6 +5363,7 @@ fn execute_ephemeral_container_task_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name),
                 runtime: prepared_runtime,
+                execution_note: None,
             })
         }
     }
@@ -5247,8 +5391,16 @@ fn execute_persistent_container_task_command(
         container_identity_seed(context_name, publications, dependency_isolation_paths);
     let container_name =
         persistent_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
+    let family_token = persistent_container_family_token(task_name, context_name);
+    let shape_token = persistent_container_shape_token(
+        context_name,
+        image,
+        engine,
+        publications,
+        dependency_isolation_paths,
+    );
 
-    if let Some(failure) = ensure_persistent_container_ready(
+    let mut reconciliation = match ensure_persistent_container_ready(
         task_name,
         working_dir,
         context_name,
@@ -5256,13 +5408,16 @@ fn execute_persistent_container_task_command(
         image,
         engine,
         &container_name,
+        family_token.as_str(),
+        shape_token.as_str(),
         compose_networks,
         publications,
         listener_publications,
         dependency_isolation_paths,
     )? {
-        return Ok(failure);
-    }
+        PersistentContainerEnsureResult::Ready(reconciliation) => reconciliation,
+        PersistentContainerEnsureResult::Failure(failure) => return Ok(failure),
+    };
 
     let fixed_expected_host_ports = fixed_listener_host_ports(listener_publications);
     let (resolved_runtime, resolved_env) = match persistent_container_runtime_projection(
@@ -5279,7 +5434,7 @@ fn execute_persistent_container_task_command(
             if remove.exit_code != 0 {
                 return Ok(container_command_failure(remove, container_name.clone()));
             }
-            if let Some(failure) = ensure_persistent_container_ready(
+            match ensure_persistent_container_ready(
                 task_name,
                 working_dir,
                 context_name,
@@ -5287,12 +5442,21 @@ fn execute_persistent_container_task_command(
                 image,
                 engine,
                 &container_name,
+                family_token.as_str(),
+                shape_token.as_str(),
                 compose_networks,
                 publications,
                 listener_publications,
                 dependency_isolation_paths,
             )? {
-                return Ok(failure);
+                PersistentContainerEnsureResult::Ready(_) => {
+                    reconciliation = PersistentContainerReconciliation::recreated(
+                        "projected host publication changed",
+                    );
+                }
+                PersistentContainerEnsureResult::Failure(failure) => {
+                    return Ok(failure);
+                }
             }
             persistent_container_runtime_projection(
                 runtime,
@@ -5323,7 +5487,7 @@ fn execute_persistent_container_task_command(
         if remove.exit_code != 0 {
             return Ok(container_command_failure(remove, container_name.clone()));
         }
-        if let Some(failure) = ensure_persistent_container_ready(
+        match ensure_persistent_container_ready(
             task_name,
             working_dir,
             context_name,
@@ -5331,12 +5495,21 @@ fn execute_persistent_container_task_command(
             image,
             engine,
             &container_name,
+            family_token.as_str(),
+            shape_token.as_str(),
             compose_networks,
             publications,
             listener_publications,
             dependency_isolation_paths,
         )? {
-            return Ok(failure);
+            PersistentContainerEnsureResult::Ready(_) => {
+                reconciliation = PersistentContainerReconciliation::recreated(
+                    "container stopped and was recreated before exec",
+                );
+            }
+            PersistentContainerEnsureResult::Failure(failure) => {
+                return Ok(failure);
+            }
         }
         let (resolved_runtime, resolved_env) = persistent_container_runtime_projection(
             runtime,
@@ -5358,14 +5531,21 @@ fn execute_persistent_container_task_command(
         )?;
         return Ok(TaskCommandOutput {
             runtime: resolved_runtime,
+            execution_note: Some(reconciliation.note()),
             ..output
         });
     }
 
     Ok(TaskCommandOutput {
         runtime: resolved_runtime,
+        execution_note: Some(reconciliation.note()),
         ..output
     })
+}
+
+enum PersistentContainerEnsureResult {
+    Ready(PersistentContainerReconciliation),
+    Failure(TaskCommandOutput),
 }
 
 fn fixed_listener_host_ports(
@@ -5426,11 +5606,24 @@ fn ensure_persistent_container_ready(
     image: &str,
     engine: &str,
     container_name: &str,
+    family_token: &str,
+    shape_token: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     dependency_isolation_paths: &[String],
-) -> Result<Option<TaskCommandOutput>, RunError> {
+) -> Result<PersistentContainerEnsureResult, RunError> {
+    let removed_drifted_family = reconcile_persistent_container_family(
+        task_name,
+        working_dir,
+        engine,
+        repo_ownership_token,
+        container_name,
+        family_token,
+        shape_token,
+        listener_publications,
+    )?;
+
     let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
     if inspect.exit_code != 0 {
         let status = create_persistent_container(
@@ -5441,26 +5634,32 @@ fn ensure_persistent_container_ready(
             image,
             engine,
             container_name,
+            family_token,
+            shape_token,
             compose_networks,
             publications,
             listener_publications,
             dependency_isolation_paths,
         )?;
         if status.exit_code != 0 {
-            return Ok(Some(container_command_failure(
-                status,
-                container_name.to_string(),
-            )));
+            return Ok(PersistentContainerEnsureResult::Failure(
+                container_command_failure(status, container_name.to_string()),
+            ));
         }
         if let Some(failure) =
             ensure_container_networks(engine, container_name, compose_networks, task_name)?
         {
-            return Ok(Some(container_command_failure(
-                failure,
-                container_name.to_string(),
-            )));
+            return Ok(PersistentContainerEnsureResult::Failure(
+                container_command_failure(failure, container_name.to_string()),
+            ));
         }
-        return Ok(None);
+        return Ok(PersistentContainerEnsureResult::Ready(
+            if removed_drifted_family {
+                PersistentContainerReconciliation::recreated("execution shape changed")
+            } else {
+                PersistentContainerReconciliation::created()
+            },
+        ));
     }
 
     match persistent_container_running(engine, container_name, task_name)? {
@@ -5468,20 +5667,20 @@ fn ensure_persistent_container_ready(
             if let Some(failure) =
                 ensure_container_networks(engine, container_name, compose_networks, task_name)?
             {
-                return Ok(Some(container_command_failure(
-                    failure,
-                    container_name.to_string(),
-                )));
+                return Ok(PersistentContainerEnsureResult::Failure(
+                    container_command_failure(failure, container_name.to_string()),
+                ));
             }
-            return Ok(None);
+            return Ok(PersistentContainerEnsureResult::Ready(
+                PersistentContainerReconciliation::reused(),
+            ));
         }
         Some(false) => {
             let remove = remove_persistent_container(engine, container_name, task_name)?;
             if remove.exit_code != 0 {
-                return Ok(Some(container_command_failure(
-                    remove,
-                    container_name.to_string(),
-                )));
+                return Ok(PersistentContainerEnsureResult::Failure(
+                    container_command_failure(remove, container_name.to_string()),
+                ));
             }
             let create = create_persistent_container(
                 task_name,
@@ -5491,6 +5690,8 @@ fn ensure_persistent_container_ready(
                 image,
                 engine,
                 container_name,
+                family_token,
+                shape_token,
                 compose_networks,
                 publications,
                 listener_publications,
@@ -5509,42 +5710,281 @@ fn ensure_persistent_container_ready(
                         port,
                     });
                 }
-                return Ok(Some(container_command_failure(
-                    create,
-                    container_name.to_string(),
-                )));
+                return Ok(PersistentContainerEnsureResult::Failure(
+                    container_command_failure(create, container_name.to_string()),
+                ));
             }
             if let Some(failure) =
                 ensure_container_networks(engine, container_name, compose_networks, task_name)?
             {
-                return Ok(Some(container_command_failure(
-                    failure,
-                    container_name.to_string(),
-                )));
+                return Ok(PersistentContainerEnsureResult::Failure(
+                    container_command_failure(failure, container_name.to_string()),
+                ));
             }
-            return Ok(None);
+            return Ok(PersistentContainerEnsureResult::Ready(
+                PersistentContainerReconciliation::recreated(
+                    "existing container was stopped before execution",
+                ),
+            ));
         }
         None => {}
     }
 
     let status = container_command_output(engine, &["start", container_name], None, task_name)?;
     if status.exit_code != 0 {
-        return Ok(Some(container_command_failure(
-            status,
-            container_name.to_string(),
-        )));
+        return Ok(PersistentContainerEnsureResult::Failure(
+            container_command_failure(status, container_name.to_string()),
+        ));
     }
 
     if let Some(failure) =
         ensure_container_networks(engine, container_name, compose_networks, task_name)?
     {
-        return Ok(Some(container_command_failure(
-            failure,
-            container_name.to_string(),
-        )));
+        return Ok(PersistentContainerEnsureResult::Failure(
+            container_command_failure(failure, container_name.to_string()),
+        ));
     }
 
+    Ok(PersistentContainerEnsureResult::Ready(
+        PersistentContainerReconciliation::reused_with_reason("existing container was started"),
+    ))
+}
+
+fn reconcile_persistent_container_family(
+    task_name: &str,
+    working_dir: &Path,
+    engine: &str,
+    repo_ownership_token: &str,
+    desired_container_name: &str,
+    family_token: &str,
+    shape_token: &str,
+    listener_publications: &[(String, ContainerPortPublication)],
+) -> Result<bool, RunError> {
+    let mut candidate_names = BTreeSet::new();
+    candidate_names.extend(
+        persistent_container_names_for_repo(task_name, engine, repo_ownership_token)?.into_iter(),
+    );
+    let legacy_candidates =
+        repo_scoped_legacy_persistent_container_names(task_name, engine, working_dir)?;
+    let legacy_candidate_names = legacy_candidates.into_iter().collect::<BTreeSet<_>>();
+    candidate_names.extend(legacy_candidate_names.iter().cloned());
+
+    let mut removed = false;
+    for container_name in candidate_names {
+        if container_name == desired_container_name {
+            continue;
+        }
+        let labels = persistent_container_labels_for_name(task_name, engine, &container_name)?;
+        let remove_due_to_family_drift = labels
+            .get(OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY)
+            .is_some_and(|label| label == family_token)
+            && labels
+                .get(OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY)
+                .is_none_or(|label| label != shape_token);
+        let remove_due_to_legacy_conflict = legacy_candidate_names.contains(&container_name)
+            && legacy_container_conflicts_with_listener_publications(
+                task_name,
+                engine,
+                &container_name,
+                listener_publications,
+            )?;
+        if remove_due_to_family_drift || remove_due_to_legacy_conflict {
+            let remove = remove_persistent_container(engine, &container_name, task_name)?;
+            if remove.exit_code != 0 {
+                let details = if !remove.stderr.trim().is_empty() {
+                    remove.stderr.trim().to_string()
+                } else if !remove.stdout.trim().is_empty() {
+                    remove.stdout.trim().to_string()
+                } else {
+                    format!(
+                        "`{engine} rm -f {container_name}` exited with {}",
+                        remove.exit_code
+                    )
+                };
+                return Err(RunError::PersistentContainerCleanupFailure {
+                    task: task_name.to_string(),
+                    action: String::from("remove"),
+                    container: container_name,
+                    engine: engine.to_string(),
+                    details,
+                });
+            }
+            removed = true;
+        }
+    }
+
+    Ok(removed)
+}
+
+fn legacy_container_conflicts_with_listener_publications(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+    listener_publications: &[(String, ContainerPortPublication)],
+) -> Result<bool, RunError> {
+    for (_, publication) in listener_publications {
+        if publication.host_port_mode != TaskRuntimeHostPortMode::Fixed {
+            continue;
+        }
+        let Some(expected_host_port) = publication.host_port else {
+            continue;
+        };
+        let actual_host_port = container_published_port(
+            engine,
+            container_name,
+            publication.bind_port,
+            publication.protocol,
+            task_name,
+        )?;
+        if actual_host_port == Some(expected_host_port) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn repo_scoped_legacy_persistent_container_names(
+    task_name: &str,
+    engine: &str,
+    working_dir: &Path,
+) -> Result<Vec<String>, RunError> {
+    let names = container_ps_names(engine, &["ps", "-a", "--format", "{{.Names}}"])?;
+    let mut legacy = Vec::new();
+    for container_name in names {
+        let labels = persistent_container_labels_for_name(task_name, engine, &container_name)?;
+        if labels.contains_key(OTA_REPO_CONTAINER_LABEL_KEY) {
+            continue;
+        }
+        let looks_like_legacy_ota_name =
+            container_name.starts_with("ota-") && !container_name.starts_with("ota-ephemeral-");
+        let is_managed_persistent_without_repo = labels
+            .get("dev.ota.managed")
+            .is_some_and(|value| value == "true")
+            && labels
+                .get("dev.ota.lifecycle")
+                .is_some_and(|value| value == "persistent");
+        if !looks_like_legacy_ota_name && !is_managed_persistent_without_repo {
+            continue;
+        }
+        let Some(workspace_source) =
+            persistent_container_workspace_source_for_name(task_name, engine, &container_name)?
+        else {
+            continue;
+        };
+        if workspace_source_matches_repo(&workspace_source, working_dir) {
+            legacy.push(container_name);
+        }
+    }
+    Ok(legacy)
+}
+
+fn persistent_container_labels_for_name(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let args = ["inspect", "-f", "{{json .Config.Labels}}", container_name];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    let stdout = output.stdout.trim();
+    if stdout.is_empty() || stdout == "null" {
+        return Ok(BTreeMap::new());
+    }
+
+    let labels_value: serde_json::Value = serde_json::from_str(stdout).map_err(|source| {
+        RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: format!("invalid `inspect` labels JSON response: {source}"),
+        }
+    })?;
+
+    let Some(labels_object) = labels_value.as_object() else {
+        return Ok(BTreeMap::new());
+    };
+
+    let mut labels = BTreeMap::new();
+    for (key, value) in labels_object {
+        if let Some(value) = value.as_str() {
+            labels.insert(key.to_string(), value.to_string());
+        }
+    }
+    Ok(labels)
+}
+
+fn persistent_container_workspace_source_for_name(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<Option<String>, RunError> {
+    let args = ["inspect", "-f", "{{json .Mounts}}", container_name];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    let stdout = output.stdout.trim();
+    if stdout.is_empty() || stdout == "null" {
+        return Ok(None);
+    }
+    let mounts_value: serde_json::Value = serde_json::from_str(stdout).map_err(|source| {
+        RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: format!("invalid `inspect` mounts JSON response: {source}"),
+        }
+    })?;
+    let Some(mounts_array) = mounts_value.as_array() else {
+        return Ok(None);
+    };
+    for mount in mounts_array {
+        let Some(mount_object) = mount.as_object() else {
+            continue;
+        };
+        let Some(destination) = mount_object
+            .get("Destination")
+            .and_then(|value| value.as_str())
+        else {
+            continue;
+        };
+        if destination != "/workspace" {
+            continue;
+        }
+        if let Some(source) = mount_object.get("Source").and_then(|value| value.as_str()) {
+            return Ok(Some(source.to_string()));
+        }
+    }
     Ok(None)
+}
+
+fn workspace_source_matches_repo(source: &str, working_dir: &Path) -> bool {
+    let source_path = Path::new(source);
+    if source_path == working_dir {
+        return true;
+    }
+    match (fs::canonicalize(source_path), fs::canonicalize(working_dir)) {
+        (Ok(source_canonical), Ok(working_canonical)) => source_canonical == working_canonical,
+        _ => source_path == working_dir,
+    }
 }
 
 fn create_persistent_container(
@@ -5555,6 +5995,8 @@ fn create_persistent_container(
     image: &str,
     engine: &str,
     container_name: &str,
+    family_token: &str,
+    shape_token: &str,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
@@ -5573,6 +6015,10 @@ fn create_persistent_container(
         OTA_PERSISTENT_CONTAINER_LABEL.to_string(),
         "--label".to_string(),
         format!("{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}"),
+        "--label".to_string(),
+        format!("{OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY}={family_token}"),
+        "--label".to_string(),
+        format!("{OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY}={shape_token}"),
         "--entrypoint".to_string(),
         "sh".to_string(),
         "-v".to_string(),
@@ -5866,6 +6312,7 @@ fn container_command_failure(
         stderr: status.stderr,
         target: Some(container_name),
         runtime: None,
+        execution_note: None,
     }
 }
 
@@ -5912,6 +6359,7 @@ fn exec_persistent_container_task_command(
                 stderr: String::new(),
                 target: Some(container_name.to_string()),
                 runtime: None,
+                execution_note: None,
             })
         }
         TaskExecutionMode::Capture => {
@@ -5932,6 +6380,7 @@ fn exec_persistent_container_task_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name.to_string()),
                 runtime: None,
+                execution_note: None,
             })
         }
     }
@@ -7434,12 +7883,14 @@ tasks:
                     exit_code: 0,
                     relation: TaskExecutionRelation::Requested,
                     generation: 0,
+                    execution_note: None,
                 }],
                 exit_code: 0,
                 stdout: String::from("hello"),
                 stderr: String::from("error"),
                 target: None,
                 runtime: None,
+                execution_note: None,
             }
         );
     }
@@ -7587,7 +8038,7 @@ tasks:
 
         assert_eq!(
             projected_runtime_public_endpoint_line(&runtime_env).as_deref(),
-            Some("⭑ Endpoint (planned): http://127.0.0.1:49153/")
+            Some("\n🦦 Endpoint (planned): http://127.0.0.1:49153/")
         );
     }
 
@@ -9949,6 +10400,14 @@ tasks:
         assert_eq!(first.exit_code, 0);
         assert_eq!(second.exit_code, 0);
         assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container reused")
+        );
+        assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "readyready"
         );
@@ -10043,6 +10502,14 @@ tasks:
 
         assert_eq!(first.exit_code, 0);
         assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container reused")
+        );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "readyready"
@@ -10147,6 +10614,14 @@ tasks:
 
         assert_eq!(first.exit_code, 0);
         assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container recreated (projected host publication changed)")
+        );
         let first_runtime = first
             .runtime
             .expect("first run should include runtime metadata");
@@ -10167,6 +10642,305 @@ tasks:
             .and_then(|resolved| resolved.host.as_ref())
             .expect("second run host endpoint should resolve");
         assert_eq!(second_host.port, 53124);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "readyready"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 2);
+        assert_eq!(log.matches("rm").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_reconciliation_removes_legacy_unlabeled_container_with_conflicting_publication() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 53123
+              path: /
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let legacy_container_name = "ota-legacy-unlabeled";
+        fs::write(
+            state_dir.join(format!("{legacy_container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join(format!("{legacy_container_name}.running")),
+            "",
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join(format!("{legacy_container_name}.publish")),
+            "127.0.0.1:53123:3000/tcp\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            outcome.execution_note.as_deref(),
+            Some("persistent container recreated (execution shape changed)")
+        );
+        assert!(
+            !state_dir
+                .join(format!("{legacy_container_name}.path"))
+                .exists()
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("rm").count(), 1);
+        assert_eq!(log.matches("run-persistent").count(), 1);
+        assert_eq!(log.matches("exec").count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_container_recreates_when_image_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:v1
+tasks:
+  setup:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+        let second_contract = parse_contract_str(
+            fixture.file_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:v2
+tasks:
+  setup:
+    run: printf ready >> prepared.txt
+"#,
+        )
+        .unwrap();
+        let second = run_task(&second_contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container recreated (execution shape changed)")
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "readyready"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 2);
+        assert_eq!(log.matches("rm").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_container_recreates_when_dependency_isolation_shape_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  setup:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+        let second_contract = parse_contract_str(
+            fixture.file_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .pnpm-store
+tasks:
+  setup:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        )
+        .unwrap();
+        let second = run_task(&second_contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container recreated (execution shape changed)")
+        );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "readyready"
@@ -10244,6 +11018,16 @@ tasks:
 
         assert_eq!(first.exit_code, 0);
         assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some(
+                "persistent container recreated (existing container was stopped before execution)"
+            )
+        );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "readyready"
@@ -11489,6 +12273,10 @@ tasks:
         assert_eq!(report.total_removed(), 0);
         assert_eq!(report.skipped_ambiguous_persistent_containers, 0);
         assert!(state_dir.join("legacy-ambiguous.path").exists());
+        assert_eq!(
+            fs::read_to_string(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE)).unwrap(),
+            "docker\n"
+        );
     }
 
     #[cfg(unix)]
@@ -12695,6 +13483,15 @@ case "$command" in
           printf "%s\n" "$labels_json"
         else
           printf "null\n"
+        fi
+        exit 0
+      fi
+      if [ "$format" = "{{json .Mounts}}" ]; then
+        if [ -f "$state_dir/$name.path" ]; then
+          host_dir=$(cat "$state_dir/$name.path")
+          printf '[{"Source":"%s","Destination":"/workspace"}]\n' "$host_dir"
+        else
+          printf "[]\n"
         fi
         exit 0
       fi

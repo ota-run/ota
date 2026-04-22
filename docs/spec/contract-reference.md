@@ -813,7 +813,7 @@ Fields:
 - `bind.port.mode: fixed`: the task must listen on one explicit port inside its execution context
 - `bind.port.mode: discover`: ota discovers the final listening port after the task starts; use this only for native tasks where the process may auto-bump to a free port
 - `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
-- `project.host.port.mode: auto`: ota injects runtime URL env values before command execution and reports the resolved URL in receipts and JSON output; ephemeral container runs pre-reserve a host port, while persistent container runs resolve the current published host mapping
+- `project.host.port.mode: auto`: ota injects runtime URL env values before command execution and reports the resolved URL in receipts and JSON output; ephemeral container runs pre-reserve a host port, while persistent container runs reconcile the named container and then resolve the current published host mapping
 - `ota run <task> --host-port <port>` can override one run's published host/public port on the selected primary projected listener when that listener uses `project.host.port.mode: fixed`; the workload bind port stays unchanged
 - with multiple projected listeners, mark one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and primary endpoint rendering
 
@@ -825,7 +825,7 @@ Current execution rules:
 - container tasks may use `project.host.port.mode: fixed` or `auto`
 - remote execution contexts do not support `runtime.kind: service` host projection yet
 - loopback-only container binds such as `127.0.0.1` or `localhost` must not be projected to `host`
-- for container tasks with `project.host.port.mode: auto`, ota verifies resolved host publication; ephemeral runs retry bounded times on host-port conflict before failing
+- for container tasks with `project.host.port.mode: auto`, ota verifies resolved host publication; ephemeral runs retry bounded times on host-port conflict before failing, and persistent runs recreate mismatched containers when reconciliation cannot safely reuse the existing publication shape
 - `--host-port` rejects invalid shapes before task spawn: non-container execution, listeners with `project.host.port.mode: auto`, no projected host listeners, or ambiguous multi-listener projection without one primary listener
 
 Use cases:

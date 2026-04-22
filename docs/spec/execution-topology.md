@@ -261,7 +261,7 @@ This keeps the boundary honest:
 - `services` still model dependencies like Postgres
 - `tasks.<name>.runtime.listeners` model app ingress like a dev server or Spring Boot API
 - with multiple projected listeners, mark exactly one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and the primary endpoint line
-- in container contexts with `project.host.port.mode: auto`, ota injects runtime URL env values before command execution; ephemeral runs pre-reserve host ports before start, while persistent runs resolve the existing published mapping
+- in container contexts with `project.host.port.mode: auto`, ota injects runtime URL env values before command execution; ephemeral runs pre-reserve host ports before start, while persistent runs reconcile named containers and then resolve the published mapping
 - `ota run <task> --host-port <port>` overrides one run's published host/public port when the selected projected listener is `project.host.port.mode: fixed`; app bind ports stay unchanged
 - `ota run dev` records the same resolved host endpoint ota injected into runtime env
 - `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`
