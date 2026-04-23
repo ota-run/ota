@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- made ephemeral container `ota run` interruption-aware: Ctrl-C now still attempts to remove the repo-owned container created for that run, and the final run summary reports incomplete cleanup instead of silently leaving interrupted residue behind
+- reclaims repo-owned orphaned ephemeral containers on later runs before starting new ephemeral container execution, so abnormal termination does not leave stale container names or published ports behind until manual cleanup
 - hardened `ota clean` cleanup integrity: drift rediscovery now keys off repo ownership labels plus `.ota/state/managed-engines`, falls back to best-effort local engine probing only when no repo engine evidence exists, and keeps ownership-ambiguous managed state visible without unsafe deletion
 - added `tasks.<name>.internal: true` as an orchestration visibility boundary: internal tasks still run normally in dependency/hook graphs and via direct `ota run`, while default `ota tasks`/`ota tasks --use` omit them unless `--all` is requested (with `internal: true` surfaced in JSON for included internal entries)
 - aligned task discovery surfaces with `internal: true`: `ota run` shell completion and `ota workspace tasks` now hide internal task nodes by default so operator-facing listings stay consistent

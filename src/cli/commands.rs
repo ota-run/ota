@@ -105,9 +105,9 @@ use crate::runner::{
     load_declared_env_sources, load_policy_env_overlay, named_execution_context,
     persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
-    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
-    run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
-    run_task_with_progress_and_args_and_overrides_with_policy,
+    resolve_task_env_details_with_policy, run_interrupt_requested,
+    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
+    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, ExtensionSpec, Lifecycle,
@@ -2176,9 +2176,7 @@ fn listed_task_summaries<'a>(
         .tasks
         .iter()
         .filter(|(_, task)| include_internal || !task.internal)
-        .map(|(name, task)| {
-            TaskSummary::from_spec(name, task, current_os(), contract.execution.as_ref())
-        })
+        .map(|(name, task)| TaskSummary::from_spec(name, task, current_os(), contract))
         .collect::<Vec<_>>();
 
     if !include_internal {
@@ -24680,7 +24678,7 @@ tasks:
     }
 
     #[test]
-    fn task_summary_reports_context_for_mode_branch_without_explicit_context() {
+    fn task_summary_omits_context_for_mode_branch_without_explicit_context() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -24713,13 +24711,13 @@ tasks:
             "test",
             contract.tasks.get("test").unwrap(),
             std::env::consts::OS,
-            contract.execution.as_ref(),
+            &contract,
         );
 
         assert_eq!(summary.default_mode, Some("container"));
-        assert_eq!(summary.context, Some("app"));
+        assert_eq!(summary.context, None);
         assert_eq!(summary.modes.len(), 1);
-        assert_eq!(summary.modes[0].context, Some("app"));
+        assert_eq!(summary.modes[0].context, None);
     }
 
     #[test]
@@ -25114,6 +25112,75 @@ tasks:
         assert!(rendered.contains("Status:    interrupted"), "{rendered}");
         assert!(!rendered.contains("Status:    failed"), "{rendered}");
         assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
+    }
+
+    #[test]
+    fn run_failure_text_reports_interrupted_non_service_with_cleanup_note() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("./ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 130,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: Some(String::from(
+                    "task interrupted by user; ephemeral container cleanup failed for `ota-ephemeral-deadbeef`: engine unavailable",
+                )),
+            }],
+            130,
+            false,
+            Some(String::from("container")),
+            None,
+            Some(String::from(
+                "task interrupted by user; ephemeral container cleanup failed for `ota-ephemeral-deadbeef`: engine unavailable",
+            )),
+        );
+        let summary = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        crate::runner::set_run_interrupt_requested(true);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            None,
+            None,
+            None,
+            &summary,
+        ));
+        crate::runner::set_run_interrupt_requested(false);
+
+        assert!(rendered.contains("INFO  Task interrupted"), "{rendered}");
+        assert!(
+            rendered.contains("task `dev` was interrupted by user"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(
+            rendered.contains("task interrupted by user; ephemeral container cleanup failed"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -27589,6 +27656,16 @@ fn render_run_captured_failure_text(
             receipt_text,
         );
     }
+    if run_interrupt_requested() {
+        return render_task_interrupted_text(
+            where_value,
+            task_name,
+            requested_task_name,
+            member,
+            summary,
+            receipt_text,
+        );
+    }
     if let Some(conflict) = parse_container_host_port_conflict_detail(stderr) {
         return render_host_publication_failure_text(
             contract,
@@ -27618,6 +27695,55 @@ fn render_run_captured_failure_text(
         Some(summary),
         receipt_text,
     )
+}
+
+fn render_task_interrupted_text(
+    where_value: &str,
+    task_name: &str,
+    requested_task_name: &str,
+    member: Option<&str>,
+    summary_block: &str,
+    receipt_text: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Info),
+        paint("Task interrupted", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Task:"),
+        paint_code(task_name)
+    ));
+    append_error_detail_section(
+        &mut out,
+        "Why:",
+        &[format!("task `{task_name}` was interrupted by user")],
+        None,
+    );
+    append_error_detail_section(
+        &mut out,
+        "Next:",
+        &[format!(
+            "rerun `{}` when ready",
+            repo_run_stream_command(requested_task_name, member)
+        )],
+        None,
+    );
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push('\n');
+        out.push_str(receipt_text);
+    }
+    let summary_override = summary_with_status_override(Some(summary_block), "interrupted");
+    append_summary_block(&mut out, summary_override.as_deref());
+    out
 }
 
 fn render_service_interrupted_text(
@@ -28376,6 +28502,30 @@ fn render_run_structured_error_text(
                 runtime_listener_resolution.next_steps,
             )
         }
+        RunError::EphemeralContainerCleanupFailure {
+            task,
+            container,
+            engine,
+            action,
+            details,
+        } => (
+            String::from("Ephemeral container cleanup failed"),
+            vec![
+                format!(
+                    "task `{task}` could not {action} repo-owned ephemeral container `{container}`"
+                ),
+                format!("container engine `{engine}` reported: {details}"),
+            ],
+            vec![
+                String::from(
+                    "rerun `ota clean` or remove the container manually if it is still present",
+                ),
+                format!(
+                    "rerun `{}` when ready",
+                    repo_run_stream_command(task_name, member)
+                ),
+            ],
+        ),
         RunError::UnknownTask { task } => (
             String::from("Unknown task"),
             vec![format!("task `{task}` is not declared in this contract")],
@@ -29019,8 +29169,7 @@ fn run_execution_receipt(
         contract_identity: Some(repo_contract_identity(contract)),
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
-        context: reported_task_context_for_backend(contract, task_name, backend)
-            .map(str::to_string),
+        context: effective.context_name.map(str::to_string),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image,
         container_memory_bytes,
@@ -31352,6 +31501,11 @@ fn render_execution_receipt_summary_block(
     {
         note = format!("{note}; {internal_note}");
     }
+    if let Some(requested_note) = requested_task_note_from_receipt(receipt, task)
+        && !note.contains(requested_note.as_str())
+    {
+        note = format!("{note}; {requested_note}");
+    }
     if let Some(service_termination) = receipt.service_termination.as_ref() {
         note = service_termination_summary_note(service_termination);
     }
@@ -31430,6 +31584,17 @@ fn internal_task_note_from_receipt(receipt: &ExecutionReceipt, task: &str) -> Op
         note.split("; ")
             .find(|part| part.contains("marked internal"))
             .map(str::to_string)
+    })
+}
+
+fn requested_task_note_from_receipt(receipt: &ExecutionReceipt, task: &str) -> Option<String> {
+    receipt.steps.iter().find_map(|step| {
+        if step.label != task {
+            return None;
+        }
+        let detail = step.detail.as_deref()?;
+        let note = detail.strip_prefix("requested task; ").unwrap_or(detail);
+        (!note.is_empty()).then(|| note.to_string())
     })
 }
 

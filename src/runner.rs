@@ -30,6 +30,7 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -599,6 +600,16 @@ pub enum RunError {
         details: String,
     },
     #[error(
+        "task `{task}` could not {action} ephemeral container `{container}` using container engine `{engine}`: {details}"
+    )]
+    EphemeralContainerCleanupFailure {
+        task: String,
+        action: String,
+        container: String,
+        engine: String,
+        details: String,
+    },
+    #[error(
         "task `{task}` could not {action} dependency-isolation ownership token at `{path}`: {details}"
     )]
     DependencyIsolationOwnershipFailure {
@@ -969,6 +980,7 @@ impl CleanExecutionReport {
 }
 
 const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
+const OTA_EPHEMERAL_CONTAINER_LABEL: &str = "dev.ota.lifecycle=ephemeral";
 const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
 const OTA_REPO_CONTAINER_LABEL_KEY: &str = "dev.ota.repo";
 const OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY: &str = "dev.ota.persistent.family";
@@ -980,6 +992,9 @@ const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
+
+static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
+static RUN_INTERRUPT_HANDLER: Once = Once::new();
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
@@ -1573,6 +1588,8 @@ pub fn run_task_captured_with_args_with_overrides_with_policy(
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<CapturedRunOutcome, RunError> {
+    install_run_interrupt_handler();
+    RUN_INTERRUPT_REQUESTED.store(false, Ordering::Relaxed);
     run_task_internal(
         contract,
         contract_path,
@@ -1582,6 +1599,43 @@ pub fn run_task_captured_with_args_with_overrides_with_policy(
         policy_env,
         TaskExecutionMode::Capture,
     )
+}
+
+fn install_run_interrupt_handler() {
+    RUN_INTERRUPT_HANDLER.call_once(|| {
+        ctrlc::set_handler(|| {
+            RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+        })
+        .expect("run interrupt handler should install successfully");
+        #[cfg(unix)]
+        {
+            use signal_hook::consts::signal::{SIGHUP, SIGQUIT, SIGTERM};
+            use signal_hook::low_level;
+            unsafe {
+                low_level::register(SIGTERM, || {
+                    RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+                })
+                .expect("run interrupt handler should install SIGTERM");
+                low_level::register(SIGHUP, || {
+                    RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+                })
+                .expect("run interrupt handler should install SIGHUP");
+                low_level::register(SIGQUIT, || {
+                    RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+                })
+                .expect("run interrupt handler should install SIGQUIT");
+            }
+        }
+    });
+}
+
+pub(crate) fn run_interrupt_requested() -> bool {
+    RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn set_run_interrupt_requested(value: bool) {
+    RUN_INTERRUPT_REQUESTED.store(value, Ordering::Relaxed);
 }
 
 pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
@@ -2270,6 +2324,8 @@ fn run_task_internal(
     policy_env: Option<&BTreeMap<String, String>>,
     mode: TaskExecutionMode,
 ) -> Result<CapturedRunOutcome, RunError> {
+    install_run_interrupt_handler();
+    RUN_INTERRUPT_REQUESTED.store(false, Ordering::Relaxed);
     if !contract.tasks.contains_key(task_name) {
         return Err(RunError::UnknownTask {
             task: task_name.to_string(),
@@ -5408,6 +5464,7 @@ fn execute_container_task_command(
     let runtime_listener_publications = task_runtime_listener_publications(runtime);
     match lifecycle {
         Lifecycle::Ephemeral => {
+            let _ = reap_repo_owned_ephemeral_containers(task_name, engine, &repo_ownership_token)?;
             let has_auto_projection =
                 runtime_listener_publications
                     .iter()
@@ -5774,6 +5831,14 @@ fn execute_ephemeral_container_task_command(
         .arg("-i")
         .arg("--name")
         .arg(&container_name)
+        .arg("--label")
+        .arg(OTA_MANAGED_CONTAINER_LABEL)
+        .arg("--label")
+        .arg(OTA_EPHEMERAL_CONTAINER_LABEL)
+        .arg("--label")
+        .arg(format!(
+            "{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}"
+        ))
         .arg("--entrypoint")
         .arg("sh")
         .arg("-v")
@@ -5872,10 +5937,28 @@ fn execute_ephemeral_container_task_command(
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
             }
-            let execution_note = service_termination
+            let mut execution_note = if run_interrupt_requested() {
+                Some(String::from("task interrupted by user"))
+            } else {
+                None
+            };
+            if let Some(note) = service_termination
                 .as_ref()
-                .map(service_termination_execution_note);
-            let _ = remove_persistent_container(engine, &container_name, task_name);
+                .map(service_termination_execution_note)
+            {
+                execution_note = Some(match execution_note {
+                    Some(existing) => format!("{existing}; {note}"),
+                    None => note,
+                });
+            }
+            if let Some(cleanup_note) =
+                remove_ephemeral_container_and_note(task_name, engine, &container_name)
+            {
+                execution_note = Some(match execution_note {
+                    Some(note) => format!("{note}; {cleanup_note}"),
+                    None => cleanup_note,
+                });
+            }
 
             Ok(TaskCommandOutput {
                 exit_code,
@@ -5925,10 +6008,28 @@ fn execute_ephemeral_container_task_command(
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
             }
-            let execution_note = service_termination
+            let mut execution_note = if run_interrupt_requested() {
+                Some(String::from("task interrupted by user"))
+            } else {
+                None
+            };
+            if let Some(note) = service_termination
                 .as_ref()
-                .map(service_termination_execution_note);
-            let _ = remove_persistent_container(engine, &container_name, task_name);
+                .map(service_termination_execution_note)
+            {
+                execution_note = Some(match execution_note {
+                    Some(existing) => format!("{existing}; {note}"),
+                    None => note,
+                });
+            }
+            if let Some(cleanup_note) =
+                remove_ephemeral_container_and_note(task_name, engine, &container_name)
+            {
+                execution_note = Some(match execution_note {
+                    Some(note) => format!("{note}; {cleanup_note}"),
+                    None => cleanup_note,
+                });
+            }
 
             Ok(TaskCommandOutput {
                 exit_code,
@@ -6952,6 +7053,67 @@ fn remove_persistent_container(
     task_name: &str,
 ) -> Result<ContainerCommandOutput, RunError> {
     container_command_output(engine, &["rm", "-f", container_name], None, task_name)
+}
+
+fn remove_ephemeral_container_and_note(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Option<String> {
+    match remove_persistent_container(engine, container_name, task_name) {
+        Ok(output) if output.exit_code == 0 => None,
+        Ok(output) => Some(format!(
+            "ephemeral container cleanup failed for `{container_name}`: {}",
+            container_command_failure_details(engine, &["rm", "-f", container_name], &output)
+        )),
+        Err(error) => Some(format!(
+            "ephemeral container cleanup failed for `{container_name}`: {error}"
+        )),
+    }
+}
+
+fn reap_repo_owned_ephemeral_containers(
+    task_name: &str,
+    engine: &str,
+    repo_ownership_token: &str,
+) -> Result<Vec<String>, RunError> {
+    let repo_label = format!("{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}");
+    let repo_owned = container_names_for_label(task_name, engine, &repo_label)?;
+    let managed = container_names_for_label(task_name, engine, OTA_MANAGED_CONTAINER_LABEL)?;
+    let ephemeral = container_names_for_label(task_name, engine, OTA_EPHEMERAL_CONTAINER_LABEL)?;
+
+    let mut stale = repo_owned
+        .into_iter()
+        .filter(|name| {
+            managed.contains(name) && ephemeral.contains(name) && name.starts_with("ota-ephemeral-")
+        })
+        .collect::<Vec<_>>();
+    stale.sort();
+    stale.dedup();
+
+    for container_name in &stale {
+        let remove = remove_persistent_container(engine, container_name, task_name)?;
+        if remove.exit_code != 0 {
+            return Err(RunError::EphemeralContainerCleanupFailure {
+                task: task_name.to_string(),
+                action: String::from("remove"),
+                container: container_name.clone(),
+                engine: engine.to_string(),
+                details: if !remove.stderr.trim().is_empty() {
+                    remove.stderr.trim().to_string()
+                } else if !remove.stdout.trim().is_empty() {
+                    remove.stdout.trim().to_string()
+                } else {
+                    format!(
+                        "`{engine} rm -f {container_name}` exited with {}",
+                        remove.exit_code
+                    )
+                },
+            });
+        }
+    }
+
+    Ok(stale)
 }
 
 fn persistent_container_running(
@@ -13616,6 +13778,93 @@ tasks:
                 .unwrap(),
             "docker\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reap_repo_owned_ephemeral_containers_removes_labelled_orphans() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+
+        fs::write(
+            state_dir.join("ota-ephemeral-leaked.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-leaked.mounts"), "").unwrap();
+        fs::write(state_dir.join("ota-ephemeral-leaked.running"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-leaked.labels"),
+            format!("dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-1\n"),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-other.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-other.mounts"), "").unwrap();
+        fs::write(state_dir.join("ota-ephemeral-other.running"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-other.labels"),
+            format!("dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-2\n"),
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let removed =
+            super::reap_repo_owned_ephemeral_containers("clean", "docker", "repo-1").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(removed, vec![String::from("ota-ephemeral-leaked")]);
+        assert!(!state_dir.join("ota-ephemeral-leaked.path").exists());
+        assert!(state_dir.join("ota-ephemeral-other.path").exists());
     }
 
     #[cfg(unix)]

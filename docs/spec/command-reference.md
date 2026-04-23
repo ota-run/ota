@@ -598,6 +598,8 @@ Current behavior:
 - on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with the selected mode, container image when relevant, target when one exists, and task
 - on non-interactive text success, large task output is shown as a bounded excerpt before the compact `RUN SUMMARY`
 - on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
+- on `Ctrl-C` during ephemeral container runs, ota still attempts to remove the repo-owned container created for that invocation and surfaces cleanup failures in the final summary
+- before starting a new ephemeral container run, ota reclaims repo-owned orphaned ephemeral containers for the same repo so stale interrupted residue does not keep occupying container names or published ports
 - on success, text output includes the compact `RUN SUMMARY` block with the selected mode, container image when relevant, target when one exists, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
 
