@@ -22,3 +22,4 @@ target
 /.idea/*
 
 /.ota/ownership-id
+/core
