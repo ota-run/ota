@@ -24539,6 +24539,7 @@ tasks:
         );
         assert_eq!(native_receipt.backend.as_deref(), Some("native"));
         assert_eq!(native_receipt.context.as_deref(), Some("host"));
+        assert_eq!(native_receipt.lifecycle, None);
 
         let container_receipt = run_execution_receipt(
             &contract,
@@ -24577,6 +24578,47 @@ tasks:
                 .target
                 .as_deref()
                 .is_some_and(|target| target.starts_with("ota-"))
+        );
+
+        let native_override_receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: Some(Lifecycle::Persistent),
+                host_port: None,
+                memory: None,
+            },
+            "test",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(native_override_receipt.backend.as_deref(), Some("native"));
+        assert_eq!(native_override_receipt.context.as_deref(), Some("host"));
+        assert_eq!(
+            native_override_receipt.lifecycle.as_deref(),
+            Some("persistent")
+        );
+        let rendered = render_execution_receipt_summary_block(
+            &native_override_receipt,
+            Some("test"),
+            "RUN SUMMARY",
+        );
+        assert!(rendered.contains("Lifecycle:"));
+        assert!(rendered.contains("persistent"));
+        assert!(
+            rendered.contains("requested `--lifecycle persistent` is advisory in native mode only")
         );
     }
 
@@ -28926,7 +28968,10 @@ fn run_execution_receipt(
 ) -> ExecutionReceipt {
     let effective = effective_task_execution(contract, task_name, overrides);
     let backend = effective.backend;
-    let lifecycle = effective.lifecycle;
+    let lifecycle = match backend {
+        Backend::Native if overrides.lifecycle.is_none() => None,
+        _ => effective.lifecycle,
+    };
     let image = match backend {
         Backend::Container => effective.container.map(|container| container.image.clone()),
         Backend::Native | Backend::Remote => None,
@@ -31288,8 +31333,8 @@ fn render_execution_receipt_summary_block(
         ("container", Some("ephemeral")) => {
             String::from("using a fresh container image for this run")
         }
-        ("native", Some("ephemeral")) => String::from(
-            "running on the host environment; `execution.lifecycle: ephemeral` is advisory in native mode only",
+        ("native", Some(lifecycle)) => format!(
+            "running on the host environment; requested `--lifecycle {lifecycle}` is advisory in native mode only"
         ),
         ("native", _) => String::from("running on the host environment"),
         (other, _) => format!("executing through the `{other}` backend"),
