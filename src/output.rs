@@ -28,12 +28,13 @@ use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::{
-    ResolvedTaskRuntime, blocking_declared_env_source_label, env_resolution_source_label,
-    load_declared_env_sources, load_policy_env_overlay, resolve_declared_env_source_value,
+    ExecutionOverrides, ResolvedTaskRuntime, blocking_declared_env_source_label,
+    effective_task_execution, env_resolution_source_label, load_declared_env_sources,
+    load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{
-    AgentConfig, Backend, Contract, Execution, ExecutionContext, ExtensionSpec, Lifecycle,
-    ServiceSpec, TaskInputSpec, TaskSpec, TaskVariantView,
+    AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
+    TaskInputSpec, TaskSpec, TaskVariantView,
 };
 use crate::workspace::{WorkspaceExecutionSummary, WorkspaceRepoDoctorReport};
 
@@ -1818,16 +1819,16 @@ impl<'a> TaskSummary<'a> {
         name: &'a str,
         task: &'a TaskSpec,
         current_os: &str,
-        execution: Option<&'a Execution>,
+        contract: &'a Contract,
     ) -> Self {
-        let selected_backend = resolved_task_summary_backend(task, execution);
+        let effective = effective_task_execution(contract, name, ExecutionOverrides::default());
+        let selected_backend = effective.backend;
         let resolved_execution = task
             .resolved_execution_for_backend(selected_backend, current_os)
             .expect("validated task must resolve to a default or variant execution");
-        let repo_execution = execution;
         Self {
             name,
-            context: resolved_task_summary_context(task, execution, selected_backend),
+            context: effective.context_name,
             default_mode: task.mode_default_backend().map(task_mode_name),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
@@ -1869,14 +1870,20 @@ impl<'a> TaskSummary<'a> {
                         .modes
                         .iter()
                         .map(|(backend, branch)| {
+                            let branch_effective = effective_task_execution(
+                                contract,
+                                name,
+                                ExecutionOverrides {
+                                    backend: Some(backend),
+                                    lifecycle: None,
+                                    host_port: None,
+                                    memory: None,
+                                },
+                            );
                             let branch_execution = branch.execution();
                             TaskModeView {
                                 mode: task_mode_name(backend),
-                                context: resolved_task_summary_context(
-                                    task,
-                                    repo_execution,
-                                    backend,
-                                ),
+                                context: branch_effective.context_name,
                                 lifecycle: branch.lifecycle.map(format_lifecycle),
                                 kind: branch_execution.map(|execution| execution.kind),
                                 run: branch.run.as_deref(),
@@ -1900,72 +1907,6 @@ impl<'a> TaskSummary<'a> {
         self.after_always
             .retain(|task| visible_task_names.contains(task.as_str()));
     }
-}
-
-fn resolved_task_summary_backend(task: &TaskSpec, execution: Option<&Execution>) -> Backend {
-    task.mode_default_backend()
-        .or_else(|| {
-            task.context.as_deref().and_then(|context_name| {
-                execution
-                    .and_then(|execution| execution.contexts.get(context_name))
-                    .map(|context| context.backend)
-            })
-        })
-        .or_else(|| {
-            execution.and_then(|execution| {
-                execution
-                    .default_context()
-                    .map(|(_, context)| context.backend)
-            })
-        })
-        .or_else(|| execution.and_then(|execution| execution.preferred))
-        .unwrap_or(Backend::Native)
-}
-
-fn resolved_task_summary_context<'a>(
-    task: &'a TaskSpec,
-    execution: Option<&'a Execution>,
-    backend: Backend,
-) -> Option<&'a str> {
-    if let Some(branch) = task.mode_execution_branch(backend) {
-        if let Some(context_name) = branch.context.as_deref()
-            && execution.is_some_and(|execution| {
-                execution
-                    .contexts
-                    .get(context_name)
-                    .is_some_and(|context| context.backend == backend)
-            })
-        {
-            return Some(context_name);
-        }
-    }
-
-    if let Some(context_name) = task.context.as_deref()
-        && execution.is_some_and(|execution| {
-            execution
-                .contexts
-                .get(context_name)
-                .is_some_and(|context| context.backend == backend)
-        })
-    {
-        return Some(context_name);
-    }
-
-    execution
-        .and_then(|execution| {
-            execution
-                .default_context()
-                .and_then(|(name, context)| (context.backend == backend).then_some(name))
-        })
-        .or_else(|| {
-            execution.and_then(|execution| {
-                execution
-                    .contexts
-                    .iter()
-                    .find(|(_, context)| context.backend == backend)
-                    .map(|(name, _)| name.as_str())
-            })
-        })
 }
 
 #[derive(Debug, Serialize)]
