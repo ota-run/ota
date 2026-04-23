@@ -57,7 +57,6 @@ use crate::schema::{
 
 #[derive(Clone)]
 pub(crate) struct StreamPhaseNotifier {
-    label: Arc<String>,
     saw_output: Arc<AtomicBool>,
     shown: Arc<AtomicBool>,
     output_lock: Arc<Mutex<()>>,
@@ -70,19 +69,21 @@ impl StreamPhaseNotifier {
             .lock()
             .expect("stream phase output lock should not be poisoned");
         if !self.saw_output.swap(true, Ordering::Relaxed) {
-            let mut stderr = io::stderr();
             if self.shown.load(Ordering::Relaxed) {
                 clear_stream_phase_line();
             }
-            let _ = write!(stderr, "{}", stream_phase_started_line(&self.label));
-            let _ = stderr.flush();
         }
         guard
+    }
+
+    fn lock_output(&self) -> MutexGuard<'_, ()> {
+        self.output_lock
+            .lock()
+            .expect("stream phase output lock should not be poisoned")
     }
 }
 
 pub(crate) struct StreamPhaseLoader {
-    label: Arc<String>,
     stop: Arc<AtomicBool>,
     shown: Arc<AtomicBool>,
     saw_output: Arc<AtomicBool>,
@@ -146,7 +147,6 @@ impl StreamPhaseLoader {
         });
 
         Some(Self {
-            label,
             stop,
             shown,
             saw_output,
@@ -157,7 +157,6 @@ impl StreamPhaseLoader {
 
     pub(crate) fn notifier(&self) -> StreamPhaseNotifier {
         StreamPhaseNotifier {
-            label: Arc::clone(&self.label),
             saw_output: Arc::clone(&self.saw_output),
             shown: Arc::clone(&self.shown),
             output_lock: Arc::clone(&self.output_lock),
@@ -189,10 +188,6 @@ fn clear_stream_phase_line() {
     let mut stderr = io::stderr();
     let _ = write!(stderr, "\r\x1b[2K\r");
     let _ = stderr.flush();
-}
-
-fn stream_phase_started_line(label: &str) -> String {
-    format!("🦦 {label}...\n")
 }
 
 fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
@@ -249,7 +244,11 @@ where
         }
         match notifier.as_ref() {
             Some(notifier) => {
-                let _guard = notifier.begin_output();
+                let _guard = if buffer_contains_visible_output(&buffer[..read]) {
+                    notifier.begin_output()
+                } else {
+                    notifier.lock_output()
+                };
                 if capture {
                     captured.extend_from_slice(&buffer[..read]);
                 }
@@ -266,6 +265,32 @@ where
         }
     }
     Ok(String::from_utf8_lossy(&captured).into_owned())
+}
+
+fn buffer_contains_visible_output(buffer: &[u8]) -> bool {
+    let mut index = 0usize;
+    while index < buffer.len() {
+        match buffer[index] {
+            b'\x1b' => {
+                index += 1;
+                if index < buffer.len() && buffer[index] == b'[' {
+                    index += 1;
+                    while index < buffer.len() {
+                        let byte = buffer[index];
+                        index += 1;
+                        if (0x40..=0x7e).contains(&byte) {
+                            break;
+                        }
+                    }
+                }
+            }
+            byte if byte.is_ascii_whitespace() || byte.is_ascii_control() => {
+                index += 1;
+            }
+            _ => return true,
+        }
+    }
+    false
 }
 
 pub(crate) fn join_stream_reader(
@@ -10763,11 +10788,10 @@ exec "$(dirname "$0")/docker-real" "$@"
     }
 
     #[test]
-    fn stream_phase_started_line_includes_newline() {
-        assert_eq!(
-            super::stream_phase_started_line("Running ci"),
-            "🦦 Running ci...\n"
-        );
+    fn visible_output_detector_ignores_whitespace_and_ansi_only_chunks() {
+        assert!(!super::buffer_contains_visible_output(b"\r\n\t"));
+        assert!(!super::buffer_contains_visible_output(b"\x1b[2K\r"));
+        assert!(super::buffer_contains_visible_output(b"$ cargo test\n"));
     }
 
     #[cfg(unix)]
