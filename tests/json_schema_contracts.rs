@@ -272,6 +272,7 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success.get("mode").is_some());
     assert!(success.get("receipt").is_some());
     assert!(success_receipt.get("contract_identity").is_some());
+    assert!(success_receipt.get("service_termination").is_some());
     assert!(success.get("findings").is_some());
     assert!(success.get("promoted_baseline").is_some());
     assert!(success_summary.get("error_count").is_some());
@@ -678,6 +679,11 @@ fn up_schema_includes_member_grouping() {
     assert!(runtime_properties.get("stderr").is_some());
     assert!(runtime_properties.get("members").is_some());
     assert!(runtime_receipt_properties.get("runtime").is_some());
+    assert!(
+        runtime_receipt_properties
+            .get("service_termination")
+            .is_some()
+    );
     assert!(runtime_receipt_properties.get("workloads").is_some());
     assert!(runtime_member_properties.get("member").is_some());
     assert!(runtime_member_properties.get("status").is_some());

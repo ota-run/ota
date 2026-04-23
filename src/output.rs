@@ -295,6 +295,8 @@ pub struct ExecutionReceipt {
     pub env_sources: Vec<ExecutionReceiptEnvSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime: Option<ResolvedTaskRuntime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_termination: Option<crate::runner::ServiceTermination>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub workloads: BTreeMap<String, ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
