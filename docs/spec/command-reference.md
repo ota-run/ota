@@ -600,6 +600,8 @@ Current behavior:
 - on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
 - on `Ctrl-C` during ephemeral container runs, ota still attempts to remove the repo-owned container created for that invocation and surfaces cleanup failures in the final summary
 - before starting a new ephemeral container run, ota reclaims repo-owned orphaned ephemeral containers for the same repo, uses bounded retries when reclaim resolves stale host-publication holders, and can reclaim legacy running ephemerals without `dev.ota.owner_pid` when they are the conflicting holder
+- persistent container runs reconcile shape before reuse and recreate when projection/publication drift would make runtime endpoint metadata stale
+- service tasks with projected listeners classify post-readiness exits as service-stop failures (including `interrupted`) so summaries and receipts stay truthful across both ephemeral and persistent lifecycle modes
 - on success, text output includes the compact `RUN SUMMARY` block with the selected mode, container image when relevant, target when one exists, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
 
