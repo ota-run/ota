@@ -24435,16 +24435,6 @@ execution:
 tasks:
   test:
     context: app
-    execution:
-      default_mode: native
-      modes:
-        native:
-          context: host
-          run: echo test-native
-        container:
-          context: app
-          lifecycle: persistent
-          run: echo test-container
     run: echo test
 "#,
         )
@@ -24715,9 +24705,9 @@ tasks:
         );
 
         assert_eq!(summary.default_mode, Some("container"));
-        assert_eq!(summary.context, None);
+        assert_eq!(summary.context, Some("app"));
         assert_eq!(summary.modes.len(), 1);
-        assert_eq!(summary.modes[0].context, None);
+        assert_eq!(summary.modes[0].context, Some("app"));
     }
 
     #[test]

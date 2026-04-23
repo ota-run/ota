@@ -3288,13 +3288,17 @@ fn selected_task_context_for_backend<'a>(
 ) -> Option<(&'a str, &'a ExecutionContext)> {
     let execution = contract.execution.as_ref()?;
     let task = contract.tasks.get(task_name)?;
-    let context_name = if let Some(branch) = task.mode_execution_branch(backend) {
-        branch.context.as_deref().filter(|context_name| {
+    let branch_context = task
+        .mode_execution_branch(backend)
+        .and_then(|branch| branch.context.as_deref())
+        .filter(|context_name| {
             execution
                 .contexts
                 .get(*context_name)
                 .is_some_and(|context| context.backend == backend)
-        })?
+        });
+    let context_name = if let Some(context_name) = branch_context {
+        context_name
     } else if let Some(context_name) = task.context.as_deref() {
         if execution
             .contexts
