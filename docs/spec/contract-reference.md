@@ -338,7 +338,7 @@ Current command behavior:
 - `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
 - `ota clean` removes current contract-derived Ota-managed persistent containers and dependency-isolation volumes for container contexts
 - `ota clean` also rediscovers drifted Ota-managed persistent containers and dependency-isolation volumes by ownership metadata (`dev.ota.managed`, cleanup-kind/lifecycle labels, and repo ownership token), even when the contract has drifted away from the original declaration
-- repo cleanup identity is anchored by `.ota/ownership-id` and tracked repo-used engines in `.ota/managed-engines`, so drifted cleanup can stay scoped to the repo instead of matching by `project.name`
+- repo cleanup identity is anchored by `.ota/state/ownership-id` and tracked repo-used engines in `.ota/state/managed-engines`, so drifted cleanup can stay scoped to the repo instead of matching by `project.name`
 - `ota clean` currently has no remote cleanup action; remote-backed repos report `No cleanup needed` today
 - `ota doctor` checks the required backend CLI for the selected execution context or preferred backend and reports unsupported shipped remote providers early
 - `ota doctor` warns on suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` not starting `pod/`)

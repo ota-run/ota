@@ -1484,8 +1484,8 @@ Current behavior:
 - when `--member` is set, targets those merged member contracts in the provided order
 - removes current contract-derived Ota-managed persistent containers and dependency-isolation volumes
 - rediscovers and removes drifted Ota-managed persistent containers and dependency-isolation volumes for the same repo via ownership labels (`dev.ota.managed`, cleanup kind/lifecycle labels, and repo ownership token)
-- repo identity for cleanup is anchored by `.ota/ownership-id` (not `project.name`)
-- tracks repo-used container engines in `.ota/managed-engines` so drift cleanup can still query a previously used engine after contract engine changes
+- repo identity for cleanup is anchored by `.ota/state/ownership-id` (not `project.name`)
+- tracks repo-used container engines in `.ota/state/managed-engines` so drift cleanup can still query a previously used engine after contract engine changes
 - scopes discovery to relevant engines (current contract targets plus recorded repo-used engines) and does not fail because an unrelated installed engine is unavailable
 - when no relevant engine evidence exists for the repo, falls back to best-effort discovery across locally available container engines and only fails if none of those discovery probes succeed
 - fails explicitly when discovery for a relevant engine fails; it does not downgrade to `No cleanup needed`
