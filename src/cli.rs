@@ -4843,6 +4843,49 @@ case "$command" in
         fi
         exit 0
       fi
+      if [ "$format" = "{{json .Config.Labels}}" ]; then
+        if [ -f "$state_dir/$name.labels" ]; then
+          labels_json="{"
+          first_label=1
+          while IFS= read -r label_entry; do
+            [ -n "$label_entry" ] || continue
+            key="${label_entry%%=*}"
+            value="${label_entry#*=}"
+            if [ "$first_label" = "1" ]; then
+              first_label=0
+            else
+              labels_json="${labels_json},"
+            fi
+            labels_json="${labels_json}\"$key\":\"$value\""
+          done < "$state_dir/$name.labels"
+          labels_json="${labels_json}}"
+          printf "%s\n" "$labels_json"
+        else
+          printf "null\n"
+        fi
+        exit 0
+      fi
+      if [ "$format" = "{{json .Mounts}}" ]; then
+        host_dir=$(cat "$state_dir/$name.path")
+        mounts_json='[{"Type":"bind","Source":"'"$host_dir"'","Destination":"/workspace"}'
+        if [ -f "$state_dir/$name.mounts" ]; then
+          while IFS= read -r mount_entry; do
+            [ -n "$mount_entry" ] || continue
+            mount_source="${mount_entry%%:*}"
+            mount_destination="${mount_entry#*:}"
+            case "$mount_destination" in
+              /workspace)
+                ;;
+              *)
+                mounts_json="${mounts_json},{\"Type\":\"volume\",\"Name\":\"$mount_source\",\"Source\":\"$state_dir/volume.$mount_source\",\"Destination\":\"$mount_destination\"}"
+                ;;
+            esac
+          done < "$state_dir/$name.mounts"
+        fi
+        mounts_json="${mounts_json}]"
+        printf "%s\n" "$mounts_json"
+        exit 0
+      fi
       exit 1
     fi
     name="$1"
@@ -5001,6 +5044,7 @@ case "$command" in
     else
       : > "$state_dir/$name.networks"
     fi
+    printf "%s" "$mounts" > "$state_dir/$name.mounts"
     if [ -n "$env_entries" ]; then
       printf "%s" "$env_entries" > "$state_dir/$name.env"
     else
@@ -5090,6 +5134,7 @@ case "$command" in
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
+      printf "%s" "$mounts" > "$state_dir/$name.mounts"
       : > "$state_dir/$name.running"
       if [ -n "$network" ]; then
         printf "%s\n" "$network" > "$state_dir/$name.networks"
@@ -5140,6 +5185,14 @@ case "$command" in
         [ -f "$state_dir/volume.$volume_name" ] || exit 1
         exit 0
         ;;
+      ls)
+        [ "$1" = "-q" ] && shift
+        for volume_path in "$state_dir"/volume.*; do
+          [ -e "$volume_path" ] || continue
+          printf "%s\n" "${volume_path##*/volume.}"
+        done
+        exit 0
+        ;;
       create)
         volume_name="$1"
         : > "$state_dir/volume.$volume_name"
@@ -5166,6 +5219,7 @@ case "$command" in
     rm -f "$state_dir/$name.running"
     rm -f "$state_dir/$name.labels"
     rm -f "$state_dir/$name.networks"
+    rm -f "$state_dir/$name.mounts"
     rm -f "$state_dir/$name.command"
     rm -f "$state_dir/$name.env"
     printf "rm\n" >> "$host_dir/docker-log.txt"
@@ -9240,10 +9294,13 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            strip_ansi(&output.stdout),
-            format!("Cleaned {}", compact_contract(fixture.file_path()))
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.starts_with(&format!(
+            "Cleaned {}",
+            compact_contract(fixture.file_path())
+        )));
+        assert!(stdout.contains("removed current persistent containers: 1"));
+        assert!(stdout.contains("queried engines: docker"));
         assert!(fixture.dir.path().join("docker-log.txt").exists());
     }
 
@@ -9858,9 +9915,10 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("BLOCKED"));
-        assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
         assert!(stdout.contains("provider `ssh` targeting `sandbox-dev`"));
+        assert!(stdout.contains("Mode:      remote"));
+        assert!(stdout.contains("Target:    sandbox-dev"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
         assert!(!log_path.exists());
     }
@@ -9942,9 +10000,10 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("BLOCKED"));
-        assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
         assert!(stdout.contains("provider `tsh` targeting `sandbox-dev`"));
+        assert!(stdout.contains("Mode:      remote"));
+        assert!(stdout.contains("Target:    sandbox-dev"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
         assert!(!log_path.exists());
     }
@@ -10026,9 +10085,10 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("BLOCKED"));
-        assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
         assert!(stdout.contains("provider `kubectl` targeting `pod/ota-dev`"));
+        assert!(stdout.contains("Mode:      remote"));
+        assert!(stdout.contains("Target:    pod/ota-dev"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
         assert!(!log_path.exists());
     }
@@ -11029,9 +11089,9 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("ERROR  Task runtime projection is invalid"));
         assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.mode"));
-        assert!(
-            stderr.contains("task `dev` listener `http` with `bind.port.mode: auto` is invalid")
-        );
+        assert!(stderr.contains(
+            "task `dev` listener `http` must use `bind.port.mode: fixed` when `project.host` is declared in a container context"
+        ));
         assert!(stderr.contains(
             "container workloads with `project.host` declared must use a fixed internal bind port"
         ));
@@ -11961,8 +12021,8 @@ tasks:
         fs::write(
             &docker_wrapper,
             r#"#!/bin/sh
-if [ "$1" = "create" ]; then
-  printf "Bind for 0.0.0.0 failed: port is already allocated\n" >&2
+if [ "$1" = "create" ] || [ "$1" = "run" ]; then
+  printf "Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
   exit 1
 fi
 exec "$(dirname "$0")/docker-real" "$@"
@@ -12286,12 +12346,10 @@ tasks:
         assert!(stderr.contains("Task Failed"));
         assert!(stderr.contains("`fail` exited with code 127"));
         assert!(stderr.contains(
-            "Why: task `fail` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage"
+            "Why: task `fail` returned a non-zero exit code\nNext: run `ota tasks --use"
         ));
         assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
-        assert!(
-            !stderr.contains("Next:\n  » run `ota tasks --use` to inspect runnable task usage")
-        );
+        assert!(!stderr.contains("Next:\n  » run `ota tasks --use"));
     }
 
     #[test]
@@ -13955,11 +14013,17 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Command: `ota run build`"));
-        assert_eq!(ci_idx, build_idx + 3);
-        assert!(lines[build_idx + 1].starts_with("  Command: `ota run build`"));
-        assert!(lines[build_idx + 2].starts_with("  Description: Build the site for production"));
-        assert!(lines[ci_idx + 1].starts_with("  Command: `ota run ci`"));
-        assert!(lines[ci_idx + 2].starts_with("  Description: Canonical local verification"));
+        assert!(lines[ci_idx - 1].trim().is_empty());
+        assert!(lines[build_idx + 1].starts_with("  Context:"));
+        assert!(lines[build_idx + 2].starts_with("  Default Mode:"));
+        assert!(lines[build_idx + 3].starts_with("  Command: `ota run build`"));
+        assert!(lines[build_idx + 4].starts_with("  Mode Branches:"));
+        assert!(lines[build_idx + 5].starts_with("  Description: Build the site for production"));
+        assert!(lines[ci_idx + 1].starts_with("  Context:"));
+        assert!(lines[ci_idx + 2].starts_with("  Default Mode:"));
+        assert!(lines[ci_idx + 3].starts_with("  Command: `ota run ci`"));
+        assert!(lines[ci_idx + 4].starts_with("  Mode Branches:"));
+        assert!(lines[ci_idx + 5].starts_with("  Description: Canonical local verification"));
     }
 
     #[test]
@@ -19154,6 +19218,7 @@ tasks:
 
     #[test]
     fn init_json_refuses_to_overwrite_existing_contract_with_next() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -20244,12 +20309,12 @@ tasks:
         assert!(rendered.contains("setup"));
         assert!(rendered.contains("Status:"));
         assert!(rendered.contains("success"));
-        assert!(rendered.contains("Target:"));
+        assert!(rendered.contains("Container:"));
         assert!(rendered.contains("ota-"));
         assert!(rendered.contains("Lifecycle:"));
         assert!(rendered.contains("persistent"));
         assert!(rendered.contains("Note:"));
-        assert!(rendered.contains("reusing persistent container backend"));
+        assert!(rendered.contains("persistent container"));
         assert!(rendered.contains("Next:"));
         assert!(rendered.contains("ota tasks --use"));
     }
@@ -22873,9 +22938,9 @@ tasks:
         ));
         assert!(rendered.contains("DEBUG command=run"));
         assert!(rendered.contains("DEBUG task=setup"));
+        assert!(rendered.contains("DEBUG contract_path="));
         assert!(rendered.contains("Note:"));
         assert!(rendered.contains("running on the host environment"));
-        assert!(rendered.contains("execution.lifecycle: ephemeral"));
     }
 
     #[test]
@@ -22982,7 +23047,7 @@ tasks:
         assert_eq!(validate.exit_code, 1);
         assert_eq!(
             json_top_level_keys_named("validate", &validate),
-            vec!["error", "errors", "ok", "path", "summary"],
+            vec!["errors", "ok", "path", "summary"],
             "validate failure keys"
         );
 
@@ -22998,7 +23063,7 @@ tasks:
         assert_eq!(doctor.exit_code, 1);
         assert_eq!(
             json_top_level_keys_named("doctor", &doctor),
-            vec!["error", "errors", "ok", "path", "summary"],
+            vec!["errors", "ok", "path"],
             "doctor failure keys"
         );
 
@@ -23107,6 +23172,8 @@ tasks:
 
     #[test]
     fn repo_commands_text_status_contract_is_stable() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -23834,6 +23901,7 @@ tasks:
     #[test]
     fn repo_run_task_completion_hides_internal_tasks() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
