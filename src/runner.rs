@@ -975,6 +975,8 @@ const OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY: &str = "dev.ota.persistent.fami
 const OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY: &str = "dev.ota.persistent.shape";
 const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
 const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
+const OTA_STATE_DIR: &str = "state";
+const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
@@ -7451,8 +7453,20 @@ fn repo_ota_dir(working_dir: &Path) -> PathBuf {
     working_dir.join(".ota")
 }
 
+fn repo_ota_state_dir(working_dir: &Path) -> PathBuf {
+    repo_ota_dir(working_dir).join(OTA_STATE_DIR)
+}
+
+fn repo_ota_state_file_path(working_dir: &Path, file_name: &str) -> PathBuf {
+    repo_ota_state_dir(working_dir).join(file_name)
+}
+
+fn legacy_repo_ota_state_file_path(working_dir: &Path, file_name: &str) -> PathBuf {
+    repo_ota_dir(working_dir).join(file_name)
+}
+
 fn repo_managed_engines_path(working_dir: &Path) -> PathBuf {
-    repo_ota_dir(working_dir).join(OTA_MANAGED_ENGINES_FILE)
+    repo_ota_state_file_path(working_dir, OTA_MANAGED_ENGINES_FILE)
 }
 
 fn repo_managed_engines(
@@ -7460,16 +7474,36 @@ fn repo_managed_engines(
     working_dir: &Path,
 ) -> Result<BTreeSet<String>, RunError> {
     let path = repo_managed_engines_path(working_dir);
-    let Ok(contents) = fs::read_to_string(&path) else {
+    let legacy_path = legacy_repo_ota_state_file_path(working_dir, OTA_MANAGED_ENGINES_FILE);
+    if path.exists() && legacy_path.exists() {
+        let _ = fs::remove_file(&legacy_path);
+    }
+    let Ok(contents) = fs::read_to_string(&path).or_else(|_| fs::read_to_string(&legacy_path))
+    else {
         return Ok(BTreeSet::new());
     };
 
-    Ok(contents
+    let engines: BTreeSet<String> = contents
         .lines()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(String::from)
-        .collect())
+        .collect();
+
+    if !path.exists() && legacy_path.exists() {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let mut serialized = String::new();
+        for engine in &engines {
+            serialized.push_str(engine.as_str());
+            serialized.push('\n');
+        }
+        let _ = fs::write(&path, serialized);
+        let _ = fs::remove_file(&legacy_path);
+    }
+
+    Ok(engines)
 }
 
 fn write_repo_managed_engines(
@@ -7477,9 +7511,9 @@ fn write_repo_managed_engines(
     working_dir: &Path,
     engines: &BTreeSet<String>,
 ) -> Result<(), RunError> {
-    let ota_dir = repo_ota_dir(working_dir);
     let path = repo_managed_engines_path(working_dir);
-    fs::create_dir_all(&ota_dir).map_err(|source| {
+    let legacy_path = legacy_repo_ota_state_file_path(working_dir, OTA_MANAGED_ENGINES_FILE);
+    fs::create_dir_all(repo_ota_state_dir(working_dir)).map_err(|source| {
         RunError::DependencyIsolationOwnershipFailure {
             task: task_name.to_string(),
             action: String::from("create"),
@@ -7490,6 +7524,7 @@ fn write_repo_managed_engines(
 
     if engines.is_empty() {
         let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&legacy_path);
         return Ok(());
     }
 
@@ -7504,7 +7539,9 @@ fn write_repo_managed_engines(
         action: String::from("write"),
         path: path.display().to_string(),
         details: source.to_string(),
-    })
+    })?;
+    let _ = fs::remove_file(&legacy_path);
+    Ok(())
 }
 
 fn record_repo_managed_engine(
@@ -7528,17 +7565,29 @@ fn repo_ownership_token_for_working_dir(
     task_name: &str,
     working_dir: &Path,
 ) -> Result<String, RunError> {
-    let ota_dir = repo_ota_dir(working_dir);
-    let token_path = ota_dir.join("ownership-id");
+    let token_path = repo_ota_state_file_path(working_dir, OTA_OWNERSHIP_ID_FILE);
+    let legacy_token_path = legacy_repo_ota_state_file_path(working_dir, OTA_OWNERSHIP_ID_FILE);
+    if token_path.exists() && legacy_token_path.exists() {
+        let _ = fs::remove_file(&legacy_token_path);
+    }
 
-    if let Ok(token) = fs::read_to_string(&token_path) {
+    if let Ok(token) =
+        fs::read_to_string(&token_path).or_else(|_| fs::read_to_string(&legacy_token_path))
+    {
         let trimmed = token.trim();
         if !trimmed.is_empty() {
+            if !token_path.exists() && legacy_token_path.exists() {
+                if let Some(parent) = token_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(&token_path, trimmed);
+                let _ = fs::remove_file(&legacy_token_path);
+            }
             return Ok(trimmed.to_string());
         }
     }
 
-    fs::create_dir_all(&ota_dir).map_err(|source| {
+    fs::create_dir_all(repo_ota_state_dir(working_dir)).map_err(|source| {
         RunError::DependencyIsolationOwnershipFailure {
             task: task_name.to_string(),
             action: String::from("create"),
@@ -7565,6 +7614,7 @@ fn repo_ownership_token_for_working_dir(
             details: source.to_string(),
         }
     })?;
+    let _ = fs::remove_file(&legacy_token_path);
 
     Ok(token)
 }
@@ -13316,7 +13366,8 @@ tasks:
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
         let stale_volume = "ota-isolated-stale";
         fs::write(state_dir.join(format!("volume.{stale_volume}")), "").unwrap();
         fs::write(
@@ -13416,7 +13467,12 @@ tasks:
         let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(
+            ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE),
+            "docker\n",
+        )
+        .unwrap();
         let mounts = fs::read_to_string(fixture.dir.path().join("docker-mounts.txt")).unwrap();
         let volume_mount = mounts
             .lines()
@@ -13473,7 +13529,10 @@ tasks:
             "volume should be removed: {report:?}"
         );
         assert!(
-            !ota_dir.join(super::OTA_MANAGED_ENGINES_FILE).exists(),
+            !ota_dir
+                .join("state")
+                .join(super::OTA_MANAGED_ENGINES_FILE)
+                .exists(),
             "recorded engines should be cleared after cleanup"
         );
     }
@@ -13521,7 +13580,12 @@ tasks:
         .unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(
+            ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE),
+            "docker\n",
+        )
+        .unwrap();
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -13548,7 +13612,8 @@ tasks:
         assert_eq!(report.skipped_ambiguous_persistent_containers, 0);
         assert!(state_dir.join("legacy-ambiguous.path").exists());
         assert_eq!(
-            fs::read_to_string(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE)).unwrap(),
+            fs::read_to_string(ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE))
+                .unwrap(),
             "docker\n"
         );
     }
@@ -13586,8 +13651,13 @@ tasks:
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
-        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE),
+            "docker\n",
+        )
+        .unwrap();
         fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.stale-repo-1.labels"),
@@ -13653,8 +13723,13 @@ tasks:
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
-        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE),
+            "docker\n",
+        )
+        .unwrap();
         fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.stale-repo-1.labels"),
@@ -13748,8 +13823,13 @@ tasks:
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
-        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE),
+            "docker\n",
+        )
+        .unwrap();
         fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.stale-repo-1.labels"),
@@ -13840,7 +13920,8 @@ exit 0
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
         fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.stale-repo-1.labels"),
@@ -13926,7 +14007,8 @@ exit 0
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
         fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.stale-repo-1.labels"),
@@ -14002,7 +14084,8 @@ tasks:
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
         fs::write(state_dir.join("volume.repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.repo-1.labels"),
@@ -14080,7 +14163,8 @@ tasks:
         fs::create_dir_all(&state_dir).unwrap();
         let ota_dir = fixture.dir.path().join(".ota");
         fs::create_dir_all(&ota_dir).unwrap();
-        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
         fs::write(state_dir.join("volume.repo-1"), "").unwrap();
         fs::write(
             state_dir.join("volume.repo-1.labels"),
@@ -14117,6 +14201,151 @@ tasks:
             other => panic!("expected inspection failure, got {other}"),
         }
         assert!(state_dir.join("volume.repo-1").exists());
+    }
+
+    #[test]
+    fn repo_ownership_token_for_working_dir_uses_state_dir_and_migrates_legacy_state() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+
+        let working_dir = fixture.dir.path();
+        let state_dir = working_dir.join(".ota").join("state");
+        let legacy_token_path = working_dir.join(".ota").join("ownership-id");
+
+        let token = super::repo_ownership_token_for_working_dir("test", working_dir).unwrap();
+        assert!(!token.is_empty());
+        assert!(state_dir.join("ownership-id").exists());
+        assert!(!legacy_token_path.exists());
+
+        let legacy_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let legacy_working_dir = legacy_fixture.dir.path();
+        let legacy_state_dir = legacy_working_dir.join(".ota").join("state");
+        let legacy_token_path = legacy_working_dir.join(".ota").join("ownership-id");
+        fs::create_dir_all(legacy_working_dir.join(".ota")).unwrap();
+        fs::write(&legacy_token_path, "repo-legacy").unwrap();
+
+        let token =
+            super::repo_ownership_token_for_working_dir("test", legacy_working_dir).unwrap();
+        assert_eq!(token, "repo-legacy");
+        assert_eq!(
+            fs::read_to_string(legacy_state_dir.join("ownership-id")).unwrap(),
+            "repo-legacy"
+        );
+        assert!(!legacy_token_path.exists());
+
+        fs::write(legacy_state_dir.join("ownership-id"), "repo-canonical").unwrap();
+        fs::write(&legacy_token_path, "repo-stale").unwrap();
+        let token =
+            super::repo_ownership_token_for_working_dir("test", legacy_working_dir).unwrap();
+        assert_eq!(token, "repo-canonical");
+        assert!(!legacy_token_path.exists());
+    }
+
+    #[test]
+    fn repo_managed_engines_uses_state_dir_and_migrates_legacy_state() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+
+        let working_dir = fixture.dir.path();
+        let state_dir = working_dir.join(".ota").join("state");
+        let legacy_path = working_dir
+            .join(".ota")
+            .join(super::OTA_MANAGED_ENGINES_FILE);
+
+        super::record_repo_managed_engine("test", working_dir, "docker").unwrap();
+        assert_eq!(
+            fs::read_to_string(state_dir.join(super::OTA_MANAGED_ENGINES_FILE)).unwrap(),
+            "docker\n"
+        );
+        assert!(!legacy_path.exists());
+
+        let legacy_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let legacy_working_dir = legacy_fixture.dir.path();
+        let legacy_state_dir = legacy_working_dir.join(".ota").join("state");
+        let legacy_path = legacy_working_dir
+            .join(".ota")
+            .join(super::OTA_MANAGED_ENGINES_FILE);
+        fs::create_dir_all(legacy_working_dir.join(".ota")).unwrap();
+        fs::write(&legacy_path, "docker\n").unwrap();
+
+        let engines = super::repo_managed_engines("test", legacy_working_dir).unwrap();
+        assert!(engines.contains("docker"));
+        assert_eq!(
+            fs::read_to_string(legacy_state_dir.join(super::OTA_MANAGED_ENGINES_FILE)).unwrap(),
+            "docker\n"
+        );
+        assert!(!legacy_path.exists());
+
+        super::record_repo_managed_engine("test", legacy_working_dir, "podman").unwrap();
+        assert_eq!(
+            fs::read_to_string(legacy_state_dir.join(super::OTA_MANAGED_ENGINES_FILE)).unwrap(),
+            "docker\npodman\n"
+        );
+
+        fs::write(
+            legacy_state_dir.join(super::OTA_MANAGED_ENGINES_FILE),
+            "docker\npodman\n",
+        )
+        .unwrap();
+        fs::write(&legacy_path, "docker\n").unwrap();
+        let engines = super::repo_managed_engines("test", legacy_working_dir).unwrap();
+        assert!(engines.contains("docker"));
+        assert!(engines.contains("podman"));
+        assert!(!legacy_path.exists());
     }
 
     #[cfg(unix)]

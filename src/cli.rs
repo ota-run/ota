@@ -11889,14 +11889,20 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Host publication failed"));
+        assert!(stderr.contains("Host publication failed"), "{stderr}");
         assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.project.host.port"));
         assert!(!stderr.starts_with("Error response from daemon:"));
         assert!(stderr.contains(&format!(
             "host port `{host_port}` on `127.0.0.1` is already allocated"
         )));
         assert!(stderr.contains(
-            "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
+            "rerun `ota run dev --host-port <free port>` to publish on a different host port"
+        ));
+        assert!(stderr.contains(&format!(
+            "stop the process or container currently using `127.0.0.1:{host_port}`"
+        )));
+        assert!(stderr.contains(
+            "or change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
         ));
         assert!(!stderr.contains("Task Failed"));
         assert!(!fixture.dir.path().join("docker-log.txt").exists());
@@ -11975,7 +11981,7 @@ exec "$(dirname "$0")/docker-real" "$@"
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Host publication failed"));
+        assert!(stderr.contains("Host publication failed"), "{stderr}");
         assert!(stderr.contains("rerun `ota run dev` so ota can reserve a new host port"));
         assert!(!stderr.contains(
             "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"

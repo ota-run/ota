@@ -28464,17 +28464,25 @@ fn render_run_structured_error_text(
                 .and_then(|runtime| runtime.listeners.get(listener.as_str()))
                 .and_then(|listener_spec| listener_spec.project.host.as_ref())
                 .is_some_and(|host| host.port.mode == TaskRuntimeHostPortMode::Auto);
+            let run_command =
+                repo_run_stream_command(task.as_str(), member).replace(" --stream", "");
             let mut next_steps = vec![format!(
-                "stop the process or container using host port `{port}`"
+                "stop the process or container currently using `{address}:{port}`"
             )];
             if is_auto_projection {
                 next_steps.push(format!(
                     "rerun `{}` so ota can reserve a new host port",
-                    repo_run_stream_command(task.as_str(), member).replace(" --stream", "")
+                    run_command
                 ));
             } else {
+                next_steps.insert(
+                    0,
+                    format!(
+                        "rerun `{run_command} --host-port <free port>` to publish on a different host port"
+                    ),
+                );
                 next_steps.push(format!(
-                    "change `tasks.{task}.runtime.listeners.{listener}.project.host.port.mode` to `auto`"
+                    "or change `tasks.{task}.runtime.listeners.{listener}.project.host.port.mode` to `auto`"
                 ));
             }
             next_steps.push(task_use_details_step(Some(contract_path), member));
