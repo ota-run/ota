@@ -983,6 +983,7 @@ const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
 const OTA_EPHEMERAL_CONTAINER_LABEL: &str = "dev.ota.lifecycle=ephemeral";
 const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
 const OTA_REPO_CONTAINER_LABEL_KEY: &str = "dev.ota.repo";
+const OTA_OWNER_PID_CONTAINER_LABEL_KEY: &str = "dev.ota.owner_pid";
 const OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY: &str = "dev.ota.persistent.family";
 const OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY: &str = "dev.ota.persistent.shape";
 const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
@@ -991,6 +992,7 @@ const OTA_STATE_DIR: &str = "state";
 const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
+const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
 
 static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -5464,7 +5466,10 @@ fn execute_container_task_command(
     let runtime_listener_publications = task_runtime_listener_publications(runtime);
     match lifecycle {
         Lifecycle::Ephemeral => {
-            let _ = reap_repo_owned_ephemeral_containers(task_name, engine, &repo_ownership_token)?;
+            let mut reclaimed_orphaned_ephemeral_count =
+                reap_repo_owned_ephemeral_containers(task_name, engine, &repo_ownership_token)?
+                    .len();
+            let mut reclaimed_conflict_retry_attempts = 0usize;
             let has_auto_projection =
                 runtime_listener_publications
                     .iter()
@@ -5493,7 +5498,7 @@ fn execute_container_task_command(
                     print_projected_runtime_public_endpoint(&projection.env);
                 }
 
-                let output = execute_ephemeral_container_task_command(
+                let mut output = execute_ephemeral_container_task_command(
                     task_name,
                     runtime,
                     context_name,
@@ -5514,6 +5519,12 @@ fn execute_container_task_command(
                 )?;
 
                 if output.exit_code == 0 {
+                    output.execution_note = merge_execution_note(
+                        output.execution_note,
+                        reclaimed_orphaned_ephemeral_containers_note(
+                            reclaimed_orphaned_ephemeral_count,
+                        ),
+                    );
                     return Ok(output);
                 }
 
@@ -5523,6 +5534,20 @@ fn execute_container_task_command(
                         .iter()
                         .find(|(_, publication)| publication.host_port == Some(port))
                 {
+                    let reclaimed_from_conflict = reap_repo_owned_ephemeral_containers(
+                        task_name,
+                        engine,
+                        &repo_ownership_token,
+                    )?;
+                    if !reclaimed_from_conflict.is_empty()
+                        && reclaimed_conflict_retry_attempts
+                            < EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS
+                    {
+                        reclaimed_orphaned_ephemeral_count += reclaimed_from_conflict.len();
+                        reclaimed_conflict_retry_attempts += 1;
+                        attempt += 1;
+                        continue;
+                    }
                     return Err(RunError::HostPublicationConflict {
                         task: task_name.to_string(),
                         listener: listener_name.clone(),
@@ -5553,10 +5578,22 @@ fn execute_container_task_command(
                             port,
                         });
                     }
+                    output.execution_note = merge_execution_note(
+                        output.execution_note,
+                        reclaimed_orphaned_ephemeral_containers_note(
+                            reclaimed_orphaned_ephemeral_count,
+                        ),
+                    );
                     return Ok(output);
                 }
 
                 if !is_container_host_publication_conflict(&output.stdout, &output.stderr) {
+                    output.execution_note = merge_execution_note(
+                        output.execution_note,
+                        reclaimed_orphaned_ephemeral_containers_note(
+                            reclaimed_orphaned_ephemeral_count,
+                        ),
+                    );
                     return Ok(output);
                 }
 
@@ -5838,6 +5875,11 @@ fn execute_ephemeral_container_task_command(
         .arg("--label")
         .arg(format!(
             "{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}"
+        ))
+        .arg("--label")
+        .arg(format!(
+            "{OTA_OWNER_PID_CONTAINER_LABEL_KEY}={}",
+            std::process::id()
         ))
         .arg("--entrypoint")
         .arg("sh")
@@ -7072,6 +7114,27 @@ fn remove_ephemeral_container_and_note(
     }
 }
 
+fn reclaimed_orphaned_ephemeral_containers_note(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some(String::from(
+            "reclaimed 1 orphaned ephemeral container before starting task",
+        )),
+        _ => Some(format!(
+            "reclaimed {count} orphaned ephemeral containers before starting task"
+        )),
+    }
+}
+
+fn merge_execution_note(existing: Option<String>, appended: Option<String>) -> Option<String> {
+    match (existing, appended) {
+        (Some(existing), Some(appended)) => Some(format!("{existing}; {appended}")),
+        (Some(existing), None) => Some(existing),
+        (None, Some(appended)) => Some(appended),
+        (None, None) => None,
+    }
+}
+
 fn reap_repo_owned_ephemeral_containers(
     task_name: &str,
     engine: &str,
@@ -7082,16 +7145,20 @@ fn reap_repo_owned_ephemeral_containers(
     let managed = container_names_for_label(task_name, engine, OTA_MANAGED_CONTAINER_LABEL)?;
     let ephemeral = container_names_for_label(task_name, engine, OTA_EPHEMERAL_CONTAINER_LABEL)?;
 
-    let mut stale = repo_owned
+    let mut candidates = repo_owned
         .into_iter()
         .filter(|name| {
             managed.contains(name) && ephemeral.contains(name) && name.starts_with("ota-ephemeral-")
         })
         .collect::<Vec<_>>();
-    stale.sort();
-    stale.dedup();
+    candidates.sort();
+    candidates.dedup();
 
-    for container_name in &stale {
+    let mut reclaimed = Vec::new();
+    for container_name in &candidates {
+        if !ephemeral_container_is_orphaned(task_name, engine, container_name)? {
+            continue;
+        }
         let remove = remove_persistent_container(engine, container_name, task_name)?;
         if remove.exit_code != 0 {
             return Err(RunError::EphemeralContainerCleanupFailure {
@@ -7111,9 +7178,124 @@ fn reap_repo_owned_ephemeral_containers(
                 },
             });
         }
+        reclaimed.push(container_name.clone());
     }
 
-    Ok(stale)
+    Ok(reclaimed)
+}
+
+fn ephemeral_container_is_orphaned(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<bool, RunError> {
+    match persistent_container_running(engine, container_name, task_name)? {
+        Some(false) => Ok(true),
+        Some(true) => {
+            let labels = ephemeral_container_labels_for_name(task_name, engine, container_name)?;
+            let owner_pid = labels
+                .get(OTA_OWNER_PID_CONTAINER_LABEL_KEY)
+                .and_then(|value| value.trim().parse::<u32>().ok());
+            Ok(owner_pid
+                .and_then(owner_pid_running)
+                .is_some_and(|running| !running))
+        }
+        None => Ok(false),
+    }
+}
+
+fn ephemeral_container_labels_for_name(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let args = ["inspect", "-f", "{{json .Config.Labels}}", container_name];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::EphemeralContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    let stdout = output.stdout.trim();
+    if stdout.is_empty() || stdout == "null" {
+        return Ok(BTreeMap::new());
+    }
+
+    parse_container_labels_json(stdout).map_err(|details| {
+        RunError::EphemeralContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details,
+        }
+    })
+}
+
+fn parse_container_labels_json(stdout: &str) -> Result<BTreeMap<String, String>, String> {
+    let labels_value: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|source| format!("invalid `inspect` labels JSON response: {source}"))?;
+
+    let Some(labels_object) = labels_value.as_object() else {
+        return Ok(BTreeMap::new());
+    };
+
+    let mut labels = BTreeMap::new();
+    for (key, value) in labels_object {
+        if let Some(value) = value.as_str() {
+            labels.insert(key.to_string(), value.to_string());
+        }
+    }
+    Ok(labels)
+}
+
+fn owner_pid_running(pid: u32) -> Option<bool> {
+    #[cfg(unix)]
+    {
+        if pid == 0 {
+            return Some(false);
+        }
+        let pid_string = pid.to_string();
+        let output = Command::new("ps")
+            .args(["-p", pid_string.as_str(), "-o", "pid="])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return Some(false);
+        }
+        return Some(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .any(|line| line.trim() == pid_string),
+        );
+    }
+    #[cfg(windows)]
+    {
+        let filter = format!("PID eq {pid}");
+        let output = Command::new("tasklist")
+            .args(["/FI", filter.as_str(), "/NH", "/FO", "CSV"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.to_ascii_lowercase().contains("no tasks are running") {
+            return Some(false);
+        }
+        let pid_token = format!("\"{pid}\"");
+        return Some(stdout.lines().any(|line| line.contains(&pid_token)));
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        None
+    }
 }
 
 fn persistent_container_running(
@@ -13821,7 +14003,6 @@ tasks:
         )
         .unwrap();
         fs::write(state_dir.join("ota-ephemeral-leaked.mounts"), "").unwrap();
-        fs::write(state_dir.join("ota-ephemeral-leaked.running"), "").unwrap();
         fs::write(
             state_dir.join("ota-ephemeral-leaked.labels"),
             format!("dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-1\n"),
@@ -13833,7 +14014,6 @@ tasks:
         )
         .unwrap();
         fs::write(state_dir.join("ota-ephemeral-other.mounts"), "").unwrap();
-        fs::write(state_dir.join("ota-ephemeral-other.running"), "").unwrap();
         fs::write(
             state_dir.join("ota-ephemeral-other.labels"),
             format!("dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-2\n"),
@@ -13865,6 +14045,354 @@ tasks:
         assert_eq!(removed, vec![String::from("ota-ephemeral-leaked")]);
         assert!(!state_dir.join("ota-ephemeral-leaked.path").exists());
         assert!(state_dir.join("ota-ephemeral-other.path").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reap_repo_owned_ephemeral_containers_skips_running_containers_owned_by_live_pid() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+
+        fs::write(
+            state_dir.join("ota-ephemeral-live.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-live.mounts"), "").unwrap();
+        fs::write(state_dir.join("ota-ephemeral-live.running"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-live.labels"),
+            format!(
+                "dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-1\ndev.ota.owner_pid={}\n",
+                std::process::id()
+            ),
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let removed =
+            super::reap_repo_owned_ephemeral_containers("clean", "docker", "repo-1").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(removed.is_empty());
+        assert!(state_dir.join("ota-ephemeral-live.path").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reap_repo_owned_ephemeral_containers_reclaims_running_container_with_dead_owner_pid() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+
+        fs::write(
+            state_dir.join("ota-ephemeral-dead-owner.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-dead-owner.mounts"), "").unwrap();
+        fs::write(state_dir.join("ota-ephemeral-dead-owner.running"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-dead-owner.labels"),
+            "dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-1\ndev.ota.owner_pid=4294967295\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let removed =
+            super::reap_repo_owned_ephemeral_containers("clean", "docker", "repo-1").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(removed, vec![String::from("ota-ephemeral-dead-owner")]);
+        assert!(!state_dir.join("ota-ephemeral-dead-owner.path").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_reclaims_orphaned_repo_owned_ephemerals_before_create() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: app
+    run: printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real);
+        let mut real_permissions = fs::metadata(&docker_real).unwrap().permissions();
+        real_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real, real_permissions).unwrap();
+        let docker_wrapper = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper,
+            r#"#!/bin/sh
+state_dir="$(dirname "$0")/docker-state"
+if [ "$1" = "create" ] && [ -f "$state_dir/ota-ephemeral-leaked.path" ]; then
+  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-leaked (deadbeef): Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper, wrapper_permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_state_dir = fixture.dir.path().join(".ota").join("state");
+        fs::create_dir_all(&ota_state_dir).unwrap();
+        fs::write(ota_state_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-leaked.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-leaked.mounts"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-leaked.labels"),
+            "dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-1\n",
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-leaked.publish"),
+            "127.0.0.1:3000:3000/http\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            outcome.execution_note.as_deref(),
+            Some("reclaimed 1 orphaned ephemeral container before starting task")
+        );
+        assert!(!state_dir.join("ota-ephemeral-leaked.path").exists());
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_does_not_reclaim_non_owned_orphaned_ephemerals() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_state_dir = fixture.dir.path().join(".ota").join("state");
+        fs::create_dir_all(&ota_state_dir).unwrap();
+        fs::write(ota_state_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-foreign.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-foreign.mounts"), "").unwrap();
+        fs::write(state_dir.join("ota-ephemeral-foreign.running"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-foreign.labels"),
+            "dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-2\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.execution_note, None);
+        assert!(state_dir.join("ota-ephemeral-foreign.path").exists());
     }
 
     #[cfg(unix)]
