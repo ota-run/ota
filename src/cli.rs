@@ -20092,7 +20092,7 @@ tasks:
     }
 
     #[test]
-    fn run_reports_ephemeral_lifecycle_as_advisory_note() {
+    fn run_hides_inherited_native_lifecycle_noise_by_default() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -20123,10 +20123,55 @@ tasks:
         assert!(rendered.contains("setup"));
         assert!(rendered.contains("Status:"));
         assert!(rendered.contains("success"));
+        assert!(!rendered.contains("Lifecycle:"), "{rendered}");
         assert!(rendered.contains("Note:"));
         assert!(rendered.contains("running on the host environment"));
+        assert!(
+            !rendered.contains("advisory in native mode only"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Next:"));
         assert!(rendered.contains("ota tasks --use"));
+    }
+
+    #[test]
+    fn run_reports_native_lifecycle_as_advisory_when_user_explicitly_overrides() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: ephemeral
+tasks:
+  setup:
+    run: exit 0
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "run",
+            "setup",
+            "--lifecycle",
+            "persistent",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        ));
+        assert!(rendered.contains("Lifecycle:"), "{rendered}");
+        assert!(rendered.contains("persistent"), "{rendered}");
+        assert!(
+            rendered.contains("requested `--lifecycle persistent` is advisory in native mode only"),
+            "{rendered}"
+        );
     }
 
     #[cfg(unix)]

@@ -57,6 +57,7 @@ use crate::schema::{
 
 #[derive(Clone)]
 pub(crate) struct StreamPhaseNotifier {
+    label: Arc<String>,
     saw_output: Arc<AtomicBool>,
     shown: Arc<AtomicBool>,
     output_lock: Arc<Mutex<()>>,
@@ -68,14 +69,20 @@ impl StreamPhaseNotifier {
             .output_lock
             .lock()
             .expect("stream phase output lock should not be poisoned");
-        if !self.saw_output.swap(true, Ordering::Relaxed) && self.shown.load(Ordering::Relaxed) {
-            clear_stream_phase_line();
+        if !self.saw_output.swap(true, Ordering::Relaxed) {
+            let mut stderr = io::stderr();
+            if self.shown.load(Ordering::Relaxed) {
+                clear_stream_phase_line();
+            }
+            let _ = write!(stderr, "{}", stream_phase_started_line(&self.label));
+            let _ = stderr.flush();
         }
         guard
     }
 }
 
 pub(crate) struct StreamPhaseLoader {
+    label: Arc<String>,
     stop: Arc<AtomicBool>,
     shown: Arc<AtomicBool>,
     saw_output: Arc<AtomicBool>,
@@ -101,11 +108,12 @@ impl StreamPhaseLoader {
         let shown = Arc::new(AtomicBool::new(false));
         let saw_output = Arc::new(AtomicBool::new(false));
         let output_lock = Arc::new(Mutex::new(()));
+        let label = Arc::new(label.to_string());
         let thread_stop = Arc::clone(&stop);
         let thread_shown = Arc::clone(&shown);
         let thread_saw_output = Arc::clone(&saw_output);
         let thread_output_lock = Arc::clone(&output_lock);
-        let label = label.to_string();
+        let thread_label = Arc::clone(&label);
         let handle = thread::spawn(move || {
             if !delay.is_zero() {
                 thread::sleep(delay);
@@ -129,7 +137,7 @@ impl StreamPhaseLoader {
                     }
                     thread_shown.store(true, Ordering::Relaxed);
                     let frame = frames[index % frames.len()];
-                    let _ = write!(stderr, "\r🦦 {frame} {label}...");
+                    let _ = write!(stderr, "\r🦦 {frame} {}...", thread_label.as_ref());
                     let _ = stderr.flush();
                 }
                 index += 1;
@@ -138,6 +146,7 @@ impl StreamPhaseLoader {
         });
 
         Some(Self {
+            label,
             stop,
             shown,
             saw_output,
@@ -148,6 +157,7 @@ impl StreamPhaseLoader {
 
     pub(crate) fn notifier(&self) -> StreamPhaseNotifier {
         StreamPhaseNotifier {
+            label: Arc::clone(&self.label),
             saw_output: Arc::clone(&self.saw_output),
             shown: Arc::clone(&self.shown),
             output_lock: Arc::clone(&self.output_lock),
@@ -179,6 +189,10 @@ fn clear_stream_phase_line() {
     let mut stderr = io::stderr();
     let _ = write!(stderr, "\r\x1b[2K\r");
     let _ = stderr.flush();
+}
+
+fn stream_phase_started_line(label: &str) -> String {
+    format!("🦦 {label}...\n")
 }
 
 fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
@@ -10745,6 +10759,14 @@ exec "$(dirname "$0")/docker-real" "$@"
                 }
             ),
             "Running test (remote)"
+        );
+    }
+
+    #[test]
+    fn stream_phase_started_line_includes_newline() {
+        assert_eq!(
+            super::stream_phase_started_line("Running ci"),
+            "🦦 Running ci...\n"
         );
     }
 
