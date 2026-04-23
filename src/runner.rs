@@ -7319,7 +7319,7 @@ fn repo_owned_ephemeral_container_candidates_by_inspection(
     let args = ["ps", "-a", "--format", "{{.Names}}"];
     let output = container_command_output(engine, &args, None, task_name)?;
     if output.exit_code != 0 {
-        return Err(RunError::PersistentContainerCleanupFailure {
+        return Err(RunError::EphemeralContainerCleanupFailure {
             task: task_name.to_string(),
             action: String::from("list"),
             container: String::from("ota-ephemeral-*"),
