@@ -2319,7 +2319,7 @@ fn remote_mode_scope_note_finding() -> Finding {
             "native doctor mode can validate remote backend declarations and run contextual readiness probes from executable remote contexts, but runtime and tool version checks still evaluate the local host rather than the declared remote environment",
         ),
         next: String::from(
-            "use `ota execution plan --mode remote` to inspect the remote backend contract, and verify remote runtimes and tools through remote execution paths until a dedicated remote doctor mode ships",
+            "use `ota doctor --mode remote` to probe remote contexts directly, and `ota execution plan --mode remote` to inspect the remote backend contract when debugging topology",
         ),
     }
 }
@@ -5759,7 +5759,9 @@ tasks:
                 .why
                 .contains("runtime and tool version checks still evaluate the local host")
         );
+        assert!(finding.next.contains("ota doctor --mode remote"));
         assert!(finding.next.contains("ota execution plan --mode remote"));
+        assert!(!finding.next.contains("dedicated remote doctor mode ships"));
     }
 
     #[test]

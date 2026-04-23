@@ -5534,11 +5534,20 @@ fn execute_container_task_command(
                         .iter()
                         .find(|(_, publication)| publication.host_port == Some(port))
                 {
-                    let reclaimed_from_conflict = reap_repo_owned_ephemeral_containers(
+                    let mut reclaimed_from_conflict = reap_repo_owned_ephemeral_containers(
                         task_name,
                         engine,
                         &repo_ownership_token,
                     )?;
+                    let mut reclaimed_legacy_conflicts =
+                        reap_legacy_repo_owned_conflicting_ephemeral_containers(
+                            task_name,
+                            engine,
+                            &repo_ownership_token,
+                            publication,
+                            port,
+                        )?;
+                    reclaimed_from_conflict.append(&mut reclaimed_legacy_conflicts);
                     if !reclaimed_from_conflict.is_empty()
                         && reclaimed_conflict_retry_attempts
                             < EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS
@@ -7140,6 +7149,52 @@ fn reap_repo_owned_ephemeral_containers(
     engine: &str,
     repo_ownership_token: &str,
 ) -> Result<Vec<String>, RunError> {
+    let candidates =
+        repo_owned_ephemeral_container_candidates(task_name, engine, repo_ownership_token)?;
+
+    let mut reclaimed = Vec::new();
+    for container_name in candidates {
+        if !ephemeral_container_is_orphaned(task_name, engine, container_name.as_str())? {
+            continue;
+        }
+        reclaim_ephemeral_container_candidate(task_name, engine, container_name.as_str())?;
+        reclaimed.push(container_name);
+    }
+
+    Ok(reclaimed)
+}
+
+fn reap_legacy_repo_owned_conflicting_ephemeral_containers(
+    task_name: &str,
+    engine: &str,
+    repo_ownership_token: &str,
+    publication: &ContainerPortPublication,
+    conflict_port: u16,
+) -> Result<Vec<String>, RunError> {
+    let candidates =
+        repo_owned_ephemeral_container_candidates(task_name, engine, repo_ownership_token)?;
+    let mut reclaimed = Vec::new();
+    for container_name in candidates {
+        if !legacy_running_ephemeral_conflicts_with_publication(
+            task_name,
+            engine,
+            container_name.as_str(),
+            publication,
+            conflict_port,
+        )? {
+            continue;
+        }
+        reclaim_ephemeral_container_candidate(task_name, engine, container_name.as_str())?;
+        reclaimed.push(container_name);
+    }
+    Ok(reclaimed)
+}
+
+fn repo_owned_ephemeral_container_candidates(
+    task_name: &str,
+    engine: &str,
+    repo_ownership_token: &str,
+) -> Result<Vec<String>, RunError> {
     let repo_label = format!("{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}");
     let repo_owned = container_names_for_label(task_name, engine, &repo_label)?;
     let managed = container_names_for_label(task_name, engine, OTA_MANAGED_CONTAINER_LABEL)?;
@@ -7153,35 +7208,34 @@ fn reap_repo_owned_ephemeral_containers(
         .collect::<Vec<_>>();
     candidates.sort();
     candidates.dedup();
+    Ok(candidates)
+}
 
-    let mut reclaimed = Vec::new();
-    for container_name in &candidates {
-        if !ephemeral_container_is_orphaned(task_name, engine, container_name)? {
-            continue;
-        }
-        let remove = remove_persistent_container(engine, container_name, task_name)?;
-        if remove.exit_code != 0 {
-            return Err(RunError::EphemeralContainerCleanupFailure {
-                task: task_name.to_string(),
-                action: String::from("remove"),
-                container: container_name.clone(),
-                engine: engine.to_string(),
-                details: if !remove.stderr.trim().is_empty() {
-                    remove.stderr.trim().to_string()
-                } else if !remove.stdout.trim().is_empty() {
-                    remove.stdout.trim().to_string()
-                } else {
-                    format!(
-                        "`{engine} rm -f {container_name}` exited with {}",
-                        remove.exit_code
-                    )
-                },
-            });
-        }
-        reclaimed.push(container_name.clone());
+fn reclaim_ephemeral_container_candidate(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<(), RunError> {
+    let remove = remove_persistent_container(engine, container_name, task_name)?;
+    if remove.exit_code != 0 {
+        return Err(RunError::EphemeralContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("remove"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: if !remove.stderr.trim().is_empty() {
+                remove.stderr.trim().to_string()
+            } else if !remove.stdout.trim().is_empty() {
+                remove.stdout.trim().to_string()
+            } else {
+                format!(
+                    "`{engine} rm -f {container_name}` exited with {}",
+                    remove.exit_code
+                )
+            },
+        });
     }
-
-    Ok(reclaimed)
+    Ok(())
 }
 
 fn ephemeral_container_is_orphaned(
@@ -7202,6 +7256,32 @@ fn ephemeral_container_is_orphaned(
         }
         None => Ok(false),
     }
+}
+
+fn legacy_running_ephemeral_conflicts_with_publication(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+    publication: &ContainerPortPublication,
+    conflict_port: u16,
+) -> Result<bool, RunError> {
+    if persistent_container_running(engine, container_name, task_name)? != Some(true) {
+        return Ok(false);
+    }
+
+    let labels = ephemeral_container_labels_for_name(task_name, engine, container_name)?;
+    if labels.contains_key(OTA_OWNER_PID_CONTAINER_LABEL_KEY) {
+        return Ok(false);
+    }
+
+    let published = container_published_port(
+        engine,
+        container_name,
+        publication.bind_port,
+        publication.protocol,
+        task_name,
+    )?;
+    Ok(published == Some(conflict_port))
 }
 
 fn ephemeral_container_labels_for_name(
@@ -14315,6 +14395,249 @@ exec "$(dirname "$0")/docker-real" "$@"
         );
         assert!(!state_dir.join("ota-ephemeral-leaked.path").exists());
         assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_reclaims_legacy_running_ephemeral_without_owner_pid_on_conflict() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: app
+    run: printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real);
+        let mut real_permissions = fs::metadata(&docker_real).unwrap().permissions();
+        real_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real, real_permissions).unwrap();
+        let docker_wrapper = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper,
+            r#"#!/bin/sh
+state_dir="$(dirname "$0")/docker-state"
+if [ "$1" = "create" ] && [ -f "$state_dir/ota-ephemeral-legacy.path" ]; then
+  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-legacy (deadbeef): Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper, wrapper_permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_state_dir = fixture.dir.path().join(".ota").join("state");
+        fs::create_dir_all(&ota_state_dir).unwrap();
+        fs::write(ota_state_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-legacy.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-legacy.mounts"), "").unwrap();
+        fs::write(state_dir.join("ota-ephemeral-legacy.running"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-legacy.labels"),
+            "dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-1\n",
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-legacy.publish"),
+            "127.0.0.1:3000:3000/tcp\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            outcome.execution_note.as_deref(),
+            Some("reclaimed 1 orphaned ephemeral container before starting task")
+        );
+        assert!(!state_dir.join("ota-ephemeral-legacy.path").exists());
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_conflict_recovery_preserves_running_ephemeral_with_live_owner_pid() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: app
+    run: printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real);
+        let mut real_permissions = fs::metadata(&docker_real).unwrap().permissions();
+        real_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real, real_permissions).unwrap();
+        let docker_wrapper = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper,
+            r#"#!/bin/sh
+state_dir="$(dirname "$0")/docker-state"
+if [ "$1" = "create" ] && [ -f "$state_dir/ota-ephemeral-live.path" ]; then
+  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-live (deadbeef): Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+  exit 1
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper, wrapper_permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_state_dir = fixture.dir.path().join(".ota").join("state");
+        fs::create_dir_all(&ota_state_dir).unwrap();
+        fs::write(ota_state_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-live.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(state_dir.join("ota-ephemeral-live.mounts"), "").unwrap();
+        fs::write(state_dir.join("ota-ephemeral-live.running"), "").unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-live.labels"),
+            format!(
+                "dev.ota.managed=true\ndev.ota.lifecycle=ephemeral\ndev.ota.repo=repo-1\ndev.ota.owner_pid={}\n",
+                std::process::id()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-live.publish"),
+            "127.0.0.1:3000:3000/tcp\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::HostPublicationConflict { port, .. } => {
+                assert_eq!(port, 3000);
+            }
+            other => panic!("expected host publication conflict, got {other}"),
+        }
+        assert!(state_dir.join("ota-ephemeral-live.path").exists());
     }
 
     #[cfg(unix)]
