@@ -99,10 +99,11 @@ use crate::runner::{
     CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
     ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
-    RuntimeListenerResolutionKind, StaleContainerOwnership, TaskExecutionRelation,
-    clean_execution_report, clean_stale_execution, effective_execution, effective_task_execution,
-    env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
-    named_execution_context, persistent_container_name, reported_task_context_for_backend,
+    RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
+    StaleContainerOwnership, TaskExecutionRelation, clean_execution_report, clean_stale_execution,
+    effective_execution, effective_task_execution, env_resolution_source_label,
+    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
+    persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
     resolve_task_env_details_with_policy, run_streaming_command_with_loader,
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
@@ -8554,6 +8555,13 @@ fn render_clean_text<E: ToString>(
                     "  {} removed drifted persistent containers: {}",
                     summary_bullet(),
                     report.removed_drift_persistent_containers
+                ));
+            }
+            if report.removed_drift_attached_containers > 0 {
+                lines.push(format!(
+                    "  {} removed drifted volume-holding containers: {}",
+                    summary_bullet(),
+                    report.removed_drift_attached_containers
                 ));
             }
             if report.removed_current_dependency_isolation_volumes > 0 {
@@ -21139,7 +21147,8 @@ mod tests {
     };
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
-        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, TaskExecutionRelation,
+        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, ServiceTermination,
+        ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
     };
     use crate::schema::{Backend, Lifecycle};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
@@ -22444,6 +22453,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -22555,6 +22565,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -24742,6 +24753,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -24783,6 +24795,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -24804,6 +24817,239 @@ tasks:
         ));
 
         assert!(rendered.contains("Status:    failed"));
+    }
+
+    #[test]
+    fn execution_summary_note_reports_service_termination_cause() {
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                crate::runner::ResolvedTaskRuntimeListener {
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 3000,
+                    },
+                    resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                        host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                            address: String::from("127.0.0.1"),
+                            port: 3000,
+                            url: Some(String::from("http://127.0.0.1:3000/")),
+                        }),
+                    }),
+                },
+            )]),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: vec![crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }],
+        };
+
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24")),
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: Some(runtime),
+            service_termination: Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::OomKilled,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(137),
+            }),
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(137))],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(rendered.contains("Status:    failed"));
+        assert!(rendered.contains("service stopped after readiness; container was OOM-killed"));
+    }
+
+    #[test]
+    fn run_failure_text_surfaces_service_stopped_classification() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                crate::runner::ResolvedTaskRuntimeListener {
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 3000,
+                    },
+                    resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                        host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                            address: String::from("127.0.0.1"),
+                            port: 3000,
+                            url: Some(String::from("http://127.0.0.1:3000/")),
+                        }),
+                    }),
+                },
+            )]),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: vec![crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }],
+        };
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            137,
+            "",
+            "",
+            Some(&runtime),
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::OomKilled,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(137),
+            }),
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(rendered.contains("became ready at `http://127.0.0.1:3000/` and then stopped"));
+        assert!(rendered.contains("was OOM-killed by the container engine"));
+        assert!(rendered.contains("Status:    failed"));
+        assert!(rendered.contains("service stopped after readiness; container was OOM-killed"));
+    }
+
+    #[test]
+    fn run_failure_text_reports_interrupted_service_without_error_banner() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(
+            rendered.contains("service interrupted by user"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
     }
 
     #[test]
@@ -24878,6 +25124,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            service_termination: None,
             workloads,
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -25004,6 +25251,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: Some(runtime),
+            service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "READY", None, None)],
@@ -26896,7 +27144,7 @@ fn run_single_contract_target_streaming(
         overrides,
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
-            let receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -26909,6 +27157,7 @@ fn run_single_contract_target_streaming(
                 outcome.runtime.clone(),
                 None,
             );
+            receipt.service_termination = outcome.service_termination.clone();
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -26932,7 +27181,7 @@ fn run_single_contract_target_streaming(
         }
         Ok(outcome) => {
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
-            let receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -26951,6 +27200,7 @@ fn run_single_contract_target_streaming(
                     details_footer
                 )),
             );
+            receipt.service_termination = outcome.service_termination.clone();
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -26969,6 +27219,8 @@ fn run_single_contract_target_streaming(
                     outcome.exit_code,
                     &outcome.stdout,
                     &outcome.stderr,
+                    outcome.runtime.as_ref(),
+                    outcome.service_termination.as_ref(),
                     receipt_text.as_deref(),
                     &summary,
                 ),
@@ -27047,7 +27299,7 @@ fn run_single_contract_target_captured(
         None,
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
-            let receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -27060,6 +27312,7 @@ fn run_single_contract_target_captured(
                 outcome.runtime.clone(),
                 None,
             );
+            receipt.service_termination = outcome.service_termination.clone();
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -27083,7 +27336,7 @@ fn run_single_contract_target_captured(
         }
         Ok(outcome) => {
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
-            let receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -27099,6 +27352,7 @@ fn run_single_contract_target_captured(
                     repo_run_stream_command(&failed_task_name, member)
                 )),
             );
+            receipt.service_termination = outcome.service_termination.clone();
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -27117,6 +27371,8 @@ fn run_single_contract_target_captured(
                     outcome.exit_code,
                     &outcome.stdout,
                     &outcome.stderr,
+                    outcome.runtime.as_ref(),
+                    outcome.service_termination.as_ref(),
                     receipt_text.as_deref(),
                     &summary,
                 ),
@@ -27236,9 +27492,37 @@ fn render_run_captured_failure_text(
     exit_code: i32,
     stdout: &str,
     stderr: &str,
+    runtime: Option<&ResolvedTaskRuntime>,
+    service_termination: Option<&ServiceTermination>,
     receipt_text: Option<&str>,
     summary: &str,
 ) -> String {
+    if let Some(service_termination) = service_termination {
+        if matches!(
+            service_termination.cause,
+            ServiceTerminationCause::Interrupted
+        ) {
+            return render_service_interrupted_text(
+                where_value,
+                task_name,
+                requested_task_name,
+                member,
+                service_termination,
+                summary,
+                receipt_text,
+            );
+        }
+        return render_service_stopped_failure_text(
+            where_value,
+            task_name,
+            requested_task_name,
+            member,
+            service_termination,
+            runtime,
+            summary,
+            receipt_text,
+        );
+    }
     if let Some(conflict) = parse_container_host_port_conflict_detail(stderr) {
         return render_host_publication_failure_text(
             contract,
@@ -27268,6 +27552,179 @@ fn render_run_captured_failure_text(
         Some(summary),
         receipt_text,
     )
+}
+
+fn render_service_interrupted_text(
+    where_value: &str,
+    task_name: &str,
+    requested_task_name: &str,
+    member: Option<&str>,
+    service_termination: &ServiceTermination,
+    summary_block: &str,
+    receipt_text: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Info),
+        paint("Service interrupted", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Task:"),
+        paint_code(task_name)
+    ));
+    let why_lines = vec![format!(
+        "container `{}` was interrupted (exit code `{}`)",
+        service_termination.container,
+        service_termination.exit_code.unwrap_or(130)
+    )];
+    append_error_detail_section(&mut out, "Why:", &why_lines, None);
+    let next_steps = vec![format!(
+        "rerun `{}` when ready",
+        repo_run_stream_command(requested_task_name, member)
+    )];
+    append_error_detail_section(&mut out, "Next:", &next_steps, None);
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push('\n');
+        out.push_str(receipt_text);
+    }
+    let summary_override = summary_with_note_override(
+        Some(summary_block),
+        &service_termination_summary_note(service_termination),
+    );
+    if let Some(summary_override) = summary_override {
+        out.push('\n');
+        out.push_str(&summary_override);
+    } else {
+        out.push('\n');
+        out.push_str(summary_block);
+    }
+    out
+}
+
+fn render_service_stopped_failure_text(
+    where_value: &str,
+    task_name: &str,
+    requested_task_name: &str,
+    member: Option<&str>,
+    service_termination: &ServiceTermination,
+    runtime: Option<&ResolvedTaskRuntime>,
+    summary_block: &str,
+    receipt_text: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Service stopped", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Task:"),
+        paint_code(task_name)
+    ));
+
+    let endpoint = runtime.and_then(primary_runtime_endpoint);
+    let mut why_lines = vec![if service_termination.after_readiness {
+        match endpoint {
+            Some(endpoint) => {
+                format!("service task `{task_name}` became ready at `{endpoint}` and then stopped")
+            }
+            None => format!("service task `{task_name}` became ready and then stopped"),
+        }
+    } else {
+        format!("service task `{task_name}` stopped before readiness")
+    }];
+    let cause_detail = match service_termination.cause {
+        ServiceTerminationCause::OomKilled => format!(
+            "container `{}` was OOM-killed by the container engine",
+            service_termination.container
+        ),
+        ServiceTerminationCause::Interrupted => format!(
+            "container `{}` was interrupted (exit code `{}`)",
+            service_termination.container,
+            service_termination.exit_code.unwrap_or(130)
+        ),
+        ServiceTerminationCause::ExitedNonZero => format!(
+            "container `{}` exited with status `{}`",
+            service_termination.container,
+            service_termination.exit_code.unwrap_or(1)
+        ),
+        ServiceTerminationCause::Exited => format!(
+            "container `{}` exited after readiness",
+            service_termination.container
+        ),
+        ServiceTerminationCause::Unknown => format!(
+            "container `{}` stopped with an unknown termination cause",
+            service_termination.container
+        ),
+    };
+    why_lines.push(cause_detail);
+    append_error_detail_section(&mut out, "Why:", &why_lines, None);
+
+    let mut next_steps = vec![format!(
+        "rerun `{}` for live task output",
+        repo_run_stream_command(requested_task_name, member)
+    )];
+    if matches!(
+        service_termination.cause,
+        ServiceTerminationCause::OomKilled
+    ) {
+        next_steps.push(String::from(
+            "increase the container memory available to Docker/Podman",
+        ));
+    }
+    next_steps.push(format!(
+        "or run `ota run {requested_task_name} --mode native` if native execution is supported"
+    ));
+    append_error_detail_section(&mut out, "Next:", &next_steps, None);
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push('\n');
+        out.push_str(receipt_text);
+    }
+    let summary_override = summary_with_note_override(
+        Some(summary_block),
+        &service_termination_summary_note(service_termination),
+    );
+    if let Some(summary_override) = summary_override {
+        out.push('\n');
+        out.push_str(&summary_override);
+    } else {
+        out.push('\n');
+        out.push_str(summary_block);
+    }
+    out
+}
+
+fn service_termination_summary_note(service_termination: &ServiceTermination) -> String {
+    let prefix = if service_termination.after_readiness {
+        "service stopped after readiness"
+    } else {
+        "service stopped before readiness"
+    };
+    match service_termination.cause {
+        ServiceTerminationCause::OomKilled => format!("{prefix}; container was OOM-killed"),
+        ServiceTerminationCause::Interrupted => String::from("service interrupted by user"),
+        ServiceTerminationCause::ExitedNonZero => format!(
+            "{prefix}; container exited with status {}",
+            service_termination.exit_code.unwrap_or(1)
+        ),
+        ServiceTerminationCause::Exited => format!("{prefix}; container exited"),
+        ServiceTerminationCause::Unknown => format!("{prefix}; container stop cause is unknown"),
+    }
 }
 
 pub(crate) fn parse_container_host_port_conflict(stderr: &str) -> Option<u16> {
@@ -28389,6 +28846,7 @@ fn run_execution_receipt(
             })
             .collect(),
         runtime,
+        service_termination: None,
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, contract_path, backend),
         steps,
@@ -30701,6 +31159,9 @@ fn render_execution_receipt_summary_block(
     {
         note = format!("{note}; {internal_note}");
     }
+    if let Some(service_termination) = receipt.service_termination.as_ref() {
+        note = service_termination_summary_note(service_termination);
+    }
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
@@ -32534,6 +32995,7 @@ fn repo_execution_receipt(
             })
             .collect(),
         runtime: None,
+        service_termination: None,
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, path, execution_backend),
         steps,
@@ -33001,6 +33463,7 @@ fn workspace_up_receipt(
             .collect(),
         env_sources,
         runtime: None,
+        service_termination: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
@@ -33066,6 +33529,7 @@ fn workspace_status_receipt(
         env: BTreeMap::new(),
         env_sources: Vec::new(),
         runtime: None,
+        service_termination: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
@@ -33140,6 +33604,7 @@ fn workspace_run_receipt(
             .collect(),
         env_sources,
         runtime: None,
+        service_termination: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,

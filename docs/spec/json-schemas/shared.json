@@ -289,6 +289,27 @@
           "items": { "$ref": "#/$defs/resolvedTaskRuntimeEndpoint" }
         }
       }
+    },
+    "serviceTermination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "cause", "after_readiness", "target", "container"],
+      "properties": {
+        "kind": { "const": "service_stopped" },
+        "cause": {
+          "enum": [
+            "oom_killed",
+            "interrupted",
+            "exited_non_zero",
+            "exited",
+            "unknown"
+          ]
+        },
+        "after_readiness": { "type": "boolean" },
+        "target": { "const": "container" },
+        "container": { "type": "string" },
+        "exit_code": { "type": "integer" }
+      }
     }
   }
 }

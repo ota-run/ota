@@ -73,6 +73,9 @@ The receipt includes:
 - `acquired`
 - `env`
 - `policy`
+- `runtime`
+- `workloads`
+- `service_termination`
 - `steps`
 - `blocked`
 - `summary`
@@ -86,7 +89,10 @@ any backend-specific source config. When semver-aware policy approval selects an
 exact install candidate, that `Policy:` section also shows the requested version,
 the resolved install version, and the matched policy rule. On failure, the normal text output keeps `Why`
 and `Next` before the trailing summary block. The receipt keeps the structured
-summary data for JSON and optional receipt output.
+summary data for JSON and optional receipt output. For container-backed service tasks, receipts can
+also include `service_termination` when a task reached a projected runtime endpoint and then
+stopped; this records whether the stop happened after readiness and whether the engine reported an
+OOM kill.
 `target` is only present when the actual recorded execution phase used a real named target.
 That includes persistent backends, remote targets, and named ephemeral task or diagnosis
 containers. Previews and host-side phases stay targetless.

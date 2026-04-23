@@ -343,6 +343,9 @@
             },
             "next": { "type": "string" },
             "runtime": { "$ref": "./shared.json#/$defs/resolvedTaskRuntime" },
+            "service_termination": {
+              "$ref": "./shared.json#/$defs/serviceTermination"
+            },
             "workloads": {
               "type": "object",
               "additionalProperties": {

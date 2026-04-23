@@ -27,7 +27,7 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -797,6 +797,7 @@ pub struct RunOutcome {
     pub stderr: String,
     pub target: Option<String>,
     pub runtime: Option<ResolvedTaskRuntime>,
+    pub service_termination: Option<ServiceTermination>,
     pub execution_note: Option<String>,
 }
 
@@ -809,7 +810,35 @@ pub struct CapturedRunOutcome {
     pub stderr: String,
     pub target: Option<String>,
     pub runtime: Option<ResolvedTaskRuntime>,
+    pub service_termination: Option<ServiceTermination>,
     pub execution_note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTerminationKind {
+    ServiceStopped,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTerminationCause {
+    OomKilled,
+    Interrupted,
+    ExitedNonZero,
+    Exited,
+    Unknown,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ServiceTermination {
+    pub kind: ServiceTerminationKind,
+    pub cause: ServiceTerminationCause,
+    pub after_readiness: bool,
+    pub target: String,
+    pub container: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -842,6 +871,7 @@ pub struct StaleContainerCleanupReport {
 pub struct CleanExecutionReport {
     pub removed_current_persistent_containers: usize,
     pub removed_drift_persistent_containers: usize,
+    pub removed_drift_attached_containers: usize,
     pub removed_current_dependency_isolation_volumes: usize,
     pub removed_drift_dependency_isolation_volumes: usize,
     pub skipped_ambiguous_persistent_containers: usize,
@@ -858,6 +888,7 @@ impl CleanExecutionReport {
     pub fn total_removed(&self) -> usize {
         self.removed_current_persistent_containers
             + self.removed_drift_persistent_containers
+            + self.removed_drift_attached_containers
             + self.removed_current_dependency_isolation_volumes
             + self.removed_drift_dependency_isolation_volumes
     }
@@ -877,6 +908,7 @@ const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
 const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
+const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
@@ -1219,25 +1251,10 @@ fn signal_forwarding_shell_script(command: String) -> String {
     command
 }
 
-#[cfg(unix)]
-fn ephemeral_container_stream_command(engine: &str, container_name: &str) -> String {
-    let engine = shell_quote(engine);
-    let container_name = shell_quote(container_name);
-    format!(
-        "cleanup() {{ {engine} rm -f {container_name} >/dev/null 2>&1 || true; }}; \
-trap 'cleanup; exit 130' INT TERM; \
-trap cleanup EXIT; \
-{engine} start -ai {container_name}; \
-status=$?; \
-exit $status"
-    )
-}
-
-#[cfg(windows)]
-fn ephemeral_container_stream_command(engine: &str, container_name: &str) -> String {
-    format!(
-        "\"{engine}\" start -ai \"{container_name}\" & set OTA_EXIT=%ERRORLEVEL% & \"{engine}\" rm -f \"{container_name}\" >NUL 2>&1 & exit /b %OTA_EXIT%"
-    )
+fn ephemeral_container_stream_command(engine: &str, container_name: &str) -> Command {
+    let mut command = Command::new(engine);
+    command.arg("start").arg("-ai").arg(container_name);
+    command
 }
 
 fn policy_env_label(source: PolicyPackSource) -> String {
@@ -1417,6 +1434,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
         stderr: outcome.stderr,
         target: outcome.target,
         runtime: outcome.runtime,
+        service_termination: outcome.service_termination,
         execution_note: outcome.execution_note,
     })
 }
@@ -1512,7 +1530,10 @@ pub fn clean_execution_report(
     let mut current_target_engines = BTreeSet::new();
     let mut relevant_engines = BTreeSet::new();
     relevant_engines.extend(repo_managed_engines("clean", working_dir)?);
-    let mut dependency_isolation_volumes_to_remove = BTreeSet::new();
+    let mut current_dependency_isolation_volumes_to_remove =
+        BTreeMap::<String, BTreeSet<String>>::new();
+    let mut drift_dependency_isolation_volumes_to_remove =
+        BTreeMap::<String, BTreeSet<String>>::new();
     for (
         context_name,
         image,
@@ -1548,7 +1569,10 @@ pub fn clean_execution_report(
             &dependency_isolation_paths,
         );
         for volume_name in dependency_volume_names {
-            dependency_isolation_volumes_to_remove.insert((engine.clone(), volume_name));
+            current_dependency_isolation_volumes_to_remove
+                .entry(engine.clone())
+                .or_default()
+                .insert(volume_name);
         }
         if !cleanup_container {
             continue;
@@ -1556,12 +1580,6 @@ pub fn clean_execution_report(
 
         if remove_persistent_container_if_present("clean", &engine, &container_name)? {
             report.removed_current_persistent_containers += 1;
-        }
-    }
-
-    for (engine, volume_name) in dependency_isolation_volumes_to_remove {
-        if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
-            report.removed_current_dependency_isolation_volumes += 1;
         }
     }
 
@@ -1601,9 +1619,10 @@ pub fn clean_execution_report(
             Ok(volume_names) => {
                 engine_query_succeeded = true;
                 for volume_name in volume_names {
-                    if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
-                        report.removed_drift_dependency_isolation_volumes += 1;
-                    }
+                    drift_dependency_isolation_volumes_to_remove
+                        .entry(engine.clone())
+                        .or_default()
+                        .insert(volume_name);
                 }
             }
             Err(error) => {
@@ -1631,10 +1650,48 @@ pub fn clean_execution_report(
         }
     }
 
+    let mut dependency_isolation_volumes_to_remove =
+        current_dependency_isolation_volumes_to_remove.clone();
+    for (engine, volume_names) in &drift_dependency_isolation_volumes_to_remove {
+        dependency_isolation_volumes_to_remove
+            .entry(engine.clone())
+            .or_default()
+            .extend(volume_names.iter().cloned());
+    }
+
+    for (engine, volume_names) in &dependency_isolation_volumes_to_remove {
+        for container_name in
+            containers_attached_to_dependency_isolation_volumes("clean", engine, volume_names)?
+        {
+            if !visited.insert((engine.clone(), container_name.clone())) {
+                continue;
+            }
+            if remove_persistent_container_if_present("clean", engine, &container_name)? {
+                report.removed_drift_attached_containers += 1;
+            }
+        }
+    }
+
     if let Some(error) = first_discovery_error
         && (strict_discovery || successful_discovery_queries == 0)
     {
         return Err(error);
+    }
+
+    for (engine, volume_names) in current_dependency_isolation_volumes_to_remove {
+        for volume_name in volume_names {
+            if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+                report.removed_current_dependency_isolation_volumes += 1;
+            }
+        }
+    }
+
+    for (engine, volume_names) in drift_dependency_isolation_volumes_to_remove {
+        for volume_name in volume_names {
+            if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+                report.removed_drift_dependency_isolation_volumes += 1;
+            }
+        }
     }
 
     write_repo_managed_engines("clean", working_dir, &engines_to_track)?;
@@ -1988,6 +2045,7 @@ pub(crate) struct TaskCommandOutput {
     pub(crate) stderr: String,
     pub(crate) target: Option<String>,
     pub(crate) runtime: Option<ResolvedTaskRuntime>,
+    pub(crate) service_termination: Option<ServiceTermination>,
     pub(crate) execution_note: Option<String>,
 }
 
@@ -2002,7 +2060,30 @@ struct TaskRunState {
     stderr: String,
     target: Option<String>,
     runtime: Option<ResolvedTaskRuntime>,
+    service_termination: Option<ServiceTermination>,
     execution_note: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct ContainerTerminationState {
+    exit_code: Option<i32>,
+    oom_killed: Option<bool>,
+}
+
+struct RuntimeReadinessProbe {
+    observed: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl RuntimeReadinessProbe {
+    fn stop_and_collect(mut self) -> bool {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        self.observed.load(Ordering::Relaxed)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2153,6 +2234,7 @@ fn run_task_internal(
         stderr: state.stderr,
         target: state.target,
         runtime: state.runtime,
+        service_termination: state.service_termination,
         execution_note: state.execution_note,
     })
 }
@@ -2225,6 +2307,7 @@ fn run_host_shell_command(
                     stderr: String::new(),
                     target: None,
                     runtime: None,
+                    service_termination: None,
                     execution_note: None,
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
@@ -2242,6 +2325,7 @@ fn run_host_shell_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
                 runtime: None,
+                service_termination: None,
                 execution_note: None,
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
@@ -2443,6 +2527,7 @@ fn execute_task_with_hooks(
     };
     if requested_relation {
         state.runtime = command_output.runtime;
+        state.service_termination = command_output.service_termination.clone();
         if let Some(note) = requested_execution_note.clone() {
             state.execution_note = Some(note);
         }
@@ -4215,6 +4300,7 @@ fn execute_remote_task_command(
                 stderr: String::new(),
                 target: Some(target.to_string()),
                 runtime: None,
+                service_termination: None,
                 execution_note: None,
             })
         }
@@ -4236,6 +4322,7 @@ fn execute_remote_task_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(target.to_string()),
                 runtime: None,
+                service_termination: None,
                 execution_note: None,
             })
         }
@@ -4556,6 +4643,7 @@ fn backend_provider_output(
         stderr: result.stderr,
         target: Some(result.target.unwrap_or_else(|| fallback_target.to_string())),
         runtime: None,
+        service_termination: None,
         execution_note: None,
     })
 }
@@ -4726,6 +4814,7 @@ fn execute_native_task_command(
                     stderr: String::new(),
                     target: None,
                     runtime,
+                    service_termination: None,
                     execution_note: None,
                 })
             } else {
@@ -4750,6 +4839,7 @@ fn execute_native_task_command(
                     stderr: String::new(),
                     target: None,
                     runtime,
+                    service_termination: None,
                     execution_note: None,
                 })
             }
@@ -4794,6 +4884,7 @@ fn execute_native_task_command(
                 stderr,
                 target: None,
                 runtime,
+                service_termination: None,
                 execution_note: None,
             })
         }
@@ -5076,6 +5167,7 @@ fn execute_container_task_command(
             stderr: issue,
             target: None,
             runtime: None,
+            service_termination: None,
             execution_note: None,
         });
     }
@@ -5235,6 +5327,182 @@ fn probe_container_backend(engine: &str, task_name: &str) -> Result<Option<Strin
     )))
 }
 
+fn resolved_runtime_has_public_endpoint(runtime: &ResolvedTaskRuntime) -> bool {
+    runtime.primary_endpoint.is_some() || !runtime.exposed_endpoints.is_empty()
+}
+
+fn resolved_runtime_probe_target(runtime: &ResolvedTaskRuntime) -> Option<(String, u16)> {
+    runtime
+        .primary_endpoint
+        .as_ref()
+        .or_else(|| runtime.exposed_endpoints.first())
+        .map(|endpoint| (endpoint.host.address.clone(), endpoint.host.port))
+}
+
+fn start_runtime_readiness_probe(
+    runtime: Option<&ResolvedTaskRuntime>,
+) -> Option<RuntimeReadinessProbe> {
+    let runtime = runtime?;
+    if !resolved_runtime_has_public_endpoint(runtime) {
+        return None;
+    }
+    let (host, port) = resolved_runtime_probe_target(runtime)?;
+    if host.trim().is_empty() || port == 0 {
+        return None;
+    }
+    let observed = Arc::new(AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_observed = Arc::clone(&observed);
+    let thread_stop = Arc::clone(&stop);
+    let address = host;
+    let handle = thread::spawn(move || {
+        let addr = format!("{address}:{port}");
+        while !thread_stop.load(Ordering::Relaxed) {
+            if let Ok(addrs) = addr.to_socket_addrs()
+                && addrs.into_iter().any(|socket| {
+                    TcpStream::connect_timeout(&socket, Duration::from_millis(200)).is_ok()
+                })
+            {
+                thread_observed.store(true, Ordering::Relaxed);
+                break;
+            }
+            thread::sleep(Duration::from_millis(150));
+        }
+    });
+    Some(RuntimeReadinessProbe {
+        observed,
+        stop,
+        handle: Some(handle),
+    })
+}
+
+fn classify_ephemeral_container_service_termination(
+    runtime: Option<&TaskRuntimeSpec>,
+    resolved_runtime: Option<&ResolvedTaskRuntime>,
+    readiness_observed: bool,
+    termination_state: Option<&ContainerTerminationState>,
+    exit_code: i32,
+    container_name: &str,
+) -> Option<ServiceTermination> {
+    let runtime = runtime?;
+    if runtime.kind != TaskRuntimeKind::Service {
+        return None;
+    }
+
+    if !resolved_runtime.is_some_and(resolved_runtime_has_public_endpoint) {
+        return None;
+    }
+
+    if !readiness_observed {
+        return None;
+    }
+
+    let after_readiness = true;
+
+    let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
+        ServiceTerminationCause::OomKilled
+    } else if exit_code == 130 || exit_code == 143 {
+        ServiceTerminationCause::Interrupted
+    } else if exit_code > 0 {
+        ServiceTerminationCause::ExitedNonZero
+    } else if exit_code == 0 {
+        ServiceTerminationCause::Exited
+    } else {
+        ServiceTerminationCause::Unknown
+    };
+
+    Some(ServiceTermination {
+        kind: ServiceTerminationKind::ServiceStopped,
+        cause,
+        after_readiness,
+        target: String::from("container"),
+        container: container_name.to_string(),
+        exit_code: termination_state
+            .and_then(|state| state.exit_code)
+            .or(Some(exit_code)),
+    })
+}
+
+fn service_termination_execution_note(service_termination: &ServiceTermination) -> String {
+    let cause = match service_termination.cause {
+        ServiceTerminationCause::OomKilled => "container was OOM-killed",
+        ServiceTerminationCause::Interrupted => "container was interrupted",
+        ServiceTerminationCause::ExitedNonZero => "container exited non-zero",
+        ServiceTerminationCause::Exited => "container exited",
+        ServiceTerminationCause::Unknown => "container stop cause is unknown",
+    };
+    if service_termination.after_readiness {
+        format!("service stopped after readiness; {cause}")
+    } else {
+        format!("service stopped before readiness; {cause}")
+    }
+}
+
+fn inspect_container_termination_state(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Option<ContainerTerminationState> {
+    let inspect = container_command_output(
+        engine,
+        &["inspect", "-f", "{{json .State}}", container_name],
+        None,
+        task_name,
+    )
+    .ok()?;
+    if inspect.exit_code != 0 {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(inspect.stdout.trim()).ok()?;
+    let state = value.as_object()?;
+    Some(ContainerTerminationState {
+        exit_code: state_i32_value(state, &["ExitCode", "exitCode", "exit_code"]),
+        oom_killed: state_bool_value(state, &["OOMKilled", "oomKilled", "oom_killed"]),
+    })
+}
+
+fn state_bool_value(
+    state: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<bool> {
+    for key in keys {
+        if let Some(value) = state.get(*key) {
+            if let Some(boolean) = value.as_bool() {
+                return Some(boolean);
+            }
+            if let Some(text) = value.as_str() {
+                match text.trim().to_ascii_lowercase().as_str() {
+                    "true" => return Some(true),
+                    "false" => return Some(false),
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
+}
+
+fn state_i32_value(
+    state: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<i32> {
+    for key in keys {
+        if let Some(value) = state.get(*key) {
+            if let Some(number) = value.as_i64() {
+                if let Ok(parsed) = i32::try_from(number) {
+                    return Some(parsed);
+                }
+            }
+            if let Some(text) = value.as_str()
+                && let Ok(parsed) = text.trim().parse::<i32>()
+            {
+                return Some(parsed);
+            }
+        }
+    }
+    None
+}
+
 fn execute_ephemeral_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
@@ -5315,6 +5583,7 @@ fn execute_ephemeral_container_task_command(
             stderr,
             target: Some(container_name.clone()),
             runtime: None,
+            service_termination: None,
             execution_note: None,
         });
     }
@@ -5328,50 +5597,106 @@ fn execute_ephemeral_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let mut container =
-                shell_command(&ephemeral_container_stream_command(engine, &container_name));
-            let output = run_streaming_command_with_capture_with_loader_options(
+            let mut container = ephemeral_container_stream_command(engine, &container_name);
+            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref());
+            let output_result = run_streaming_command_with_capture_with_loader_options(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
                 false,
-            )
-            .map_err(|source| RunError::SpawnFailed {
-                task: task_name.to_string(),
-                source,
-            })?;
+            );
+            let readiness_observed = readiness_probe
+                .map(RuntimeReadinessProbe::stop_and_collect)
+                .unwrap_or(false);
+            let output = match output_result {
+                Ok(output) => output,
+                Err(source) => {
+                    let _ = remove_persistent_container(engine, &container_name, task_name);
+                    return Err(RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    });
+                }
+            };
+            let termination_state =
+                inspect_container_termination_state(task_name, engine, &container_name);
+            let service_termination = classify_ephemeral_container_service_termination(
+                runtime,
+                prepared_runtime.as_ref(),
+                readiness_observed,
+                termination_state.as_ref(),
+                output.exit_code,
+                &container_name,
+            );
+            let mut exit_code = output.exit_code;
+            if service_termination.is_some() && exit_code == 0 {
+                exit_code = 1;
+            }
+            let execution_note = service_termination
+                .as_ref()
+                .map(service_termination_execution_note);
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
-                exit_code: output.exit_code,
+                exit_code,
                 stdout: output.stdout,
                 stderr: output.stderr,
                 target: Some(container_name.clone()),
                 runtime: prepared_runtime.clone(),
-                execution_note: None,
+                service_termination,
+                execution_note,
             })
         }
         TaskExecutionMode::Capture => {
             let mut container = Command::new(engine);
             container.arg("start").arg("-ai").arg(&container_name);
-            let output = container
+            let child = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .and_then(|child| child.wait_with_output())
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
+            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref());
+            let output = child.wait_with_output().map_err(|source| {
+                let _ = remove_persistent_container(engine, &container_name, task_name);
+                RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                }
+            })?;
+            let readiness_observed = readiness_probe
+                .map(RuntimeReadinessProbe::stop_and_collect)
+                .unwrap_or(false);
+            let output_exit_code = output.status.code().unwrap_or(1);
+            let termination_state =
+                inspect_container_termination_state(task_name, engine, &container_name);
+            let service_termination = classify_ephemeral_container_service_termination(
+                runtime,
+                prepared_runtime.as_ref(),
+                readiness_observed,
+                termination_state.as_ref(),
+                output_exit_code,
+                &container_name,
+            );
+            let mut exit_code = output_exit_code;
+            if service_termination.is_some() && exit_code == 0 {
+                exit_code = 1;
+            }
+            let execution_note = service_termination
+                .as_ref()
+                .map(service_termination_execution_note);
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
-                exit_code: output.status.code().unwrap_or(1),
+                exit_code,
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name),
                 runtime: prepared_runtime,
-                execution_note: None,
+                service_termination,
+                execution_note,
             })
         }
     }
@@ -5984,6 +6309,83 @@ fn persistent_container_workspace_source_for_name(
     Ok(None)
 }
 
+fn container_attached_volume_names(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<BTreeSet<String>, RunError> {
+    let args = ["inspect", "-f", "{{json .Mounts}}", container_name];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    let stdout = output.stdout.trim();
+    if stdout.is_empty() || stdout == "null" {
+        return Ok(BTreeSet::new());
+    }
+    let mounts_value: serde_json::Value = serde_json::from_str(stdout).map_err(|source| {
+        RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("inspect"),
+            container: container_name.to_string(),
+            engine: engine.to_string(),
+            details: format!("invalid `inspect` mounts JSON response: {source}"),
+        }
+    })?;
+    let Some(mounts_array) = mounts_value.as_array() else {
+        return Ok(BTreeSet::new());
+    };
+
+    let mut volume_names = BTreeSet::new();
+    for mount in mounts_array {
+        let Some(mount_object) = mount.as_object() else {
+            continue;
+        };
+        if mount_object
+            .get("Type")
+            .and_then(|value| value.as_str())
+            .is_some_and(|kind| kind != "volume")
+        {
+            continue;
+        }
+        if let Some(volume_name) = mount_object.get("Name").and_then(|value| value.as_str()) {
+            volume_names.insert(volume_name.to_string());
+        }
+    }
+    Ok(volume_names)
+}
+
+fn containers_attached_to_dependency_isolation_volumes(
+    task_name: &str,
+    engine: &str,
+    volume_names: &BTreeSet<String>,
+) -> Result<Vec<String>, RunError> {
+    if volume_names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let container_names = container_ps_names(engine, &["ps", "-a", "--format", "{{.Names}}"])?;
+    let mut attached = Vec::new();
+    for container_name in container_names {
+        let mounted_volume_names =
+            container_attached_volume_names(task_name, engine, &container_name)?;
+        if mounted_volume_names
+            .iter()
+            .any(|volume_name| volume_names.contains(volume_name))
+        {
+            attached.push(container_name);
+        }
+    }
+    Ok(attached)
+}
+
 fn workspace_source_matches_repo(source: &str, working_dir: &Path) -> bool {
     let source_path = Path::new(source);
     if source_path == working_dir {
@@ -6320,6 +6722,7 @@ fn container_command_failure(
         stderr: status.stderr,
         target: Some(container_name),
         runtime: None,
+        service_termination: None,
         execution_note: None,
     }
 }
@@ -6367,6 +6770,7 @@ fn exec_persistent_container_task_command(
                 stderr: String::new(),
                 target: Some(container_name.to_string()),
                 runtime: None,
+                service_termination: None,
                 execution_note: None,
             })
         }
@@ -6388,6 +6792,7 @@ fn exec_persistent_container_task_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name.to_string()),
                 runtime: None,
+                service_termination: None,
                 execution_note: None,
             })
         }
@@ -6585,27 +6990,34 @@ fn remove_dependency_isolation_volume(
         return Ok(false);
     }
 
-    let remove = container_command_output(
-        engine,
-        &["volume", "rm", "-f", volume_name],
-        None,
-        task_name,
-    )?;
-    if remove.exit_code == 0 {
-        return Ok(true);
+    let args = ["volume", "rm", "-f", volume_name];
+    for attempt in 0..DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS {
+        let remove = container_command_output(engine, &args, None, task_name)?;
+        if remove.exit_code == 0 {
+            return Ok(true);
+        }
+        if attempt + 1 < DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS
+            && dependency_isolation_volume_still_in_use(&remove)
+        {
+            thread::sleep(Duration::from_millis(150));
+            continue;
+        }
+
+        return Err(RunError::DependencyIsolationVolumeFailure {
+            task: task_name.to_string(),
+            action: String::from("remove"),
+            volume: volume_name.to_string(),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &remove),
+        });
     }
 
-    Err(RunError::DependencyIsolationVolumeFailure {
-        task: task_name.to_string(),
-        action: String::from("remove"),
-        volume: volume_name.to_string(),
-        engine: engine.to_string(),
-        details: container_command_failure_details(
-            engine,
-            &["volume", "rm", "-f", volume_name],
-            &remove,
-        ),
-    })
+    Ok(false)
+}
+
+fn dependency_isolation_volume_still_in_use(output: &ContainerCommandOutput) -> bool {
+    let combined = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
+    combined.contains("volume is in use")
 }
 
 fn dependency_isolation_volume_labels(
@@ -7898,6 +8310,7 @@ tasks:
                 stderr: String::from("error"),
                 target: None,
                 runtime: None,
+                service_termination: None,
                 execution_note: None,
             }
         );
@@ -8052,14 +8465,21 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn ephemeral_stream_command_cleans_up_container_on_exit() {
+    fn ephemeral_stream_command_starts_attached_container() {
         let command = ephemeral_container_stream_command("/usr/bin/docker", "ota-ephemeral-test");
 
-        assert!(command.contains("/usr/bin/docker"));
-        assert!(command.contains("start -ai"));
-        assert!(command.contains("rm -f"));
-        assert!(command.contains("trap 'cleanup; exit 130' INT TERM"));
-        assert!(command.contains("trap cleanup EXIT"));
+        assert_eq!(
+            command.get_program(),
+            std::ffi::OsStr::new("/usr/bin/docker")
+        );
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![
+                std::ffi::OsStr::new("start"),
+                std::ffi::OsStr::new("-ai"),
+                std::ffi::OsStr::new("ota-ephemeral-test")
+            ]
+        );
     }
 
     #[cfg(unix)]
@@ -8346,8 +8766,7 @@ tasks:
             host:
               address: 127.0.0.1
               port:
-                mode: fixed
-                value: 3000
+                mode: auto
               path: /
 "#,
         );
@@ -8502,8 +8921,7 @@ tasks:
             host:
               address: 127.0.0.1
               port:
-                mode: fixed
-                value: 3000
+                mode: auto
               path: /
 "#,
         );
@@ -8624,8 +9042,7 @@ tasks:
             host:
               address: 127.0.0.1
               port:
-                mode: fixed
-                value: 3000
+                mode: auto
               path: /
 "#,
         );
@@ -8761,8 +9178,7 @@ tasks:
             host:
               address: 127.0.0.1
               port:
-                mode: fixed
-                value: 3000
+                mode: auto
               path: /
 "#,
         );
@@ -8831,6 +9247,256 @@ exec "$(dirname "$0")/docker-real" "$@"
             }
             other => panic!("expected host publication conflict, got {other}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_service_oom_before_readiness_keeps_generic_exit_semantics() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: |
+      printf ready > prepared.txt
+      exit 137
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_real_path = bin_dir.join("docker-real");
+        install_fake_docker(&docker_real_path);
+        let mut permissions = fs::metadata(&docker_real_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_real_path, permissions).unwrap();
+        let docker_wrapper_path = bin_dir.join("docker");
+        fs::write(
+            &docker_wrapper_path,
+            r#"#!/bin/sh
+if [ "$1" = "start" ]; then
+  name=""
+  for arg in "$@"; do
+    case "$arg" in
+      -*) ;;
+      *) name="$arg" ;;
+    esac
+  done
+  if [ -n "$name" ]; then
+    : > "$(dirname "$0")/docker-state/$name.oom-killed"
+  fi
+fi
+exec "$(dirname "$0")/docker-real" "$@"
+"#,
+        )
+        .unwrap();
+        let mut wrapper_permissions = fs::metadata(&docker_wrapper_path).unwrap().permissions();
+        wrapper_permissions.set_mode(0o755);
+        fs::set_permissions(&docker_wrapper_path, wrapper_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome =
+            super::run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+                .expect("service run should return streaming output");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 137);
+        assert!(outcome.service_termination.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_service_nonzero_before_readiness_keeps_generic_exit_semantics() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: |
+      printf ready > prepared.txt
+      exit 42
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = super::run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect("service run should return captured output");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 42);
+        assert!(outcome.service_termination.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_service_failure_without_projected_endpoint_keeps_generic_exit_semantics() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: exit 17
+    runtime:
+      kind: service
+      listeners:
+        tcp:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 4000
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = super::run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect("service run should return captured output");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 17);
+        assert!(outcome.service_termination.is_none());
     }
 
     #[test]
@@ -12393,6 +13059,90 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn clean_execution_removes_unlabeled_container_holding_repo_owned_isolation_volume() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::write(ota_dir.join("ownership-id"), "repo-1").unwrap();
+        fs::write(ota_dir.join(super::OTA_MANAGED_ENGINES_FILE), "docker\n").unwrap();
+        fs::write(state_dir.join("volume.stale-repo-1"), "").unwrap();
+        fs::write(
+            state_dir.join("volume.stale-repo-1.labels"),
+            "dev.ota.managed=true\ndev.ota.kind=dependency-isolation\ndev.ota.repo=repo-1\ndev.ota.path=node_modules\n",
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-leaked.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-ephemeral-leaked.mounts"),
+            format!(
+                "{}\n{}:/workspace/node_modules\n",
+                format!("{}:/workspace", fixture.dir.path().display()),
+                "stale-repo-1"
+            ),
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let report = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(report.removed_drift_attached_containers, 1);
+        assert!(report.removed_drift_dependency_isolation_volumes >= 1);
+        assert!(!state_dir.join("ota-ephemeral-leaked.path").exists());
+        assert!(!state_dir.join("ota-ephemeral-leaked.mounts").exists());
+        assert!(!state_dir.join("volume.stale-repo-1").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn clean_execution_handles_engines_that_reject_volume_label_filters() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -13532,12 +14282,47 @@ case "$command" in
         exit 0
       fi
       if [ "$format" = "{{json .Mounts}}" ]; then
-        if [ -f "$state_dir/$name.path" ]; then
-          host_dir=$(cat "$state_dir/$name.path")
-          printf '[{"Source":"%s","Destination":"/workspace"}]\n' "$host_dir"
-        else
+        if [ ! -f "$state_dir/$name.path" ]; then
           printf "[]\n"
+          exit 0
         fi
+        host_dir=$(cat "$state_dir/$name.path")
+        mounts_json='[{"Type":"bind","Source":"'"$host_dir"'","Destination":"/workspace"}'
+        if [ -f "$state_dir/$name.mounts" ]; then
+          while IFS= read -r mount_entry; do
+            [ -n "$mount_entry" ] || continue
+            mount_source="${mount_entry%%:*}"
+            mount_destination="${mount_entry#*:}"
+            case "$mount_destination" in
+              /workspace)
+                ;;
+              *)
+                mounts_json="${mounts_json},{\"Type\":\"volume\",\"Name\":\"$mount_source\",\"Source\":\"$state_dir/volume.$mount_source\",\"Destination\":\"$mount_destination\"}"
+                ;;
+            esac
+          done < "$state_dir/$name.mounts"
+        fi
+        mounts_json="${mounts_json}]"
+        printf "%s\n" "$mounts_json"
+        exit 0
+      fi
+      if [ "$format" = "{{json .State}}" ]; then
+        if [ -f "$state_dir/$name.running" ]; then
+          running=true
+          status="running"
+        else
+          running=false
+          status="exited"
+        fi
+        exit_code=0
+        if [ -f "$state_dir/$name.exit-code" ]; then
+          exit_code=$(cat "$state_dir/$name.exit-code")
+        fi
+        oom_killed=false
+        if [ -f "$state_dir/$name.oom-killed" ]; then
+          oom_killed=true
+        fi
+        printf '{"Running":%s,"Status":"%s","ExitCode":%s,"OOMKilled":%s}\n' "$running" "$status" "$exit_code" "$oom_killed"
         exit 0
       fi
       exit 1
@@ -13602,7 +14387,11 @@ case "$command" in
         done < "$state_dir/$name.env"
       fi
       cd "$host_dir" || exit 1
-      exec /bin/sh -c "$(cat "$state_dir/$name.command")"
+      /bin/sh -c "$(cat "$state_dir/$name.command")"
+      status=$?
+      printf "%s" "$status" > "$state_dir/$name.exit-code"
+      rm -f "$state_dir/$name.running"
+      exit $status
     fi
     exit 0
     ;;
@@ -13638,6 +14427,7 @@ case "$command" in
     mounts=""
     name=""
     network=""
+    labels=""
     env_entries=""
     pub_entries=""
     while [ "$#" -gt 0 ]; do
@@ -13650,6 +14440,11 @@ case "$command" in
           ;;
         --name)
           name="$2"
+          shift 2
+          ;;
+        --label)
+          labels="${labels}${2}
+"
           shift 2
           ;;
         --network)
@@ -13698,6 +14493,7 @@ case "$command" in
     host_dir="${workspace_mount%%:*}"
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$host_dir" > "$state_dir/$name.path"
+    printf "%s" "$mounts" > "$state_dir/$name.mounts"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ -n "$network" ]; then
       printf "%s\n" "$network" > "$state_dir/$name.networks"
@@ -13714,6 +14510,9 @@ case "$command" in
     else
       : > "$state_dir/$name.publish"
     fi
+    if [ -n "$labels" ]; then
+      printf "%s" "$labels" > "$state_dir/$name.labels"
+    fi
     if [ "$1" = "-c" ]; then
       printf "%s" "$2" > "$state_dir/$name.command"
     elif [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
@@ -13721,6 +14520,8 @@ case "$command" in
     else
       printf "%s" "$1" > "$state_dir/$name.command"
     fi
+    rm -f "$state_dir/$name.exit-code"
+    rm -f "$state_dir/$name.oom-killed"
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     exit 0
     ;;
@@ -13793,6 +14594,7 @@ case "$command" in
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
+      printf "%s" "$mounts" > "$state_dir/$name.mounts"
       : > "$state_dir/$name.running"
       if [ -n "$network" ]; then
         printf "%s\n" "$network" > "$state_dir/$name.networks"
@@ -13956,6 +14758,17 @@ EOF
         [ "$1" = "-f" ] && shift
         volume_name="$1"
         [ -f "$state_dir/volume.$volume_name" ] || exit 1
+        holders=""
+        for mount_file in "$state_dir"/*.mounts; do
+          [ -e "$mount_file" ] || continue
+          grep -F "${volume_name}:" "$mount_file" >/dev/null || continue
+          holders="${holders}$(basename "$mount_file" .mounts),"
+        done
+        if [ -n "$holders" ]; then
+          holders="${holders%,}"
+          printf "Error response from daemon: remove %s: volume is in use - [%s]\n" "$volume_name" "$holders" >&2
+          exit 1
+        fi
         rm -f "$state_dir/volume.$volume_name"
         rm -f "$state_dir/volume.$volume_name.labels"
         printf "volume-rm %s\n" "$volume_name" >> "$state_dir/volume-log.txt"
@@ -13975,8 +14788,11 @@ EOF
     rm -f "$state_dir/$name.no-start-revive"
     rm -f "$state_dir/$name.labels"
     rm -f "$state_dir/$name.networks"
+    rm -f "$state_dir/$name.mounts"
     rm -f "$state_dir/$name.command"
     rm -f "$state_dir/$name.env"
+    rm -f "$state_dir/$name.exit-code"
+    rm -f "$state_dir/$name.oom-killed"
     printf "rm\n" >> "$host_dir/docker-log.txt"
     exit 0
   ;;
