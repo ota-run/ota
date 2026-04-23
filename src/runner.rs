@@ -5714,7 +5714,7 @@ fn start_runtime_readiness_probe(
     })
 }
 
-fn classify_ephemeral_container_service_termination(
+fn classify_container_service_termination(
     runtime: Option<&TaskRuntimeSpec>,
     resolved_runtime: Option<&ResolvedTaskRuntime>,
     readiness_observed: bool,
@@ -5976,7 +5976,7 @@ fn execute_ephemeral_container_task_command(
             };
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
-            let service_termination = classify_ephemeral_container_service_termination(
+            let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
                 readiness_observed,
@@ -6047,7 +6047,7 @@ fn execute_ephemeral_container_task_command(
             let output_exit_code = output.status.code().unwrap_or(1);
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
-            let service_termination = classify_ephemeral_container_service_termination(
+            let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
                 readiness_observed,
@@ -6206,7 +6206,8 @@ fn execute_persistent_container_task_command(
     if matches!(mode, TaskExecutionMode::Stream { .. }) {
         print_projected_runtime_public_endpoint(&resolved_env);
     }
-    let output = exec_persistent_container_task_command(
+    let readiness_probe = start_runtime_readiness_probe(resolved_runtime.as_ref());
+    let mut output = exec_persistent_container_task_command(
         task_name,
         command,
         &resolved_env,
@@ -6216,6 +6217,29 @@ fn execute_persistent_container_task_command(
         mode,
         &container_name,
     )?;
+    let readiness_observed = readiness_probe
+        .map(RuntimeReadinessProbe::stop_and_collect)
+        .unwrap_or(false);
+    let termination_state = inspect_container_termination_state(task_name, engine, &container_name);
+    output.service_termination = classify_container_service_termination(
+        runtime,
+        resolved_runtime.as_ref(),
+        readiness_observed,
+        termination_state.as_ref(),
+        output.exit_code,
+        &container_name,
+    );
+    if output.service_termination.is_some() && output.exit_code == 0 {
+        output.exit_code = 1;
+    }
+    output.execution_note = merge_execution_note(
+        output.execution_note,
+        output
+            .service_termination
+            .as_ref()
+            .map(service_termination_execution_note),
+    );
+
     if output.exit_code != 0 && persistent_container_exec_hit_stopped_container(&output.stderr) {
         let remove = remove_persistent_container(engine, &container_name, task_name)?;
         if remove.exit_code != 0 {
@@ -6254,7 +6278,8 @@ fn execute_persistent_container_task_command(
             &fixed_expected_host_ports,
             env_overrides,
         )?;
-        let output = exec_persistent_container_task_command(
+        let readiness_probe = start_runtime_readiness_probe(resolved_runtime.as_ref());
+        let mut output = exec_persistent_container_task_command(
             task_name,
             command,
             &resolved_env,
@@ -6264,16 +6289,42 @@ fn execute_persistent_container_task_command(
             mode,
             &container_name,
         )?;
+        let readiness_observed = readiness_probe
+            .map(RuntimeReadinessProbe::stop_and_collect)
+            .unwrap_or(false);
+        let termination_state =
+            inspect_container_termination_state(task_name, engine, &container_name);
+        output.service_termination = classify_container_service_termination(
+            runtime,
+            resolved_runtime.as_ref(),
+            readiness_observed,
+            termination_state.as_ref(),
+            output.exit_code,
+            &container_name,
+        );
+        if output.service_termination.is_some() && output.exit_code == 0 {
+            output.exit_code = 1;
+        }
+        output.execution_note = merge_execution_note(
+            output.execution_note,
+            output
+                .service_termination
+                .as_ref()
+                .map(service_termination_execution_note),
+        );
         return Ok(TaskCommandOutput {
             runtime: resolved_runtime,
-            execution_note: Some(reconciliation.note()),
+            execution_note: merge_execution_note(
+                Some(reconciliation.note()),
+                output.execution_note,
+            ),
             ..output
         });
     }
 
     Ok(TaskCommandOutput {
         runtime: resolved_runtime,
-        execution_note: Some(reconciliation.note()),
+        execution_note: merge_execution_note(Some(reconciliation.note()), output.execution_note),
         ..output
     })
 }
@@ -12262,6 +12313,102 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
             "http://127.0.0.1:49153/"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_service_run_reports_service_stop_after_readiness() {
+        use std::net::TcpListener;
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 55321
+              path: /
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "dev").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:55321").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let second = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+        drop(listener);
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 1);
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container reused; service stopped after readiness; container exited")
+        );
+        let service_termination = second
+            .service_termination
+            .as_ref()
+            .expect("persistent service run should classify post-readiness stop");
+        assert!(service_termination.after_readiness);
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::Exited
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
