@@ -303,6 +303,7 @@ Current validation rule:
 - `execution.contexts` defines backend and requirement surfaces per context
 - each `execution.contexts.<name>` requires:
   - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
+  - optional `container.resources.memory.minimum` and `container.resources.memory.default` for container contexts
   - optional `requirements.<runtimes|tools>` to scope readiness checks to that context
   - optional `attachments.compose` to attach container workloads to compose project networks
   - optional `attachments.isolated_paths` to mount Ota-managed, engine-owned named volumes over workspace-relative dependency paths such as `node_modules`
@@ -314,6 +315,7 @@ Current implementation:
 - `tasks.<name>.context` lets a task declare a non-default execution context
 - `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
+- container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
 - `ota up` now runs the `setup` task in the task's resolved context backend
 - `ota run` supports remote execution when the resolved context or legacy `execution.backends.remote` declares `provider` and `target`
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
@@ -816,6 +818,7 @@ Fields:
 - `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
 - `project.host.port.mode: auto`: ota injects runtime URL env values before command execution and reports the resolved URL in receipts and JSON output; ephemeral container runs pre-reserve a host port, while persistent container runs reconcile the named container and then resolve the current published host mapping
 - `ota run <task> --host-port <port>` can override one run's published host/public port on the selected primary projected listener when that listener uses `project.host.port.mode: fixed`; the workload bind port stays unchanged
+- `ota run <task> --memory <size>` can override one run's requested container memory for container execution while preserving contract/task intent
 - with multiple projected listeners, mark one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and primary endpoint rendering
 
 Current execution rules:
@@ -828,6 +831,8 @@ Current execution rules:
 - loopback-only container binds such as `127.0.0.1` or `localhost` must not be projected to `host`
 - for container tasks with `project.host.port.mode: auto`, ota verifies resolved host publication; ephemeral runs retry bounded times on host-port conflict before failing, and persistent runs recreate mismatched containers when reconciliation cannot safely reuse the existing publication shape
 - `--host-port` rejects invalid shapes before task spawn: non-container execution, listeners with `project.host.port.mode: auto`, no projected host listeners, or ambiguous multi-listener projection without one primary listener
+- container memory precedence is: `--memory` override, then `execution.contexts.<name>.container.resources.memory.default`, then `execution.contexts.<name>.container.resources.memory.minimum`, then engine default
+- when `execution.contexts.<name>.container.resources.memory.minimum` is declared, ota rejects `--memory` values below the minimum before task spawn
 
 Use cases:
 
@@ -841,6 +846,7 @@ Use cases:
 - use `bind.port.mode: fixed` when the app should stay on one known internal port
 - use `bind.port.mode: discover` when a native dev server may choose its final port at runtime
 - use `project.host.port.mode: auto` when the host port should be conflict-free but does not need to stay fixed
+- use `execution.contexts.<name>.container.resources.memory.minimum/default` when container workloads need explicit memory truth to stay reliable across environments
 - use `description` for the short summary and `notes` for the task purpose plus extra guidance
 - use `requires_services` when a task needs canonical services brought up through their manager before the task runs
 - use `depends_on` to model a build/package/upload chain without hiding order in shell scripts

@@ -110,7 +110,8 @@ use crate::runner::{
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{
-    Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskRuntimeHostPortMode, TaskSpec,
+    Backend, ContainerBackend, Contract, EnvRequirement, ExtensionSpec, Lifecycle,
+    TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes, parse_memory_size_bytes,
 };
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
@@ -21150,7 +21151,7 @@ mod tests {
         CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
     };
-    use crate::schema::{Backend, Lifecycle};
+    use crate::schema::{Backend, Lifecycle, parse_memory_size_bytes};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
 
@@ -22448,6 +22449,7 @@ tasks:
             context: None,
             lifecycle: Some(String::from("ephemeral")),
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
+            container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -22560,6 +22562,7 @@ tasks:
             context: Some(String::from("app")),
             lifecycle: Some(String::from("ephemeral")),
             image: Some(String::from("node:24-bookworm")),
+            container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -23947,6 +23950,10 @@ execution:
       lifecycle: ephemeral
       container:
         image: ghcr.io/ota/dev:latest
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
     remote-db:
       backend: remote
       remote:
@@ -23963,6 +23970,10 @@ execution:
             DoctorMode::Container,
         );
         assert_eq!(doctor_container.context.as_deref(), Some("app"));
+        assert_eq!(
+            doctor_container.container_memory_bytes,
+            Some(parse_memory_size_bytes("3GiB").unwrap())
+        );
 
         let doctor_remote = super::doctor_phase_execution_context(
             &contract,
@@ -23981,6 +23992,10 @@ execution:
             },
         );
         assert_eq!(provisioning_container.context.as_deref(), Some("app"));
+        assert_eq!(
+            provisioning_container.container_memory_bytes,
+            Some(parse_memory_size_bytes("3GiB").unwrap())
+        );
 
         let provisioning_remote = super::provisioning_phase_execution_context(
             &contract,
@@ -24505,6 +24520,7 @@ tasks:
                 backend: Some(Backend::Native),
                 lifecycle: None,
                 host_port: None,
+                memory: None,
             },
             "test",
             None,
@@ -24531,6 +24547,7 @@ tasks:
                 backend: Some(Backend::Container),
                 lifecycle: Some(Lifecycle::Persistent),
                 host_port: None,
+                memory: None,
             },
             "test",
             None,
@@ -24748,6 +24765,7 @@ tasks:
             context: None,
             lifecycle: None,
             image: None,
+            container_memory_bytes: None,
             target: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -24790,6 +24808,7 @@ tasks:
             context: None,
             lifecycle: None,
             image: None,
+            container_memory_bytes: None,
             target: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -24882,6 +24901,7 @@ tasks:
             context: Some(String::from("app")),
             lifecycle: Some(String::from("ephemeral")),
             image: Some(String::from("node:24")),
+            container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -25049,6 +25069,8 @@ tasks:
             rendered.contains("service interrupted by user"),
             "{rendered}"
         );
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(!rendered.contains("Status:    failed"), "{rendered}");
         assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
     }
 
@@ -25119,6 +25141,7 @@ tasks:
             context: Some(String::from("app")),
             lifecycle: Some(String::from("persistent")),
             image: Some(String::from("node:24")),
+            container_memory_bytes: None,
             target: Some(String::from("ota-container")),
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -25246,6 +25269,7 @@ tasks:
             context: Some(String::from("app")),
             lifecycle: Some(String::from("persistent")),
             image: Some(String::from("node:24")),
+            container_memory_bytes: None,
             target: Some(String::from("ota-container")),
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -27595,8 +27619,9 @@ fn render_service_interrupted_text(
         out.push('\n');
         out.push_str(receipt_text);
     }
+    let summary_with_status = summary_with_status_override(Some(summary_block), "interrupted");
     let summary_override = summary_with_note_override(
-        Some(summary_block),
+        summary_with_status.as_deref(),
         &service_termination_summary_note(service_termination),
     );
     if let Some(summary_override) = summary_override {
@@ -27861,6 +27886,31 @@ fn summary_with_note_override(summary_block: Option<&str>, note: &str) -> Option
         } else {
             let mut lines = lines;
             lines.push(summary_detail_line("Note:", note));
+            lines.join("\n")
+        }
+    })
+}
+
+fn summary_with_status_override(summary_block: Option<&str>, status: &str) -> Option<String> {
+    summary_block.map(|summary| {
+        let mut replaced = false;
+        let status_value = render_execution_summary_status_value(status);
+        let lines = summary
+            .lines()
+            .map(|line| {
+                if line.starts_with("Status:") {
+                    replaced = true;
+                    summary_detail_line("Status:", status_value.as_str())
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>();
+        if replaced {
+            lines.join("\n")
+        } else {
+            let mut lines = lines;
+            lines.push(summary_detail_line("Status:", status_value.as_str()));
             lines.join("\n")
         }
     })
@@ -28361,6 +28411,7 @@ fn render_run_structured_error_text(
                     backend: overrides.backend,
                     lifecycle: None,
                     host_port: overrides.host_port,
+                    memory: overrides.memory,
                 },
             )
             .backend;
@@ -28450,6 +28501,69 @@ fn render_run_structured_error_text(
                 ),
                 String::from("or rerun without `--host-port`"),
             ],
+        ),
+        RunError::MemoryOverrideUnsupportedBackend { task, backend } => (
+            String::from("Memory override requires container execution"),
+            vec![format!(
+                "task `{task}` resolved to `{backend}` execution, but `--memory` only applies to container execution"
+            )],
+            vec![
+                format!(
+                    "rerun with container mode if the contract supports it, for example {}",
+                    paint_code(&match member {
+                        Some(member) =>
+                            format!("ota run --member {member} {task} --mode container"),
+                        None => format!("ota run {task} --mode container"),
+                    })
+                ),
+                String::from("or rerun without `--memory`"),
+            ],
+        ),
+        RunError::MemoryOverrideBelowMinimum {
+            task,
+            requested,
+            minimum,
+            field,
+        } => (
+            String::from("Memory override is below the declared minimum"),
+            vec![format!(
+                "task `{task}` requested `--memory {requested}`, but `{field}` requires at least `{minimum}`"
+            )],
+            vec![
+                String::from("increase `--memory` to meet the declared minimum"),
+                format!(
+                    "or lower `{field}` in the contract if the workload is still supported below `{minimum}`"
+                ),
+            ],
+        ),
+        RunError::InvalidContainerMemoryValue {
+            task,
+            field,
+            value,
+            details,
+        } => (
+            String::from("Container memory declaration is invalid"),
+            vec![format!(
+                "task `{task}` declares `{field}: {value}`, but the value is invalid: {details}"
+            )],
+            vec![String::from(
+                "use binary units like `512MiB`, `2GiB`, or `4TiB`",
+            )],
+        ),
+        RunError::InvalidContainerMemoryRange {
+            task,
+            default_field,
+            default_value,
+            minimum_field,
+            minimum_value,
+        } => (
+            String::from("Container memory declaration is inconsistent"),
+            vec![format!(
+                "task `{task}` declares `{default_field}` as `{default_value}`, but `{minimum_field}` is `{minimum_value}`"
+            )],
+            vec![format!(
+                "set `{default_field}` greater than or equal to `{minimum_field}`",
+            )],
         ),
         RunError::MissingRemoteProvider { .. } => (
             String::from("Remote run is not configured"),
@@ -28776,6 +28890,27 @@ fn policy_target_os_for_backend(backend: Backend) -> &'static str {
     }
 }
 
+fn receipt_container_memory_bytes(
+    container: Option<&ContainerBackend>,
+    override_memory: Option<u64>,
+) -> Option<u64> {
+    if override_memory.is_some() {
+        return override_memory;
+    }
+    let memory = container
+        .and_then(|container| container.resources.as_ref())
+        .and_then(|resources| resources.memory.as_ref())?;
+    let default_bytes = memory
+        .default
+        .as_deref()
+        .and_then(|value| parse_memory_size_bytes(value).ok());
+    let minimum_bytes = memory
+        .minimum
+        .as_deref()
+        .and_then(|value| parse_memory_size_bytes(value).ok());
+    default_bytes.or(minimum_bytes)
+}
+
 fn run_execution_receipt(
     contract: &Contract,
     contract_path: &Path,
@@ -28794,6 +28929,10 @@ fn run_execution_receipt(
     let lifecycle = effective.lifecycle;
     let image = match backend {
         Backend::Container => effective.container.map(|container| container.image.clone()),
+        Backend::Native | Backend::Remote => None,
+    };
+    let container_memory_bytes = match backend {
+        Backend::Container => receipt_container_memory_bytes(effective.container, overrides.memory),
         Backend::Native | Backend::Remote => None,
     };
     let target = target.or_else(|| effective_task_execution_target(contract_path, effective));
@@ -28831,6 +28970,7 @@ fn run_execution_receipt(
             .map(str::to_string),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image,
+        container_memory_bytes,
         target,
         acquired: Vec::new(),
         env: env_details
@@ -31178,6 +31318,10 @@ fn render_execution_receipt_summary_block(
     if let Some(image) = receipt.image.as_deref() {
         lines.push(summary_detail_line("Image:", image));
     }
+    if let Some(memory_bytes) = receipt.container_memory_bytes {
+        let memory_display = format_memory_size_bytes(memory_bytes);
+        lines.push(summary_detail_line("Memory:", memory_display.as_str()));
+    }
     if let Some(target) = receipt.target.as_deref() {
         if receipt.backend.as_deref() == Some("container") {
             lines.push(summary_detail_line("Container:", target));
@@ -32688,6 +32832,7 @@ struct PhaseExecutionContext {
     context: Option<String>,
     lifecycle: Option<String>,
     image: Option<String>,
+    container_memory_bytes: Option<u64>,
     target: Option<String>,
 }
 
@@ -32904,6 +33049,7 @@ fn doctor_mode_execution_overrides(mode: DoctorMode) -> ExecutionOverrides {
         }),
         lifecycle: None,
         host_port: None,
+        memory: None,
     }
 }
 
@@ -32980,6 +33126,7 @@ fn repo_execution_receipt(
         context: context.context,
         lifecycle: context.lifecycle,
         image: context.image,
+        container_memory_bytes: context.container_memory_bytes,
         target: context.target,
         acquired: Vec::new(),
         env: env_details
@@ -33027,6 +33174,32 @@ fn matching_phase_execution_context_name(
     .map(str::to_string)
 }
 
+fn execution_context_container_backend<'a>(
+    contract: &'a Contract,
+    context_name: Option<&str>,
+) -> Option<&'a ContainerBackend> {
+    context_name
+        .and_then(|name| named_execution_context(contract, name))
+        .and_then(|(_, context)| context.container.as_ref())
+}
+
+fn effective_phase_container_backend<'a>(
+    contract: &'a Contract,
+    backend: Backend,
+    context_name: Option<&str>,
+) -> Option<&'a ContainerBackend> {
+    if backend != Backend::Container {
+        return None;
+    }
+    execution_context_container_backend(contract, context_name).or_else(|| {
+        contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.backends.as_ref())
+            .and_then(|backends| backends.container.as_ref())
+    })
+}
+
 fn native_phase_execution_context() -> PhaseExecutionContext {
     PhaseExecutionContext {
         backend: Some(String::from("native")),
@@ -33040,11 +33213,16 @@ fn selected_phase_execution_context(
     overrides: ExecutionOverrides,
 ) -> PhaseExecutionContext {
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let context = matching_phase_execution_context_name(contract, backend, lifecycle);
     PhaseExecutionContext {
         backend: Some(format_backend(backend).to_string()),
-        context: matching_phase_execution_context_name(contract, backend, lifecycle),
+        context: context.clone(),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image: execution_image(contract, backend),
+        container_memory_bytes: receipt_container_memory_bytes(
+            effective_phase_container_backend(contract, backend, context.as_deref()),
+            overrides.memory,
+        ),
         target: execution_target(contract, path, backend, lifecycle),
     }
 }
@@ -33094,6 +33272,12 @@ fn task_phase_execution_context(
             .container
             .map(|container| container.image.clone())
             .filter(|_| matches!(effective.backend, Backend::Container)),
+        container_memory_bytes: match effective.backend {
+            Backend::Container => {
+                receipt_container_memory_bytes(effective.container, overrides.memory)
+            }
+            Backend::Native | Backend::Remote => None,
+        },
         target: effective_task_execution_target(path, effective),
     };
     if target.is_some() {
@@ -33112,18 +33296,29 @@ fn doctor_phase_execution_context(
             context: matching_phase_execution_context_name(contract, Backend::Native, None),
             ..native_phase_execution_context()
         },
-        DoctorMode::Container => PhaseExecutionContext {
-            backend: Some(String::from("container")),
-            context: matching_phase_execution_context_name(
+        DoctorMode::Container => {
+            let context = matching_phase_execution_context_name(
                 contract,
                 Backend::Container,
                 Some(Lifecycle::Ephemeral),
             )
-            .or_else(|| matching_phase_execution_context_name(contract, Backend::Container, None)),
-            lifecycle: Some(String::from("ephemeral")),
-            image: execution_image(contract, Backend::Container),
-            target: ephemeral_container_target(contract, path),
-        },
+            .or_else(|| matching_phase_execution_context_name(contract, Backend::Container, None));
+            PhaseExecutionContext {
+                backend: Some(String::from("container")),
+                context: context.clone(),
+                lifecycle: Some(String::from("ephemeral")),
+                image: execution_image(contract, Backend::Container),
+                container_memory_bytes: receipt_container_memory_bytes(
+                    effective_phase_container_backend(
+                        contract,
+                        Backend::Container,
+                        context.as_deref(),
+                    ),
+                    None,
+                ),
+                target: ephemeral_container_target(contract, path),
+            }
+        }
         DoctorMode::Remote => PhaseExecutionContext {
             backend: Some(String::from("remote")),
             context: matching_phase_execution_context_name(contract, Backend::Remote, None),
@@ -33158,22 +33353,33 @@ fn provisioning_phase_execution_context(
         },
         ProvisioningExecutionTarget::Container {
             image, lifecycle, ..
-        } => PhaseExecutionContext {
-            backend: Some(String::from("container")),
-            context: matching_phase_execution_context_name(
+        } => {
+            let context = matching_phase_execution_context_name(
                 contract,
                 Backend::Container,
                 Some(*lifecycle),
-            ),
-            lifecycle: Some(format_lifecycle(*lifecycle).to_string()),
-            image: Some(image.clone()),
-            target: match lifecycle {
-                Lifecycle::Persistent => {
-                    execution_target(contract, path, Backend::Container, Some(*lifecycle))
-                }
-                Lifecycle::Ephemeral => None,
-            },
-        },
+            );
+            PhaseExecutionContext {
+                backend: Some(String::from("container")),
+                context: context.clone(),
+                lifecycle: Some(format_lifecycle(*lifecycle).to_string()),
+                image: Some(image.clone()),
+                container_memory_bytes: receipt_container_memory_bytes(
+                    effective_phase_container_backend(
+                        contract,
+                        Backend::Container,
+                        context.as_deref(),
+                    ),
+                    None,
+                ),
+                target: match lifecycle {
+                    Lifecycle::Persistent => {
+                        execution_target(contract, path, Backend::Container, Some(*lifecycle))
+                    }
+                    Lifecycle::Ephemeral => None,
+                },
+            }
+        }
         ProvisioningExecutionTarget::Remote { context_name, .. } => PhaseExecutionContext {
             backend: Some(String::from("remote")),
             context: context_name
@@ -33455,6 +33661,7 @@ fn workspace_up_receipt(
         context: None,
         lifecycle: None,
         image: None,
+        container_memory_bytes: None,
         target: None,
         acquired: Vec::new(),
         env: env_sources
@@ -33524,6 +33731,7 @@ fn workspace_status_receipt(
         context: None,
         lifecycle: None,
         image: None,
+        container_memory_bytes: None,
         target: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
@@ -33596,6 +33804,7 @@ fn workspace_run_receipt(
         context: None,
         lifecycle: None,
         image: None,
+        container_memory_bytes: None,
         target: None,
         acquired: Vec::new(),
         env: env_sources

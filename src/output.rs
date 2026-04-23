@@ -286,6 +286,8 @@ pub struct ExecutionReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_memory_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub acquired: Vec<String>,

@@ -40,6 +40,7 @@ use clap_complete::env::{Bash, Elvish, EnvCompleter, Fish, Powershell, Zsh};
 
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
+use crate::schema::parse_memory_size_bytes;
 
 mod commands;
 pub(crate) use commands::parse_container_host_port_conflict;
@@ -149,7 +150,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, and `--host-port` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -165,6 +166,9 @@ enum Commands {
         /// Override the projected host/public port for this invocation.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
+        /// Override the container memory request for this invocation.
+        #[arg(long, value_name = "SIZE", value_parser = parse_memory_override_arg)]
+        memory: Option<u64>,
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
         ephemeral: bool,
@@ -636,6 +640,10 @@ impl From<RunBackend> for crate::schema::Backend {
 enum RunLifecycle {
     Persistent,
     Ephemeral,
+}
+
+fn parse_memory_override_arg(value: &str) -> Result<u64, String> {
+    parse_memory_size_bytes(value).map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1282,6 +1290,7 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
         "--mode",
         "--backend",
         "--host-port",
+        "--memory",
         "--lifecycle",
         "--baseline",
         "--run",
@@ -2323,6 +2332,7 @@ enum RunFlagValueKind {
     Enum(&'static [&'static str]),
     Usize,
     U16,
+    MemorySize,
 }
 
 struct RunFlagOccurrence {
@@ -2512,6 +2522,9 @@ fn parse_run_flag_occurrence(
         RunFlagValueKind::U16 => value
             .as_deref()
             .is_some_and(|candidate| candidate.parse::<u16>().is_ok_and(|port| port > 0)),
+        RunFlagValueKind::MemorySize => value
+            .as_deref()
+            .is_some_and(|candidate| parse_memory_size_bytes(candidate).is_ok()),
     };
 
     Some(RunFlagOccurrence {
@@ -2537,6 +2550,11 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             canonical: "host-port",
             takes_value: true,
             value_kind: RunFlagValueKind::U16,
+        }),
+        "--memory" => Some(RunFlagSpec {
+            canonical: "memory",
+            takes_value: true,
+            value_kind: RunFlagValueKind::MemorySize,
         }),
         "--lifecycle" => Some(RunFlagSpec {
             canonical: "lifecycle",
@@ -3644,6 +3662,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     lifecycle.map(Into::into)
                 },
                 host_port: None,
+                memory: None,
             },
             format_from_json(json),
             debug,
@@ -3653,6 +3672,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             backend,
             lifecycle,
             host_port,
+            memory,
             ephemeral,
             receipt,
             stream,
@@ -3671,6 +3691,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     lifecycle.map(Into::into)
                 },
                 host_port,
+                memory,
             },
             &member,
             &inputs,
@@ -3776,6 +3797,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     lifecycle.map(Into::into)
                 },
                 host_port: None,
+                memory: None,
             },
             &member,
             format_from_json(json),
@@ -4118,6 +4140,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         lifecycle.map(Into::into)
                     },
                     host_port: None,
+                    memory: None,
                 },
                 format_from_json(json),
                 debug,
@@ -10630,6 +10653,28 @@ tasks:
     }
 
     #[test]
+    fn run_text_rejects_memory_override_for_native_execution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: printf ready
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", "--memory", "2GiB", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Memory override requires container execution"));
+        assert!(stderr.contains("`--memory` only applies to container execution"));
+        assert!(stderr.contains("ota run dev --mode container"));
+    }
+
+    #[test]
     fn run_text_reports_task_runtime_projection_field_when_host_port_value_is_missing() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -11694,7 +11739,7 @@ tasks:
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
-        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, and `--host-port` before task inputs."));
+        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, `--host-port`, and `--memory` before task inputs."));
         assert!(help.contains("ota run version:bump --stream --version patch"));
     }
 
@@ -12165,6 +12210,7 @@ tasks:
                 backend: None,
                 lifecycle: None,
                 host_port: None,
+                memory: None,
                 ephemeral: false,
                 receipt: false,
                 stream: false,
@@ -13156,6 +13202,7 @@ tasks:
             backend: None,
             lifecycle: None,
             host_port: None,
+            memory: None,
             ephemeral: false,
             receipt: false,
             stream: false,
