@@ -5497,6 +5497,48 @@ fn execute_container_task_command(
                 if matches!(mode, TaskExecutionMode::Stream { .. }) {
                     print_projected_runtime_public_endpoint(&projection.env);
                 }
+                if let Err(preflight_error) = preflight_container_host_publications(
+                    task_name,
+                    &projection.listener_publications,
+                ) {
+                    if let RunError::HostPublicationConflict { port, .. } = preflight_error
+                        && let Some((listener_name, publication)) = projection
+                            .listener_publications
+                            .iter()
+                            .find(|(_, publication)| publication.host_port == Some(port))
+                    {
+                        let mut reclaimed_from_conflict = reap_repo_owned_ephemeral_containers(
+                            task_name,
+                            engine,
+                            &repo_ownership_token,
+                        )?;
+                        let mut reclaimed_legacy_conflicts =
+                            reap_legacy_repo_owned_conflicting_ephemeral_containers(
+                                task_name,
+                                engine,
+                                &repo_ownership_token,
+                                publication,
+                                port,
+                            )?;
+                        reclaimed_from_conflict.append(&mut reclaimed_legacy_conflicts);
+                        if !reclaimed_from_conflict.is_empty()
+                            && reclaimed_conflict_retry_attempts
+                                < EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS
+                        {
+                            reclaimed_orphaned_ephemeral_count += reclaimed_from_conflict.len();
+                            reclaimed_conflict_retry_attempts += 1;
+                            attempt += 1;
+                            continue;
+                        }
+                        return Err(RunError::HostPublicationConflict {
+                            task: task_name.to_string(),
+                            listener: listener_name.clone(),
+                            address: publication.host_address.clone(),
+                            port,
+                        });
+                    }
+                    return Err(preflight_error);
+                }
 
                 let mut output = execute_ephemeral_container_task_command(
                     task_name,
@@ -5868,7 +5910,6 @@ fn execute_ephemeral_container_task_command(
     );
     let container_name =
         ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
-    preflight_container_host_publications(task_name, listener_publications)?;
     let prepared_runtime =
         resolve_container_task_runtime_from_publications(runtime, listener_publications);
     let mut create = Command::new(engine);
@@ -7080,6 +7121,32 @@ fn container_published_port(
         .and_then(parse_published_port_line))
 }
 
+fn container_published_host_port_exists(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+    host_port: u16,
+) -> Result<bool, RunError> {
+    let output = container_command_output(engine, &["port", container_name], None, task_name)?;
+    if output.exit_code != 0 {
+        return Ok(false);
+    }
+
+    Ok(output
+        .stdout
+        .lines()
+        .filter_map(parse_container_port_output_host_port)
+        .any(|published_host_port| published_host_port == host_port))
+}
+
+fn parse_container_port_output_host_port(value: &str) -> Option<u16> {
+    let publication = value
+        .split_once("->")
+        .map(|(_, rhs)| rhs.trim())
+        .unwrap_or_else(|| value.trim());
+    parse_published_port_line(publication)
+}
+
 fn parse_published_port_line(value: &str) -> Option<u16> {
     let (_, port) = value.rsplit_once(':')?;
     port.trim().parse::<u16>().ok()
@@ -7222,8 +7289,11 @@ fn reap_legacy_repo_owned_conflicting_ephemeral_containers(
     publication: &ContainerPortPublication,
     conflict_port: u16,
 ) -> Result<Vec<String>, RunError> {
-    let candidates =
-        repo_owned_ephemeral_container_candidates(task_name, engine, repo_ownership_token)?;
+    let candidates = repo_owned_ephemeral_container_candidates_by_inspection(
+        task_name,
+        engine,
+        repo_ownership_token,
+    )?;
     let mut reclaimed = Vec::new();
     for container_name in candidates {
         if !legacy_running_ephemeral_conflicts_with_publication(
@@ -7239,6 +7309,46 @@ fn reap_legacy_repo_owned_conflicting_ephemeral_containers(
         reclaimed.push(container_name);
     }
     Ok(reclaimed)
+}
+
+fn repo_owned_ephemeral_container_candidates_by_inspection(
+    task_name: &str,
+    engine: &str,
+    repo_ownership_token: &str,
+) -> Result<Vec<String>, RunError> {
+    let args = ["ps", "-a", "--format", "{{.Names}}"];
+    let output = container_command_output(engine, &args, None, task_name)?;
+    if output.exit_code != 0 {
+        return Err(RunError::PersistentContainerCleanupFailure {
+            task: task_name.to_string(),
+            action: String::from("list"),
+            container: String::from("ota-ephemeral-*"),
+            engine: engine.to_string(),
+            details: container_command_failure_details(engine, &args, &output),
+        });
+    }
+
+    let mut candidates = Vec::new();
+    for container_name in output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.starts_with("ota-ephemeral-"))
+    {
+        let labels = ephemeral_container_labels_for_name(task_name, engine, container_name)?;
+        if labels.get("dev.ota.managed").map(String::as_str) != Some("true") {
+            continue;
+        }
+        if labels.get(OTA_REPO_CONTAINER_LABEL_KEY).map(String::as_str)
+            != Some(repo_ownership_token)
+        {
+            continue;
+        }
+        candidates.push(container_name.to_string());
+    }
+    candidates.sort();
+    candidates.dedup();
+    Ok(candidates)
 }
 
 fn repo_owned_ephemeral_container_candidates(
@@ -7332,7 +7442,11 @@ fn legacy_running_ephemeral_conflicts_with_publication(
         publication.protocol,
         task_name,
     )?;
-    Ok(published == Some(conflict_port))
+    if published == Some(conflict_port) {
+        return Ok(true);
+    }
+
+    container_published_host_port_exists(task_name, engine, container_name, conflict_port)
 }
 
 fn ephemeral_container_labels_for_name(
@@ -8144,6 +8258,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::env;
     use std::fs;
+    use std::net::TcpListener;
     use std::path::Path;
 
     use tempfile::TempDir;
@@ -14431,7 +14546,12 @@ tasks:
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
+        let host_port = TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let fixture = ContractFixture::new(&format!(
             r#"
 version: 1
 project:
@@ -14457,16 +14577,16 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {host_port}
           project:
             host:
               address: 127.0.0.1
               port:
                 mode: fixed
-                value: 3000
+                value: {host_port}
               path: /
-"#,
-        );
+"#
+        ));
 
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -14478,14 +14598,16 @@ tasks:
         let docker_wrapper = bin_dir.join("docker");
         fs::write(
             &docker_wrapper,
-            r#"#!/bin/sh
+            &format!(
+                r#"#!/bin/sh
 state_dir="$(dirname "$0")/docker-state"
 if [ "$1" = "create" ] && [ -f "$state_dir/ota-ephemeral-leaked.path" ]; then
-  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-leaked (deadbeef): Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-leaked (deadbeef): Bind for 127.0.0.1:{host_port} failed: port is already allocated\n" >&2
   exit 1
 fi
 exec "$(dirname "$0")/docker-real" "$@"
 "#,
+            ),
         )
         .unwrap();
         let mut wrapper_permissions = fs::metadata(&docker_wrapper).unwrap().permissions();
@@ -14510,7 +14632,7 @@ exec "$(dirname "$0")/docker-real" "$@"
         .unwrap();
         fs::write(
             state_dir.join("ota-ephemeral-leaked.publish"),
-            "127.0.0.1:3000:3000/http\n",
+            format!("127.0.0.1:{host_port}:{host_port}/http\n"),
         )
         .unwrap();
 
@@ -14550,7 +14672,12 @@ exec "$(dirname "$0")/docker-real" "$@"
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
+        let host_port = TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let fixture = ContractFixture::new(&format!(
             r#"
 version: 1
 project:
@@ -14576,16 +14703,16 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {host_port}
           project:
             host:
               address: 127.0.0.1
               port:
                 mode: fixed
-                value: 3000
+                value: {host_port}
               path: /
-"#,
-        );
+"#
+        ));
 
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -14597,14 +14724,16 @@ tasks:
         let docker_wrapper = bin_dir.join("docker");
         fs::write(
             &docker_wrapper,
-            r#"#!/bin/sh
+            &format!(
+                r#"#!/bin/sh
 state_dir="$(dirname "$0")/docker-state"
 if [ "$1" = "create" ] && [ -f "$state_dir/ota-ephemeral-legacy.path" ]; then
-  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-legacy (deadbeef): Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
+  printf "Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint ota-ephemeral-legacy (deadbeef): Bind for 127.0.0.1:{host_port} failed: port is already allocated\n" >&2
   exit 1
 fi
 exec "$(dirname "$0")/docker-real" "$@"
 "#,
+            ),
         )
         .unwrap();
         let mut wrapper_permissions = fs::metadata(&docker_wrapper).unwrap().permissions();
@@ -14630,7 +14759,7 @@ exec "$(dirname "$0")/docker-real" "$@"
         .unwrap();
         fs::write(
             state_dir.join("ota-ephemeral-legacy.publish"),
-            "127.0.0.1:3000:3000/tcp\n",
+            format!("127.0.0.1:{host_port}:{host_port}/tcp\n"),
         )
         .unwrap();
 
@@ -16373,8 +16502,9 @@ case "$command" in
     ;;
   port)
     name="$1"
-    query="$2"
+    query="${2:-}"
     [ -f "$state_dir/$name.path" ] || exit 1
+    found=0
     if [ -f "$state_dir/$name.publish" ]; then
       while IFS= read -r publication; do
         [ -n "$publication" ] || continue
@@ -16390,11 +16520,17 @@ case "$command" in
           host_port="${remainder%%:*}"
           bind_port="${remainder##*:}"
         fi
-        if [ "$bind_port/$transport" = "$query" ]; then
+        if [ -n "$query" ] && [ "$bind_port/$transport" = "$query" ]; then
           printf "%s:%s\n" "$host_address" "$host_port"
           exit 0
+        elif [ -z "$query" ]; then
+          printf "%s/%s -> %s:%s\n" "$bind_port" "$transport" "$host_address" "$host_port"
+          found=1
         fi
       done < "$state_dir/$name.publish"
+    fi
+    if [ -z "$query" ] && [ "$found" = "1" ]; then
+      exit 0
     fi
     exit 1
     ;;

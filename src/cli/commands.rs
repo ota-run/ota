@@ -24973,6 +24973,61 @@ tasks:
     }
 
     #[test]
+    fn execution_summary_note_keeps_persistent_reconciliation_with_service_termination() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("node:24")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-persistent-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            service_termination: Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-persistent-deadbeef"),
+                exit_code: Some(1),
+            }),
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "dev",
+                "FAILED",
+                Some(String::from(
+                    "requested task; persistent container recreated (execution shape changed)",
+                )),
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(rendered.contains("Status:    failed"), "{rendered}");
+        assert!(
+            rendered.contains("persistent container recreated (execution shape changed); service stopped after readiness; container exited with status 1"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_surfaces_service_stopped_classification() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -31507,7 +31562,10 @@ fn render_execution_receipt_summary_block(
         note = format!("{note}; {requested_note}");
     }
     if let Some(service_termination) = receipt.service_termination.as_ref() {
-        note = service_termination_summary_note(service_termination);
+        let service_note = service_termination_summary_note(service_termination);
+        if !note.contains(service_note.as_str()) {
+            note = format!("{note}; {service_note}");
+        }
     }
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
