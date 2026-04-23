@@ -26,9 +26,9 @@ use crate::execution::{
     matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
 use crate::schema::{
-    AgentConfig, Backend, Contract, EnvConfig, ExtensionKind, RuntimeRequirement, ServiceSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
-    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExtensionKind, RuntimeRequirement,
+    ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, parse_memory_size_bytes,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +204,13 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         errors.push(ValidationError::new(
             "`execution.backends.container.image` must not be empty",
         ));
+    }
+    if let Some(container) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.container.as_ref())
+    {
+        validate_container_memory_resources("execution.backends.container", container, errors);
     }
 
     if let Some(remote) = execution
@@ -408,6 +415,11 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "`execution.contexts.{name}.container.image` must not be empty"
                     )));
                 }
+                validate_container_memory_resources(
+                    format!("execution.contexts.{name}.container").as_str(),
+                    container,
+                    errors,
+                );
                 if context.remote.is_some() {
                     errors.push(ValidationError::new(format!(
                         "`execution.contexts.{name}.backend: container` must not declare `remote` settings"
@@ -528,6 +540,51 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             |value| value.version(),
         );
         validate_tool_details(&context.requirements.tools, errors);
+    }
+}
+
+fn validate_container_memory_resources(
+    path_prefix: &str,
+    container: &ContainerBackend,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(memory) = container
+        .resources
+        .as_ref()
+        .and_then(|resources| resources.memory.as_ref())
+    else {
+        return;
+    };
+
+    let minimum_path = format!("{path_prefix}.resources.memory.minimum");
+    let default_path = format!("{path_prefix}.resources.memory.default");
+    let minimum_bytes = memory.minimum.as_deref().and_then(|value| {
+        parse_memory_size_bytes(value)
+            .map(Some)
+            .unwrap_or_else(|error| {
+                errors.push(ValidationError::new(format!(
+                    "`{minimum_path}` value `{value}` is invalid: {error}"
+                )));
+                None
+            })
+    });
+    let default_bytes = memory.default.as_deref().and_then(|value| {
+        parse_memory_size_bytes(value)
+            .map(Some)
+            .unwrap_or_else(|error| {
+                errors.push(ValidationError::new(format!(
+                    "`{default_path}` value `{value}` is invalid: {error}"
+                )));
+                None
+            })
+    });
+
+    if let (Some(minimum), Some(default_value)) = (minimum_bytes, default_bytes)
+        && default_value < minimum
+    {
+        errors.push(ValidationError::new(format!(
+            "`{default_path}` must be greater than or equal to `{minimum_path}`"
+        )));
     }
 }
 
@@ -2068,6 +2125,75 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_container_memory_resource_values() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24
+        resources:
+          memory:
+            minimum: nope
+tasks:
+  dev:
+    context: app
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.contexts.app.container.resources.memory.minimum` value `nope` is invalid",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_container_memory_default_below_minimum() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 1024MiB
+tasks:
+  dev:
+    context: app
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("`execution.contexts.app.container.resources.memory.default` must be greater than or equal to `execution.contexts.app.container.resources.memory.minimum`")
+        }));
     }
 
     #[test]

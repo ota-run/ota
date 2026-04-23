@@ -575,6 +575,7 @@ ota run <task> --member api --member web [PATH]
 ota run <task> --mode native [PATH]
 ota run <task> --mode container --ephemeral [PATH]
 ota run <task> --mode remote [PATH]
+ota run <task> --memory 4GiB [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
 
@@ -626,6 +627,7 @@ ota run version:bump --version minor
 ota run version:bump --version 0.2.0
 ota run version:bump --version major
 ota run dev --host-port 4000
+ota run dev --memory 4GiB
 ```
 
 - resolves task dependencies before execution
@@ -668,10 +670,14 @@ ota run dev --host-port 4000
 - `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
 - `--host-port` is valid only when the selected task resolves to container execution and that selected primary listener uses `project.host.port.mode: fixed`
 - `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, and ambiguous multi-listener projections without one primary listener
+- `--memory <size>` overrides one run's requested container memory (examples: `512MiB`, `2GiB`, `4TiB`)
+- `--memory` is valid only when the selected task resolves to container execution
+- when the selected container context declares `container.resources.memory.minimum`, ota rejects `--memory` values below that minimum before task execution starts
+- when no `--memory` override is passed, ota uses `container.resources.memory.default` when declared; if only `minimum` is declared ota requests that minimum; otherwise the engine default applies
 - for container-backed `runtime.kind: service` tasks, ota now captures container termination state before ephemeral teardown and reports post-readiness service stops as first-class failures (including explicit OOM classification when the engine reports it)
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
-- execution receipts include backend, lifecycle, container image when relevant, remote target when set, acquired paths, env sources, step summary data, resolved runtime listener endpoints, and optional `service_termination` details for post-readiness service stops; text receipts also print the winning env source for each resolved value
+- execution receipts include backend, lifecycle, container image when relevant, resolved container memory when requested, remote target when set, acquired paths, env sources, step summary data, resolved runtime listener endpoints, and optional `service_termination` details for post-readiness service stops; text receipts also print the winning env source for each resolved value
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.

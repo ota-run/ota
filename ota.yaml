@@ -61,6 +61,7 @@ tasks:
       Use this as the first step in a fresh checkout or after dependency changes.
       It prepares the workspace without compiling the crate.
     category: setup
+    internal: true
     run: cargo fetch
     safe_for_agent: true
   build:
@@ -243,14 +244,15 @@ tasks:
     notes: |
       Use this when you want a task name that makes the source-based reinstall path explicit.
     category: dev
+    execution:
+      default_mode: native
+      modes:
+        native: {}
     run: ./scripts/install.sh --from-source
     variants:
       - when:
           os: windows
         run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
-    depends_on:
-      - ci
-
 agent:
   entrypoint: setup
   default_task: ci

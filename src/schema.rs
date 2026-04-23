@@ -24,6 +24,92 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+const MEMORY_KIB: u64 = 1024;
+const MEMORY_MIB: u64 = MEMORY_KIB * 1024;
+const MEMORY_GIB: u64 = MEMORY_MIB * 1024;
+const MEMORY_TIB: u64 = MEMORY_GIB * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemorySizeParseError {
+    Empty,
+    MissingNumber,
+    InvalidNumber,
+    UnsupportedUnit { unit: String },
+    Overflow,
+}
+
+impl std::fmt::Display for MemorySizeParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => {
+                f.write_str("memory size must not be empty (examples: `512MiB`, `2GiB`)")
+            }
+            Self::MissingNumber => {
+                f.write_str("memory size must start with a positive integer amount")
+            }
+            Self::InvalidNumber => f.write_str("memory size amount must be a positive integer"),
+            Self::UnsupportedUnit { unit } => write!(
+                f,
+                "unsupported memory size unit `{unit}` (supported units: `B`, `KiB`, `MiB`, `GiB`, `TiB`)"
+            ),
+            Self::Overflow => f.write_str("memory size is too large"),
+        }
+    }
+}
+
+pub fn parse_memory_size_bytes(value: &str) -> Result<u64, MemorySizeParseError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(MemorySizeParseError::Empty);
+    }
+
+    let first_non_digit = trimmed
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(trimmed.len());
+    let (amount_text, unit_text) = trimmed.split_at(first_non_digit);
+    if amount_text.is_empty() {
+        return Err(MemorySizeParseError::MissingNumber);
+    }
+    let amount = amount_text
+        .parse::<u64>()
+        .map_err(|_| MemorySizeParseError::InvalidNumber)?;
+    if amount == 0 {
+        return Err(MemorySizeParseError::InvalidNumber);
+    }
+
+    let normalized_unit = unit_text.trim().to_ascii_lowercase();
+    let multiplier = match normalized_unit.as_str() {
+        "" | "b" => 1_u64,
+        "kib" => MEMORY_KIB,
+        "mib" => MEMORY_MIB,
+        "gib" => MEMORY_GIB,
+        "tib" => MEMORY_TIB,
+        _ => {
+            return Err(MemorySizeParseError::UnsupportedUnit {
+                unit: unit_text.trim().to_string(),
+            });
+        }
+    };
+
+    amount
+        .checked_mul(multiplier)
+        .ok_or(MemorySizeParseError::Overflow)
+}
+
+pub fn format_memory_size_bytes(bytes: u64) -> String {
+    if bytes % MEMORY_TIB == 0 {
+        format!("{}TiB", bytes / MEMORY_TIB)
+    } else if bytes % MEMORY_GIB == 0 {
+        format!("{}GiB", bytes / MEMORY_GIB)
+    } else if bytes % MEMORY_MIB == 0 {
+        format!("{}MiB", bytes / MEMORY_MIB)
+    } else if bytes % MEMORY_KIB == 0 {
+        format!("{}KiB", bytes / MEMORY_KIB)
+    } else {
+        format!("{bytes}B")
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Contract {
@@ -257,6 +343,24 @@ pub struct ContainerBackend {
     pub image: String,
     #[serde(default)]
     pub engines: Vec<String>,
+    #[serde(default)]
+    pub resources: Option<ContainerResourceSpec>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerResourceSpec {
+    #[serde(default)]
+    pub memory: Option<ContainerMemoryResourceSpec>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerMemoryResourceSpec {
+    #[serde(default)]
+    pub minimum: Option<String>,
+    #[serde(default)]
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

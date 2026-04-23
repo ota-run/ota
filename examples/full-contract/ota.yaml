@@ -8,6 +8,15 @@ execution:
   contexts:
     host:
       backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
 runtimes:
   node: "22"
   python: ">=3.12"
@@ -67,6 +76,28 @@ tasks:
     run: pnpm dev
     depends_on:
       - setup
+  dev:container:
+    context: app
+    description: Start the local development server in a container context
+    category: dev
+    run: pnpm dev --host 0.0.0.0 --port 3000
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
   test:
     context: host
     description: Run the validation suite

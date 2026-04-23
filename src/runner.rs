@@ -51,7 +51,8 @@ use crate::policy_pack::{
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
     ExtensionKind, Lifecycle, RemoteBackend, TaskModeBranchSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, format_memory_size_bytes,
+    parse_memory_size_bytes,
 };
 
 #[derive(Clone)]
@@ -510,6 +511,34 @@ pub enum RunError {
     HostPortOverrideAmbiguousProjectedListener { task: String, listeners: String },
     #[error("task `{task}` cannot apply `--host-port` when execution resolves to `{backend}`")]
     HostPortOverrideUnsupportedBackend { task: String, backend: &'static str },
+    #[error("task `{task}` cannot apply `--memory` when execution resolves to `{backend}`")]
+    MemoryOverrideUnsupportedBackend { task: String, backend: &'static str },
+    #[error(
+        "task `{task}` cannot apply `--memory` `{requested}` because it is below `{field}` `{minimum}`"
+    )]
+    MemoryOverrideBelowMinimum {
+        task: String,
+        requested: String,
+        minimum: String,
+        field: String,
+    },
+    #[error("task `{task}` declares invalid memory value for `{field}`: `{value}` ({details})")]
+    InvalidContainerMemoryValue {
+        task: String,
+        field: String,
+        value: String,
+        details: String,
+    },
+    #[error(
+        "task `{task}` declares `{default_field}` `{default_value}` below `{minimum_field}` `{minimum_value}`"
+    )]
+    InvalidContainerMemoryRange {
+        task: String,
+        default_field: String,
+        default_value: String,
+        minimum_field: String,
+        minimum_value: String,
+    },
     #[error(
         "task `{task}` could not {action} dependency-isolation volume `{volume}` using container engine `{engine}`: {details}"
     )]
@@ -846,6 +875,7 @@ pub struct ExecutionOverrides {
     pub backend: Option<Backend>,
     pub lifecycle: Option<Lifecycle>,
     pub host_port: Option<u16>,
+    pub memory: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1540,6 +1570,7 @@ pub fn clean_execution_report(
         engine,
         publications,
         dependency_isolation_paths,
+        memory_bytes,
         cleanup_container,
     ) in cleanup_targets
     {
@@ -1549,6 +1580,7 @@ pub fn clean_execution_report(
             context_name.as_deref(),
             &publications,
             &dependency_isolation_paths,
+            memory_bytes,
         );
         let container_name = persistent_container_name_for_seed(
             working_dir,
@@ -1732,6 +1764,7 @@ fn persistent_cleanup_targets(
         String,
         Vec<ContainerPortPublication>,
         Vec<String>,
+        Option<u64>,
         bool,
     )>,
     RunError,
@@ -1760,22 +1793,38 @@ fn persistent_cleanup_targets(
                 for publications in
                     task_container_publication_sets_for_context(contract, Some(name))
                 {
+                    let memory_field_prefix = format!("execution.contexts.{name}.container");
+                    let memory_bytes = container_memory_override_or_default(
+                        "clean",
+                        container,
+                        memory_field_prefix.as_str(),
+                        None,
+                    )?;
                     targets.push((
                         Some(name.clone()),
                         container.image.clone(),
                         engine.clone(),
                         publications,
                         dependency_isolation_paths.clone(),
+                        memory_bytes,
                         true,
                     ));
                 }
             } else if !dependency_isolation_paths.is_empty() {
+                let memory_field_prefix = format!("execution.contexts.{name}.container");
+                let memory_bytes = container_memory_override_or_default(
+                    "clean",
+                    container,
+                    memory_field_prefix.as_str(),
+                    None,
+                )?;
                 targets.push((
                     Some(name.clone()),
                     container.image.clone(),
                     engine.clone(),
                     Vec::new(),
                     dependency_isolation_paths.clone(),
+                    memory_bytes,
                     false,
                 ));
             }
@@ -1796,12 +1845,28 @@ fn persistent_cleanup_targets(
             }
         })?;
         for publications in task_container_publication_sets_for_context(contract, None) {
+            let memory_bytes = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.backends.as_ref())
+                .and_then(|backends| backends.container.as_ref())
+                .map(|container| {
+                    container_memory_override_or_default(
+                        "clean",
+                        container,
+                        "execution.backends.container",
+                        None,
+                    )
+                })
+                .transpose()?
+                .flatten();
             let target = (
                 Some(LEGACY_EXECUTION_CONTEXT_NAME.to_string()),
                 image.clone(),
                 engine.clone(),
                 publications,
                 Vec::new(),
+                memory_bytes,
                 true,
             );
             if !targets.contains(&target) {
@@ -2111,6 +2176,7 @@ pub(crate) enum ResolvedExecutionBackend {
         image: String,
         engine: String,
         lifecycle: Lifecycle,
+        memory_bytes: Option<u64>,
         compose_networks: Vec<String>,
         publications: Vec<ContainerPortPublication>,
         dependency_isolation_paths: Vec<String>,
@@ -2147,6 +2213,10 @@ fn execution_overrides_for_resolved_backend(
             _ => None,
         },
         host_port: None,
+        memory: match backend {
+            ResolvedExecutionBackend::Container { memory_bytes, .. } => *memory_bytes,
+            _ => None,
+        },
     }
 }
 
@@ -2806,6 +2876,7 @@ fn execute_task_command(
             image,
             engine,
             lifecycle,
+            memory_bytes,
             compose_networks,
             publications,
             dependency_isolation_paths,
@@ -2821,6 +2892,7 @@ fn execute_task_command(
             image,
             engine,
             *lifecycle,
+            *memory_bytes,
             compose_networks,
             publications,
             dependency_isolation_paths,
@@ -3389,6 +3461,75 @@ fn preflight_host_port_override(
     Ok(())
 }
 
+fn container_memory_override_or_default(
+    task_name: &str,
+    container: &ContainerBackend,
+    field_prefix: &str,
+    override_bytes: Option<u64>,
+) -> Result<Option<u64>, RunError> {
+    let Some(memory) = container
+        .resources
+        .as_ref()
+        .and_then(|resources| resources.memory.as_ref())
+    else {
+        return Ok(override_bytes);
+    };
+
+    let minimum_field = format!("{field_prefix}.resources.memory.minimum");
+    let default_field = format!("{field_prefix}.resources.memory.default");
+    let minimum_bytes = memory
+        .minimum
+        .as_deref()
+        .map(|value| {
+            parse_memory_size_bytes(value).map_err(|error| RunError::InvalidContainerMemoryValue {
+                task: task_name.to_string(),
+                field: minimum_field.clone(),
+                value: value.to_string(),
+                details: error.to_string(),
+            })
+        })
+        .transpose()?;
+    let default_bytes = memory
+        .default
+        .as_deref()
+        .map(|value| {
+            parse_memory_size_bytes(value).map_err(|error| RunError::InvalidContainerMemoryValue {
+                task: task_name.to_string(),
+                field: default_field.clone(),
+                value: value.to_string(),
+                details: error.to_string(),
+            })
+        })
+        .transpose()?;
+    if let (Some(default_bytes), Some(minimum_bytes)) = (default_bytes, minimum_bytes)
+        && default_bytes < minimum_bytes
+    {
+        return Err(RunError::InvalidContainerMemoryRange {
+            task: task_name.to_string(),
+            default_field,
+            default_value: format_memory_size_bytes(default_bytes),
+            minimum_field,
+            minimum_value: format_memory_size_bytes(minimum_bytes),
+        });
+    }
+
+    // `minimum` is an honest support floor; if no explicit default is declared,
+    // request the minimum so ordinary runs cannot silently execute below it.
+    let requested = override_bytes.or(default_bytes).or(minimum_bytes);
+    if let (Some(requested_bytes), Some(minimum_bytes)) = (requested, minimum_bytes)
+        && requested_bytes < minimum_bytes
+    {
+        return Err(RunError::MemoryOverrideBelowMinimum {
+            task: task_name.to_string(),
+            requested: format_memory_size_bytes(requested_bytes),
+            minimum: format_memory_size_bytes(minimum_bytes),
+            field: minimum_field,
+        });
+    }
+
+    Ok(requested)
+}
+
 fn apply_host_port_override_to_listener_publications(
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
@@ -3866,6 +4007,7 @@ fn container_identity_seed(
     context_name: Option<&str>,
     publications: &[ContainerPortPublication],
     isolated_paths: &[String],
+    memory_bytes: Option<u64>,
 ) -> Option<String> {
     let context_name = context_name?;
     let mut seed = context_name.to_string();
@@ -3901,6 +4043,10 @@ fn container_identity_seed(
                 .join(","),
         );
     }
+    if let Some(memory_bytes) = memory_bytes {
+        seed.push('|');
+        seed.push_str(format!("memory:{memory_bytes}").as_str());
+    }
     Some(seed)
 }
 
@@ -3919,6 +4065,7 @@ fn persistent_container_shape_token(
     engine: &str,
     publications: &[ContainerPortPublication],
     isolated_paths: &[String],
+    memory_bytes: Option<u64>,
 ) -> String {
     let mut hasher = DefaultHasher::new();
     context_name
@@ -3936,6 +4083,7 @@ fn persistent_container_shape_token(
     for isolated_path in isolated_paths {
         isolated_path.hash(&mut hasher);
     }
+    memory_bytes.hash(&mut hasher);
     format!("{:x}", hasher.finish())
 }
 
@@ -4025,7 +4173,15 @@ pub(crate) fn resolve_execution_backend(
     }
 
     match preferred {
-        Backend::Native => Ok(ResolvedExecutionBackend::Native),
+        Backend::Native => {
+            if overrides.memory.is_some() {
+                return Err(RunError::MemoryOverrideUnsupportedBackend {
+                    task: task_name.to_string(),
+                    backend: "native",
+                });
+            }
+            Ok(ResolvedExecutionBackend::Native)
+        }
         Backend::Container => {
             let Some(container) = effective.container else {
                 return Err(RunError::MissingContainerImage {
@@ -4047,6 +4203,22 @@ pub(crate) fn resolve_execution_backend(
             })?;
 
             let context_name = effective.context_name.map(str::to_string);
+            let memory_field_prefix =
+                selected_task_context_for_backend(contract, task_name, preferred)
+                    .filter(|(_, context)| context.backend == Backend::Container)
+                    .and_then(|(context_name, context)| {
+                        context
+                            .container
+                            .as_ref()
+                            .map(|_| format!("execution.contexts.{context_name}.container"))
+                    })
+                    .unwrap_or_else(|| String::from("execution.backends.container"));
+            let memory_bytes = container_memory_override_or_default(
+                task_name,
+                container,
+                memory_field_prefix.as_str(),
+                overrides.memory,
+            )?;
             let publications = task_container_publication_details(contract, task_name, preferred)
                 .into_iter()
                 .map(|(_, publication)| publication)
@@ -4062,6 +4234,7 @@ pub(crate) fn resolve_execution_backend(
                 image: container.image.clone(),
                 engine,
                 lifecycle,
+                memory_bytes,
                 compose_networks: selected_task_context_for_backend(contract, task_name, preferred)
                     .filter(|(_, context)| context.backend == Backend::Container)
                     .map(|(_, context)| compose_networks_for_context(context))
@@ -4070,58 +4243,67 @@ pub(crate) fn resolve_execution_backend(
                 dependency_isolation_paths,
             })
         }
-        Backend::Remote => effective
-            .remote
-            .ok_or_else(|| RunError::MissingRemoteProvider {
-                task: task_name.to_string(),
-            })
-            .and_then(|remote| {
-                if remote.provider.trim().is_empty() {
-                    return Err(RunError::MissingRemoteProvider {
-                        task: task_name.to_string(),
-                    });
-                }
-                let target = remote
-                    .target
-                    .clone()
-                    .filter(|target| !target.trim().is_empty())
-                    .ok_or_else(|| RunError::MissingRemoteTarget {
-                        task: task_name.to_string(),
-                        provider: remote.provider.clone(),
-                        example_target: remote_target_example(&remote.provider).to_string(),
-                    })?;
-
-                if is_builtin_remote_provider(&remote.provider) {
-                    Ok(ResolvedExecutionBackend::Remote {
-                        provider: remote.provider.clone(),
-                        target,
-                        cwd: remote.cwd.clone(),
-                    })
-                } else {
-                    let Some(extension) = backend_provider_extension(contract, &remote.provider)
-                    else {
-                        return Err(RunError::MissingBackendProvider {
+        Backend::Remote => {
+            if overrides.memory.is_some() {
+                return Err(RunError::MemoryOverrideUnsupportedBackend {
+                    task: task_name.to_string(),
+                    backend: "remote",
+                });
+            }
+            effective
+                .remote
+                .ok_or_else(|| RunError::MissingRemoteProvider {
+                    task: task_name.to_string(),
+                })
+                .and_then(|remote| {
+                    if remote.provider.trim().is_empty() {
+                        return Err(RunError::MissingRemoteProvider {
                             task: task_name.to_string(),
-                            provider: remote.provider.clone(),
-                        });
-                    };
-
-                    if extension.api_version != 1 {
-                        return Err(RunError::UnsupportedBackendProviderVersion {
-                            task: task_name.to_string(),
-                            provider: remote.provider.clone(),
-                            api_version: extension.api_version,
                         });
                     }
+                    let target = remote
+                        .target
+                        .clone()
+                        .filter(|target| !target.trim().is_empty())
+                        .ok_or_else(|| RunError::MissingRemoteTarget {
+                            task: task_name.to_string(),
+                            provider: remote.provider.clone(),
+                            example_target: remote_target_example(&remote.provider).to_string(),
+                        })?;
 
-                    Ok(ResolvedExecutionBackend::BackendProvider {
-                        provider: remote.provider.clone(),
-                        command: extension.command.clone(),
-                        target,
-                        cwd: remote.cwd.clone(),
-                    })
-                }
-            }),
+                    if is_builtin_remote_provider(&remote.provider) {
+                        Ok(ResolvedExecutionBackend::Remote {
+                            provider: remote.provider.clone(),
+                            target,
+                            cwd: remote.cwd.clone(),
+                        })
+                    } else {
+                        let Some(extension) =
+                            backend_provider_extension(contract, &remote.provider)
+                        else {
+                            return Err(RunError::MissingBackendProvider {
+                                task: task_name.to_string(),
+                                provider: remote.provider.clone(),
+                            });
+                        };
+
+                        if extension.api_version != 1 {
+                            return Err(RunError::UnsupportedBackendProviderVersion {
+                                task: task_name.to_string(),
+                                provider: remote.provider.clone(),
+                                api_version: extension.api_version,
+                            });
+                        }
+
+                        Ok(ResolvedExecutionBackend::BackendProvider {
+                            provider: remote.provider.clone(),
+                            command: extension.command.clone(),
+                            target,
+                            cwd: remote.cwd.clone(),
+                        })
+                    }
+                })
+        }
     }
 }
 
@@ -4159,12 +4341,21 @@ pub(crate) fn resolve_context_execution_backend(
                     .ok_or_else(|| RunError::MissingContainerLifecycle {
                         task: format!("context:{context_name}"),
                     })?;
+            let context_task_name = format!("context:{context_name}");
+            let memory_field_prefix = format!("execution.contexts.{context_name}.container");
+            let memory_bytes = container_memory_override_or_default(
+                context_task_name.as_str(),
+                container,
+                memory_field_prefix.as_str(),
+                None,
+            )?;
 
             Ok(ResolvedExecutionBackend::Container {
                 context_name: Some(context_name.to_string()),
                 image: container.image.clone(),
                 engine,
                 lifecycle,
+                memory_bytes,
                 compose_networks: compose_networks_for_context(context),
                 publications: Vec::new(),
                 dependency_isolation_paths: context_dependency_isolation_paths(context),
@@ -5153,6 +5344,7 @@ fn execute_container_task_command(
     image: &str,
     engine: &str,
     lifecycle: Lifecycle,
+    memory_bytes: Option<u64>,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     dependency_isolation_paths: &[String],
@@ -5215,6 +5407,7 @@ fn execute_container_task_command(
                     secret_env_names,
                     image,
                     engine,
+                    memory_bytes,
                     compose_networks,
                     &projection.publications,
                     &projection.listener_publications,
@@ -5296,6 +5489,7 @@ fn execute_container_task_command(
                 secret_env_names,
                 image,
                 engine,
+                memory_bytes,
                 compose_networks,
                 &projection.publications,
                 &projection.listener_publications,
@@ -5515,14 +5709,19 @@ fn execute_ephemeral_container_task_command(
     secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
+    memory_bytes: Option<u64>,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     dependency_isolation_paths: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let identity_seed =
-        container_identity_seed(context_name, publications, dependency_isolation_paths);
+    let identity_seed = container_identity_seed(
+        context_name,
+        publications,
+        dependency_isolation_paths,
+        memory_bytes,
+    );
     let container_name =
         ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
     preflight_container_host_publications(task_name, listener_publications)?;
@@ -5557,6 +5756,7 @@ fn execute_ephemeral_container_task_command(
             .arg(format!("{volume_name}:{container_path}"));
     }
     append_container_publication_args(&mut create, publications);
+    append_container_memory_arg(&mut create, memory_bytes);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             create.env(name, value);
@@ -5714,14 +5914,19 @@ fn execute_persistent_container_task_command(
     secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
+    memory_bytes: Option<u64>,
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     dependency_isolation_paths: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let identity_seed =
-        container_identity_seed(context_name, publications, dependency_isolation_paths);
+    let identity_seed = container_identity_seed(
+        context_name,
+        publications,
+        dependency_isolation_paths,
+        memory_bytes,
+    );
     let container_name =
         persistent_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
     let family_token = persistent_container_family_token(task_name, context_name);
@@ -5731,6 +5936,7 @@ fn execute_persistent_container_task_command(
         engine,
         publications,
         dependency_isolation_paths,
+        memory_bytes,
     );
 
     let mut reconciliation = match ensure_persistent_container_ready(
@@ -5744,6 +5950,7 @@ fn execute_persistent_container_task_command(
         family_token.as_str(),
         shape_token.as_str(),
         compose_networks,
+        memory_bytes,
         publications,
         listener_publications,
         dependency_isolation_paths,
@@ -5778,6 +5985,7 @@ fn execute_persistent_container_task_command(
                 family_token.as_str(),
                 shape_token.as_str(),
                 compose_networks,
+                memory_bytes,
                 publications,
                 listener_publications,
                 dependency_isolation_paths,
@@ -5831,6 +6039,7 @@ fn execute_persistent_container_task_command(
             family_token.as_str(),
             shape_token.as_str(),
             compose_networks,
+            memory_bytes,
             publications,
             listener_publications,
             dependency_isolation_paths,
@@ -5942,6 +6151,7 @@ fn ensure_persistent_container_ready(
     family_token: &str,
     shape_token: &str,
     compose_networks: &[String],
+    memory_bytes: Option<u64>,
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     dependency_isolation_paths: &[String],
@@ -5970,6 +6180,7 @@ fn ensure_persistent_container_ready(
             family_token,
             shape_token,
             compose_networks,
+            memory_bytes,
             publications,
             listener_publications,
             dependency_isolation_paths,
@@ -6026,6 +6237,7 @@ fn ensure_persistent_container_ready(
                 family_token,
                 shape_token,
                 compose_networks,
+                memory_bytes,
                 publications,
                 listener_publications,
                 dependency_isolation_paths,
@@ -6408,6 +6620,7 @@ fn create_persistent_container(
     family_token: &str,
     shape_token: &str,
     compose_networks: &[String],
+    memory_bytes: Option<u64>,
     publications: &[ContainerPortPublication],
     listener_publications: &[(String, ContainerPortPublication)],
     dependency_isolation_paths: &[String],
@@ -6453,6 +6666,7 @@ fn create_persistent_container(
         args.push(format!("{volume_name}:{container_path}"));
     }
     append_container_publication_vec(&mut args, publications);
+    append_container_memory_vec(&mut args, memory_bytes);
     args.push(image.to_string());
     args.push("-lc".to_string());
     args.push("while true; do sleep 3600; done".to_string());
@@ -6478,6 +6692,19 @@ fn append_container_publication_vec(
     for publication in publications {
         args.push("-p".to_string());
         args.push(container_publication_arg(publication));
+    }
+}
+
+fn append_container_memory_arg(command: &mut Command, memory_bytes: Option<u64>) {
+    if let Some(memory_bytes) = memory_bytes {
+        command.arg("--memory").arg(memory_bytes.to_string());
+    }
+}
+
+fn append_container_memory_vec(args: &mut Vec<String>, memory_bytes: Option<u64>) {
+    if let Some(memory_bytes) = memory_bytes {
+        args.push("--memory".to_string());
+        args.push(memory_bytes.to_string());
     }
 }
 
@@ -7378,7 +7605,7 @@ mod tests {
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
         TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec,
         TaskRuntimePortMode, TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
-        TaskRuntimeSpec,
+        TaskRuntimeSpec, parse_memory_size_bytes,
     };
 
     #[test]
@@ -9571,6 +9798,292 @@ tasks:
         assert!(!fixture.dir.path().join("service.txt").exists());
     }
 
+    #[test]
+    fn run_task_captured_rejects_memory_override_for_native_before_side_effects() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    start: printf started > service.txt
+    healthcheck: test -f service.txt
+tasks:
+  dev:
+    requires_services:
+      - postgres
+    run: echo ok
+"#,
+        );
+
+        let error = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                memory: Some(parse_memory_size_bytes("2GiB").unwrap()),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("native execution should reject --memory override");
+        assert!(matches!(
+            error,
+            RunError::MemoryOverrideUnsupportedBackend { task, backend }
+                if task == "dev" && backend == "native"
+        ));
+        assert!(!fixture.dir.path().join("service.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_memory_defaults_and_overrides_flow_to_engine_and_reconcile_persistent_shape() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = super::run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect("persistent run should succeed with default memory");
+        let second = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                memory: Some(parse_memory_size_bytes("4GiB").unwrap()),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("memory override run should succeed");
+        let too_small = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                memory: Some(parse_memory_size_bytes("1024MiB").unwrap()),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("memory override below minimum should fail");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-memory.txt")).unwrap(),
+            parse_memory_size_bytes("4GiB").unwrap().to_string()
+        );
+        assert!(
+            second
+                .task_steps
+                .first()
+                .and_then(|step| step.execution_note.as_deref())
+                .is_some_and(|note| note.contains("persistent container recreated")),
+            "memory drift should trigger persistent reconciliation"
+        );
+        assert!(matches!(
+            too_small,
+            RunError::MemoryOverrideBelowMinimum { task, .. } if task == "dev"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_container_memory_default_and_override_reach_engine_create_args() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        resources:
+          memory:
+            default: 3GiB
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let default_outcome =
+            super::run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+                .expect("ephemeral run should succeed with contract default memory");
+        assert_eq!(default_outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-memory.txt")).unwrap(),
+            parse_memory_size_bytes("3GiB").unwrap().to_string()
+        );
+
+        let override_outcome = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                memory: Some(parse_memory_size_bytes("4GiB").unwrap()),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("ephemeral run should apply memory override");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(override_outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-memory.txt")).unwrap(),
+            parse_memory_size_bytes("4GiB").unwrap().to_string()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ephemeral_container_memory_minimum_without_default_requests_minimum() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        resources:
+          memory:
+            minimum: 2GiB
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = super::run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect("ephemeral run should request minimum memory when default is omitted");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-memory.txt")).unwrap(),
+            parse_memory_size_bytes("2GiB").unwrap().to_string()
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn run_task_captured_keeps_prepared_auto_container_runtime_when_port_lookup_disappears() {
@@ -10214,6 +10727,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                     image: String::from("rust:1.94-bookworm"),
                     engine: String::from("docker"),
                     lifecycle: Lifecycle::Ephemeral,
+                    memory_bytes: None,
                     compose_networks: Vec::new(),
                     publications: Vec::new(),
                     dependency_isolation_paths: Vec::new(),
@@ -11310,6 +11824,7 @@ tasks:
                 backend: Some(Backend::Container),
                 lifecycle: Some(Lifecycle::Persistent),
                 host_port: Some(53124),
+                memory: None,
             },
         )
         .unwrap();
@@ -11796,6 +12311,7 @@ tasks:
                 backend: Some(crate::schema::Backend::Container),
                 lifecycle: Some(crate::schema::Lifecycle::Ephemeral),
                 host_port: None,
+                memory: None,
             },
         )
         .unwrap();
@@ -11949,6 +12465,7 @@ tasks:
                 backend: Some(Backend::Container),
                 lifecycle: None,
                 host_port: None,
+                memory: None,
             },
         )
         .unwrap_err();
@@ -13704,7 +14221,7 @@ tasks:
         assert_eq!(
             cleanup_targets
                 .iter()
-                .filter_map(|(context_name, _, _, _, _, _)| context_name.as_deref())
+                .filter_map(|(context_name, _, _, _, _, _, _)| context_name.as_deref())
                 .collect::<Vec<_>>(),
             vec!["web", LEGACY_EXECUTION_CONTEXT_NAME]
         );
@@ -13712,9 +14229,10 @@ tasks:
 
     #[test]
     fn persistent_container_identity_changes_when_dependency_isolation_paths_change() {
-        let base_seed = container_identity_seed(Some("app"), &[], &[]).expect("seed should exist");
+        let base_seed =
+            container_identity_seed(Some("app"), &[], &[], None).expect("seed should exist");
         let isolated_seed =
-            container_identity_seed(Some("app"), &[], &[String::from("node_modules")])
+            container_identity_seed(Some("app"), &[], &[String::from("node_modules")], None)
                 .expect("seed should exist");
 
         assert_ne!(base_seed, isolated_seed);
@@ -14430,6 +14948,7 @@ case "$command" in
     labels=""
     env_entries=""
     pub_entries=""
+    memory=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --rm|-i)
@@ -14468,6 +14987,10 @@ case "$command" in
         -p)
           pub_entries="${pub_entries}${2}
 "
+          shift 2
+          ;;
+        --memory)
+          memory="$2"
           shift 2
           ;;
         --env)
@@ -14510,6 +15033,13 @@ case "$command" in
     else
       : > "$state_dir/$name.publish"
     fi
+    if [ -n "$memory" ]; then
+      printf "%s" "$memory" > "$state_dir/$name.memory"
+      printf "%s" "$memory" > "$host_dir/docker-memory.txt"
+    else
+      rm -f "$state_dir/$name.memory"
+      : > "$host_dir/docker-memory.txt"
+    fi
     if [ -n "$labels" ]; then
       printf "%s" "$labels" > "$state_dir/$name.labels"
     fi
@@ -14534,6 +15064,7 @@ case "$command" in
     labels=""
     network=""
     pub_entries=""
+    memory=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -14578,6 +15109,10 @@ case "$command" in
 "
           shift 2
           ;;
+        --memory)
+          memory="$2"
+          shift 2
+          ;;
         --env)
           export "$2"
           shift 2
@@ -14592,6 +15127,13 @@ case "$command" in
     host_dir="${workspace_mount%%:*}"
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
+    if [ -n "$memory" ]; then
+      printf "%s" "$memory" > "$state_dir/$name.memory"
+      printf "%s" "$memory" > "$host_dir/docker-memory.txt"
+    else
+      rm -f "$state_dir/$name.memory"
+      : > "$host_dir/docker-memory.txt"
+    fi
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
       printf "%s" "$mounts" > "$state_dir/$name.mounts"
@@ -14791,6 +15333,7 @@ EOF
     rm -f "$state_dir/$name.mounts"
     rm -f "$state_dir/$name.command"
     rm -f "$state_dir/$name.env"
+    rm -f "$state_dir/$name.memory"
     rm -f "$state_dir/$name.exit-code"
     rm -f "$state_dir/$name.oom-killed"
     printf "rm\n" >> "$host_dir/docker-log.txt"

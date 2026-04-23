@@ -105,6 +105,10 @@ execution:
       lifecycle: persistent
       container:
         image: maven:3.9.14-eclipse-temurin-21-noble
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
       attachments:
         compose:
           - local
@@ -117,6 +121,12 @@ execution:
 ```
 
 This keeps `docker` on the host context instead of pretending the app container should carry it.
+
+Container resource settings stay on the context so task identity stays stable:
+
+- `container.resources.memory.minimum` declares the lowest supported memory for that container context
+- `container.resources.memory.default` declares the default engine memory request
+- `ota run <task> --memory <size>` overrides one run when the selected task resolves to container execution
 
 ### `tasks.<name>.context`
 
@@ -263,6 +273,7 @@ This keeps the boundary honest:
 - with multiple projected listeners, mark exactly one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and the primary endpoint line
 - in container contexts with `project.host.port.mode: auto`, ota injects runtime URL env values before command execution; ephemeral runs pre-reserve host ports before start, while persistent runs reconcile named containers and then resolve the published mapping
 - `ota run <task> --host-port <port>` overrides one run's published host/public port when the selected projected listener is `project.host.port.mode: fixed`; app bind ports stay unchanged
+- `ota run <task> --memory <size>` overrides one run's requested container memory without changing task/runtime listener contract shape
 - `ota run dev` records the same resolved host endpoint ota injected into runtime env
 - `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`
 - readiness remains separate from ingress projection
