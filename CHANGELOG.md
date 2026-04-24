@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- refreshed the README entry surface with a tighter brand hero, release/status badges, a reduced primary nav, and direct links to the live get-started, docs, reference, examples, governance, releases, Discord, and X surfaces
 - added execution-selection shortcut flags for quicker override ergonomics: `ota run`, `ota up`, `ota execution plan`, and `ota workspace execution plan` now support `--native` (`--mode native`), `--container` (`--mode container`), and `--persistent` (`--lifecycle persistent`) alongside `--ephemeral`, with updated help/completion boundary handling
 - made streaming run interruption semantics explicit: user `Ctrl+C` now classifies as `interrupted` across run summaries/receipts (including service workloads), interrupted service-termination classification now wins over generic post-readiness stop wording, receipt step/status metadata aligns with intentional interruption instead of generic failure text, and late post-exit interrupts no longer overwrite concrete non-zero task/container failure causes
 - added `ota run --log` durable run artifacts under `.ota/state/logs/<run-id>/` (`stdout.log` and `stderr.log`) for native/container runs, including ephemeral container runs that clean up immediately after failure or interruption; run receipts/summaries now surface log paths, streamed runs now tee output into the same artifacts, and log-capture write failures are surfaced directly in run output notes instead of failing silently
