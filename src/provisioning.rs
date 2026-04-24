@@ -3460,13 +3460,13 @@ fn command_output(
             let stdout_notifier = notifier.clone();
             let stdout_handle = child.stdout.take().map(|stdout| {
                 thread::spawn(move || {
-                    stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, true)
+                    stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, true, None)
                 })
             });
             let stderr_notifier = notifier;
             let stderr_handle = child.stderr.take().map(|stderr| {
                 thread::spawn(move || {
-                    stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, true)
+                    stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, true, None)
                 })
             });
 
@@ -3836,6 +3836,7 @@ mod tests {
             &mut sink,
             None,
             true,
+            None,
         )
         .unwrap();
         assert_eq!(captured, "streamed-output");

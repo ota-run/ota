@@ -24,11 +24,11 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
@@ -100,10 +100,10 @@ use crate::runner::{
     ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
-    StaleContainerOwnership, TaskExecutionRelation, clean_execution_report, clean_stale_execution,
-    effective_execution, effective_task_execution, env_resolution_source_label,
-    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, reported_task_context_for_backend,
+    StaleContainerOwnership, StreamLogTee, TaskExecutionRelation, clean_execution_report,
+    clean_stale_execution, effective_execution, effective_task_execution,
+    env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
+    named_execution_context, persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
     resolve_task_env_details_with_policy, run_streaming_command_with_loader,
     run_task_captured_with_args_with_overrides_with_policy,
@@ -27776,6 +27776,12 @@ struct RunLogCaptureResult {
     warning: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct PreparedStreamingRunLogs {
+    capture: RunLogCaptureResult,
+    live_log: Option<StreamLogTee>,
+}
+
 fn capture_durable_run_logs(
     contract_path: &Path,
     task_name: &str,
@@ -27803,13 +27809,71 @@ fn capture_durable_run_logs(
     }
 }
 
-fn write_durable_run_logs(
+fn prepare_streaming_durable_run_logs(
     contract_path: &Path,
     task_name: &str,
     member: Option<&str>,
-    stdout: &str,
-    stderr: &str,
-) -> Result<ExecutionReceiptLogs, String> {
+    enabled: bool,
+) -> PreparedStreamingRunLogs {
+    if !enabled {
+        return PreparedStreamingRunLogs {
+            capture: RunLogCaptureResult {
+                logs: None,
+                warning: None,
+            },
+            live_log: None,
+        };
+    }
+
+    match create_durable_run_log_paths(contract_path, task_name, member) {
+        Ok((logs, stdout_path, stderr_path)) => {
+            let stdout = File::create(&stdout_path).map_err(|error| {
+                format!(
+                    "failed to create stdout log `{}`: {error}",
+                    compact_path(&stdout_path, ".")
+                )
+            });
+            let stderr = File::create(&stderr_path).map_err(|error| {
+                format!(
+                    "failed to create stderr log `{}`: {error}",
+                    compact_path(&stderr_path, ".")
+                )
+            });
+            match (stdout, stderr) {
+                (Ok(stdout), Ok(stderr)) => PreparedStreamingRunLogs {
+                    capture: RunLogCaptureResult {
+                        logs: Some(logs),
+                        warning: None,
+                    },
+                    live_log: Some(StreamLogTee {
+                        stdout: Arc::new(Mutex::new(stdout)),
+                        stderr: Arc::new(Mutex::new(stderr)),
+                    }),
+                },
+                (Err(error), _) | (_, Err(error)) => PreparedStreamingRunLogs {
+                    capture: RunLogCaptureResult {
+                        logs: None,
+                        warning: Some(format!("log capture failed: {error}")),
+                    },
+                    live_log: None,
+                },
+            }
+        }
+        Err(error) => PreparedStreamingRunLogs {
+            capture: RunLogCaptureResult {
+                logs: None,
+                warning: Some(format!("log capture failed: {error}")),
+            },
+            live_log: None,
+        },
+    }
+}
+
+fn create_durable_run_log_paths(
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+) -> Result<(ExecutionReceiptLogs, PathBuf, PathBuf), String> {
     let repo_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let logs_root = repo_root.join(".ota").join("state").join("logs");
     fs::create_dir_all(&logs_root).map_err(|error| {
@@ -27841,6 +27905,26 @@ fn write_durable_run_logs(
 
     let stdout_path = run_dir.join("stdout.log");
     let stderr_path = run_dir.join("stderr.log");
+    Ok((
+        ExecutionReceiptLogs {
+            dir: repo_relative_log_path(repo_root, &run_dir),
+            stdout: repo_relative_log_path(repo_root, &stdout_path),
+            stderr: repo_relative_log_path(repo_root, &stderr_path),
+        },
+        stdout_path,
+        stderr_path,
+    ))
+}
+
+fn write_durable_run_logs(
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<ExecutionReceiptLogs, String> {
+    let (logs, stdout_path, stderr_path) =
+        create_durable_run_log_paths(contract_path, task_name, member)?;
     fs::write(&stdout_path, stdout).map_err(|error| {
         format!(
             "failed to write stdout log `{}`: {error}",
@@ -27854,11 +27938,7 @@ fn write_durable_run_logs(
         )
     })?;
 
-    Ok(ExecutionReceiptLogs {
-        dir: repo_relative_log_path(repo_root, &run_dir),
-        stdout: repo_relative_log_path(repo_root, &stdout_path),
-        stderr: repo_relative_log_path(repo_root, &stderr_path),
-    })
+    Ok(logs)
 }
 
 fn sanitize_log_component(value: &str, fallback: &str) -> String {
@@ -27982,6 +28062,12 @@ fn run_single_contract_target_streaming(
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let task_name = canonical_declared_task_name(&target.contract, task_name);
+    let prepared_logs = prepare_streaming_durable_run_logs(
+        &target.contract_path,
+        task_name.as_str(),
+        member,
+        persist_logs,
+    );
     match run_task_with_args_with_overrides_and_stream_capture(
         &target.contract,
         &target.contract_path,
@@ -27989,16 +28075,21 @@ fn run_single_contract_target_streaming(
         task_inputs,
         overrides,
         persist_logs,
+        prepared_logs.live_log.clone(),
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
-            let log_capture = capture_durable_run_logs(
-                &target.contract_path,
-                task_name.as_str(),
-                member,
-                &outcome.stdout,
-                &outcome.stderr,
-                persist_logs,
-            );
+            let log_capture = if prepared_logs.capture.logs.is_some() {
+                prepared_logs.capture.clone()
+            } else {
+                capture_durable_run_logs(
+                    &target.contract_path,
+                    task_name.as_str(),
+                    member,
+                    &outcome.stdout,
+                    &outcome.stderr,
+                    persist_logs,
+                )
+            };
             let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -28041,14 +28132,18 @@ fn run_single_contract_target_streaming(
             Ok(output)
         }
         Ok(outcome) => {
-            let log_capture = capture_durable_run_logs(
-                &target.contract_path,
-                task_name.as_str(),
-                member,
-                &outcome.stdout,
-                &outcome.stderr,
-                persist_logs,
-            );
+            let log_capture = if prepared_logs.capture.logs.is_some() {
+                prepared_logs.capture.clone()
+            } else {
+                capture_durable_run_logs(
+                    &target.contract_path,
+                    task_name.as_str(),
+                    member,
+                    &outcome.stdout,
+                    &outcome.stderr,
+                    persist_logs,
+                )
+            };
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
             let mut receipt = run_execution_receipt(
                 &target.contract,
@@ -28107,14 +28202,18 @@ fn run_single_contract_target_streaming(
         }
         Err(error) => {
             let error_detail = error.to_string();
-            let log_capture = capture_durable_run_logs(
-                &target.contract_path,
-                task_name.as_str(),
-                member,
-                "",
-                &error_detail,
-                persist_logs,
-            );
+            let log_capture = if prepared_logs.capture.logs.is_some() {
+                prepared_logs.capture.clone()
+            } else {
+                capture_durable_run_logs(
+                    &target.contract_path,
+                    task_name.as_str(),
+                    member,
+                    "",
+                    &error_detail,
+                    persist_logs,
+                )
+            };
             let next_note = match &error {
                 RunError::RuntimeListenerResolutionFailed {
                     task,
@@ -35465,6 +35564,7 @@ fn run_up_setup_task(
             &[],
             overrides,
             false,
+            None,
             policy_env,
         )
         .map(|outcome| CommandRunResult {
@@ -38697,6 +38797,7 @@ fn run_workspace_repo_task(
                         task_args,
                         ExecutionOverrides::default(),
                         false,
+                        None,
                         Some(&repo.policy_env),
                     )
                     .map(|result| CommandRunResult {
