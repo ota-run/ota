@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- made `ota init`, `ota init --pack ...`, and repo-contract detect write flows (`ota detect --write`, `--merge`, `--rewrite`) automatically create or extend repo `.gitignore` files with `.ota/state/` so local Ota runtime state stays out of source control by default
+- added a first safe `ota doctor --fix` path with `--dry-run` preview mode, currently scoped to deterministic repo-hygiene repair for `.ota/state/` gitignore protection (`# Ota local runtime state` + `.ota/state/`) with planned/applied status surfaced in text and JSON output
 - added additive named-context inheritance for execution topology: `execution.contexts.<name>.extends` now resolves parent context shape with deterministic merge semantics (scalars override, maps merge, lists replace) while preserving both existing single-context shorthand (`execution.preferred`/`execution.lifecycle`/`execution.backends`) and existing named-context contracts
 - moved `execution.contexts.<name>.extends` semantic failures (`unknown parent`, `cycle`, unresolved backend) into validator findings, and now reject backend-family switches across inheritance (`container`/`remote`/`native`) with explicit errors instead of inherited cross-backend drift
 - made runtime context selection consume resolved named-context inheritance across execution planning and diagnosis surfaces (`ota execution plan`, `ota up`, `ota run`, and doctor mode context checks) while preserving existing shorthand behavior for single-context contracts
@@ -33,6 +35,7 @@
 - tightened streamed service-stop classification so inspected container exit evidence wins over late interrupt flags, preserving real crash/exit causes instead of rewriting them as `Interrupted`
 - made persistent container reconciliation treat Compose attachment namespaces as part of execution shape, so changing `execution.contexts.<name>.attachments.compose` now recreates stale persistent backends instead of silently reusing containers bound to the old Compose network family
 - made streamed `ota up` provisioning progress environment-aware: the loader now shows the selected native/container/remote target and container lifecycle/image where relevant instead of a generic preparation spinner
+- fixed Windows release installs and `ota self-update` / `ota upgrade` overwrite behavior in `scripts/bootstrap.ps1` so existing `ota.exe` is replaced via copy-and-cleanup semantics instead of failing with PowerShell `Move-Item` "file already exists" errors
 
 ## 1.6.1
 

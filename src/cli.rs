@@ -207,6 +207,12 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Apply supported safe deterministic doctor fixes for this repo.
+        #[arg(long, action = ArgAction::SetTrue)]
+        fix: bool,
+        /// Preview supported doctor fixes without writing files. Requires `--fix`.
+        #[arg(long, action = ArgAction::SetTrue, requires = "fix")]
+        dry_run: bool,
         /// Diagnose readiness in a specific execution context.
         #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
         mode: DoctorModeArg,
@@ -3774,6 +3780,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Doctor {
             json,
+            fix,
+            dry_run,
             mode,
             member,
             path,
@@ -3781,6 +3789,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             &member,
+            fix,
+            dry_run,
             mode.into(),
             format_from_json(json),
             debug,
@@ -17896,6 +17906,25 @@ policies:
     }
 
     #[test]
+    fn init_write_creates_gitignore_for_ota_state() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert!(gitignore.contains("# Ota local runtime state"));
+        assert!(gitignore.contains(".ota/state/"));
+    }
+
+    #[test]
     fn init_write_followup_commands_keep_repo_target_for_default_contracts() {
         let _guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
@@ -18385,6 +18414,20 @@ policies:
         assert!(written.contains("test:"));
         assert!(written.contains("description: Run the default automated test command."));
         assert!(written.contains("run: pnpm test"));
+    }
+
+    #[test]
+    fn init_pack_write_does_not_duplicate_existing_ota_state_ignore_rule() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(".gitignore", "node_modules/\n.ota/state/*\n");
+
+        let output = run_with(["ota", "init", "--pack", "node", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert_eq!(gitignore.matches(".ota/state/*").count(), 1);
+        assert!(!gitignore.contains("# Ota local runtime state"));
+        assert!(!gitignore.contains(".ota/state/\n"));
     }
 
     #[test]
@@ -22862,6 +22905,234 @@ tasks:
         assert!(written.contains("tasks.dev.description: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
         assert!(!written.contains("node:"));
+    }
+
+    #[test]
+    fn detect_write_creates_gitignore_for_ota_state() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert!(gitignore.contains("# Ota local runtime state"));
+        assert!(gitignore.contains(".ota/state/"));
+    }
+
+    #[test]
+    fn doctor_reports_missing_ota_state_gitignore_rule_as_fixable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let finding = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .find(|finding| {
+                finding["code"] == "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE"
+                    && finding["severity"] == "warn"
+            })
+            .expect("expected fixable gitignore finding");
+        assert!(
+            finding["next"]
+                .as_str()
+                .is_some_and(|next| next.contains("ota doctor --fix --dry-run"))
+        );
+    }
+
+    #[test]
+    fn doctor_fix_dry_run_previews_without_writing_gitignore() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+
+        let output = run_with(["ota", "doctor", "--fix", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(!fixture.dir.path().join(".gitignore").exists());
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Fixes"));
+        assert!(stdout.contains("preview mode: no files were modified"));
+        assert!(stdout.contains("# Ota local runtime state"));
+        assert!(stdout.contains(".ota/state/"));
+    }
+
+    #[test]
+    fn doctor_dry_run_requires_fix_flag() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("the following required arguments were not provided")
+                || stderr.contains("requires")
+        );
+    }
+
+    #[test]
+    fn doctor_fix_creates_gitignore_when_missing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+
+        let output = run_with(["ota", "doctor", "--fix", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert_eq!(
+            gitignore,
+            String::from("# Ota local runtime state\n.ota/state/\n")
+        );
+    }
+
+    #[test]
+    fn doctor_fix_appends_ota_state_rule_when_missing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+        fixture.write(".gitignore", "node_modules/\n");
+
+        let output = run_with(["ota", "doctor", "--fix", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert_eq!(
+            gitignore,
+            String::from("node_modules/\n\n# Ota local runtime state\n.ota/state/\n")
+        );
+    }
+
+    #[test]
+    fn doctor_fix_does_not_duplicate_existing_ota_state_ignore_rule() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+        fixture.write(".gitignore", ".ota/state/*\n");
+
+        let output = run_with(["ota", "doctor", "--fix", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert_eq!(gitignore, String::from(".ota/state/*\n"));
+    }
+
+    #[test]
+    fn doctor_fix_json_reports_planned_and_applied_actions() {
+        let dry_run_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(dry_run_fixture.dir.path().join(".git")).unwrap();
+
+        let dry_run = run_with([
+            "ota",
+            "doctor",
+            "--fix",
+            "--dry-run",
+            "--json",
+            dry_run_fixture.path(),
+        ]);
+        assert_eq!(dry_run.exit_code, 0);
+        let dry_run_json: Value = serde_json::from_str(&dry_run.stdout).unwrap();
+        assert_eq!(dry_run_json["fix"]["requested"], true);
+        assert_eq!(dry_run_json["fix"]["dry_run"], true);
+        assert_eq!(dry_run_json["fix"]["planned_count"], 1);
+        assert_eq!(dry_run_json["fix"]["applied_count"], 0);
+        assert_eq!(dry_run_json["fix"]["actions"][0]["status"], "planned");
+        assert!(dry_run_json["fix"]["actions"][0]["preview"].is_string());
+        assert!(!dry_run_fixture.dir.path().join(".gitignore").exists());
+
+        let apply_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(apply_fixture.dir.path().join(".git")).unwrap();
+
+        let applied = run_with(["ota", "doctor", "--fix", "--json", apply_fixture.path()]);
+        assert_eq!(applied.exit_code, 0);
+        let applied_json: Value = serde_json::from_str(&applied.stdout).unwrap();
+        assert_eq!(applied_json["fix"]["requested"], true);
+        assert_eq!(applied_json["fix"]["dry_run"], false);
+        assert_eq!(applied_json["fix"]["planned_count"], 1);
+        assert_eq!(applied_json["fix"]["applied_count"], 1);
+        assert_eq!(applied_json["fix"]["actions"][0]["status"], "applied");
+        assert!(applied_json["fix"]["actions"][0]["preview"].is_null());
     }
 
     #[test]
