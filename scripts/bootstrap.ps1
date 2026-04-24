@@ -278,7 +278,8 @@ while (`$parentPid -gt 0 -and `$waited -lt 1800 -and (Get-Process -Id `$parentPi
 `$attempt = 0
 while (`$attempt -lt 1800 -and (Test-Path -LiteralPath `$source)) {
     try {
-        Move-Item -Path `$source -Destination `$destination -Force
+        Copy-Item -Path `$source -Destination `$destination -Force
+        Remove-Item -LiteralPath `$source -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
         exit 0
     } catch {
@@ -418,7 +419,8 @@ function Install-ReleaseBinary {
             Copy-Item -Path $binary.FullName -Destination $staged -Force
             try
             {
-                Move-Item -Path $staged -Destination $destination -Force
+                Copy-Item -Path $staged -Destination $destination -Force
+                Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
             }
             catch [System.IO.IOException]
             {
