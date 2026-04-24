@@ -884,6 +884,7 @@ pub struct RunOutcome {
     pub runtime: Option<ResolvedTaskRuntime>,
     pub service_termination: Option<ServiceTermination>,
     pub execution_note: Option<String>,
+    pub interrupted: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -897,6 +898,7 @@ pub struct CapturedRunOutcome {
     pub runtime: Option<ResolvedTaskRuntime>,
     pub service_termination: Option<ServiceTermination>,
     pub execution_note: Option<String>,
+    pub interrupted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -1558,6 +1560,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
         runtime: outcome.runtime,
         service_termination: outcome.service_termination,
         execution_note: outcome.execution_note,
+        interrupted: outcome.interrupted,
     })
 }
 
@@ -1669,9 +1672,16 @@ pub(crate) fn run_interrupt_requested() -> bool {
     RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed)
 }
 
-#[cfg(test)]
-pub(crate) fn set_run_interrupt_requested(value: bool) {
-    RUN_INTERRUPT_REQUESTED.store(value, Ordering::Relaxed);
+fn is_interrupt_exit_code(exit_code: i32) -> bool {
+    exit_code == 130 || exit_code == 143
+}
+
+fn interruption_observed_for_exit(exit_code: i32) -> bool {
+    run_interrupt_requested() && is_interrupt_exit_code(exit_code)
+}
+
+fn interruption_execution_note(interrupted: bool) -> Option<String> {
+    interrupted.then(|| String::from("task interrupted by user"))
 }
 
 pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
@@ -2246,6 +2256,7 @@ pub(crate) struct TaskCommandOutput {
     pub(crate) runtime: Option<ResolvedTaskRuntime>,
     pub(crate) service_termination: Option<ServiceTermination>,
     pub(crate) execution_note: Option<String>,
+    pub(crate) interrupted: bool,
 }
 
 #[derive(Debug, Default)]
@@ -2261,6 +2272,7 @@ struct TaskRunState {
     runtime: Option<ResolvedTaskRuntime>,
     service_termination: Option<ServiceTermination>,
     execution_note: Option<String>,
+    interrupted: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -2475,6 +2487,7 @@ fn run_task_internal(
         runtime: state.runtime,
         service_termination: state.service_termination,
         execution_note: state.execution_note,
+        interrupted: state.interrupted,
     })
 }
 
@@ -2562,6 +2575,7 @@ fn run_host_shell_command(
                     runtime: None,
                     service_termination: None,
                     execution_note: None,
+                    interrupted: false,
                 })
             } else {
                 process
@@ -2579,6 +2593,7 @@ fn run_host_shell_command(
                         runtime: None,
                         service_termination: None,
                         execution_note: None,
+                        interrupted: false,
                     })
                     .map_err(|error| format!("failed to execute `{command}`: {error}"))
             }
@@ -2598,6 +2613,7 @@ fn run_host_shell_command(
                 runtime: None,
                 service_termination: None,
                 execution_note: None,
+                interrupted: false,
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }
@@ -2802,6 +2818,7 @@ fn execute_task_with_hooks(
         if let Some(note) = requested_execution_note.clone() {
             state.execution_note = Some(note);
         }
+        state.interrupted = command_output.interrupted;
     }
     state.task_steps.push(ExecutedTaskStep {
         name: task_name.to_string(),
@@ -4680,6 +4697,7 @@ fn execute_remote_task_command(
                         task: task_name.to_string(),
                         source,
                     })?;
+                    let interrupted = interruption_observed_for_exit(output.exit_code);
                     Ok(TaskCommandOutput {
                         exit_code: output.exit_code,
                         stdout: output.stdout,
@@ -4687,7 +4705,8 @@ fn execute_remote_task_command(
                         target: Some(target.to_string()),
                         runtime: None,
                         service_termination: None,
-                        execution_note: None,
+                        execution_note: interruption_execution_note(interrupted),
+                        interrupted,
                     })
                 } else {
                     let exit_code = run_streaming_command_with_loader(
@@ -4698,6 +4717,7 @@ fn execute_remote_task_command(
                         task: task_name.to_string(),
                         source,
                     })?;
+                    let interrupted = interruption_observed_for_exit(exit_code);
                     Ok(TaskCommandOutput {
                         exit_code,
                         stdout: String::new(),
@@ -4705,7 +4725,8 @@ fn execute_remote_task_command(
                         target: Some(target.to_string()),
                         runtime: None,
                         service_termination: None,
-                        execution_note: None,
+                        execution_note: interruption_execution_note(interrupted),
+                        interrupted,
                     })
                 }
             } else if capture_output {
@@ -4728,6 +4749,8 @@ fn execute_remote_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+                let exit_code = status.code().unwrap_or(1);
+                let interrupted = interruption_observed_for_exit(exit_code);
                 let stdout =
                     join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
                         task: task_name.to_string(),
@@ -4739,13 +4762,14 @@ fn execute_remote_task_command(
                         source,
                     })?;
                 Ok(TaskCommandOutput {
-                    exit_code: status.code().unwrap_or(1),
+                    exit_code,
                     stdout,
                     stderr,
                     target: Some(target.to_string()),
                     runtime: None,
                     service_termination: None,
-                    execution_note: None,
+                    execution_note: interruption_execution_note(interrupted),
+                    interrupted,
                 })
             } else {
                 let exit_code = remote_command
@@ -4759,6 +4783,7 @@ fn execute_remote_task_command(
                     })?
                     .code()
                     .unwrap_or(1);
+                let interrupted = interruption_observed_for_exit(exit_code);
 
                 Ok(TaskCommandOutput {
                     exit_code,
@@ -4767,7 +4792,8 @@ fn execute_remote_task_command(
                     target: Some(target.to_string()),
                     runtime: None,
                     service_termination: None,
-                    execution_note: None,
+                    execution_note: interruption_execution_note(interrupted),
+                    interrupted,
                 })
             }
         }
@@ -4782,15 +4808,17 @@ fn execute_remote_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-
+            let exit_code = output.status.code().unwrap_or(1);
+            let interrupted = interruption_observed_for_exit(exit_code);
             Ok(TaskCommandOutput {
-                exit_code: output.status.code().unwrap_or(1),
+                exit_code,
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(target.to_string()),
                 runtime: None,
                 service_termination: None,
-                execution_note: None,
+                execution_note: interruption_execution_note(interrupted),
+                interrupted,
             })
         }
     }
@@ -5112,6 +5140,7 @@ fn backend_provider_output(
         runtime: None,
         service_termination: None,
         execution_note: None,
+        interrupted: false,
     })
 }
 
@@ -5278,14 +5307,17 @@ fn execute_native_task_command(
                     loader.stop();
                 }
 
+                let exit_code = status.code().unwrap_or(1);
+                let interrupted = interruption_observed_for_exit(exit_code);
                 Ok(TaskCommandOutput {
-                    exit_code: status.code().unwrap_or(1),
+                    exit_code,
                     stdout,
                     stderr,
                     target: None,
                     runtime,
                     service_termination: None,
-                    execution_note: None,
+                    execution_note: interruption_execution_note(interrupted),
+                    interrupted,
                 })
             } else {
                 let mut child = if capture_output {
@@ -5339,14 +5371,17 @@ fn execute_native_task_command(
                         source,
                     })?;
 
+                let exit_code = status.code().unwrap_or(1);
+                let interrupted = interruption_observed_for_exit(exit_code);
                 Ok(TaskCommandOutput {
-                    exit_code: status.code().unwrap_or(1),
+                    exit_code,
                     stdout,
                     stderr,
                     target: None,
                     runtime,
                     service_termination: None,
-                    execution_note: None,
+                    execution_note: interruption_execution_note(interrupted),
+                    interrupted,
                 })
             }
         }
@@ -5384,14 +5419,17 @@ fn execute_native_task_command(
                     source,
                 })?;
 
+            let exit_code = status.code().unwrap_or(1);
+            let interrupted = interruption_observed_for_exit(exit_code);
             Ok(TaskCommandOutput {
-                exit_code: status.code().unwrap_or(1),
+                exit_code,
                 stdout,
                 stderr,
                 target: None,
                 runtime,
                 service_termination: None,
-                execution_note: None,
+                execution_note: interruption_execution_note(interrupted),
+                interrupted,
             })
         }
     }
@@ -5676,6 +5714,7 @@ fn execute_container_task_command(
             runtime: None,
             service_termination: None,
             execution_note: None,
+            interrupted: false,
         });
     }
 
@@ -5978,7 +6017,7 @@ fn classify_container_service_termination(
     readiness_observed: bool,
     termination_state: Option<&ContainerTerminationState>,
     exit_code: i32,
-    interrupted_by_user: bool,
+    interrupted: bool,
     container_name: &str,
 ) -> Option<ServiceTermination> {
     let runtime = runtime?;
@@ -5999,19 +6038,11 @@ fn classify_container_service_termination(
         .and_then(|state| state.exit_code)
         .unwrap_or(exit_code);
 
-    let cause = if interrupted_by_user {
-        if termination_state.and_then(|state| state.oom_killed) == Some(true) {
-            ServiceTerminationCause::OomKilled
-        } else if effective_exit_code == 130 || effective_exit_code == 143 {
-            ServiceTerminationCause::Interrupted
-        } else if effective_exit_code > 0 {
-            ServiceTerminationCause::ExitedNonZero
-        } else {
-            ServiceTerminationCause::Interrupted
-        }
-    } else if termination_state.and_then(|state| state.oom_killed) == Some(true) {
+    let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
         ServiceTerminationCause::OomKilled
-    } else if effective_exit_code == 130 || effective_exit_code == 143 {
+    } else if interrupted {
+        ServiceTerminationCause::Interrupted
+    } else if is_interrupt_exit_code(effective_exit_code) {
         ServiceTerminationCause::Interrupted
     } else if effective_exit_code > 0 {
         ServiceTerminationCause::ExitedNonZero
@@ -6213,6 +6244,7 @@ fn execute_ephemeral_container_task_command(
             runtime: None,
             service_termination: None,
             execution_note: None,
+            interrupted: false,
         });
     }
 
@@ -6243,7 +6275,7 @@ fn execute_ephemeral_container_task_command(
                     });
                 }
             };
-            let interrupted_by_user = run_interrupt_requested();
+            let interrupted_by_user = interruption_observed_for_exit(output.exit_code);
             let readiness_observed = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
                 .unwrap_or(false);
@@ -6262,11 +6294,7 @@ fn execute_ephemeral_container_task_command(
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
             }
-            let mut execution_note = if run_interrupt_requested() {
-                Some(String::from("task interrupted by user"))
-            } else {
-                None
-            };
+            let mut execution_note = interruption_execution_note(interrupted_by_user);
             if let Some(note) = service_termination
                 .as_ref()
                 .map(service_termination_execution_note)
@@ -6293,6 +6321,7 @@ fn execute_ephemeral_container_task_command(
                 runtime: prepared_runtime.clone(),
                 service_termination,
                 execution_note,
+                interrupted: interrupted_by_user,
             })
         }
         TaskExecutionMode::Capture => {
@@ -6316,7 +6345,7 @@ fn execute_ephemeral_container_task_command(
                 }
             })?;
             let output_exit_code = output.status.code().unwrap_or(1);
-            let interrupted_by_user = run_interrupt_requested();
+            let interrupted_by_user = interruption_observed_for_exit(output_exit_code);
             let readiness_observed = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
                 .unwrap_or(false);
@@ -6335,11 +6364,7 @@ fn execute_ephemeral_container_task_command(
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
             }
-            let mut execution_note = if run_interrupt_requested() {
-                Some(String::from("task interrupted by user"))
-            } else {
-                None
-            };
+            let mut execution_note = interruption_execution_note(interrupted_by_user);
             if let Some(note) = service_termination
                 .as_ref()
                 .map(service_termination_execution_note)
@@ -6366,6 +6391,7 @@ fn execute_ephemeral_container_task_command(
                 runtime: prepared_runtime,
                 service_termination,
                 execution_note,
+                interrupted: interrupted_by_user,
             })
         }
     }
@@ -6493,7 +6519,6 @@ fn execute_persistent_container_task_command(
         mode,
         &container_name,
     )?;
-    let interrupted_by_user = run_interrupt_requested();
     let readiness_observed = readiness_probe
         .map(RuntimeReadinessProbe::stop_and_collect)
         .unwrap_or(false);
@@ -6504,7 +6529,7 @@ fn execute_persistent_container_task_command(
         readiness_observed,
         termination_state.as_ref(),
         output.exit_code,
-        interrupted_by_user,
+        output.interrupted,
         &container_name,
     );
     if output.service_termination.is_some() && output.exit_code == 0 {
@@ -6567,7 +6592,6 @@ fn execute_persistent_container_task_command(
             mode,
             &container_name,
         )?;
-        let interrupted_by_user = run_interrupt_requested();
         let readiness_observed = readiness_probe
             .map(RuntimeReadinessProbe::stop_and_collect)
             .unwrap_or(false);
@@ -6579,7 +6603,7 @@ fn execute_persistent_container_task_command(
             readiness_observed,
             termination_state.as_ref(),
             output.exit_code,
-            interrupted_by_user,
+            output.interrupted,
             &container_name,
         );
         if output.service_termination.is_some() && output.exit_code == 0 {
@@ -7820,6 +7844,7 @@ fn container_command_failure(
         runtime: None,
         service_termination: None,
         execution_note: None,
+        interrupted: false,
     }
 }
 
@@ -7860,6 +7885,7 @@ fn exec_persistent_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+                let interrupted = interruption_observed_for_exit(output.exit_code);
                 Ok(TaskCommandOutput {
                     exit_code: output.exit_code,
                     stdout: output.stdout,
@@ -7867,7 +7893,8 @@ fn exec_persistent_container_task_command(
                     target: Some(container_name.to_string()),
                     runtime: None,
                     service_termination: None,
-                    execution_note: None,
+                    execution_note: interruption_execution_note(interrupted),
+                    interrupted,
                 })
             } else {
                 let exit_code = run_streaming_command_with_loader(
@@ -7878,6 +7905,7 @@ fn exec_persistent_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+                let interrupted = interruption_observed_for_exit(exit_code);
 
                 Ok(TaskCommandOutput {
                     exit_code,
@@ -7886,7 +7914,8 @@ fn exec_persistent_container_task_command(
                     target: Some(container_name.to_string()),
                     runtime: None,
                     service_termination: None,
-                    execution_note: None,
+                    execution_note: interruption_execution_note(interrupted),
+                    interrupted,
                 })
             }
         }
@@ -7901,15 +7930,17 @@ fn exec_persistent_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-
+            let exit_code = output.status.code().unwrap_or(1);
+            let interrupted = interruption_observed_for_exit(exit_code);
             Ok(TaskCommandOutput {
-                exit_code: output.status.code().unwrap_or(1),
+                exit_code,
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name.to_string()),
                 runtime: None,
                 service_termination: None,
-                execution_note: None,
+                execution_note: interruption_execution_note(interrupted),
+                interrupted,
             })
         }
     }
@@ -9583,6 +9614,7 @@ tasks:
                 runtime: None,
                 service_termination: None,
                 execution_note: None,
+                interrupted: false,
             }
         );
     }
@@ -12890,10 +12922,10 @@ tasks:
             Some(&resolved_runtime),
             true,
             Some(&super::ContainerTerminationState {
-                exit_code: Some(0),
+                exit_code: Some(130),
                 oom_killed: Some(false),
             }),
-            0,
+            130,
             true,
             "ota-ephemeral-test",
         )
@@ -12970,7 +13002,7 @@ tasks:
                 oom_killed: Some(false),
             }),
             1,
-            true,
+            false,
             "ota-ephemeral-test",
         )
         .expect("service termination should classify");
