@@ -26472,6 +26472,62 @@ tasks:
     }
 
     #[test]
+    fn interrupted_zero_exit_receipt_summary_status_is_interrupted() {
+        let mut receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("oven/bun:1.3.12-slim")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "dev",
+                "READY",
+                Some(String::from("requested task; task interrupted by user")),
+                Some(0),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 0,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        super::apply_interrupted_run_classification(&mut receipt, None, true);
+
+        assert!(!receipt.ok);
+        assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(!rendered.contains("Status:    success"), "{rendered}");
+    }
+
+    #[test]
     fn late_interrupt_signal_does_not_reclassify_non_interrupt_failures() {
         let mut receipt = ExecutionReceipt {
             ok: false,
@@ -29377,6 +29433,7 @@ fn apply_interrupted_run_classification(
         step.status = String::from("INTERRUPTED");
     }
 
+    receipt.ok = false;
     if receipt.summary.error_count > 0 {
         receipt.summary.error_count = 0;
     }
