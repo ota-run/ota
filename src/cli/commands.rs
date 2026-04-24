@@ -112,6 +112,7 @@ use crate::runner::{
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, ExtensionSpec, Lifecycle,
+    RequirementSurface,
     TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes, parse_memory_size_bytes,
 };
 use crate::update;
@@ -23461,6 +23462,102 @@ tasks:
     }
 
     #[test]
+    fn up_provisioning_actions_are_scoped_to_setup_context_requirements() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: scoped-up
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      requirements:
+        runtimes:
+          java: "21"
+    tooling:
+      backend: container
+      requirements:
+        runtimes:
+          node: "24"
+tasks:
+  setup:
+    context: app
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(crate::doctor::ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![
+                        ProvisioningAction {
+                            kind: ProvisioningActionKind::SelectSource,
+                            target_kind: ProvisioningTargetKind::Runtime,
+                            name: String::from("java"),
+                            requested_version: String::from("21"),
+                            normalized_requirement: None,
+                            resolved_version: None,
+                            package: None,
+                            source: String::from("sdkman"),
+                            source_config: None,
+                            approved_version: Some(String::from("21")),
+                            policy_match: None,
+                        },
+                        ProvisioningAction {
+                            kind: ProvisioningActionKind::SelectSource,
+                            target_kind: ProvisioningTargetKind::Runtime,
+                            name: String::from("node"),
+                            requested_version: String::from("24"),
+                            normalized_requirement: None,
+                            resolved_version: None,
+                            package: None,
+                            source: String::from("mise"),
+                            source_config: None,
+                            approved_version: Some(String::from("24")),
+                            policy_match: None,
+                        },
+                    ],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing runtime: java"),
+                    why: String::from(
+                        "java is declared in the selected setup context but is not available",
+                    ),
+                    next: String::from("install `java` and rerun `ota doctor`"),
+                },
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing runtime: node"),
+                    why: String::from(
+                        "node is declared in a separate tooling context but is not available",
+                    ),
+                    next: String::from("install `node` and rerun `ota doctor`"),
+                },
+            ],
+        };
+
+        let actions = super::selected_up_provisioning_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "java");
+    }
+
+    #[test]
     fn up_preview_adds_readiness_check_for_services_with_endpoints_only() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -36160,9 +36257,50 @@ fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> S
     )
 }
 
+fn up_requirement_surface(contract: &Contract, overrides: ExecutionOverrides) -> RequirementSurface {
+    let mut surface = RequirementSurface {
+        runtimes: contract.runtimes.clone(),
+        tools: contract.tools.clone(),
+    };
+
+    if contract.tasks.contains_key("setup") {
+        let effective = effective_task_execution(contract, "setup", overrides);
+        if let Some(context_name) = effective.context_name
+            && let Some((_, context)) = named_execution_context(contract, context_name)
+        {
+            surface.runtimes.extend(context.requirements.runtimes.clone());
+            surface.tools.extend(context.requirements.tools.clone());
+            return surface;
+        }
+        surface.merge(&contract.context_requirement_surface_for_backend(effective.backend));
+        return surface;
+    }
+
+    let (backend, _) = effective_execution(contract, overrides);
+    surface.merge(&contract.context_requirement_surface_for_backend(backend));
+    surface
+}
+
+fn requirement_surface_targets_provisioning_action(
+    requirement_surface: &RequirementSurface,
+    action: &crate::policy_pack::ProvisioningAction,
+) -> bool {
+    match action.target_kind {
+        crate::policy_pack::ProvisioningTargetKind::Runtime => {
+            requirement_surface.runtimes.contains_key(action.name.as_str())
+        }
+        crate::policy_pack::ProvisioningTargetKind::Tool => {
+            requirement_surface.tools.contains_key(action.name.as_str())
+        }
+    }
+}
+
 fn selected_up_provisioning_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
     preflight: &DoctorReport,
 ) -> Vec<crate::policy_pack::ProvisioningAction> {
+    let requirement_surface = up_requirement_surface(contract, overrides);
     preflight
         .provisioning
         .as_ref()
@@ -36172,6 +36310,8 @@ fn selected_up_provisioning_actions(
                 .actions
                 .iter()
                 .filter(|action| {
+                    requirement_surface_targets_provisioning_action(&requirement_surface, action)
+                        &&
                     preflight
                         .findings
                         .iter()
@@ -36299,7 +36439,7 @@ fn build_up_preview(
     let target = effective_task_execution_target(resolved_path, effective);
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
-    let selected_actions = selected_up_provisioning_actions(preflight);
+    let selected_actions = selected_up_provisioning_actions(contract, overrides, preflight);
 
     if let Some(provisioning) = preflight.provisioning.as_ref() {
         for action in &provisioning.request.actions {
@@ -36667,7 +36807,7 @@ fn execute_repo_up(
         }
     };
 
-    let provisioning_actions = selected_up_provisioning_actions(&preflight);
+    let provisioning_actions = selected_up_provisioning_actions(contract, overrides, &preflight);
     if !provisioning_actions.is_empty() {
         let provisioning_request = crate::policy_pack::ProvisioningBackendRequest {
             actions: provisioning_actions,
