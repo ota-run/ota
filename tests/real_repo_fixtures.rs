@@ -1497,6 +1497,122 @@ fn init_write_writes_high_confidence_contract_for_python_requirements_fixture() 
 }
 
 #[test]
+fn init_detected_dry_run_marks_generated_setup_internal() {
+    let fixture = TempDir::new().expect("temp fixture");
+    fs::write(
+        fixture.path().join("package.json"),
+        r#"{
+  "name": "setup-internal-dry-run",
+  "scripts": {
+    "setup": "npm ci"
+  }
+}"#,
+    )
+    .expect("write package.json");
+
+    let output = run_ota(&[
+        "init",
+        "--json",
+        "--dry-run",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["config"]["tasks"]["setup"]["internal"], true);
+}
+
+#[test]
+fn init_detected_write_marks_generated_setup_internal() {
+    let fixture = TempDir::new().expect("temp fixture");
+    fs::write(
+        fixture.path().join("package.json"),
+        r#"{
+  "name": "setup-internal-write",
+  "scripts": {
+    "setup": "npm ci"
+  }
+}"#,
+    )
+    .expect("write package.json");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let contract = load_contract(&fixture.path().join("ota.yaml")).expect("load written contract");
+    assert_eq!(
+        contract.tasks.get("setup").map(|task| task.internal),
+        Some(true)
+    );
+}
+
+#[test]
+fn detect_json_reports_internal_setup_for_generated_setup_task() {
+    let fixture = TempDir::new().expect("temp fixture");
+    fs::write(
+        fixture.path().join("package.json"),
+        r#"{
+  "name": "detect-internal-dry-run",
+  "scripts": {
+    "setup": "npm ci"
+  }
+}"#,
+    )
+    .expect("write package.json");
+    fs::write(
+        fixture.path().join("package-lock.json"),
+        "{\n  \"name\": \"detect-internal-dry-run\"\n}\n",
+    )
+    .expect("write package-lock.json");
+
+    let output = run_ota(&[
+        "detect",
+        "--json",
+        "--dry-run",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["config"]["tasks"]["setup"]["internal"], true);
+}
+
+#[test]
+fn detect_write_marks_setup_internal_for_generated_setup_task() {
+    let fixture = TempDir::new().expect("temp fixture");
+    fs::write(
+        fixture.path().join("package.json"),
+        r#"{
+  "name": "detect-internal-write",
+  "scripts": {
+    "setup": "npm ci"
+  }
+}"#,
+    )
+    .expect("write package.json");
+    fs::write(
+        fixture.path().join("package-lock.json"),
+        "{\n  \"name\": \"detect-internal-write\"\n}\n",
+    )
+    .expect("write package-lock.json");
+
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let contract = load_contract(&fixture.path().join("ota.yaml")).expect("load written contract");
+    assert_eq!(
+        contract.tasks.get("setup").map(|task| task.internal),
+        Some(true)
+    );
+}
+
+#[test]
 fn init_write_writes_high_confidence_contract_for_mixed_node_python_compose_fixture() {
     let fixture = copy_fixture_to_temp("mixed-node-python-compose");
 

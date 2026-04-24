@@ -315,6 +315,17 @@ pub(crate) fn collect_detect_changes(
             existing_value,
             Some(task.run.as_str()),
         );
+        if task.internal {
+            let existing_internal = existing.tasks.get(name).map(|task| task.internal);
+            push_detect_change(
+                &mut changes,
+                existing,
+                &inference_index,
+                &format!("tasks.{name}.internal"),
+                existing_internal.map(|value| if value { "true" } else { "false" }),
+                Some("true"),
+            );
+        }
         if task.safe_for_agent {
             let existing_safe = existing.tasks.get(name).map(|task| task.safe_for_agent);
             push_detect_change(

@@ -12204,6 +12204,9 @@ fn write_detected_merge(
 
     let comparison =
         build_detect_comparison(&existing_contract, &report, DetectRemovalScope::Drift);
+    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
 
     let apply_all = apply_all || apply.iter().any(|field| field == ".");
     let selected_fields = apply
@@ -12267,11 +12270,7 @@ fn write_detected_merge(
             {
                 return false;
             }
-            report
-                .inferences
-                .iter()
-                .find(|inference| inference.field == change.field)
-                .is_some_and(|inference| inference.confidence == Confidence::High)
+            high_confidence_fields.contains(&change.field)
         })
         .collect::<Vec<_>>();
 
@@ -16153,18 +16152,15 @@ fn selected_detect_comparison(
             error: comparison.error.clone(),
         });
     }
+    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
 
     let changes = comparison
         .changes
         .iter()
         .filter(|change| selected_fields.contains(&change.field))
-        .filter(|change| {
-            report
-                .inferences
-                .iter()
-                .find(|inference| inference.field == change.field)
-                .is_some_and(|inference| inference.confidence == Confidence::High)
-        })
+        .filter(|change| high_confidence_fields.contains(&change.field))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -16196,9 +16192,18 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
         ["tasks", _, "run"] | ["tasks", _, "description"] => {
             set_string_field(root, &segments, &change.detected)
         }
+        ["tasks", _, "internal"] => set_bool_field(root, &segments, &change.detected),
         ["tasks", _, "safe_for_agent"] => set_bool_field(root, &segments, &change.detected),
         _ => false,
     }
+}
+
+fn detect_high_confidence_inference_fields(inferences: &[Inference]) -> Vec<String> {
+    inferences
+        .iter()
+        .filter(|inference| inference.confidence >= Confidence::High)
+        .map(|inference| inference.field.clone())
+        .collect()
 }
 
 fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
@@ -16243,6 +16248,9 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
         fields.push(format!("tasks.{name}.run"));
         if task.description.is_some() {
             fields.push(format!("tasks.{name}.description"));
+        }
+        if task.internal {
+            fields.push(format!("tasks.{name}.internal"));
         }
         if task.safe_for_agent {
             fields.push(format!("tasks.{name}.safe_for_agent"));
@@ -16459,6 +16467,12 @@ fn init_contract_provenance(
             provenance.push(template_field_provenance(
                 format!("tasks.{name}.notes"),
                 "ota.init#task_notes",
+            ));
+        }
+        if task.internal {
+            provenance.push(template_field_provenance(
+                format!("tasks.{name}.internal"),
+                "ota.init#task_internal",
             ));
         }
         if task.safe_for_agent {
@@ -21136,6 +21150,10 @@ mod tests {
         render_report_section, render_up_result, render_up_section_from_parts,
         render_windows_uninstall_pending, run_execution_receipt, strip_ansi_codes,
         stylize_text_failure, up_doctor_mode, windows_uninstall_script, workspace_refresh_command,
+        write_detected_merge,
+    };
+    use crate::detector::{
+        Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
@@ -21371,6 +21389,79 @@ tasks:
         assert!(!output.contains("rerun `ota validate ./ota.yaml`"));
 
         env::set_current_dir(cwd).expect("restore current dir");
+    }
+
+    #[test]
+    fn detect_merge_apply_can_write_generated_task_internal_field() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  setup:
+    run: npm install
+"#,
+        )
+        .expect("write existing contract");
+
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            String::from("setup"),
+            DetectTask {
+                description: None,
+                run: String::from("npm install"),
+                notes: None,
+                internal: true,
+                safe_for_agent: false,
+            },
+        );
+        let report = DetectReport {
+            root: repo.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                project: Some(DetectProject {
+                    name: String::from("demo"),
+                }),
+                tasks,
+                ..DetectContract::default()
+            },
+            inferences: vec![
+                Inference {
+                    field: String::from("tasks.setup.run"),
+                    value: String::from("npm install"),
+                    source: String::from("package.json#scripts.setup"),
+                    confidence: Confidence::High,
+                },
+                Inference {
+                    field: String::from("tasks.setup.internal"),
+                    value: String::from("true"),
+                    source: String::from("package.json#scripts.setup"),
+                    confidence: Confidence::High,
+                },
+            ],
+        };
+
+        let apply = vec![String::from("tasks.setup.internal")];
+        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect merge json");
+        assert_eq!(json["ok"], true, "{}", output.stdout);
+        assert_eq!(json["written"], true, "{}", output.stdout);
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["internal"],
+            serde_json::Value::Bool(true),
+            "{}",
+            output.stdout
+        );
+
+        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
+        assert!(merged.contains("internal: true"), "{merged}");
     }
 
     #[test]
