@@ -12036,6 +12036,7 @@ tasks:
         assert!(!stderr.contains("Next:\n\n\nRUN SUMMARY"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn run_failure_reports_host_publication_conflict_as_a_host_port_error() {
         let _guard = env_mutex_lock();
