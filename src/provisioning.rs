@@ -3423,11 +3423,31 @@ fn shell_command(command: &str, args: &[&str]) -> String {
     script
 }
 
+fn provisioning_loader_label(target: &ProvisioningExecutionTarget) -> String {
+    match target {
+        ProvisioningExecutionTarget::Native => String::from("Preparing environment (native host)"),
+        ProvisioningExecutionTarget::Container {
+            image, lifecycle, ..
+        } => format!(
+            "Preparing environment (container, {}, {})",
+            match lifecycle {
+                Lifecycle::Persistent => "persistent",
+                Lifecycle::Ephemeral => "ephemeral",
+            },
+            image
+        ),
+        ProvisioningExecutionTarget::Remote {
+            provider, target, ..
+        } => format!("Preparing environment (remote, {provider}, {target})"),
+    }
+}
+
 fn command_output(
     command: &str,
     args: &[&str],
     working_dir: &Path,
     mode: ProvisioningOutputMode,
+    loader_label: Option<&str>,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
     let mut child = Command::new(command);
     child.args(args).current_dir(working_dir);
@@ -3447,7 +3467,7 @@ fn command_output(
             })
         }
         ProvisioningOutputMode::StreamAndCapture => {
-            let loader = StreamPhaseLoader::start("Provisioning");
+            let loader = StreamPhaseLoader::start(loader_label.unwrap_or("Preparing environment"));
             let notifier = loader.as_ref().map(|loader| loader.notifier());
             let mut child = child
                 .stdout(Stdio::piped())
@@ -3508,8 +3528,9 @@ fn container_command_output(
     args: &[&str],
     working_dir: &Path,
     mode: ProvisioningOutputMode,
+    loader_label: Option<&str>,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    command_output(engine, args, working_dir, mode)
+    command_output(engine, args, working_dir, mode, loader_label)
 }
 
 fn run_container_command(
@@ -3520,6 +3541,7 @@ fn run_container_command(
     command: &str,
     args: &[&str],
     mode: ProvisioningOutputMode,
+    loader_label: Option<&str>,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
     let shell = shell_command(command, args);
     let workspace = format!("{}:/workspace", working_dir.display());
@@ -3543,6 +3565,7 @@ fn run_container_command(
             ],
             working_dir,
             mode,
+            loader_label,
         ),
         Lifecycle::Persistent => {
             let container_name = persistent_container_name(working_dir, image, engine);
@@ -3551,6 +3574,7 @@ fn run_container_command(
                 &["inspect", &container_name],
                 working_dir,
                 ProvisioningOutputMode::Capture,
+                None,
             )?;
             if inspect.exit_code != 0 {
                 let status = container_command_output(
@@ -3572,6 +3596,7 @@ fn run_container_command(
                     ],
                     working_dir,
                     ProvisioningOutputMode::Capture,
+                    None,
                 )?;
                 if status.exit_code != 0 {
                     return Ok(status);
@@ -3582,6 +3607,7 @@ fn run_container_command(
                     &["start", &container_name],
                     working_dir,
                     ProvisioningOutputMode::Capture,
+                    None,
                 )?;
                 if status.exit_code != 0 {
                     return Ok(status);
@@ -3593,6 +3619,7 @@ fn run_container_command(
                 &["exec", "-i", &container_name, "sh", "-lc", &shell],
                 working_dir,
                 mode,
+                loader_label,
             )
         }
     }
@@ -3605,13 +3632,29 @@ fn execute_provisioning_command(
     args: &[&str],
     mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+    let loader_label = provisioning_loader_label(target);
     match target {
-        ProvisioningExecutionTarget::Native => command_output(command, args, working_dir, mode),
+        ProvisioningExecutionTarget::Native => command_output(
+            command,
+            args,
+            working_dir,
+            mode,
+            Some(loader_label.as_str()),
+        ),
         ProvisioningExecutionTarget::Container {
             image,
             engine,
             lifecycle,
-        } => run_container_command(engine, image, *lifecycle, working_dir, command, args, mode),
+        } => run_container_command(
+            engine,
+            image,
+            *lifecycle,
+            working_dir,
+            command,
+            args,
+            mode,
+            Some(loader_label.as_str()),
+        ),
         ProvisioningExecutionTarget::Remote {
             provider,
             provider_command,
@@ -3767,6 +3810,32 @@ mod tests {
         unsafe {
             env::set_var("PATH", original_path);
         }
+    }
+
+    #[test]
+    fn provisioning_loader_labels_include_target_identity() {
+        assert_eq!(
+            provisioning_loader_label(&ProvisioningExecutionTarget::Native),
+            "Preparing environment (native host)"
+        );
+        assert_eq!(
+            provisioning_loader_label(&ProvisioningExecutionTarget::Container {
+                image: String::from("maven:3.9.14-eclipse-temurin-21-noble"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Persistent,
+            }),
+            "Preparing environment (container, persistent, maven:3.9.14-eclipse-temurin-21-noble)"
+        );
+        assert_eq!(
+            provisioning_loader_label(&ProvisioningExecutionTarget::Remote {
+                provider: String::from("ssh"),
+                provider_command: None,
+                target: String::from("user@host"),
+                cwd: None,
+                context_name: Some(String::from("tooling")),
+            }),
+            "Preparing environment (remote, ssh, user@host)"
+        );
     }
 
     #[test]

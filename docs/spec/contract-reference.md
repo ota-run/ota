@@ -277,6 +277,30 @@ execution:
           - local
 ```
 
+Named-context inheritance example (additive to existing context and shorthand support):
+
+```yaml
+execution:
+  default_context: development
+  contexts:
+    node-base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .next
+    development:
+      extends: node-base
+      container:
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
+```
+
 Supported backend values:
 
 - `native`
@@ -301,18 +325,25 @@ Current validation rule:
 - `kubectl`: `pod/ota-dev`
 - `execution.default_context` declares the context used when task-level `context` is not set
 - `execution.contexts` defines backend and requirement surfaces per context
+- `execution.contexts.<name>.extends` lets a named context inherit from one parent context to avoid repetition
 - each `execution.contexts.<name>` requires:
   - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
   - optional `container.resources.memory.minimum` and `container.resources.memory.default` for container contexts
   - optional `requirements.<runtimes|tools>` to scope readiness checks to that context
   - optional `attachments.compose` to attach container workloads to compose project networks
   - optional `attachments.isolated_paths` to mount Ota-managed, engine-owned named volumes over workspace-relative dependency paths such as `node_modules`
+- inheritance merge rules for `extends`:
+  - scalar fields override (`backend`, `lifecycle`, image/target/provider)
+  - maps merge recursively (`container.resources`, `requirements`, `attachments`)
+  - lists replace (`container.engines`, `attachments.compose`, `attachments.isolated_paths`)
+- backend-family overrides across `extends` are rejected (for example inheriting from a `container` parent and setting child `backend: native`)
 
 Current implementation:
 
 - `ota run` resolves a task context from `tasks.<name>.context` and `execution.default_context`, then executes that context's backend
 - `execution.contexts` are used for context-scoped requirement checks and receipts
 - `tasks.<name>.context` lets a task declare a non-default execution context
+- named contexts can now share a base execution shape through `extends` while keeping single-context shorthand (`preferred`/`lifecycle`/`backends`) fully supported
 - `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
 - container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
@@ -338,6 +369,7 @@ Current command behavior:
 - `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
 - `ota clean` removes current contract-derived Ota-managed persistent containers and dependency-isolation volumes for container contexts
 - `ota clean` also rediscovers drifted Ota-managed persistent containers and dependency-isolation volumes by ownership metadata (`dev.ota.managed`, cleanup-kind/lifecycle labels, and repo ownership token), even when the contract has drifted away from the original declaration
+- persistent container reconciliation treats execution shape drift as recreate-worthy, including Compose attachment namespace changes from `execution.contexts.<name>.attachments.compose`
 - repo cleanup identity is anchored by `.ota/state/ownership-id` and tracked repo-used engines in `.ota/state/managed-engines`, so drifted cleanup can stay scoped to the repo instead of matching by `project.name`
 - `ota clean` currently has no remote cleanup action; remote-backed repos report `No cleanup needed` today
 - `ota doctor` checks the required backend CLI for the selected execution context or preferred backend and reports unsupported shipped remote providers early

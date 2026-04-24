@@ -310,6 +310,157 @@ unexpected: true
     }
 
     #[test]
+    fn resolves_named_execution_context_extends_inheritance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: development
+  contexts:
+    node-base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+        engines:
+          - docker
+          - podman
+      requirements:
+        runtimes:
+          node: ">=22"
+        tools:
+          npm: ">=10"
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .next
+    development:
+      extends: node-base
+      container:
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
+      attachments:
+        isolated_paths:
+          - vendor
+tasks:
+  dev:
+    context: development
+    run: npm run dev
+"#,
+        )
+        .unwrap();
+
+        let execution = contract.execution.as_ref().expect("execution should exist");
+        let context = execution
+            .contexts
+            .get("development")
+            .expect("development context should resolve");
+
+        assert_eq!(context.backend, crate::schema::Backend::Container);
+        assert_eq!(context.lifecycle, Some(crate::schema::Lifecycle::Ephemeral));
+        let container = context
+            .container
+            .as_ref()
+            .expect("container settings should be inherited");
+        assert_eq!(container.image, "node:24-bookworm");
+        assert_eq!(container.engines, vec!["docker", "podman"]);
+        let memory = container
+            .resources
+            .as_ref()
+            .and_then(|resources| resources.memory.as_ref())
+            .expect("memory resources should merge from child");
+        assert_eq!(memory.minimum.as_deref(), Some("2GiB"));
+        assert_eq!(memory.default.as_deref(), Some("3GiB"));
+        assert_eq!(
+            context.attachments.isolated_paths,
+            vec![String::from("vendor")]
+        );
+        assert_eq!(
+            context
+                .requirements
+                .runtimes
+                .get("node")
+                .map(|entry| entry.version()),
+            Some(">=22")
+        );
+        assert_eq!(
+            context
+                .requirements
+                .tools
+                .get("npm")
+                .map(|entry| entry.version()),
+            Some(">=10")
+        );
+    }
+
+    #[test]
+    fn rejects_named_execution_context_extends_with_unknown_parent() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      extends: missing-base
+      backend: native
+tasks:
+  dev:
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let execution = contract.execution.as_ref().expect("execution should exist");
+        assert!(
+            execution.context_resolution_errors().iter().any(|error| error
+                == "`execution.contexts.app.extends` references unknown context `missing-base`")
+        );
+    }
+
+    #[test]
+    fn rejects_named_execution_context_extends_cycles() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    a:
+      extends: b
+      backend: native
+    b:
+      extends: a
+tasks:
+  dev:
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            contract
+                .execution
+                .as_ref()
+                .expect("execution should exist")
+                .context_resolution_errors()
+                .iter()
+                .any(|error| {
+                    error.contains("`execution.contexts.a.extends` introduces an inheritance cycle")
+                })
+        );
+    }
+
+    #[test]
     fn loads_monorepo_member_contract_by_merging_root_and_member() {
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join("api")).unwrap();

@@ -175,6 +175,10 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         return;
     };
 
+    for error in execution.context_resolution_errors() {
+        errors.push(ValidationError::new(error.clone()));
+    }
+
     if execution
         .default_context
         .as_deref()
@@ -2125,6 +2129,182 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_existing_single_context_shorthand_contract_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_existing_named_context_contract_without_extends() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: app
+    run: npm run dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_inherited_named_context_that_resolves_to_invalid_container_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    base:
+      backend: container
+      lifecycle: ephemeral
+    app:
+      extends: base
+tasks:
+  dev:
+    context: app
+    run: npm run dev
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.contexts.app.backend: container` requires `execution.contexts.app.container.image`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_named_context_extends_with_unknown_parent_in_validation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      extends: missing-base
+      backend: native
+tasks:
+  dev:
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.contexts.app.extends` references unknown context `missing-base`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_named_context_extends_cycles_in_validation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    a:
+      extends: b
+      backend: native
+    b:
+      extends: a
+tasks:
+  dev:
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("`execution.contexts.a.extends` introduces an inheritance cycle")
+        }));
+    }
+
+    #[test]
+    fn rejects_backend_family_override_across_extends() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+    app:
+      extends: base
+      backend: native
+tasks:
+  dev:
+    context: app
+    run: npm run dev
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.contexts.app.backend` `native` conflicts with inherited backend `container`",
+            )
+        }));
     }
 
     #[test]
