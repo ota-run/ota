@@ -1334,8 +1334,8 @@ fn resolve_execution_plan(
     contract_path: &Path,
     overrides: ExecutionOverrides,
 ) -> Result<ExecutionPlanResolved, RunError> {
+    let task_name = "execution plan";
     let (backend, lifecycle) = effective_execution(contract, overrides);
-    let resolved_backend = resolve_execution_backend(contract, "execution plan", overrides)?;
     let backend_source = if overrides.backend.is_some() {
         "override"
     } else if contract
@@ -1348,20 +1348,60 @@ fn resolve_execution_plan(
     } else {
         "default"
     };
-    let lifecycle_source = lifecycle.map(|_| {
-        if overrides.lifecycle.is_some() {
-            String::from("override")
-        } else if contract
-            .execution
-            .as_ref()
-            .and_then(|execution| execution.lifecycle)
-            .is_some()
-        {
-            String::from("contract lifecycle")
-        } else {
-            String::from("implicit")
+    let lifecycle_source = if overrides.lifecycle.is_some() {
+        String::from("override")
+    } else if contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.lifecycle)
+        .is_some()
+    {
+        String::from("contract lifecycle")
+    } else {
+        String::from("implicit")
+    };
+    let resolved_backend = match resolve_execution_backend(contract, task_name, overrides) {
+        Ok(resolved_backend) => Ok(resolved_backend),
+        Err(RunError::MissingContainerBackendCli { .. }) if backend == Backend::Container => {
+            let effective = effective_task_execution(contract, task_name, overrides);
+            let Some(container) = effective.container else {
+                return Err(RunError::MissingContainerImage {
+                    task: task_name.to_string(),
+                });
+            };
+            let lifecycle =
+                effective
+                    .lifecycle
+                    .ok_or_else(|| RunError::MissingContainerLifecycle {
+                        task: task_name.to_string(),
+                    })?;
+            let target = match lifecycle {
+                Lifecycle::Persistent => {
+                    execution_target(contract, contract_path, backend, Some(lifecycle))
+                }
+                Lifecycle::Ephemeral => ephemeral_container_target(contract, contract_path),
+            };
+            let target_strategy = match lifecycle {
+                Lifecycle::Persistent => String::from("persistent container"),
+                Lifecycle::Ephemeral => String::from("ephemeral per-run container"),
+            };
+            return Ok(ExecutionPlanResolved {
+                backend: format_backend(backend).to_string(),
+                backend_source: String::from(backend_source),
+                lifecycle: Some(format_lifecycle(lifecycle).to_string()),
+                lifecycle_source: Some(lifecycle_source),
+                image: Some(container.image.clone()),
+                engine: selected_container_engine_from_backend(Some(container)),
+                engine_candidates: container_engine_candidates_from_backend(Some(container)),
+                provider: None,
+                target,
+                target_strategy,
+                cwd: None,
+            });
         }
-    });
+        Err(error) => Err(error),
+    }?;
+    let lifecycle_source = lifecycle.map(|_| lifecycle_source);
 
     let (image, engine, engine_candidates, provider, target, target_strategy, cwd) =
         match resolved_backend {
@@ -20661,6 +20701,7 @@ fn render_up(
     show_receipt: bool,
     format: OutputFormat,
 ) -> CommandOutput {
+    let cause = primary_up_failure_cause(status, phase, &report.findings, stderr, service, task);
     match format {
         OutputFormat::Text => render_up_text(
             path,
@@ -20682,6 +20723,7 @@ fn render_up(
             path,
             status,
             phase,
+            cause.map(up_failure_cause_key),
             report,
             ready,
             stderr.filter(|stderr| !stderr.is_empty()),
@@ -20717,15 +20759,24 @@ fn render_up_result(
 
     match format {
         OutputFormat::Text => {
+            let cause = primary_up_failure_cause(
+                result.status,
+                result.phase,
+                &result.report.findings,
+                (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
+                result.service.as_deref(),
+                result.task.as_deref(),
+            );
             let mut stdout = render_up_section(text_path, &result);
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&result.receipt));
             }
             stdout.push('\n');
-            stdout.push_str(&render_execution_receipt_summary_block(
+            stdout.push_str(&render_up_summary_block(
                 &result.receipt,
                 result.task.as_deref().or(Some(result.phase)),
                 "UP SUMMARY",
+                cause,
             ));
             CommandOutput {
                 stdout,
@@ -20809,11 +20860,21 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "blockers": preview.blockers,
         })
     } else {
+        let cause = primary_up_failure_cause(
+            result.status,
+            result.phase,
+            &result.report.findings,
+            (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
+            result.service.as_deref(),
+            result.task.as_deref(),
+        )
+        .map(up_failure_cause_key);
         json!({
             "ok": result.ok,
             "path": path,
             "status": result.status,
             "phase": result.phase,
+            "cause": cause,
             "findings": result.report.findings,
             "receipt": result.receipt,
             "stderr": result.stderr,
@@ -20838,11 +20899,21 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "blockers": preview.blockers,
         })
     } else {
+        let cause = primary_up_failure_cause(
+            result.status,
+            result.phase,
+            &result.report.findings,
+            (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
+            result.service.as_deref(),
+            result.task.as_deref(),
+        )
+        .map(up_failure_cause_key);
         json!({
             "member": member,
             "ok": result.ok,
             "status": result.status,
             "phase": result.phase,
+            "cause": cause,
             "findings": result.report.findings,
             "stderr": result.stderr,
             "service": result.service,
@@ -21727,7 +21798,9 @@ tasks:
             true,
         );
 
-        interrupt_thread.join().expect("interrupt thread should finish");
+        interrupt_thread
+            .join()
+            .expect("interrupt thread should finish");
 
         assert_eq!(output.exit_code, 130);
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
@@ -23010,6 +23083,175 @@ tasks:
         );
         assert!(text.contains("set `execution.backends.container.image` in the repo contract"));
         assert!(text.contains("rerun `ota up`"));
+    }
+
+    #[test]
+    fn up_provision_failed_text_prioritizes_backend_startup_and_separates_secondary_findings() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-3ff7e125cddff1a4")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "provisioning",
+                "PROVISION FAILED",
+                None,
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "PROVISION FAILED",
+            phase: "provisioning",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: vec![
+                    Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from(
+                            "Container mise cannot install requested prerequisite: node",
+                        ),
+                        why: String::from(
+                            "the Linux/container target requests `node >=24.14.1`; policy resolves that to `24.14.1` using rule `24.14.1`, but the configured `mise` provisioning path could not satisfy it inside container image `maven:3.9.14-eclipse-temurin-21-noble`",
+                        ),
+                        next: String::from(
+                            "fix the selected container image (currently `maven:3.9.14-eclipse-temurin-21-noble`) or the configured `mise` provisioning path for `node`, then rerun `ota up --mode container`",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Info,
+                        summary: String::from("Policy-backed version rules are declared"),
+                        why: String::from(
+                            "`.ota/org-policy.yaml` declares approved repo version rules: runtime java (versions >=21), runtime node (versions >=24.14.1)",
+                        ),
+                        next: String::from(
+                            "use `ota policy review` to inspect the active policy source",
+                        ),
+                    },
+                ],
+            },
+            preview: None,
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("provisioning")),
+            task_command: None,
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: String::from(
+                "Error response from daemon: failed to set up container networking: network local_default not found\nfailed to start containers: ota-3ff7e125cddff1a4\n",
+            ),
+        };
+
+        let text = strip_ansi_codes(
+            &render_up_result(
+                "./ota.yaml",
+                "./ota.yaml",
+                result,
+                OutputFormat::Text,
+                false,
+            )
+            .stdout,
+        );
+
+        assert!(text.contains("BACKEND STARTUP FAILED"));
+        assert!(text.contains("Container: ota-3ff7e125cddff1a4"));
+        assert!(text.contains("failed to set up container networking"));
+        assert!(text.contains("failed to start containers"));
+        assert!(text.contains("Also detected:"));
+        assert!(text.contains("Container mise cannot install requested prerequisite: node"));
+        assert!(text.contains("UP SUMMARY"));
+        assert!(text.contains("Cause:"));
+        assert!(text.contains("backend startup"));
+    }
+
+    #[test]
+    fn up_json_includes_primary_failure_cause() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-3ff7e125cddff1a4")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "provisioning",
+                "PROVISION FAILED",
+                None,
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "PROVISION FAILED",
+            phase: "provisioning",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: Vec::new(),
+            },
+            preview: None,
+            receipt,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: String::from(
+                "Error response from daemon: failed to set up container networking: network local_default not found\nfailed to start containers: ota-3ff7e125cddff1a4\n",
+            ),
+        };
+
+        let value = super::up_result_json_value("./ota.yaml", &result);
+
+        assert_eq!(
+            value.get("cause").and_then(|value| value.as_str()),
+            Some("backend_startup")
+        );
     }
 
     #[test]
@@ -25586,7 +25828,9 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("container `ota-ephemeral-deadbeef` was interrupted by user (exit code `130`)"),
+            rendered.contains(
+                "container `ota-ephemeral-deadbeef` was interrupted by user (exit code `130`)"
+            ),
             "{rendered}"
         );
         assert!(rendered.contains("Status:    interrupted"), "{rendered}");
@@ -25633,7 +25877,10 @@ tasks:
             "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
         ));
 
-        assert!(rendered.contains("container `ota-ephemeral-deadbeef` was interrupted by user"), "{rendered}");
+        assert!(
+            rendered.contains("container `ota-ephemeral-deadbeef` was interrupted by user"),
+            "{rendered}"
+        );
         assert!(!rendered.contains("exit code `0`"), "{rendered}");
     }
 
@@ -31938,6 +32185,7 @@ fn render_up_text(
     receipt: &ExecutionReceipt,
     show_receipt: bool,
 ) -> CommandOutput {
+    let cause = primary_up_failure_cause(status, phase, &report.findings, stderr, service, task);
     let mut stdout = render_up_section_body(
         path,
         Some(Path::new(path)),
@@ -31952,15 +32200,17 @@ fn render_up_text(
         stderr,
         exit_code,
         receipt,
+        cause,
     );
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(receipt));
     }
     stdout.push_str("\n\n");
-    stdout.push_str(&render_execution_receipt_summary_block(
+    stdout.push_str(&render_up_summary_block(
         receipt,
         task.or(Some(phase)),
         "UP SUMMARY",
+        cause,
     ));
 
     CommandOutput {
@@ -31996,6 +32246,14 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         phase_output_text(&result.stdout, &result.stderr).as_deref(),
         result.exit_code,
         &result.receipt,
+        primary_up_failure_cause(
+            result.status,
+            result.phase,
+            &result.report.findings,
+            phase_output_text(&result.stdout, &result.stderr).as_deref(),
+            result.service.as_deref(),
+            result.task.as_deref(),
+        ),
     )
 }
 
@@ -32013,9 +32271,24 @@ fn render_up_section_body(
     stderr: Option<&str>,
     exit_code: Option<i32>,
     receipt: &ExecutionReceipt,
+    cause: Option<UpFailureCause>,
 ) -> String {
     if status == "BLOCKED" && phase == "provisioning" {
         return render_up_blocked_provisioning_section(path, contract_path, report, receipt, task);
+    }
+
+    if matches!(cause, Some(UpFailureCause::BackendStartup)) {
+        return render_up_backend_startup_failure_section(
+            path,
+            contract_path,
+            phase,
+            report,
+            backend,
+            receipt.context.as_deref(),
+            stderr,
+            exit_code,
+            receipt,
+        );
     }
 
     render_up_section_from_parts(
@@ -32033,6 +32306,215 @@ fn render_up_section_body(
         stderr,
         exit_code,
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpFailureCause {
+    BackendStartup,
+    Provisioning,
+    ServiceReadiness,
+    RepoSetup,
+    Preconditions,
+}
+
+fn up_failure_cause_key(cause: UpFailureCause) -> &'static str {
+    match cause {
+        UpFailureCause::BackendStartup => "backend_startup",
+        UpFailureCause::Provisioning => "provisioning",
+        UpFailureCause::ServiceReadiness => "service_readiness",
+        UpFailureCause::RepoSetup => "repo_setup",
+        UpFailureCause::Preconditions => "preconditions",
+    }
+}
+
+fn up_failure_cause_label(cause: UpFailureCause) -> &'static str {
+    match cause {
+        UpFailureCause::BackendStartup => "backend startup",
+        UpFailureCause::Provisioning => "provisioning",
+        UpFailureCause::ServiceReadiness => "service readiness",
+        UpFailureCause::RepoSetup => "repo setup",
+        UpFailureCause::Preconditions => "preconditions",
+    }
+}
+
+fn primary_up_failure_cause(
+    status: &str,
+    phase: &str,
+    findings: &[Finding],
+    stderr: Option<&str>,
+    service: Option<&str>,
+    task: Option<&str>,
+) -> Option<UpFailureCause> {
+    if status == "PROVISION FAILED" && phase == "provisioning" {
+        if provisioning_output_indicates_backend_startup_issue(stderr) {
+            return Some(UpFailureCause::BackendStartup);
+        }
+        return Some(UpFailureCause::Provisioning);
+    }
+
+    if findings.iter().any(|finding| {
+        finding.severity == FindingSeverity::Error
+            && finding.summary.starts_with("Service readiness failed")
+    }) {
+        return Some(UpFailureCause::ServiceReadiness);
+    }
+
+    if matches!(status, "BLOCKED" | "NOT READY") || phase == "preconditions" {
+        return Some(UpFailureCause::Preconditions);
+    }
+
+    if service.is_some() || task.is_some() || phase == "task" {
+        if status != "READY" {
+            return Some(UpFailureCause::RepoSetup);
+        }
+    }
+
+    None
+}
+
+fn provisioning_output_indicates_backend_startup_issue(stderr: Option<&str>) -> bool {
+    let Some(stderr) = stderr else {
+        return false;
+    };
+    let lowered = stderr.to_ascii_lowercase();
+    (lowered.contains("failed to set up container networking")
+        || lowered.contains("failed to start containers")
+        || (lowered.contains("network") && lowered.contains("not found")))
+        && (lowered.contains("container")
+            || lowered.contains("docker")
+            || lowered.contains("network"))
+}
+
+fn render_up_backend_startup_failure_section(
+    path: &str,
+    contract_path: Option<&Path>,
+    phase: &str,
+    report: &DoctorReport,
+    backend: Option<&str>,
+    context: Option<&str>,
+    stderr: Option<&str>,
+    exit_code: Option<i32>,
+    receipt: &ExecutionReceipt,
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}\n{} {}",
+        format_command_header("UP", path),
+        render_status_line("BACKEND STARTUP FAILED"),
+        paint_key("Phase:"),
+        phase
+    );
+
+    if let Some(backend) = backend {
+        stdout.push_str(&format!("\n{} {backend}", paint_key("Backend:")));
+    }
+    if let Some(context) = context {
+        stdout.push_str(&format!("\n{} {context}", paint_key("Context:")));
+    }
+    if let Some(target) = receipt.target.as_deref() {
+        let label = if receipt.backend.as_deref() == Some("container") {
+            "Container:"
+        } else {
+            "Target:"
+        };
+        stdout.push_str(&format!("\n{} {target}", paint_key(label)));
+    }
+    if let Some(image) = receipt.image.as_deref() {
+        stdout.push_str(&format!("\n{} {image}", paint_key("Image:")));
+    }
+    if let Some(exit_code) = exit_code {
+        stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
+    }
+
+    let mut why_lines = Vec::new();
+    if let Some(target) = receipt.target.as_deref() {
+        why_lines.push(format!(
+            "persistent container `{target}` could not start or attach to the required container runtime surface"
+        ));
+    } else {
+        why_lines.push(String::from(
+            "the selected execution backend could not start the required runtime surface for `ota up`",
+        ));
+    }
+    if let Some(stderr) = stderr {
+        why_lines.extend(
+            stderr
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .take(4)
+                .map(str::to_string),
+        );
+    }
+    append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
+
+    let mut next_steps = Vec::new();
+    if stderr
+        .map(|text| {
+            let lowered = text.to_ascii_lowercase();
+            lowered.contains("network") && lowered.contains("not found")
+        })
+        .unwrap_or(false)
+    {
+        next_steps.push(String::from(
+            "repair the missing compose/runtime network attachment, then rerun `ota up`",
+        ));
+    } else {
+        next_steps.push(String::from(
+            "repair the container backend startup state, then rerun `ota up`",
+        ));
+    }
+    next_steps.push(String::from(
+        "verify the container runtime and required compose attachments are healthy",
+    ));
+    append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
+
+    let secondary_findings = report
+        .findings
+        .iter()
+        .filter(|finding| {
+            !(finding.severity == FindingSeverity::Error
+                && finding.summary.starts_with("Service readiness failed"))
+        })
+        .collect::<Vec<_>>();
+    if !secondary_findings.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_key("Also detected:")));
+        for finding in secondary_findings {
+            stdout.push_str(&format!(
+                "\n\n{}  {}",
+                render_severity(finding.severity),
+                paint(&finding.summary, "1;37")
+            ));
+            let why_lines = finding_why_lines(&finding.summary, &finding.why, None);
+            let next_steps = finding_next_steps(&finding.next);
+            append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
+            append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
+        }
+    }
+
+    stdout
+}
+
+fn render_up_summary_block(
+    receipt: &ExecutionReceipt,
+    task: Option<&str>,
+    title: &str,
+    cause: Option<UpFailureCause>,
+) -> String {
+    let rendered = render_execution_receipt_summary_block(receipt, task, title);
+    let Some(cause) = cause else {
+        return rendered;
+    };
+    let insertion = summary_detail_line("Cause:", up_failure_cause_label(cause));
+    if let Some(index) = rendered.find("\nNote:") {
+        let mut summary = String::with_capacity(rendered.len() + insertion.len() + 1);
+        summary.push_str(&rendered[..index]);
+        summary.push('\n');
+        summary.push_str(&insertion);
+        summary.push_str(&rendered[index..]);
+        summary
+    } else {
+        format!("{rendered}\n{insertion}")
+    }
 }
 
 fn render_up_blocked_provisioning_section(
@@ -33087,6 +33569,7 @@ fn render_up_json(
     path: &str,
     status: &str,
     phase: &str,
+    cause: Option<&str>,
     report: DoctorReport,
     ready: bool,
     stderr: Option<&str>,
@@ -33101,6 +33584,7 @@ fn render_up_json(
             path,
             status,
             phase,
+            cause,
             findings: &report.findings,
             receipt: receipt.clone(),
             stderr,

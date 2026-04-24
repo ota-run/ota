@@ -7,9 +7,8 @@ Plan
   Why:
     » node resolved to `24.14.1` but the
       contract requires `22`
-    » ota probed
-      `./bin/node`
-      with `node --version`
+    » ota probed `./bin/node` with
+      `node --version`
   Provenance: repo contract
   Next: install compatible runtimes and tools,
         then rerun `ota doctor`

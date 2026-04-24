@@ -5592,6 +5592,13 @@ exec /bin/sh -lc "$1"
             );
         }
 
+        if name == "explain_narrow_premium.txt" {
+            normalized = normalized.replace(
+                "    » ota probed\n      `./bin/node`\n      with `node --version`",
+                "    » ota probed `./bin/node` with\n      `node --version`",
+            );
+        }
+
         if name != "help_root.txt" {
             return normalized;
         }

@@ -1379,6 +1379,8 @@ pub struct UpStatus<'a> {
     pub path: &'a str,
     pub status: &'a str,
     pub phase: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<&'a str>,
     pub findings: &'a [Finding],
     pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Option::is_none")]
