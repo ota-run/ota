@@ -25683,6 +25683,95 @@ tasks:
     }
 
     #[test]
+    fn late_interrupt_signal_does_not_reclassify_non_interrupt_failures() {
+        let mut receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "dev",
+                "FAILED",
+                Some(String::from("requested task")),
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        crate::runner::set_run_interrupt_requested(true);
+        super::apply_interrupted_run_classification(&mut receipt, None);
+        crate::runner::set_run_interrupt_requested(false);
+
+        assert_eq!(receipt.steps[0].status, "FAILED");
+        assert_eq!(receipt.summary.error_count, 1);
+        assert_eq!(receipt.summary.info_count, 0);
+    }
+
+    #[test]
+    fn run_failure_text_keeps_generic_failure_for_late_interrupt_without_signal_exit() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        crate::runner::set_run_interrupt_requested(true);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "boom",
+            None,
+            None,
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+        crate::runner::set_run_interrupt_requested(false);
+
+        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
+        assert!(!rendered.contains("INFO  Task interrupted"), "{rendered}");
+    }
+
+    #[test]
     fn execution_summary_uses_workload_endpoint_when_runtime_is_absent() {
         let mut workloads = BTreeMap::new();
         workloads.insert(
@@ -28292,18 +28381,26 @@ fn apply_run_log_capture_to_receipt(
     }
 }
 
+fn exit_code_indicates_user_interruption(exit_code: i32) -> bool {
+    exit_code == 130 || exit_code == 143
+}
+
 fn receipt_reports_user_interruption(
     receipt: &ExecutionReceipt,
     service_termination: Option<&ServiceTermination>,
 ) -> bool {
     service_termination
         .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
-        || run_interrupt_requested()
         || receipt.steps.iter().any(|step| {
             step.detail
                 .as_deref()
                 .is_some_and(|detail| detail.contains("interrupted by user"))
         })
+        || (run_interrupt_requested()
+            && receipt.steps.iter().any(|step| {
+                step.exit_code
+                    .is_some_and(exit_code_indicates_user_interruption)
+            }))
 }
 
 fn apply_interrupted_run_classification(
@@ -28406,7 +28503,7 @@ fn render_run_captured_failure_text(
             receipt_text,
         );
     }
-    if run_interrupt_requested() {
+    if run_interrupt_requested() && exit_code_indicates_user_interruption(exit_code) {
         return render_task_interrupted_text(
             where_value,
             task_name,

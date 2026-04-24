@@ -5995,16 +5995,27 @@ fn classify_container_service_termination(
     }
 
     let after_readiness = true;
+    let effective_exit_code = termination_state
+        .and_then(|state| state.exit_code)
+        .unwrap_or(exit_code);
 
     let cause = if interrupted_by_user {
-        ServiceTerminationCause::Interrupted
+        if termination_state.and_then(|state| state.oom_killed) == Some(true) {
+            ServiceTerminationCause::OomKilled
+        } else if effective_exit_code == 130 || effective_exit_code == 143 {
+            ServiceTerminationCause::Interrupted
+        } else if effective_exit_code > 0 {
+            ServiceTerminationCause::ExitedNonZero
+        } else {
+            ServiceTerminationCause::Interrupted
+        }
     } else if termination_state.and_then(|state| state.oom_killed) == Some(true) {
         ServiceTerminationCause::OomKilled
-    } else if exit_code == 130 || exit_code == 143 {
+    } else if effective_exit_code == 130 || effective_exit_code == 143 {
         ServiceTerminationCause::Interrupted
-    } else if exit_code > 0 {
+    } else if effective_exit_code > 0 {
         ServiceTerminationCause::ExitedNonZero
-    } else if exit_code == 0 {
+    } else if effective_exit_code == 0 {
         ServiceTerminationCause::Exited
     } else {
         ServiceTerminationCause::Unknown
@@ -6222,9 +6233,6 @@ fn execute_ephemeral_container_task_command(
                 false,
                 capture_output,
             );
-            let readiness_observed = readiness_probe
-                .map(RuntimeReadinessProbe::stop_and_collect)
-                .unwrap_or(false);
             let output = match output_result {
                 Ok(output) => output,
                 Err(source) => {
@@ -6235,9 +6243,12 @@ fn execute_ephemeral_container_task_command(
                     });
                 }
             };
+            let interrupted_by_user = run_interrupt_requested();
+            let readiness_observed = readiness_probe
+                .map(RuntimeReadinessProbe::stop_and_collect)
+                .unwrap_or(false);
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
-            let interrupted_by_user = run_interrupt_requested();
             let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
@@ -6304,13 +6315,13 @@ fn execute_ephemeral_container_task_command(
                     source,
                 }
             })?;
+            let output_exit_code = output.status.code().unwrap_or(1);
+            let interrupted_by_user = run_interrupt_requested();
             let readiness_observed = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
                 .unwrap_or(false);
-            let output_exit_code = output.status.code().unwrap_or(1);
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
-            let interrupted_by_user = run_interrupt_requested();
             let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
@@ -6482,11 +6493,11 @@ fn execute_persistent_container_task_command(
         mode,
         &container_name,
     )?;
+    let interrupted_by_user = run_interrupt_requested();
     let readiness_observed = readiness_probe
         .map(RuntimeReadinessProbe::stop_and_collect)
         .unwrap_or(false);
     let termination_state = inspect_container_termination_state(task_name, engine, &container_name);
-    let interrupted_by_user = run_interrupt_requested();
     output.service_termination = classify_container_service_termination(
         runtime,
         resolved_runtime.as_ref(),
@@ -6556,12 +6567,12 @@ fn execute_persistent_container_task_command(
             mode,
             &container_name,
         )?;
+        let interrupted_by_user = run_interrupt_requested();
         let readiness_observed = readiness_probe
             .map(RuntimeReadinessProbe::stop_and_collect)
             .unwrap_or(false);
         let termination_state =
             inspect_container_termination_state(task_name, engine, &container_name);
-        let interrupted_by_user = run_interrupt_requested();
         output.service_termination = classify_container_service_termination(
             runtime,
             resolved_runtime.as_ref(),
@@ -12891,6 +12902,82 @@ tasks:
         assert_eq!(
             service_termination.cause,
             super::ServiceTerminationCause::Interrupted
+        );
+    }
+
+    #[test]
+    fn container_service_classification_preserves_nonzero_failure_when_interrupt_arrives_late() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref());
+        let resolved_runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let service_termination = super::classify_container_service_termination(
+            runtime,
+            Some(&resolved_runtime),
+            true,
+            Some(&super::ContainerTerminationState {
+                exit_code: Some(1),
+                oom_killed: Some(false),
+            }),
+            1,
+            true,
+            "ota-ephemeral-test",
+        )
+        .expect("service termination should classify");
+
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::ExitedNonZero
         );
     }
 
