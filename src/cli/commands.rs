@@ -12204,6 +12204,9 @@ fn write_detected_merge(
 
     let comparison =
         build_detect_comparison(&existing_contract, &report, DetectRemovalScope::Drift);
+    // Merge/apply must stay inference-backed. Projected defaults in the detected
+    // contract are not merge-eligible unless detector emitted an explicit
+    // high-confidence inference for that exact field.
     let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
         .into_iter()
         .collect::<BTreeSet<_>>();
@@ -16152,6 +16155,8 @@ fn selected_detect_comparison(
             error: comparison.error.clone(),
         });
     }
+    // Keep preview filtering aligned with merge/apply trust rules: only explicit
+    // high-confidence inference fields are eligible here.
     let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
         .into_iter()
         .collect::<BTreeSet<_>>();
