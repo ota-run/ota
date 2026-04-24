@@ -127,9 +127,11 @@ execution:
 
 Inheritance merge rules:
 
-- scalar fields override
+- scalar fields override within a backend family
 - maps merge recursively
 - lists replace
+- backend-family switches across `extends` are rejected
+- `ota run`, `ota up`, `ota doctor`, and `ota execution plan` consume the resolved merged context shape, not the raw partial parent/child declarations
 
 This keeps `docker` on the host context instead of pretending the app container should carry it.
 

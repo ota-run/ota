@@ -266,6 +266,15 @@ fn selected_container_backend(execution: Option<&Execution>) -> Option<&Containe
                 .and_then(|execution| execution.backends.as_ref())
                 .and_then(|backends| backends.container.as_ref())
         })
+        .or_else(|| {
+            execution.and_then(|execution| {
+                execution
+                    .contexts
+                    .values()
+                    .find(|context| context.backend == Backend::Container)
+                    .and_then(|context| context.container.as_ref())
+            })
+        })
 }
 
 fn selected_remote_backend(execution: Option<&Execution>) -> Option<&RemoteBackend> {
@@ -281,11 +290,24 @@ fn selected_remote_backend(execution: Option<&Execution>) -> Option<&RemoteBacke
                 .and_then(|execution| execution.backends.as_ref())
                 .and_then(|backends| backends.remote.as_ref())
         })
+        .or_else(|| {
+            execution.and_then(|execution| {
+                execution
+                    .contexts
+                    .values()
+                    .find(|context| context.backend == Backend::Remote)
+                    .and_then(|context| context.remote.as_ref())
+            })
+        })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_dependency_isolated_path;
+    use std::path::Path;
+
+    use super::{execution_image, execution_target, normalize_dependency_isolated_path};
+    use crate::parser::parse_contract_str;
+    use crate::schema::Backend;
 
     #[test]
     fn normalizes_windows_separator_isolated_paths() {
@@ -311,6 +333,74 @@ mod tests {
         assert_eq!(
             normalize_dependency_isolated_path("node_modules/../cache"),
             None
+        );
+    }
+
+    #[test]
+    fn execution_image_prefers_legacy_backend_before_non_default_container_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: image-selection
+execution:
+  backends:
+    container:
+      image: ghcr.io/ota/legacy:latest
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: ghcr.io/ota/context:latest
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .expect("contract should parse");
+
+        assert_eq!(
+            execution_image(&contract, Backend::Container),
+            Some(String::from("ghcr.io/ota/legacy:latest"))
+        );
+    }
+
+    #[test]
+    fn execution_target_prefers_legacy_remote_backend_before_non_default_remote_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: remote-target-selection
+execution:
+  backends:
+    remote:
+      provider: ssh
+      target: legacy@example.com
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    remote-dev:
+      backend: remote
+      remote:
+        provider: ssh
+        target: context@example.com
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .expect("contract should parse");
+
+        assert_eq!(
+            execution_target(&contract, Path::new("/tmp/ota.yaml"), Backend::Remote, None),
+            Some(String::from("legacy@example.com"))
         );
     }
 }

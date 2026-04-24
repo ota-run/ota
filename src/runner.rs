@@ -3416,7 +3416,16 @@ pub fn effective_execution(
                 .filter(|(_, context)| context.backend == backend)
                 .and_then(|(_, context)| context.lifecycle)
         })
-        .or_else(|| execution.and_then(|execution| execution.lifecycle));
+        .or_else(|| execution.and_then(|execution| execution.lifecycle))
+        .or_else(|| {
+            execution.and_then(|execution| {
+                execution
+                    .contexts
+                    .values()
+                    .find(|context| context.backend == backend)
+                    .and_then(|context| context.lifecycle)
+            })
+        });
 
     (backend, lifecycle)
 }
@@ -13257,7 +13266,7 @@ tasks:
                 oom_killed: Some(false),
             }),
             1,
-            false,
+            true,
             "ota-ephemeral-test",
         )
         .expect("service termination should classify");
@@ -14101,6 +14110,194 @@ tasks:
             effective_task_execution(&fixture.contract, "start", ExecutionOverrides::default());
         assert_eq!(effective.backend, Backend::Container);
         assert_eq!(effective.context_name, Some("app"));
+    }
+
+    #[test]
+    fn effective_execution_prefers_root_lifecycle_over_arbitrary_backend_context_match() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  lifecycle: persistent
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    a-container:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/a:latest
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+
+        let (_, lifecycle) = super::effective_execution(
+            &fixture.contract,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        );
+        assert_eq!(lifecycle, Some(Lifecycle::Persistent));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_execution_backend_uses_resolved_inherited_container_context_shape() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app-base:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+    app:
+      extends: app-base
+      container:
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
+tasks:
+  dev:
+    context: app
+    run: echo dev
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let resolved =
+            resolve_execution_backend(&fixture.contract, "dev", ExecutionOverrides::default())
+                .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match resolved {
+            ResolvedExecutionBackend::Container {
+                context_name,
+                image,
+                lifecycle,
+                memory_bytes,
+                dependency_isolation_paths,
+                ..
+            } => {
+                assert_eq!(context_name.as_deref(), Some("app"));
+                assert_eq!(image, "ghcr.io/ota/test:latest");
+                assert_eq!(lifecycle, Lifecycle::Persistent);
+                assert_eq!(memory_bytes, Some(parse_memory_size_bytes("3GiB").unwrap()));
+                assert_eq!(
+                    dependency_isolation_paths,
+                    vec![String::from("node_modules")]
+                );
+            }
+            other => panic!("expected container backend, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_execution_backend_inherits_dependency_isolation_paths_from_parent_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app-base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - missing-engine
+      attachments:
+        isolated_paths:
+          - node_modules
+      requirements:
+        tools:
+          npm: ">=10"
+    app:
+      extends: app-base
+tasks:
+  dev:
+    context: app
+    run: echo dev
+"#,
+        );
+
+        let effective =
+            effective_task_execution(&fixture.contract, "dev", ExecutionOverrides::default());
+        assert_eq!(effective.backend, Backend::Container);
+        assert_eq!(effective.context_name, Some("app"));
+        assert_eq!(effective.lifecycle, Some(Lifecycle::Ephemeral));
+        let container = effective
+            .container
+            .expect("inherited container settings should resolve");
+        assert_eq!(container.image, "ghcr.io/ota/test:latest");
+        let context = fixture
+            .contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get("app"))
+            .expect("resolved app context");
+        assert_eq!(
+            crate::execution::context_dependency_isolation_paths(context),
+            vec![String::from("node_modules")]
+        );
+        assert_eq!(
+            fixture
+                .contract
+                .context_requirement_surface_for_backend(Backend::Container)
+                .tools
+                .get("npm")
+                .map(|requirement| requirement.version().to_string()),
+            Some(String::from(">=10"))
+        );
     }
 
     #[cfg(unix)]
