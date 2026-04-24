@@ -300,6 +300,8 @@ pub struct ExecutionReceipt {
     pub runtime: Option<ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_termination: Option<crate::runner::ServiceTermination>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logs: Option<ExecutionReceiptLogs>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub workloads: BTreeMap<String, ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -311,6 +313,13 @@ pub struct ExecutionReceipt {
     pub summary: ExecutionReceiptSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptLogs {
+    pub dir: String,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]

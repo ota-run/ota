@@ -150,7 +150,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--lifecycle`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run dev --log\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -178,6 +178,9 @@ enum Commands {
         /// Stream raw child process output live instead of buffering it into the final report.
         #[arg(long, action = ArgAction::SetTrue)]
         stream: bool,
+        /// Persist durable run logs under `.ota/state/logs/` for this invocation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        log: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
@@ -1303,6 +1306,7 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
         "--use",
         "--write",
         "--stream",
+        "--log",
         "--dry-run",
         "--receipt",
         "--archive",
@@ -2569,12 +2573,13 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--ephemeral" | "--receipt" | "--stream" | "--debug" | "--plain" | "--concise"
-        | "--verbose" => Some(RunFlagSpec {
+        "--ephemeral" | "--receipt" | "--stream" | "--log" | "--debug" | "--plain"
+        | "--concise" | "--verbose" => Some(RunFlagSpec {
             canonical: match name {
                 "--ephemeral" => "ephemeral",
                 "--receipt" => "receipt",
                 "--stream" => "stream",
+                "--log" => "log",
                 "--debug" => "debug",
                 "--plain" => "plain",
                 "--concise" => "concise",
@@ -3676,6 +3681,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ephemeral,
             receipt,
             stream,
+            log,
             member,
             path,
             inputs,
@@ -3698,6 +3704,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             debug,
             receipt,
             stream,
+            log,
         ),
         Commands::Doctor {
             json,
@@ -4747,11 +4754,20 @@ mod tests {
 
     #[cfg(unix)]
     fn install_fake_docker(path: &std::path::Path) {
-        fs::write(
-            path,
+        let name = path
+            .file_name()
+            .and_then(|entry| entry.to_str())
+            .unwrap_or("docker");
+        let dir = path.parent().unwrap_or_else(|| Path::new("."));
+        write_fake_command(
+            dir,
+            name,
             r#"#!/bin/sh
 state_dir="$(dirname "$0")/docker-state"
 mkdir -p "$state_dir"
+if [ -n "$OTA_FAKE_DOCKER_TRACE" ]; then
+  printf '%s\n' "$@" >> "$OTA_FAKE_DOCKER_TRACE"
+fi
 
 command="$1"
 shift
@@ -4946,7 +4962,7 @@ case "$command" in
         done < "$state_dir/$name.env"
       fi
       cd "$host_dir" || exit 1
-      exec /bin/sh -c "$(cat "$state_dir/$name.command")"
+      exec /bin/sh "$state_dir/$name.command"
     fi
     exit 0
     ;;
@@ -4978,12 +4994,18 @@ case "$command" in
     mounts=""
     name=""
     network=""
+    labels=""
     env_entries=""
     pub_entries=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --rm|-i)
           shift
+          ;;
+        --label)
+          labels="${labels}${2}
+"
+          shift 2
           ;;
         --entrypoint)
           shift 2
@@ -5049,6 +5071,11 @@ case "$command" in
       printf "%s" "$env_entries" > "$state_dir/$name.env"
     else
       : > "$state_dir/$name.env"
+    fi
+    if [ -n "$labels" ]; then
+      printf "%s" "$labels" > "$state_dir/$name.labels"
+    else
+      : > "$state_dir/$name.labels"
     fi
     if [ -n "$pub_entries" ]; then
       printf "%s" "$pub_entries" > "$state_dir/$name.publish"
@@ -5229,8 +5256,7 @@ esac
 
 exit 1
 "#,
-        )
-        .unwrap();
+        );
     }
 
     #[cfg(unix)]
@@ -5250,6 +5276,10 @@ exec "{}" "$@"
             ),
         )
         .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
     }
 
     #[cfg(unix)]
@@ -10674,7 +10704,6 @@ tasks:
         );
 
         let output = run_with(["ota", "run", "dev", fixture.path()]);
-
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("ERROR  Container run is not configured"));
@@ -10744,6 +10773,9 @@ project:
   name: ota
 execution:
   default_context: app
+  backends:
+    container:
+      image: node:24-bookworm
   contexts:
     app:
       backend: container
@@ -10773,7 +10805,6 @@ tasks:
         );
 
         let output = run_with(["ota", "run", "dev", fixture.path()]);
-
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("ERROR  Task runtime projection is invalid"));
@@ -10797,6 +10828,9 @@ project:
   name: ota
 execution:
   default_context: app
+  backends:
+    container:
+      image: node:24-bookworm
   contexts:
     app:
       backend: container
@@ -10857,6 +10891,9 @@ project:
   name: ota
 execution:
   default_context: app
+  backends:
+    container:
+      image: node:24-bookworm
   contexts:
     app:
       backend: container
@@ -11946,7 +11983,6 @@ tasks:
         let _keep_port_bound = listener;
 
         let output = run_with(["ota", "run", "dev", fixture.path()]);
-
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Host publication failed"), "{stderr}");
@@ -12005,7 +12041,8 @@ tasks:
             host:
               address: 127.0.0.1
               port:
-                mode: auto
+                mode: fixed
+                value: 3001
               path: /
 "#,
         );
@@ -12042,7 +12079,7 @@ exec "$(dirname "$0")/docker-real" "$@"
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Host publication failed"), "{stderr}");
-        assert!(stderr.contains("rerun `ota run dev` so ota can reserve a new host port"));
+        assert!(stderr.contains("rerun `ota run dev --host-port <free port>`"));
         assert!(!stderr.contains(
             "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
         ));
@@ -12161,10 +12198,13 @@ project:
   name: ota
 execution:
   default_context: app
+  backends:
+    container:
+      image: node:24-bookworm
   contexts:
     app:
       backend: container
-      lifecycle: ephemeral
+      lifecycle: persistent
       container:
         image: node:24-bookworm
 tasks:
@@ -12203,9 +12243,7 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Published endpoint could not be resolved"));
         assert!(stderr.contains("Field: tasks.setup.runtime.listeners.http.project.host.port"));
-        assert!(stderr.contains(
-            "the container engine did not report a published host port for `ota-ephemeral"
-        ));
+        assert!(stderr.contains("the container engine did not report a published host port"));
         assert!(stderr.contains("rerun `ota up`"));
         assert!(!stderr.contains("Task run failed"));
     }
@@ -12280,6 +12318,7 @@ tasks:
                 ephemeral: false,
                 receipt: false,
                 stream: false,
+                log: false,
                 member: Vec::new(),
                 path: None,
                 inputs: Vec::new(),
@@ -13270,6 +13309,7 @@ tasks:
             ephemeral: false,
             receipt: false,
             stream: false,
+            log: false,
             member: Vec::new(),
             path: None,
             inputs: Vec::new(),

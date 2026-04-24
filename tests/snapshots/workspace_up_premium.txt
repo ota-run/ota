@@ -17,4 +17,4 @@ Workspace: premium-workspace
 Mode:      native
 Task:      web
 Status:    success
-Note:      running on the host environment
+Note:      running on the host environment; post-setup diagnosis
