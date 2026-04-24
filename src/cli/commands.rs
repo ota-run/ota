@@ -406,7 +406,7 @@ fn render_task_exit_failure_text(
     append_error_detail_section(
         &mut out,
         "Why:",
-        &[format!("task `{task_name}` returned a non-zero exit code")],
+        &task_exit_failure_why_lines(task_name, exit_code),
         None,
     );
     if !next_steps.is_empty() {
@@ -25529,6 +25529,73 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_explains_exit_137_service_kill_and_aligns_container_summary() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            137,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(137),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nContainer: stale-summary-id\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(
+            rendered.contains("was killed (exit code `137`, SIGKILL)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("often due to OOM or container runtime termination"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("check for OOM kills or container runtime termination"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Container: ota-ephemeral-deadbeef"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Container: stale-summary-id"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "service stopped after readiness; container was killed (exit 137, SIGKILL)"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_reports_interrupted_non_service_with_cleanup_note() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -25800,6 +25867,33 @@ tasks:
 
         assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
         assert!(!rendered.contains("INFO  Task interrupted"), "{rendered}");
+    }
+
+    #[test]
+    fn task_exit_failure_text_explains_exit_137() {
+        let rendered = strip_ansi_codes(&super::render_task_exit_failure_text(
+            "./ota.yaml",
+            "setup:dev",
+            137,
+            &[String::from(
+                "run `ota tasks --use` to inspect runnable task usage",
+            )],
+            Some("RUN SUMMARY\nStatus:    failed"),
+            None,
+        ));
+
+        assert!(
+            rendered.contains("`setup:dev` exited with code 137"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("task `setup:dev` returned non-zero exit code `137`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("exit code `137` usually means the process was killed (SIGKILL), often due to OOM or container runtime termination"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -28831,9 +28925,13 @@ fn render_service_interrupted_text(
         out.push_str(receipt_text);
     }
     let summary_with_status = summary_with_status_override(Some(summary_block), "interrupted");
-    let summary_override = summary_with_note_override(
-        summary_with_status.as_deref(),
-        &service_termination_summary_note(service_termination),
+    let summary_override = summary_with_container_override(
+        summary_with_note_override(
+            summary_with_status.as_deref(),
+            &service_termination_summary_note(service_termination),
+        )
+        .as_deref(),
+        &service_termination.container,
     );
     if let Some(summary_override) = summary_override {
         out.push('\n');
@@ -28892,11 +28990,20 @@ fn render_service_stopped_failure_text(
             service_termination.container,
             service_termination.exit_code.unwrap_or(130)
         ),
-        ServiceTerminationCause::ExitedNonZero => format!(
-            "container `{}` exited with status `{}`",
-            service_termination.container,
-            service_termination.exit_code.unwrap_or(1)
-        ),
+        ServiceTerminationCause::ExitedNonZero => {
+            if service_termination.exit_code == Some(137) {
+                format!(
+                    "container `{}` was killed (exit code `137`, SIGKILL), often due to OOM or container runtime termination",
+                    service_termination.container
+                )
+            } else {
+                format!(
+                    "container `{}` exited with status `{}`",
+                    service_termination.container,
+                    service_termination.exit_code.unwrap_or(1)
+                )
+            }
+        }
         ServiceTerminationCause::Exited => format!(
             "container `{}` exited after readiness",
             service_termination.container
@@ -28920,6 +29027,10 @@ fn render_service_stopped_failure_text(
         next_steps.push(String::from(
             "increase the container memory available to Docker/Podman",
         ));
+    } else if service_termination.exit_code == Some(137) {
+        next_steps.push(String::from(
+            "check for OOM kills or container runtime termination, then retry the run",
+        ));
     }
     next_steps.push(format!(
         "or run `ota run {requested_task_name} --mode native` if native execution is supported"
@@ -28931,9 +29042,13 @@ fn render_service_stopped_failure_text(
         out.push('\n');
         out.push_str(receipt_text);
     }
-    let summary_override = summary_with_note_override(
-        Some(summary_block),
-        &service_termination_summary_note(service_termination),
+    let summary_override = summary_with_container_override(
+        summary_with_note_override(
+            Some(summary_block),
+            &service_termination_summary_note(service_termination),
+        )
+        .as_deref(),
+        &service_termination.container,
     );
     if let Some(summary_override) = summary_override {
         out.push('\n');
@@ -28954,13 +29069,56 @@ fn service_termination_summary_note(service_termination: &ServiceTermination) ->
     match service_termination.cause {
         ServiceTerminationCause::OomKilled => format!("{prefix}; container was OOM-killed"),
         ServiceTerminationCause::Interrupted => String::from("service interrupted by user"),
-        ServiceTerminationCause::ExitedNonZero => format!(
-            "{prefix}; container exited with status {}",
-            service_termination.exit_code.unwrap_or(1)
-        ),
+        ServiceTerminationCause::ExitedNonZero => {
+            if service_termination.exit_code == Some(137) {
+                format!("{prefix}; container was killed (exit 137, SIGKILL)")
+            } else {
+                format!(
+                    "{prefix}; container exited with status {}",
+                    service_termination.exit_code.unwrap_or(1)
+                )
+            }
+        }
         ServiceTerminationCause::Exited => format!("{prefix}; container exited"),
         ServiceTerminationCause::Unknown => format!("{prefix}; container stop cause is unknown"),
     }
+}
+
+fn task_exit_failure_why_lines(task_name: &str, exit_code: i32) -> Vec<String> {
+    if exit_code == 137 {
+        vec![
+            format!("task `{task_name}` returned non-zero exit code `137`"),
+            String::from(
+                "exit code `137` usually means the process was killed (SIGKILL), often due to OOM or container runtime termination",
+            ),
+        ]
+    } else {
+        vec![format!("task `{task_name}` returned a non-zero exit code")]
+    }
+}
+
+fn summary_with_container_override(summary_block: Option<&str>, container: &str) -> Option<String> {
+    summary_block.map(|summary| {
+        let mut replaced = false;
+        let lines = summary
+            .lines()
+            .map(|line| {
+                if line.starts_with("Container:") {
+                    replaced = true;
+                    summary_detail_line("Container:", container)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>();
+        if replaced {
+            lines.join("\n")
+        } else {
+            let mut lines = lines;
+            lines.push(summary_detail_line("Container:", container));
+            lines.join("\n")
+        }
+    })
 }
 
 pub(crate) fn parse_container_host_port_conflict(stderr: &str) -> Option<u16> {
