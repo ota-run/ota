@@ -98,6 +98,8 @@ pub struct DoctorFixSummary {
     pub fixable_count: usize,
     pub planned_count: usize,
     pub applied_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<DoctorFixActionSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

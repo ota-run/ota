@@ -301,7 +301,7 @@ execution:
             default: 3GiB
 ```
 
-Execution authoring patterns (all supported):
+Execution authoring patterns (choose one default execution declaration mode):
 
 1. Single-context shorthand (lean repos with one execution shape):
 
@@ -355,6 +355,7 @@ execution:
 ```
 
 `extends` is optional. It reduces repetition for named contexts; it does not replace shorthand for simple repos.
+Single-context shorthand and named contexts are separate declaration modes: once a contract declares `execution.default_context` or `execution.contexts`, it must stop using root shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) as overlapping default execution truth.
 
 Supported backend values:
 
@@ -381,6 +382,7 @@ Current validation rule:
 - `execution.default_context` declares the context used when task-level `context` is not set
 - `execution.contexts` defines backend and requirement surfaces per context
 - `execution.contexts.<name>.extends` lets a named context inherit from one parent context to avoid repetition
+- root shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) must not be combined with `execution.default_context` or `execution.contexts`; pick either shorthand-only or named-context mode
 - each `execution.contexts.<name>` requires:
   - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
   - optional `container.resources.memory.minimum` and `container.resources.memory.default` for container contexts
@@ -399,7 +401,7 @@ Current implementation:
 - runtime selection consumes resolved named contexts after `extends` merge, so `ota run`, `ota up`, `ota doctor`, and `ota execution plan` execute the merged concrete context shape instead of partial parent/child declarations
 - `execution.contexts` are used for context-scoped requirement checks and receipts
 - `tasks.<name>.context` lets a task declare a non-default execution context
-- named contexts can now share a base execution shape through `extends` while keeping single-context shorthand (`preferred`/`lifecycle`/`backends`) fully supported
+- named contexts can now share a base execution shape through `extends`, while shorthand remains the lean authoring path for shorthand-only repos
 - `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
 - container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
