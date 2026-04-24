@@ -47,7 +47,7 @@
   <p>
     <a href="https://ota.run/docs/install">Install</a> ·
     <a href="https://ota.run/docs/quickstart">Quickstart</a> ·
-    <a href="https://ota.run/docs/examples">Examples</a> ·
+    <a href="https://github.com/ota-run/examples">Examples</a> ·
     <a href="https://ota.run/docs/reference/governance">Governance</a> ·
     <a href="https://github.com/ota-run/ota/releases">Releases</a>
   </p>
