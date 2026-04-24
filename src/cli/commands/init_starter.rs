@@ -603,6 +603,7 @@ fn inferred_init_env_sources(root: &Path) -> Vec<EnvSource> {
 }
 
 pub(super) fn apply_starter_contract_defaults(contract: &mut DetectContract, root: &Path) {
+    mark_setup_task_internal(contract);
     if contract.project.is_none()
         && let Some(name) = directory_name_for_root(root)
     {
@@ -614,6 +615,12 @@ pub(super) fn apply_starter_contract_defaults(contract: &mut DetectContract, roo
         }
     } else {
         contract.agent = starter_agent_from_detected_contract(contract, root);
+    }
+}
+
+pub(super) fn mark_setup_task_internal(contract: &mut DetectContract) {
+    if let Some(task) = contract.tasks.get_mut("setup") {
+        task.internal = true;
     }
 }
 
@@ -1188,6 +1195,7 @@ fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectT
         description,
         run: String::from(run),
         notes: Some(notes),
+        internal: task_name == "setup",
         safe_for_agent: false,
     }
 }
@@ -1205,4 +1213,64 @@ fn composer_has_test_script(root: &Path) -> bool {
         .get("scripts")
         .and_then(JsonValue::as_object)
         .is_some_and(|scripts| scripts.contains_key("test"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        StarterPack, StarterPackConfig, StarterPackOptions, bootstrap_init_contract,
+        starter_pack_contract,
+    };
+    use crate::detector::{DetectContract, DetectReport, DetectTask};
+    use std::collections::BTreeMap;
+    use tempfile::TempDir;
+
+    #[test]
+    fn bootstrap_contract_marks_setup_internal_by_default() {
+        let fixture = TempDir::new().expect("fixture");
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            String::from("setup"),
+            DetectTask {
+                description: None,
+                run: String::from("echo setup"),
+                notes: None,
+                internal: false,
+                safe_for_agent: false,
+            },
+        );
+        let report = DetectReport {
+            root: fixture.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                tasks,
+                ..DetectContract::default()
+            },
+            inferences: Vec::new(),
+        };
+
+        let contract = bootstrap_init_contract(&report);
+
+        assert_eq!(
+            contract.tasks.get("setup").map(|task| task.internal),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn starter_pack_contract_marks_setup_internal_by_default() {
+        let fixture = TempDir::new().expect("fixture");
+        let contract = starter_pack_contract(
+            StarterPackConfig {
+                pack: StarterPack::Node,
+                options: StarterPackOptions::default(),
+            },
+            fixture.path(),
+        );
+
+        assert_eq!(
+            contract.tasks.get("setup").map(|task| task.internal),
+            Some(true)
+        );
+    }
 }

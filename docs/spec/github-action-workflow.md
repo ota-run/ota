@@ -69,6 +69,7 @@ on:
   push:
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -83,8 +84,7 @@ jobs:
         with:
           command: receipt
           archive: true
-          annotate: true
-          comment-pr: true
+          fail-on-new-blockers: true
           github-token: ${{ github.token }}
 ```
 
@@ -93,7 +93,7 @@ jobs:
 Current `v1` behavior:
 
 - runs `ota receipt --json --archive` or `ota doctor --json`
-- auto-installs ota by default when the runner does not already have it
+- installs ota by default on every run unless `install: never` is set
 - writes a GitHub step summary through `ota annotations --format markdown`
 - emits GitHub annotations through `ota annotations --format github`
 - optionally creates or updates a sticky pull-request comment
@@ -128,8 +128,7 @@ scan as a durable artifact, and keeps later automation pointed at the receipt su
 
 The action supports:
 
-- `install: auto` (default) to reuse an existing ota binary or install ota if it is missing
-- `install: always` to force installer use for the requested version
+- `install: always` (default) to run the official installer for the requested ota version on every run
 - `install: never` to fail closed unless ota is already available on the runner
 - `ota-version` to pin the installed ota release explicitly
 
@@ -145,12 +144,12 @@ The action currently supports Linux, macOS, and Windows GitHub Actions runners.
 - `archive` adds `--archive` when `command=receipt`; default: `true`
 - `annotate` emits GitHub annotations from ota findings; default: `true`
 - `max-annotations` caps emitted annotations; default: `20`
-- `comment-pr` creates or updates the sticky pull-request comment; default: `false`
+- `comment-pr` creates or updates the sticky pull-request comment; default: `true`
 - `comment-pr-only` limits comment behavior to pull-request events; default: `true`
-- `artifact-name` sets the uploaded artifact name; default: `ota-report`
+- `artifact-name` sets the uploaded artifact name; default: `ota-readiness`
 - `artifact-retention-days` sets optional artifact retention in days
 - `fail-on-error` fails the action when ota reports a blocked outcome; default: `true`
-- `install` controls installation behavior with `auto`, `always`, or `never`; default: `auto`
+- `install` controls installation behavior with `always` or `never`; default: `always`
 - `ota-version` pins installer-driven ota installation to a specific release such as `v1.4.3`
 - `ota-bin` overrides the ota binary name or path after resolution; default: `ota`
 - `output-path` chooses where the captured ota JSON payload is written; default:
@@ -183,6 +182,7 @@ If a later job needs to invoke `ota` directly, install ota again in that job or 
 
 If `comment-pr: true` is set:
 
+- the workflow should grant `actions: read` so pull-request `receipt` runs can restore the latest successful baseline artifact named by `artifact-name`
 - the workflow should grant `pull-requests: write`
 - the action updates one sticky comment instead of posting a new one each run
 - `comment-pr-only: true` keeps comment behavior limited to pull-request events

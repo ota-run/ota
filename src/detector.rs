@@ -81,6 +81,8 @@ pub struct DetectTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub internal: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub safe_for_agent: bool,
 }
 
@@ -174,6 +176,10 @@ fn task_description(task_name: &str, source: &str) -> Option<String> {
     }
 }
 
+fn setup_task_is_internal(task_name: &str) -> bool {
+    task_name.eq_ignore_ascii_case("setup")
+}
+
 impl DetectReport {
     pub fn high_confidence_contract(&self) -> DetectContract {
         self.contract_with_min_confidence(Confidence::High)
@@ -241,6 +247,7 @@ impl DetectReport {
                                 description,
                                 run: inference.value.clone(),
                                 notes,
+                                internal: setup_task_is_internal(task_name),
                                 safe_for_agent: false,
                             },
                         );
@@ -3736,19 +3743,35 @@ impl DetectBuilder {
         if self.should_replace(&field, &source, confidence) {
             let notes = task_notes(&name);
             let description = task_description(&name, &source);
+            let internal = setup_task_is_internal(&name);
             self.contract.tasks.insert(
                 name.clone(),
                 DetectTask {
                     description,
                     run: run.clone(),
                     notes,
+                    internal,
                     safe_for_agent: false,
                 },
             );
             self.record(field, run, source.clone(), confidence);
+            if internal {
+                self.set_task_internal(name.clone(), source.clone(), confidence);
+            }
             if is_verifier_task_name(&name) {
                 self.set_task_safe_for_agent(name, source, confidence);
             }
+        }
+    }
+
+    fn set_task_internal(&mut self, name: String, source: String, confidence: Confidence) {
+        let field = format!("tasks.{name}.internal");
+        if !self.should_replace(&field, &source, confidence) {
+            return;
+        }
+        if let Some(task) = self.contract.tasks.get_mut(&name) {
+            task.internal = true;
+            self.record(field, String::from("true"), source, confidence);
         }
     }
 
@@ -6255,6 +6278,59 @@ name = "ota-api"
             Some("Run `ota run dev` to execute this task.\n")
         );
         assert!(!contract.runtimes.contains_key("node"));
+    }
+
+    #[test]
+    fn marks_detected_setup_task_internal_in_contract() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-app",
+  "scripts": {
+    "setup": "npm ci"
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.tasks.get("setup").map(|task| task.internal),
+            Some(true)
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tasks.setup.internal"
+                    && inference.value == "true"
+                    && inference.source == "package.json#scripts.setup"
+            }),
+            "expected setup task internal inference"
+        );
+    }
+
+    #[test]
+    fn marks_detected_setup_task_internal_in_high_confidence_projection() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-app",
+  "scripts": {
+    "setup": "npm ci",
+    "dev": "npm run dev"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-app\"\n}\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        let contract = report.high_confidence_contract();
+
+        assert_eq!(
+            contract.tasks.get("setup").map(|task| task.internal),
+            Some(true)
+        );
     }
 
     struct Fixture {

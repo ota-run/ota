@@ -1047,7 +1047,7 @@ Current execution model:
 - `after_failure` runs only when the task body exits non-zero
 - `after_always` runs after either branch, but only when the task body actually ran
 - hook tasks run in declared order
-- tasks marked `internal: true` remain normal graph nodes for `depends_on` and hooks, but `ota tasks` hides them unless `--all` is requested
+- tasks marked `internal: true` (commonly `setup`) remain normal graph nodes for `depends_on` and hooks, still run when referenced directly, and are hidden from default `ota tasks` output unless `--all` is requested
 - hook failures affect the final task result for the parent task
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec

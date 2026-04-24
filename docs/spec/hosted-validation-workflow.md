@@ -250,6 +250,7 @@ on:
   push:
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -264,8 +265,7 @@ jobs:
         with:
           command: receipt
           archive: true
-          annotate: true
-          comment-pr: true
+          fail-on-new-blockers: true
           github-token: ${{ github.token }}
 ```
 
