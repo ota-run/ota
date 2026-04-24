@@ -310,7 +310,10 @@ pub(crate) fn run_streaming_command_with_loader(
     command: &mut Command,
     label: &str,
 ) -> io::Result<i32> {
-    Ok(run_streaming_command_with_capture_with_loader(command, label)?.exit_code)
+    Ok(
+        run_streaming_command_with_capture_with_loader_options(command, label, true, false)?
+            .exit_code,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,13 +327,14 @@ pub(crate) fn run_streaming_command_with_capture_with_loader(
     command: &mut Command,
     label: &str,
 ) -> io::Result<StreamingCommandOutput> {
-    run_streaming_command_with_capture_with_loader_options(command, label, true)
+    run_streaming_command_with_capture_with_loader_options(command, label, true, true)
 }
 
 pub(crate) fn run_streaming_command_with_capture_with_loader_options(
     command: &mut Command,
     label: &str,
     echo_stderr: bool,
+    capture_output: bool,
 ) -> io::Result<StreamingCommandOutput> {
     let loader = StreamPhaseLoader::start(label);
     let notifier = loader.as_ref().map(|loader| loader.notifier());
@@ -342,15 +346,17 @@ pub(crate) fn run_streaming_command_with_capture_with_loader_options(
 
     let stdout_notifier = notifier.clone();
     let stdout_handle = child.stdout.take().map(|stdout| {
-        thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, true))
+        thread::spawn(move || {
+            stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, capture_output)
+        })
     });
     let stderr_notifier = notifier;
     let stderr_handle = child.stderr.take().map(|stderr| {
         thread::spawn(move || {
             if echo_stderr {
-                stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, true)
+                stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, capture_output)
             } else {
-                stream_reader_to_sink(stderr, io::sink(), stderr_notifier, true)
+                stream_reader_to_sink(stderr, io::sink(), stderr_notifier, capture_output)
             }
         })
     });
@@ -6204,13 +6210,14 @@ fn execute_ephemeral_container_task_command(
     }
 
     match mode {
-        TaskExecutionMode::Stream { .. } => {
+        TaskExecutionMode::Stream { capture_output, .. } => {
             let mut container = ephemeral_container_stream_command(engine, &container_name);
             let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref());
             let output_result = run_streaming_command_with_capture_with_loader_options(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
                 false,
+                capture_output,
             );
             let readiness_observed = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
@@ -9317,6 +9324,80 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert!(outcome.stdout.contains("stream-out"), "{}", outcome.stdout);
         assert!(outcome.stderr.contains("stream-err"), "{}", outcome.stderr);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_stream_capture_collects_container_output_when_enabled() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: |
+      printf container-stream-out
+      printf container-stream-err >&2
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_with_args_with_overrides_and_stream_capture(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &[],
+            ExecutionOverrides::default(),
+            true,
+        )
+        .expect("stream run with capture should succeed");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(
+            outcome.stdout.contains("container-stream-out"),
+            "{}",
+            outcome.stdout
+        );
+        assert!(
+            outcome.stderr.contains("container-stream-err"),
+            "{}",
+            outcome.stderr
+        );
     }
 
     #[test]
@@ -16759,8 +16840,12 @@ case "$command" in
         done < "$state_dir/$name.env"
       fi
       cd "$host_dir" || exit 1
-      /bin/sh -c "$(cat "$state_dir/$name.command")"
+      /bin/sh -c "$(cat "$state_dir/$name.command")" &
+      child_pid=$!
+      printf "%s" "$child_pid" > "$state_dir/$name.pid"
+      wait "$child_pid"
       status=$?
+      rm -f "$state_dir/$name.pid"
       printf "%s" "$status" > "$state_dir/$name.exit-code"
       rm -f "$state_dir/$name.running"
       exit $status
@@ -17179,6 +17264,10 @@ EOF
     name="$1"
     [ -f "$state_dir/$name.path" ] || exit 1
     host_dir=$(cat "$state_dir/$name.path")
+    if [ -f "$state_dir/$name.pid" ]; then
+      kill "$(cat "$state_dir/$name.pid")" >/dev/null 2>&1 || true
+      rm -f "$state_dir/$name.pid"
+    fi
     rm -f "$state_dir/$name.path"
     rm -f "$state_dir/$name.running"
     rm -f "$state_dir/$name.no-start-revive"

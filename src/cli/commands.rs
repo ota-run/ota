@@ -25137,6 +25137,7 @@ tasks:
             Some("dev"),
             "RUN SUMMARY",
         ));
+        assert!(rendered.contains("Warning:"));
         assert!(rendered.contains("log capture failed: failed to create log directory"));
     }
 
@@ -32044,11 +32045,7 @@ fn render_execution_receipt_summary_block(
             note = format!("{note}; {service_note}");
         }
     }
-    if let Some(log_warning) = receipt_log_capture_warning(receipt)
-        && !note.contains(log_warning)
-    {
-        note = format!("{note}; {log_warning}");
-    }
+    let log_capture_warning = receipt_log_capture_warning(receipt).map(str::to_string);
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
@@ -32099,6 +32096,9 @@ fn render_execution_receipt_summary_block(
         &render_execution_summary_status_value(&status),
     ));
     lines.push(summary_detail_line("Note:", &note));
+    if let Some(log_warning) = log_capture_warning.as_deref() {
+        lines.push(summary_detail_line("Warning:", log_warning));
+    }
     lines.join("\n")
 }
 
