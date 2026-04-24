@@ -176,6 +176,11 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         return;
     };
 
+    let uses_context_mode = execution.default_context.is_some() || !execution.contexts.is_empty();
+    let uses_root_shorthand = execution.preferred.is_some()
+        || execution.lifecycle.is_some()
+        || execution.backends.is_some();
+
     for error in execution.context_resolution_errors() {
         errors.push(ValidationError::new(error.clone()));
     }
@@ -190,161 +195,169 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         ));
     }
 
-    if let Some(preferred) = execution.preferred
-        && !execution.supported.is_empty()
-        && !execution.supported.contains(&preferred)
-    {
-        errors.push(ValidationError::new(format!(
-            "`execution.preferred` is set to `{}` but it is missing from `execution.supported`",
-            format_backend(preferred)
-        )));
-    }
-
-    if let Some(container) = execution
-        .backends
-        .as_ref()
-        .and_then(|backends| backends.container.as_ref())
-        && container.image.trim().is_empty()
-    {
+    if uses_context_mode && uses_root_shorthand {
         errors.push(ValidationError::new(
-            "`execution.backends.container.image` must not be empty",
-        ));
-    }
-    if let Some(container) = execution
-        .backends
-        .as_ref()
-        .and_then(|backends| backends.container.as_ref())
-    {
-        validate_container_memory_resources("execution.backends.container", container, errors);
-    }
-
-    if let Some(remote) = execution
-        .backends
-        .as_ref()
-        .and_then(|backends| backends.remote.as_ref())
-        && remote.provider.trim().is_empty()
-    {
-        errors.push(ValidationError::new(
-            "`execution.backends.remote.provider` must not be empty",
+            "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both",
         ));
     }
 
-    if let Some(remote) = execution
-        .backends
-        .as_ref()
-        .and_then(|backends| backends.remote.as_ref())
-        && remote
-            .target
-            .as_deref()
-            .is_some_and(|target| target.trim().is_empty())
-    {
-        errors.push(ValidationError::new(
-            "`execution.backends.remote.target` must not be empty",
-        ));
-    }
+    if !uses_context_mode {
+        if let Some(preferred) = execution.preferred
+            && !execution.supported.is_empty()
+            && !execution.supported.contains(&preferred)
+        {
+            errors.push(ValidationError::new(format!(
+                "`execution.preferred` is set to `{}` but it is missing from `execution.supported`",
+                format_backend(preferred)
+            )));
+        }
 
-    if let Some(remote) = execution
-        .backends
-        .as_ref()
-        .and_then(|backends| backends.remote.as_ref())
-        && remote
-            .cwd
-            .as_deref()
-            .is_some_and(|cwd| cwd.trim().is_empty())
-    {
-        errors.push(ValidationError::new(
-            "`execution.backends.remote.cwd` must not be empty",
-        ));
-    }
-
-    if execution.preferred == Some(crate::schema::Backend::Container)
-        && execution
+        if let Some(container) = execution
             .backends
             .as_ref()
             .and_then(|backends| backends.container.as_ref())
-            .is_none()
-    {
-        errors.push(ValidationError::new(
-            "`execution.preferred: container` requires `execution.backends.container.image`",
-        ));
-    }
-
-    if execution.preferred == Some(crate::schema::Backend::Container)
-        && execution.lifecycle.is_none()
-    {
-        errors.push(ValidationError::new(
-            "`execution.preferred: container` requires an explicit `execution.lifecycle`",
-        ));
-    }
-
-    if execution.preferred == Some(crate::schema::Backend::Remote)
-        && execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-            .is_none()
-    {
-        errors.push(ValidationError::new(
-            "`execution.preferred: remote` requires `execution.backends.remote.provider`",
-        ));
-    }
-
-    if let Some(remote) = execution
-        .backends
-        .as_ref()
-        .and_then(|backends| backends.remote.as_ref())
-    {
-        let provider = remote.provider.trim();
-        if provider.is_empty() {
-            return;
-        }
-
-        if !is_builtin_remote_provider(provider) {
-            let Some(extension) = contract.extensions.get(provider) else {
-                errors.push(ValidationError::new(format!(
-                    "`execution.backends.remote.provider` `{provider}` is not supported; declare a matching `backend_provider` extension or use a built-in provider"
-                )));
-                return;
-            };
-
-            if extension.kind != ExtensionKind::BackendProvider {
-                errors.push(ValidationError::new(format!(
-                    "`execution.backends.remote.provider` `{provider}` must refer to a `backend_provider` extension"
-                )));
-                return;
-            }
-
-            if extension.api_version != 1 {
-                errors.push(ValidationError::new(format!(
-                    "`execution.backends.remote.provider` `{provider}` requires a `backend_provider` extension with `api_version: 1`"
-                )));
-            }
-        }
-    }
-
-    if execution.preferred == Some(crate::schema::Backend::Remote)
-        && execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-            .and_then(|remote| remote.target.as_deref())
-            .is_none()
-    {
-        let provider = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-            .map(|remote| remote.provider.trim())
-            .unwrap_or_default();
-        let example = remote_target_example(provider);
-        if provider.is_empty() {
+            && container.image.trim().is_empty()
+        {
             errors.push(ValidationError::new(
-                "`execution.preferred: remote` requires `execution.backends.remote.target`",
+                "`execution.backends.container.image` must not be empty",
             ));
-        } else {
-            errors.push(ValidationError::new(format!(
-                "`execution.preferred: remote` with provider `{provider}` requires `execution.backends.remote.target` (example: `{example}`)"
-            )));
+        }
+        if let Some(container) = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.container.as_ref())
+        {
+            validate_container_memory_resources("execution.backends.container", container, errors);
+        }
+
+        if let Some(remote) = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+            && remote.provider.trim().is_empty()
+        {
+            errors.push(ValidationError::new(
+                "`execution.backends.remote.provider` must not be empty",
+            ));
+        }
+
+        if let Some(remote) = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+            && remote
+                .target
+                .as_deref()
+                .is_some_and(|target| target.trim().is_empty())
+        {
+            errors.push(ValidationError::new(
+                "`execution.backends.remote.target` must not be empty",
+            ));
+        }
+
+        if let Some(remote) = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+            && remote
+                .cwd
+                .as_deref()
+                .is_some_and(|cwd| cwd.trim().is_empty())
+        {
+            errors.push(ValidationError::new(
+                "`execution.backends.remote.cwd` must not be empty",
+            ));
+        }
+
+        if execution.preferred == Some(crate::schema::Backend::Container)
+            && execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.container.as_ref())
+                .is_none()
+        {
+            errors.push(ValidationError::new(
+                "`execution.preferred: container` requires `execution.backends.container.image`",
+            ));
+        }
+
+        if execution.preferred == Some(crate::schema::Backend::Container)
+            && execution.lifecycle.is_none()
+        {
+            errors.push(ValidationError::new(
+                "`execution.preferred: container` requires an explicit `execution.lifecycle`",
+            ));
+        }
+
+        if execution.preferred == Some(crate::schema::Backend::Remote)
+            && execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.remote.as_ref())
+                .is_none()
+        {
+            errors.push(ValidationError::new(
+                "`execution.preferred: remote` requires `execution.backends.remote.provider`",
+            ));
+        }
+
+        if let Some(remote) = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+        {
+            let provider = remote.provider.trim();
+            if provider.is_empty() {
+                return;
+            }
+
+            if !is_builtin_remote_provider(provider) {
+                let Some(extension) = contract.extensions.get(provider) else {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.backends.remote.provider` `{provider}` is not supported; declare a matching `backend_provider` extension or use a built-in provider"
+                    )));
+                    return;
+                };
+
+                if extension.kind != ExtensionKind::BackendProvider {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.backends.remote.provider` `{provider}` must refer to a `backend_provider` extension"
+                    )));
+                    return;
+                }
+
+                if extension.api_version != 1 {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.backends.remote.provider` `{provider}` requires a `backend_provider` extension with `api_version: 1`"
+                    )));
+                }
+            }
+        }
+
+        if execution.preferred == Some(crate::schema::Backend::Remote)
+            && execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.remote.as_ref())
+                .and_then(|remote| remote.target.as_deref())
+                .is_none()
+        {
+            let provider = execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.remote.as_ref())
+                .map(|remote| remote.provider.trim())
+                .unwrap_or_default();
+            let example = remote_target_example(provider);
+            if provider.is_empty() {
+                errors.push(ValidationError::new(
+                    "`execution.preferred: remote` requires `execution.backends.remote.target`",
+                ));
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "`execution.preferred: remote` with provider `{provider}` requires `execution.backends.remote.target` (example: `{example}`)"
+                )));
+            }
         }
     }
 
@@ -355,28 +368,6 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             "`execution.default_context` is set to `{default_context}` but it is missing from `execution.contexts`"
         )));
     }
-    if let Some((context_name, context)) = execution.default_context()
-        && let Some(preferred) = execution.preferred
-        && context.backend != preferred
-    {
-        errors.push(ValidationError::new(format!(
-            "`execution.default_context` `{context_name}` resolves to `{}` but `execution.preferred` is `{}`; align them or keep only one default execution declaration",
-            format_backend(context.backend),
-            format_backend(preferred)
-        )));
-    }
-    if let Some((context_name, context)) = execution.default_context()
-        && let Some(lifecycle) = execution.lifecycle
-        && context.lifecycle.is_some()
-        && context.lifecycle != Some(lifecycle)
-    {
-        errors.push(ValidationError::new(format!(
-            "`execution.default_context` `{context_name}` resolves to lifecycle `{}` but `execution.lifecycle` is `{}`; align them or keep only one default execution declaration",
-            format_lifecycle(context.lifecycle.expect("context lifecycle should exist")),
-            format_lifecycle(lifecycle)
-        )));
-    }
-
     for (name, context) in &execution.contexts {
         if name.trim().is_empty() {
             errors.push(ValidationError::new(
@@ -2195,13 +2186,6 @@ fn format_backend(backend: crate::schema::Backend) -> &'static str {
         crate::schema::Backend::Native => "native",
         crate::schema::Backend::Container => "container",
         crate::schema::Backend::Remote => "remote",
-    }
-}
-
-fn format_lifecycle(lifecycle: crate::schema::Lifecycle) -> &'static str {
-    match lifecycle {
-        crate::schema::Lifecycle::Persistent => "persistent",
-        crate::schema::Lifecycle::Ephemeral => "ephemeral",
     }
 }
 
@@ -4053,7 +4037,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_conflicting_default_execution_declarations() {
+    fn rejects_mixed_shorthand_and_named_context_execution_declarations() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -4061,7 +4045,11 @@ version: 1
 project:
   name: ota
 execution:
-  preferred: native
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
   default_context: app
   contexts:
     app:
@@ -4080,7 +4068,40 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "`execution.default_context` `app` resolves to `container` but `execution.preferred` is `native`; align them or keep only one default execution declaration"
+            "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both"
+        );
+    }
+
+    #[test]
+    fn rejects_named_contexts_with_root_backend_shorthand_even_without_preferred() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both"
         );
     }
 

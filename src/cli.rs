@@ -5869,6 +5869,50 @@ tasks:
     }
 
     #[test]
+    fn validate_text_breaks_out_mixed_execution_model_error() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Why:"));
+        assert!(stdout.contains("`execution` mixes two execution models:"));
+        assert!(stdout.contains(
+            "» single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`)"
+        ));
+        assert!(stdout.contains(
+            "» named contexts (`execution.default_context` / `execution.contexts`)"
+        ));
+        assert!(stdout.contains("» choose one: shorthand-only or named contexts"));
+        assert!(stdout.contains("» remove root shorthand and keep named contexts"));
+        assert!(stdout.contains("» or remove named contexts and keep shorthand"));
+        assert!(stdout.contains("» rerun `ota validate "));
+    }
+
+    #[test]
     fn validate_json_reports_monorepo_member_success() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -23078,6 +23122,9 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(gitignore, String::from(".ota/state/*\n"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("no supported deterministic repo-hygiene fixes are needed"));
+        assert!(!stdout.contains("preview mode: no files were modified"));
     }
 
     #[test]
@@ -23164,6 +23211,56 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["fix"]["planned_count"], 1);
         assert_eq!(json["fix"]["actions"][0]["key"], "repo_gitignore_ota_state");
+    }
+
+    #[test]
+    fn contractless_doctor_fix_does_not_plan_gitignore_hygiene() {
+        let fixture = ContractFixture::new_dir();
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+
+        let output = run_with(["ota", "doctor", "--fix", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("No `ota.yaml` found"));
+        assert!(stdout.contains(
+            "no contract-aware fixes are available yet; run `ota detect --dry-run` or `ota init --bootstrap` first"
+        ));
+        assert!(!stdout.contains("Repo local runtime state is not ignored by git"));
+        assert!(!stdout.contains(".ota/state/"));
+    }
+
+    #[test]
+    fn contractless_doctor_fix_json_reports_note_without_planned_actions() {
+        let fixture = ContractFixture::new_dir();
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+
+        let output = run_with([
+            "ota",
+            "doctor",
+            "--fix",
+            "--dry-run",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["fix"]["requested"], true);
+        assert_eq!(json["fix"]["dry_run"], true);
+        assert_eq!(json["fix"]["fixable_count"], 0);
+        assert_eq!(json["fix"]["planned_count"], 0);
+        assert_eq!(
+            json["fix"]["note"],
+            "no contract-aware fixes are available yet; run `ota detect --dry-run` or `ota init --bootstrap` first"
+        );
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| finding["code"] != "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE")
+        );
     }
 
     #[test]

@@ -132,6 +132,7 @@ Inheritance merge rules:
 - lists replace
 - backend-family switches across `extends` are rejected
 - `extends` is additive for multi-context repos; simple repos can keep single-context shorthand (`preferred` / `lifecycle` / `backends`)
+- root shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) must not be combined with `execution.default_context` or `execution.contexts`; contracts choose either shorthand-only or context mode
 - `ota run`, `ota up`, `ota doctor`, and `ota execution plan` consume the resolved merged context shape, not the raw partial parent/child declarations
 
 This keeps `docker` on the host context instead of pretending the app container should carry it.

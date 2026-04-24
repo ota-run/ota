@@ -45,9 +45,8 @@ use crate::contract_drift::{
 use crate::detector::{Confidence, DetectContract, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_STATE_GITIGNORE_COMMENT,
-    OTA_STATE_GITIGNORE_ENTRY, command_available, command_version,
-    detect_missing_ota_state_gitignore, diagnose_checks_only, diagnose_contract,
-    diagnose_contract_in_mode, diagnose_policy_review, diagnose_preconditions,
+    OTA_STATE_GITIGNORE_ENTRY, command_available, command_version, diagnose_checks_only,
+    diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review, diagnose_preconditions,
     diagnose_preconditions_with_mode, diagnose_service, diagnose_services_only,
     finding_targets_container_image, finding_targets_remote_backend,
     provisioning_installability_finding,
@@ -3809,6 +3808,21 @@ fn doctor_fixable_finding_count(report: &DoctorReport) -> usize {
         .count()
 }
 
+fn contractless_doctor_fix_summary(dry_run: bool) -> DoctorFixSummary {
+    DoctorFixSummary {
+        requested: true,
+        dry_run,
+        fixable_count: 0,
+        planned_count: 0,
+        applied_count: 0,
+        note: Some(String::from(
+            "no contract-aware fixes are available yet; run `ota detect --dry-run` or `ota init --bootstrap` first",
+        )),
+        actions: Vec::new(),
+        errors: Vec::new(),
+    }
+}
+
 fn run_doctor_fix(
     report: &DoctorReport,
     repo_root: &Path,
@@ -3817,19 +3831,21 @@ fn run_doctor_fix(
     let mut summary = DoctorFixSummary {
         requested: true,
         dry_run,
-        fixable_count: doctor_fixable_finding_count(report),
+        fixable_count: 0,
         planned_count: 0,
         applied_count: 0,
+        note: None,
         actions: Vec::new(),
         errors: Vec::new(),
     };
 
-    if summary.fixable_count == 0 {
+    if doctor_fixable_finding_count(report) == 0 {
         return Ok(summary);
     }
 
     let action = plan_ota_state_gitignore_fix(repo_root)?;
     if let Some(action) = action {
+        summary.fixable_count = 1;
         summary.planned_count = 1;
         if dry_run {
             summary.actions.push(DoctorFixActionSummary {
@@ -3873,8 +3889,17 @@ fn render_doctor_fix_text(summary: &DoctorFixSummary) -> String {
     stdout.push_str(&format!("\n\n{}", paint_section_title("Fixes")));
 
     if summary.fixable_count == 0 {
+        let note = summary
+            .note
+            .as_deref()
+            .unwrap_or("no supported deterministic repo-hygiene fixes are needed");
+        stdout.push_str(&format!("\n  {} {}", list_bullet(), note));
+        return stdout;
+    }
+
+    if summary.actions.is_empty() {
         stdout.push_str(&format!(
-            "\n  {} no supported deterministic repo-hygiene fixes are needed",
+            "\n  {} no applicable deterministic repo-hygiene file changes are needed",
             list_bullet()
         ));
         return stdout;
@@ -4078,6 +4103,9 @@ fn invalid_repo_contract_output(
     let path_display = target_path.display().to_string();
     match format {
         OutputFormat::Text => {
+            let (display_why_lines, display_next_steps) =
+                structured_validation_error_details(why_lines, &next_steps)
+                    .unwrap_or_else(|| (why_lines.to_vec(), next_steps.clone()));
             let mut stdout = format_command_header(command, &compact_target);
             stdout.push_str(&format!(
                 "\n\n{}  {}",
@@ -4089,8 +4117,13 @@ fn invalid_repo_contract_output(
                 paint_key("Where:"),
                 paint_code(&compact_target)
             ));
-            append_error_detail_section(&mut stdout, "Why:", why_lines, Some(target_path));
-            append_error_detail_section(&mut stdout, "Next:", &next_steps, Some(target_path));
+            append_error_detail_section(&mut stdout, "Why:", &display_why_lines, Some(target_path));
+            append_error_detail_section(
+                &mut stdout,
+                "Next:",
+                &display_next_steps,
+                Some(target_path),
+            );
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -4110,6 +4143,42 @@ fn invalid_repo_contract_output(
             error: Some(String::from("Invalid contract")),
         })),
     }
+}
+
+fn structured_validation_error_details(
+    why_lines: &[String],
+    next_steps: &[String],
+) -> Option<(Vec<String>, Vec<String>)> {
+    if why_lines.len() != 1 {
+        return None;
+    }
+
+    let why = why_lines[0].as_str();
+    if why
+        == "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both"
+    {
+        return Some((
+            vec![
+                String::from("`execution` mixes two execution models:"),
+                String::from(
+                    "single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`)",
+                ),
+                String::from("named contexts (`execution.default_context` / `execution.contexts`)"),
+                String::from("choose one: shorthand-only or named contexts"),
+            ],
+            vec![
+                String::from("remove root shorthand and keep named contexts"),
+                String::from("or remove named contexts and keep shorthand"),
+                next_steps
+                    .iter()
+                    .find(|step| step.starts_with("rerun "))
+                    .cloned()
+                    .unwrap_or_else(|| String::from("rerun `ota validate`")),
+            ],
+        ));
+    }
+
+    None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4939,22 +5008,7 @@ pub fn doctor(
         | Err(ResolveContractError::MissingExplicitDirectory { path: start }) => {
             let root = Path::new(&start);
             let report = diagnose_contractless_repo(root);
-            let fix_summary = if fix {
-                Some(match run_doctor_fix(&report, root, fix_dry_run) {
-                    Ok(summary) => summary,
-                    Err(error) => DoctorFixSummary {
-                        requested: true,
-                        dry_run: fix_dry_run,
-                        fixable_count: 0,
-                        planned_count: 0,
-                        applied_count: 0,
-                        actions: Vec::new(),
-                        errors: vec![error],
-                    },
-                })
-            } else {
-                None
-            };
+            let fix_summary = fix.then(|| contractless_doctor_fix_summary(fix_dry_run));
             let fix_failed = fix_summary
                 .as_ref()
                 .is_some_and(|summary| !summary.errors.is_empty());
@@ -5083,6 +5137,7 @@ pub fn doctor(
                             fixable_count: 0,
                             planned_count: 0,
                             applied_count: 0,
+                            note: None,
                             actions: Vec::new(),
                             errors: vec![error],
                         },
@@ -5513,10 +5568,6 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
             "run `ota detect --dry-run` to review inferred fields, or run `ota init --bootstrap` to create a starter contract",
         ),
     }];
-
-    if let Some(finding) = detect_missing_ota_state_gitignore(&root.join(DEFAULT_CONTRACT_FILE)) {
-        findings.push(finding);
-    }
 
     let detect_report = match detect_repo(root) {
         Ok(report) => Some(report),
