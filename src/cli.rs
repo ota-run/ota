@@ -9438,6 +9438,8 @@ tasks:
 
     #[test]
     fn up_does_not_report_endpoint_for_unstarted_workload_tasks() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -21151,6 +21153,8 @@ tasks:
 
     #[test]
     fn up_captures_setup_failure_output_in_compact_report() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -24125,6 +24129,7 @@ tasks:
     #[test]
     fn repo_run_task_completion_preserves_colon_task_names() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1

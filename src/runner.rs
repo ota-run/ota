@@ -231,6 +231,7 @@ pub(crate) fn stream_reader_to_sink<R, W>(
     mut sink: W,
     notifier: Option<StreamPhaseNotifier>,
     capture: bool,
+    live_log: Option<Arc<Mutex<File>>>,
 ) -> io::Result<String>
 where
     R: Read,
@@ -253,12 +254,24 @@ where
                 if capture {
                     captured.extend_from_slice(&buffer[..read]);
                 }
+                if let Some(log) = live_log.as_ref()
+                    && let Ok(mut file) = log.lock()
+                {
+                    let _ = file.write_all(&buffer[..read]);
+                    let _ = file.flush();
+                }
                 let _ = sink.write_all(&buffer[..read]);
                 let _ = sink.flush();
             }
             None => {
                 if capture {
                     captured.extend_from_slice(&buffer[..read]);
+                }
+                if let Some(log) = live_log.as_ref()
+                    && let Ok(mut file) = log.lock()
+                {
+                    let _ = file.write_all(&buffer[..read]);
+                    let _ = file.flush();
                 }
                 let _ = sink.write_all(&buffer[..read]);
                 let _ = sink.flush();
@@ -311,7 +324,7 @@ pub(crate) fn run_streaming_command_with_loader(
     label: &str,
 ) -> io::Result<i32> {
     Ok(
-        run_streaming_command_with_capture_with_loader_options(command, label, true, false)?
+        run_streaming_command_with_capture_with_loader_options(command, label, true, false, None)?
             .exit_code,
     )
 }
@@ -323,11 +336,10 @@ pub(crate) struct StreamingCommandOutput {
     pub(crate) stderr: String,
 }
 
-pub(crate) fn run_streaming_command_with_capture_with_loader(
-    command: &mut Command,
-    label: &str,
-) -> io::Result<StreamingCommandOutput> {
-    run_streaming_command_with_capture_with_loader_options(command, label, true, true)
+#[derive(Clone, Debug)]
+pub(crate) struct StreamLogTee {
+    pub(crate) stdout: Arc<Mutex<File>>,
+    pub(crate) stderr: Arc<Mutex<File>>,
 }
 
 pub(crate) fn run_streaming_command_with_capture_with_loader_options(
@@ -335,6 +347,7 @@ pub(crate) fn run_streaming_command_with_capture_with_loader_options(
     label: &str,
     echo_stderr: bool,
     capture_output: bool,
+    live_log: Option<&StreamLogTee>,
 ) -> io::Result<StreamingCommandOutput> {
     let loader = StreamPhaseLoader::start(label);
     let notifier = loader.as_ref().map(|loader| loader.notifier());
@@ -345,18 +358,38 @@ pub(crate) fn run_streaming_command_with_capture_with_loader_options(
         .spawn()?;
 
     let stdout_notifier = notifier.clone();
+    let stdout_log = live_log.map(|tee| tee.stdout.clone());
     let stdout_handle = child.stdout.take().map(|stdout| {
         thread::spawn(move || {
-            stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, capture_output)
+            stream_reader_to_sink(
+                stdout,
+                io::stdout(),
+                stdout_notifier,
+                capture_output,
+                stdout_log,
+            )
         })
     });
     let stderr_notifier = notifier;
+    let stderr_log = live_log.map(|tee| tee.stderr.clone());
     let stderr_handle = child.stderr.take().map(|stderr| {
         thread::spawn(move || {
             if echo_stderr {
-                stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, capture_output)
+                stream_reader_to_sink(
+                    stderr,
+                    io::stderr(),
+                    stderr_notifier,
+                    capture_output,
+                    stderr_log,
+                )
             } else {
-                stream_reader_to_sink(stderr, io::sink(), stderr_notifier, capture_output)
+                stream_reader_to_sink(
+                    stderr,
+                    io::sink(),
+                    stderr_notifier,
+                    capture_output,
+                    stderr_log,
+                )
             }
         })
     });
@@ -1004,8 +1037,7 @@ const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
 
 static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
-static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static RUN_INTERRUPT_HANDLER: Once = Once::new();
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
@@ -1434,6 +1466,7 @@ pub fn run_task_with_overrides(
         &[],
         overrides,
         false,
+        None,
     )
 }
 
@@ -1451,16 +1484,18 @@ pub fn run_task_with_args_with_overrides(
         args,
         overrides,
         false,
+        None,
     )
 }
 
-pub fn run_task_with_args_with_overrides_and_stream_capture(
+pub(crate) fn run_task_with_args_with_overrides_and_stream_capture(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
     args: &[String],
     overrides: ExecutionOverrides,
     capture_stream_output: bool,
+    live_log: Option<StreamLogTee>,
 ) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides(
         contract,
@@ -1470,6 +1505,7 @@ pub fn run_task_with_args_with_overrides_and_stream_capture(
         args,
         overrides,
         capture_stream_output,
+        live_log,
     )
 }
 
@@ -1487,6 +1523,7 @@ pub fn run_task_with_progress(
         &[],
         ExecutionOverrides::default(),
         false,
+        None,
     )
 }
 
@@ -1505,10 +1542,11 @@ pub fn run_task_with_progress_and_overrides(
         &[],
         overrides,
         false,
+        None,
     )
 }
 
-pub fn run_task_with_progress_and_args_and_overrides(
+pub(crate) fn run_task_with_progress_and_args_and_overrides(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
@@ -1516,6 +1554,7 @@ pub fn run_task_with_progress_and_args_and_overrides(
     args: &[String],
     overrides: ExecutionOverrides,
     capture_stream_output: bool,
+    live_log: Option<StreamLogTee>,
 ) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides_with_policy(
         contract,
@@ -1525,11 +1564,12 @@ pub fn run_task_with_progress_and_args_and_overrides(
         args,
         overrides,
         capture_stream_output,
+        live_log,
         None,
     )
 }
 
-pub fn run_task_with_progress_and_args_and_overrides_with_policy(
+pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
@@ -1537,6 +1577,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
     args: &[String],
     overrides: ExecutionOverrides,
     capture_stream_output: bool,
+    live_log: Option<StreamLogTee>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<RunOutcome, RunError> {
     let outcome = run_task_internal(
@@ -1549,6 +1590,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
         TaskExecutionMode::Stream {
             emit_progress,
             capture_output: capture_stream_output,
+            live_log,
         },
     )?;
 
@@ -2193,11 +2235,12 @@ fn container_names_for_label(
         .collect())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum TaskExecutionMode {
     Stream {
         emit_progress: bool,
         capture_output: bool,
+        live_log: Option<StreamLogTee>,
     },
     Capture,
 }
@@ -2549,7 +2592,11 @@ fn run_host_shell_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, String> {
     match mode {
-        TaskExecutionMode::Stream { capture_output, .. } => {
+        TaskExecutionMode::Stream {
+            capture_output,
+            live_log,
+            ..
+        } => {
             let mut process = shell_command(command);
             process.current_dir(working_dir);
             if capture_output {
@@ -2559,11 +2606,17 @@ fn run_host_shell_command(
                     .stderr(Stdio::piped())
                     .spawn()
                     .map_err(|error| format!("failed to execute `{command}`: {error}"))?;
+                let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
                 let stdout_handle = child.stdout.take().map(|stdout| {
-                    thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), None, true))
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stdout, io::stdout(), None, true, stdout_log)
+                    })
                 });
+                let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
                 let stderr_handle = child.stderr.take().map(|stderr| {
-                    thread::spawn(move || stream_reader_to_sink(stderr, io::stderr(), None, true))
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stderr, io::stderr(), None, true, stderr_log)
+                    })
                 });
                 let status = child
                     .wait()
@@ -2696,7 +2749,7 @@ fn execute_task_with_hooks(
         task_name,
         task,
         working_dir,
-        mode,
+        mode.clone(),
         state,
     )? {
         state.completed.insert(task_name.to_string(), exit_code);
@@ -2715,7 +2768,7 @@ fn execute_task_with_hooks(
             host_port_override,
             policy_env,
             &backend,
-            mode,
+            mode.clone(),
             working_dir,
             current_os,
             TaskExecutionRelation::DependsOn {
@@ -2798,7 +2851,7 @@ fn execute_task_with_hooks(
         } else {
             None
         },
-        mode,
+        mode.clone(),
     )?;
 
     state.stdout.push_str(&command_output.stdout);
@@ -2842,7 +2895,7 @@ fn execute_task_with_hooks(
         host_port_override,
         policy_env,
         &backend,
-        mode,
+        mode.clone(),
         working_dir,
         current_os,
         generation,
@@ -2892,7 +2945,7 @@ fn ensure_task_required_services(
 
         if state.started_services.insert(service_name.clone()) {
             if let Some(start) = service.start_command(service_name.as_str()) {
-                match run_host_shell_command(start.as_str(), working_dir, mode) {
+                match run_host_shell_command(start.as_str(), working_dir, mode.clone()) {
                     Ok(output) => {
                         state.stdout.push_str(&output.stdout);
                         state.stderr.push_str(&output.stderr);
@@ -2968,7 +3021,7 @@ fn execute_post_hooks(
             host_port_override,
             policy_env,
             backend,
-            mode,
+            mode.clone(),
             working_dir,
             current_os,
             generation,
@@ -2985,7 +3038,7 @@ fn execute_post_hooks(
             host_port_override,
             policy_env,
             backend,
-            mode,
+            mode.clone(),
             working_dir,
             current_os,
             generation,
@@ -3002,7 +3055,7 @@ fn execute_post_hooks(
         host_port_override,
         policy_env,
         backend,
-        mode,
+        mode.clone(),
         working_dir,
         current_os,
         generation,
@@ -3041,7 +3094,7 @@ fn run_hook_tasks(
             host_port_override,
             policy_env,
             backend,
-            mode,
+            mode.clone(),
             working_dir,
             current_os,
             relation(task_name.to_string()),
@@ -4692,13 +4745,17 @@ fn execute_remote_task_command(
         TaskExecutionMode::Stream {
             emit_progress,
             capture_output,
+            live_log,
         } => {
             if emit_progress {
                 if capture_output {
                     let interrupt_epoch = current_run_interrupt_epoch();
-                    let output = run_streaming_command_with_capture_with_loader(
+                    let output = run_streaming_command_with_capture_with_loader_options(
                         &mut remote_command,
                         &running_loader_label_for_backend(task_name, Backend::Remote),
+                        true,
+                        true,
+                        live_log.as_ref(),
                     )
                     .map_err(|source| RunError::SpawnFailed {
                         task: task_name.to_string(),
@@ -4748,11 +4805,17 @@ fn execute_remote_task_command(
                         task: task_name.to_string(),
                         source,
                     })?;
+                let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
                 let stdout_handle = child.stdout.take().map(|stdout| {
-                    thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), None, true))
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stdout, io::stdout(), None, true, stdout_log)
+                    })
                 });
+                let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
                 let stderr_handle = child.stderr.take().map(|stderr| {
-                    thread::spawn(move || stream_reader_to_sink(stderr, io::stderr(), None, true))
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stderr, io::stderr(), None, true, stderr_log)
+                    })
                 });
                 let status = child.wait().map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
@@ -4882,7 +4945,7 @@ fn execute_backend_provider_task_command(
         working_dir,
         target,
         cwd,
-        mode,
+        mode.clone(),
         &provider_env,
     );
     let request_json = serde_json::to_string(&request).map_err(|source| {
@@ -4900,7 +4963,11 @@ fn execute_backend_provider_task_command(
     let mut provider_command = shell_command(provider_command);
 
     match mode {
-        TaskExecutionMode::Stream { emit_progress, .. } => {
+        TaskExecutionMode::Stream {
+            emit_progress,
+            live_log,
+            ..
+        } => {
             if emit_progress {
                 eprintln!("RUN {task_name}");
             }
@@ -4941,15 +5008,17 @@ fn execute_backend_provider_task_command(
                 .flatten();
             let notifier = loader.as_ref().map(|loader| loader.notifier());
             let stdout_notifier = notifier.clone();
+            let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
             let stdout_handle = child.stdout.take().map(|stdout| {
                 thread::spawn(move || {
-                    stream_reader_to_sink(stdout, io::sink(), stdout_notifier, true)
+                    stream_reader_to_sink(stdout, io::sink(), stdout_notifier, true, stdout_log)
                 })
             });
             let stderr_notifier = notifier;
+            let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
             let stderr_handle = child.stderr.take().map(|stderr| {
                 thread::spawn(move || {
-                    stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, false)
+                    stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, false, stderr_log)
                 })
             });
 
@@ -5272,6 +5341,7 @@ fn execute_native_task_command(
         TaskExecutionMode::Stream {
             emit_progress,
             capture_output,
+            live_log,
         } => {
             if emit_progress {
                 let interrupt_epoch = current_run_interrupt_epoch();
@@ -5288,15 +5358,29 @@ fn execute_native_task_command(
                     })?;
 
                 let stdout_notifier = notifier.clone();
+                let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
                 let stdout_handle = child.stdout.take().map(|stdout| {
                     thread::spawn(move || {
-                        stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, capture_output)
+                        stream_reader_to_sink(
+                            stdout,
+                            io::stdout(),
+                            stdout_notifier,
+                            capture_output,
+                            stdout_log,
+                        )
                     })
                 });
                 let stderr_notifier = notifier;
+                let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
                 let stderr_handle = child.stderr.take().map(|stderr| {
                     thread::spawn(move || {
-                        stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, capture_output)
+                        stream_reader_to_sink(
+                            stderr,
+                            io::stderr(),
+                            stderr_notifier,
+                            capture_output,
+                            stderr_log,
+                        )
                     })
                 });
 
@@ -5351,18 +5435,20 @@ fn execute_native_task_command(
                     source,
                 })?;
                 let stdout_handle = if capture_output {
+                    let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
                     child.stdout.take().map(|stdout| {
                         thread::spawn(move || {
-                            stream_reader_to_sink(stdout, io::stdout(), None, true)
+                            stream_reader_to_sink(stdout, io::stdout(), None, true, stdout_log)
                         })
                     })
                 } else {
                     None
                 };
                 let stderr_handle = if capture_output {
+                    let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
                     child.stderr.take().map(|stderr| {
                         thread::spawn(move || {
-                            stream_reader_to_sink(stderr, io::stderr(), None, true)
+                            stream_reader_to_sink(stderr, io::stderr(), None, true, stderr_log)
                         })
                     })
                 } else {
@@ -5411,10 +5497,10 @@ fn execute_native_task_command(
                 })?;
 
             let stdout_handle = child.stdout.take().map(|stdout| {
-                thread::spawn(move || stream_reader_to_sink(stdout, io::sink(), None, true))
+                thread::spawn(move || stream_reader_to_sink(stdout, io::sink(), None, true, None))
             });
             let stderr_handle = child.stderr.take().map(|stderr| {
-                thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true))
+                thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true, None))
             });
 
             let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
@@ -5826,7 +5912,7 @@ fn execute_container_task_command(
                     &projection.publications,
                     &projection.listener_publications,
                     dependency_isolation_paths,
-                    mode,
+                    mode.clone(),
                 )?;
 
                 if output.exit_code == 0 {
@@ -6271,7 +6357,11 @@ fn execute_ephemeral_container_task_command(
     }
 
     match mode {
-        TaskExecutionMode::Stream { capture_output, .. } => {
+        TaskExecutionMode::Stream {
+            capture_output,
+            live_log,
+            ..
+        } => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = ephemeral_container_stream_command(engine, &container_name);
             let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref());
@@ -6280,6 +6370,7 @@ fn execute_ephemeral_container_task_command(
                 &running_loader_label_for_backend(task_name, Backend::Container),
                 false,
                 capture_output,
+                live_log.as_ref(),
             );
             let output = match output_result {
                 Ok(output) => output,
@@ -6533,7 +6624,7 @@ fn execute_persistent_container_task_command(
         path_export,
         secret_env_names,
         engine,
-        mode,
+        mode.clone(),
         &container_name,
     )?;
     let readiness_observed = readiness_probe
@@ -6606,7 +6697,7 @@ fn execute_persistent_container_task_command(
             path_export,
             secret_env_names,
             engine,
-            mode,
+            mode.clone(),
             &container_name,
         )?;
         let readiness_observed = readiness_probe
@@ -7892,12 +7983,19 @@ fn exec_persistent_container_task_command(
         .arg(command_with_path_export(command, path_export));
 
     match mode {
-        TaskExecutionMode::Stream { capture_output, .. } => {
+        TaskExecutionMode::Stream {
+            capture_output,
+            live_log,
+            ..
+        } => {
             if capture_output {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let output = run_streaming_command_with_capture_with_loader(
+                let output = run_streaming_command_with_capture_with_loader_options(
                     &mut container,
                     &running_loader_label_for_backend(task_name, Backend::Container),
+                    true,
+                    true,
+                    live_log.as_ref(),
                 )
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
@@ -8567,11 +8665,12 @@ fn shell_command(command: &str) -> Command {
 mod tests {
     use std::collections::BTreeMap;
     use std::env;
-    use std::fs;
+    use std::fs::{self, File};
     use std::net::TcpListener;
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
 
-    use tempfile::TempDir;
+    use tempfile::{TempDir, tempdir};
 
     use crate::parser::parse_contract_str;
     use crate::test_support::env_mutex_lock;
@@ -8579,17 +8678,17 @@ mod tests {
     use super::{
         CapturedRunOutcome, ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep,
         ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend, RunError,
-        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, TaskExecutionMode,
-        TaskExecutionRelation, TaskRunState, clean_execution, clean_execution_report,
-        container_identity_seed, contract_working_dir, current_os, effective_task_execution,
-        ephemeral_container_stream_command, execute_task_with_hooks, persistent_cleanup_targets,
-        persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
-        preflight_container_host_publications, prepare_container_runtime_projection,
-        preparing_loader_label, projected_runtime_public_endpoint_line, resolve_execution_backend,
-        resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
-        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
-        run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend,
+        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, StreamLogTee,
+        TaskExecutionMode, TaskExecutionRelation, TaskRunState, clean_execution,
+        clean_execution_report, container_identity_seed, contract_working_dir, current_os,
+        effective_task_execution, ephemeral_container_stream_command, execute_task_with_hooks,
+        persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
+        plan_task_execution, preflight_container_host_publications,
+        prepare_container_runtime_projection, preparing_loader_label,
+        projected_runtime_public_endpoint_line, resolve_execution_backend, resolve_task_env,
+        resolve_task_env_details, run_task, run_task_captured, run_task_with_args,
+        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
+        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -9391,12 +9490,64 @@ tasks:
             &[],
             ExecutionOverrides::default(),
             true,
+            None,
         )
         .expect("stream run with capture should succeed");
 
         assert_eq!(outcome.exit_code, 0);
         assert!(outcome.stdout.contains("stream-out"), "{}", outcome.stdout);
         assert!(outcome.stderr.contains("stream-err"), "{}", outcome.stderr);
+    }
+
+    #[test]
+    fn run_task_stream_capture_live_log_tee_matches_streamed_output() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: |
+      printf tee-out
+      printf tee-err >&2
+"#,
+        );
+        let log_dir = tempdir().expect("tempdir should create");
+        let stdout_path = log_dir.path().join("stdout.log");
+        let stderr_path = log_dir.path().join("stderr.log");
+        let live_log = StreamLogTee {
+            stdout: Arc::new(Mutex::new(
+                File::create(&stdout_path).expect("stdout log should create"),
+            )),
+            stderr: Arc::new(Mutex::new(
+                File::create(&stderr_path).expect("stderr log should create"),
+            )),
+        };
+
+        let outcome = run_task_with_args_with_overrides_and_stream_capture(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &[],
+            ExecutionOverrides::default(),
+            true,
+            Some(live_log),
+        )
+        .expect("stream run with live log tee should succeed");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(outcome.stdout.contains("tee-out"), "{}", outcome.stdout);
+        assert!(outcome.stderr.contains("tee-err"), "{}", outcome.stderr);
+        assert_eq!(
+            fs::read_to_string(&stdout_path).expect("stdout log should read"),
+            outcome.stdout
+        );
+        assert_eq!(
+            fs::read_to_string(&stderr_path).expect("stderr log should read"),
+            outcome.stderr
+        );
     }
 
     #[cfg(unix)]
@@ -9448,6 +9599,7 @@ tasks:
             &[],
             ExecutionOverrides::default(),
             true,
+            None,
         )
         .expect("stream run with capture should succeed");
 
