@@ -150,7 +150,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--lifecycle`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run dev --log\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run dev --log\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -160,9 +160,18 @@ enum Commands {
         /// Override the execution mode for this invocation.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        container: bool,
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle persistent`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
+        persistent: bool,
         /// Override the projected host/public port for this invocation.
         #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
         host_port: Option<u16>,
@@ -170,7 +179,7 @@ enum Commands {
         #[arg(long, value_name = "SIZE", value_parser = parse_memory_override_arg)]
         memory: Option<u64>,
         /// Shorthand for `--lifecycle ephemeral`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -375,11 +384,20 @@ enum Commands {
         /// Override the execution mode for this invocation.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        container: bool,
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle persistent`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
+        persistent: bool,
         /// Shorthand for `--lifecycle ephemeral`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
@@ -537,11 +555,20 @@ enum ExecutionCommands {
         /// Override the execution mode for this inspection.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        container: bool,
         /// Override the execution lifecycle for this inspection.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle persistent`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
+        persistent: bool,
         /// Shorthand for `--lifecycle ephemeral`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
         /// Inspect one merged monorepo member contract declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
@@ -561,11 +588,20 @@ enum WorkspaceExecutionCommands {
         /// Override the execution mode for this inspection.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        container: bool,
         /// Override the execution lifecycle for this inspection.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle persistent`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
+        persistent: bool,
         /// Shorthand for `--lifecycle ephemeral`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
         /// Filter output to one workspace repo by name.
         #[arg(long)]
@@ -728,6 +764,34 @@ impl From<RunLifecycle> for crate::schema::Lifecycle {
             RunLifecycle::Persistent => crate::schema::Lifecycle::Persistent,
             RunLifecycle::Ephemeral => crate::schema::Lifecycle::Ephemeral,
         }
+    }
+}
+
+fn resolve_run_backend_override(
+    backend: Option<RunBackend>,
+    native: bool,
+    container: bool,
+) -> Option<crate::schema::Backend> {
+    if native {
+        Some(crate::schema::Backend::Native)
+    } else if container {
+        Some(crate::schema::Backend::Container)
+    } else {
+        backend.map(Into::into)
+    }
+}
+
+fn resolve_run_lifecycle_override(
+    lifecycle: Option<RunLifecycle>,
+    persistent: bool,
+    ephemeral: bool,
+) -> Option<crate::schema::Lifecycle> {
+    if persistent {
+        Some(crate::schema::Lifecycle::Persistent)
+    } else if ephemeral {
+        Some(crate::schema::Lifecycle::Ephemeral)
+    } else {
+        lifecycle.map(Into::into)
     }
 }
 
@@ -1313,7 +1377,10 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
         "--history",
         "--fail-on-new-blockers",
         "--promote-baseline",
+        "--native",
+        "--container",
         "--ephemeral",
+        "--persistent",
         "--stale",
         "--plain",
         "--concise",
@@ -2573,10 +2640,11 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--ephemeral" | "--receipt" | "--stream" | "--log" | "--debug" | "--plain"
-        | "--concise" | "--verbose" => Some(RunFlagSpec {
+        "--native" | "--container" | "--ephemeral" | "--persistent" | "--receipt" | "--stream"
+        | "--log" | "--debug" | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
             canonical: match name {
-                "--ephemeral" => "ephemeral",
+                "--native" | "--container" => "mode",
+                "--ephemeral" | "--persistent" => "lifecycle",
                 "--receipt" => "receipt",
                 "--stream" => "stream",
                 "--log" => "log",
@@ -3650,7 +3718,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 ExecutionCommands::Plan {
                     json,
                     backend,
+                    native,
+                    container,
                     lifecycle,
+                    persistent,
                     ephemeral,
                     member,
                     path,
@@ -3660,12 +3731,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             member.as_deref(),
             ExecutionOverrides {
-                backend: backend.map(Into::into),
-                lifecycle: if ephemeral {
-                    Some(crate::schema::Lifecycle::Ephemeral)
-                } else {
-                    lifecycle.map(Into::into)
-                },
+                backend: resolve_run_backend_override(backend, native, container),
+                lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
             },
@@ -3675,7 +3742,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Run {
             task,
             backend,
+            native,
+            container,
             lifecycle,
+            persistent,
             host_port,
             memory,
             ephemeral,
@@ -3690,12 +3760,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             ExecutionOverrides {
-                backend: backend.map(Into::into),
-                lifecycle: if ephemeral {
-                    Some(crate::schema::Lifecycle::Ephemeral)
-                } else {
-                    lifecycle.map(Into::into)
-                },
+                backend: resolve_run_backend_override(backend, native, container),
+                lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port,
                 memory,
             },
@@ -3788,7 +3854,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
             dry_run,
             stream,
             backend,
+            native,
+            container,
             lifecycle,
+            persistent,
             ephemeral,
             receipt,
             member,
@@ -3797,12 +3866,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             ExecutionOverrides {
-                backend: backend.map(Into::into),
-                lifecycle: if ephemeral {
-                    Some(crate::schema::Lifecycle::Ephemeral)
-                } else {
-                    lifecycle.map(Into::into)
-                },
+                backend: resolve_run_backend_override(backend, native, container),
+                lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
             },
@@ -4130,7 +4195,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     WorkspaceExecutionCommands::Plan {
                         json,
                         backend,
+                        native,
+                        container,
                         lifecycle,
+                        persistent,
                         ephemeral,
                         repo,
                         path,
@@ -4140,12 +4208,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 file.as_deref(),
                 repo.as_deref(),
                 ExecutionOverrides {
-                    backend: backend.map(Into::into),
-                    lifecycle: if ephemeral {
-                        Some(crate::schema::Lifecycle::Ephemeral)
-                    } else {
-                        lifecycle.map(Into::into)
-                    },
+                    backend: resolve_run_backend_override(backend, native, container),
+                    lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                     host_port: None,
                     memory: None,
                 },
@@ -8678,6 +8742,44 @@ tasks:
     }
 
     #[test]
+    fn execution_plan_json_resolves_shortcut_mode_and_lifecycle_overrides() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: execution-shortcuts
+execution:
+  preferred: native
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: rust:1.94-bookworm
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "execution",
+            "plan",
+            "--json",
+            "--container",
+            "--persistent",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["resolved"]["backend"], "container");
+        assert_eq!(json["resolved"]["backend_source"], "override");
+        assert_eq!(json["resolved"]["lifecycle"], "persistent");
+        assert_eq!(json["resolved"]["lifecycle_source"], "override");
+        assert_eq!(json["overrides"]["backend"], "container");
+        assert_eq!(json["overrides"]["lifecycle"], "persistent");
+    }
+
+    #[test]
     fn execution_plan_text_reports_selected_member_and_resolved_target_strategy() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
@@ -11836,7 +11938,10 @@ tasks:
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
-        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--mode`, `--lifecycle`, `--host-port`, and `--memory` before task inputs."));
+        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--host-port`, and `--memory` before task inputs."));
+        assert!(help.contains("--native"));
+        assert!(help.contains("--container"));
+        assert!(help.contains("--persistent"));
         assert!(help.contains("ota run version:bump --stream --version patch"));
     }
 
@@ -12312,7 +12417,10 @@ tasks:
             &Commands::Run {
                 task: String::from("install-from-source"),
                 backend: None,
+                native: false,
+                container: false,
                 lifecycle: None,
+                persistent: false,
                 host_port: None,
                 memory: None,
                 ephemeral: false,
@@ -13212,7 +13320,10 @@ tasks:
             dry_run: false,
             stream: false,
             backend: None,
+            native: false,
+            container: false,
             lifecycle: None,
+            persistent: false,
             ephemeral: false,
             receipt: false,
             member: Vec::new(),
@@ -13227,7 +13338,10 @@ tasks:
             dry_run: false,
             stream: true,
             backend: None,
+            native: false,
+            container: false,
             lifecycle: None,
+            persistent: false,
             ephemeral: false,
             receipt: false,
             member: Vec::new(),
@@ -13251,7 +13365,10 @@ tasks:
                 dry_run: false,
                 stream: false,
                 backend: None,
+                native: false,
+                container: false,
                 lifecycle: None,
+                persistent: false,
                 ephemeral: false,
                 receipt: false,
                 member: Vec::new(),
@@ -13272,7 +13389,10 @@ tasks:
                 dry_run: false,
                 stream: false,
                 backend: None,
+                native: false,
+                container: false,
                 lifecycle: None,
+                persistent: false,
                 ephemeral: false,
                 receipt: false,
                 member: Vec::new(),
@@ -13303,7 +13423,10 @@ tasks:
         assert!(!super::command_supports_spinner(&super::Commands::Run {
             task: String::from("test"),
             backend: None,
+            native: false,
+            container: false,
             lifecycle: None,
+            persistent: false,
             host_port: None,
             memory: None,
             ephemeral: false,
@@ -15764,6 +15887,40 @@ policies:
         }
 
         assert_eq!(super::command_where_label(&command), "ota policy review");
+    }
+
+    #[test]
+    fn run_shortcut_flags_parse_as_mode_and_lifecycle_overrides() {
+        let cli = Cli::parse_from(["ota", "run", "dev", "--native", "--persistent", "."]);
+        match cli.command {
+            Commands::Run {
+                task,
+                backend,
+                native,
+                container,
+                lifecycle,
+                persistent,
+                ephemeral,
+                path,
+                ..
+            } => {
+                assert_eq!(task, "dev");
+                assert!(native);
+                assert!(!container);
+                assert!(persistent);
+                assert!(!ephemeral);
+                assert!(backend.is_none());
+                assert!(lifecycle.is_none());
+                assert_eq!(path.as_deref(), Some(Path::new(".")));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_shortcut_mode_flags_conflict() {
+        let parsed = Cli::try_parse_from(["ota", "run", "dev", "--native", "--container"]);
+        assert!(parsed.is_err());
     }
 
     #[test]
