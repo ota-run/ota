@@ -112,8 +112,8 @@ use crate::runner::{
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, ExtensionSpec, Lifecycle,
-    RequirementSurface,
-    TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    RequirementSurface, TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes,
+    parse_memory_size_bytes,
 };
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
@@ -20702,7 +20702,15 @@ fn render_up(
     show_receipt: bool,
     format: OutputFormat,
 ) -> CommandOutput {
-    let cause = primary_up_failure_cause(status, phase, &report.findings, stderr, service, task);
+    let cause = primary_up_failure_cause(
+        status,
+        phase,
+        &report.findings,
+        receipt.backend.as_deref(),
+        stderr,
+        service,
+        task,
+    );
     match format {
         OutputFormat::Text => render_up_text(
             path,
@@ -20764,6 +20772,7 @@ fn render_up_result(
                 result.status,
                 result.phase,
                 &result.report.findings,
+                result.receipt.backend.as_deref(),
                 (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
                 result.service.as_deref(),
                 result.task.as_deref(),
@@ -20865,6 +20874,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             result.status,
             result.phase,
             &result.report.findings,
+            result.receipt.backend.as_deref(),
             (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
             result.service.as_deref(),
             result.task.as_deref(),
@@ -20904,6 +20914,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             result.status,
             result.phase,
             &result.report.findings,
+            result.receipt.backend.as_deref(),
             (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
             result.service.as_deref(),
             result.task.as_deref(),
@@ -24982,6 +24993,88 @@ execution:
         assert!(!text.contains("Task output:"));
         assert!(text.contains("Phase: post-setup diagnosis"));
         assert!(text.contains("Backend: container"));
+    }
+
+    #[test]
+    fn up_setup_failed_due_to_container_networking_is_classified_as_backend_startup() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-3ff7e125cddff1a4")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "setup",
+                "SETUP FAILED",
+                Some(String::from("task `setup`")),
+                Some(125),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "SETUP FAILED",
+            phase: "setup",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: Vec::new(),
+            },
+            preview: None,
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("setup")),
+            task_command: Some(String::from("mvn -q -DskipTests dependency:go-offline")),
+            exit_code: Some(125),
+            stdout: String::new(),
+            stderr: String::from(
+                "5f6a5b038e7509106eb6c5f7f05ad0be531e8acc8fe9d7de9827cf885ba922c4\n\
+docker: Error response from daemon: failed to set up container networking: network local_default not found\n\
+\nRun 'docker run --help' for more information\n",
+            ),
+        };
+
+        let text = strip_ansi_codes(
+            &render_up_result(
+                "./ota.yaml",
+                "./ota.yaml",
+                result,
+                OutputFormat::Text,
+                false,
+            )
+            .stdout,
+        );
+
+        assert!(text.contains("BACKEND STARTUP FAILED"));
+        assert!(text.contains("Phase: setup"));
+        assert!(text.contains("Cause:"));
+        assert!(text.contains("backend startup"));
+        assert!(!text.contains("Cause:     repo setup"));
+        assert!(!text.contains("6c0d799bfdb2428e953d80057ba36bacbd14282aca68f5dc5ea3951bdc5053a7"));
+        assert!(text.contains(
+            "docker: Error response from daemon: failed to set up container networking: network local_default not found"
+        ));
     }
 
     #[test]
@@ -32282,7 +32375,15 @@ fn render_up_text(
     receipt: &ExecutionReceipt,
     show_receipt: bool,
 ) -> CommandOutput {
-    let cause = primary_up_failure_cause(status, phase, &report.findings, stderr, service, task);
+    let cause = primary_up_failure_cause(
+        status,
+        phase,
+        &report.findings,
+        backend,
+        stderr,
+        service,
+        task,
+    );
     let mut stdout = render_up_section_body(
         path,
         Some(Path::new(path)),
@@ -32347,6 +32448,7 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
             result.status,
             result.phase,
             &result.report.findings,
+            result.receipt.backend.as_deref(),
             phase_output_text(&result.stdout, &result.stderr).as_deref(),
             result.service.as_deref(),
             result.task.as_deref(),
@@ -32438,14 +32540,21 @@ fn primary_up_failure_cause(
     status: &str,
     phase: &str,
     findings: &[Finding],
+    backend: Option<&str>,
     stderr: Option<&str>,
     service: Option<&str>,
     task: Option<&str>,
 ) -> Option<UpFailureCause> {
-    if status == "PROVISION FAILED" && phase == "provisioning" {
-        if provisioning_output_indicates_backend_startup_issue(stderr) {
+    if backend_output_indicates_backend_startup_issue(backend, stderr) {
+        if status == "PROVISION FAILED" && phase == "provisioning" {
             return Some(UpFailureCause::BackendStartup);
         }
+        if matches!(phase, "setup" | "task" | "services") || task.is_some() || service.is_some() {
+            return Some(UpFailureCause::BackendStartup);
+        }
+    }
+
+    if status == "PROVISION FAILED" && phase == "provisioning" {
         return Some(UpFailureCause::Provisioning);
     }
 
@@ -32469,7 +32578,14 @@ fn primary_up_failure_cause(
     None
 }
 
-fn provisioning_output_indicates_backend_startup_issue(stderr: Option<&str>) -> bool {
+fn backend_output_indicates_backend_startup_issue(
+    backend: Option<&str>,
+    stderr: Option<&str>,
+) -> bool {
+    match backend {
+        Some("container") | Some("remote") => {}
+        _ => return false,
+    }
     let Some(stderr) = stderr else {
         return false;
     };
@@ -32480,6 +32596,30 @@ fn provisioning_output_indicates_backend_startup_issue(stderr: Option<&str>) -> 
         && (lowered.contains("container")
             || lowered.contains("docker")
             || lowered.contains("network"))
+}
+
+fn backend_startup_why_lines(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !looks_like_unlabeled_runtime_noise(line))
+        .take(4)
+        .map(str::to_string)
+        .collect()
+}
+
+fn looks_like_unlabeled_runtime_noise(line: &str) -> bool {
+    if line.starts_with("docker:")
+        || line.starts_with("container ")
+        || line.starts_with("failed ")
+        || line.starts_with("Error response")
+        || line.starts_with("Run '")
+    {
+        return false;
+    }
+
+    line.len() >= 32 && line.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn render_up_backend_startup_failure_section(
@@ -32533,14 +32673,7 @@ fn render_up_backend_startup_failure_section(
         ));
     }
     if let Some(stderr) = stderr {
-        why_lines.extend(
-            stderr
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .take(4)
-                .map(str::to_string),
-        );
+        why_lines.extend(backend_startup_why_lines(stderr));
     }
     append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
 
@@ -36257,7 +36390,10 @@ fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> S
     )
 }
 
-fn up_requirement_surface(contract: &Contract, overrides: ExecutionOverrides) -> RequirementSurface {
+fn up_requirement_surface(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+) -> RequirementSurface {
     let mut surface = RequirementSurface {
         runtimes: contract.runtimes.clone(),
         tools: contract.tools.clone(),
@@ -36268,7 +36404,9 @@ fn up_requirement_surface(contract: &Contract, overrides: ExecutionOverrides) ->
         if let Some(context_name) = effective.context_name
             && let Some((_, context)) = named_execution_context(contract, context_name)
         {
-            surface.runtimes.extend(context.requirements.runtimes.clone());
+            surface
+                .runtimes
+                .extend(context.requirements.runtimes.clone());
             surface.tools.extend(context.requirements.tools.clone());
             return surface;
         }
@@ -36286,9 +36424,9 @@ fn requirement_surface_targets_provisioning_action(
     action: &crate::policy_pack::ProvisioningAction,
 ) -> bool {
     match action.target_kind {
-        crate::policy_pack::ProvisioningTargetKind::Runtime => {
-            requirement_surface.runtimes.contains_key(action.name.as_str())
-        }
+        crate::policy_pack::ProvisioningTargetKind::Runtime => requirement_surface
+            .runtimes
+            .contains_key(action.name.as_str()),
         crate::policy_pack::ProvisioningTargetKind::Tool => {
             requirement_surface.tools.contains_key(action.name.as_str())
         }
@@ -36311,11 +36449,10 @@ fn selected_up_provisioning_actions(
                 .iter()
                 .filter(|action| {
                     requirement_surface_targets_provisioning_action(&requirement_surface, action)
-                        &&
-                    preflight
-                        .findings
-                        .iter()
-                        .any(|finding| finding_targets_provisioning_action(finding, action))
+                        && preflight
+                            .findings
+                            .iter()
+                            .any(|finding| finding_targets_provisioning_action(finding, action))
                 })
                 .cloned()
                 .collect()
