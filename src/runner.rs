@@ -2764,6 +2764,8 @@ fn execute_task_with_hooks(
     }
 
     for dependency in &task.depends_on {
+        let dependency_backend =
+            resolve_execution_backend(contract, dependency, ExecutionOverrides::default())?;
         let dependency_exit = execute_task_with_hooks(
             contract,
             contract_path,
@@ -2771,7 +2773,7 @@ fn execute_task_with_hooks(
             &[],
             host_port_override,
             policy_env,
-            &backend,
+            &dependency_backend,
             mode.clone(),
             working_dir,
             current_os,
@@ -3068,7 +3070,7 @@ fn run_hook_tasks(
     task_name: &str,
     host_port_override: Option<u16>,
     policy_env: Option<&BTreeMap<String, String>>,
-    backend: &ResolvedExecutionBackend,
+    _backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
     working_dir: &Path,
     current_os: &str,
@@ -3079,6 +3081,8 @@ fn run_hook_tasks(
 ) -> Result<(), RunError> {
     for hook in hooks {
         let hook_generation = hook_generation_for_task(hook, generation, state);
+        let hook_backend =
+            resolve_execution_backend(contract, hook, ExecutionOverrides::default())?;
         let exit_code = execute_task_with_hooks(
             contract,
             contract_path,
@@ -3086,7 +3090,7 @@ fn run_hook_tasks(
             &[],
             host_port_override,
             policy_env,
-            backend,
+            &hook_backend,
             mode.clone(),
             working_dir,
             current_os,
@@ -9478,6 +9482,75 @@ tasks:
         assert_eq!(outcome.executed_tasks, vec!["setup", "test"]);
         assert_eq!(outcome.exit_code, 0);
         assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn failed_host_dependency_does_not_inherit_parent_container_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+tasks:
+  compose:up:
+    context: host
+    run: exit 7
+  build:
+    context: app
+    run: echo build
+    depends_on:
+      - compose:up
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("dependency failure should still produce a captured outcome");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 7);
+        assert_eq!(outcome.executed_tasks, vec!["compose:up"]);
+        assert!(outcome.target.is_none(), "{:?}", outcome.target);
     }
 
     #[test]
