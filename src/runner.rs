@@ -1423,6 +1423,7 @@ pub fn run_task_with_overrides(
         true,
         &[],
         overrides,
+        false,
     )
 }
 
@@ -1433,6 +1434,24 @@ pub fn run_task_with_args_with_overrides(
     args: &[String],
     overrides: ExecutionOverrides,
 ) -> Result<RunOutcome, RunError> {
+    run_task_with_args_with_overrides_and_stream_capture(
+        contract,
+        contract_path,
+        task_name,
+        args,
+        overrides,
+        false,
+    )
+}
+
+pub fn run_task_with_args_with_overrides_and_stream_capture(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    args: &[String],
+    overrides: ExecutionOverrides,
+    capture_stream_output: bool,
+) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides(
         contract,
         contract_path,
@@ -1440,6 +1459,7 @@ pub fn run_task_with_args_with_overrides(
         true,
         args,
         overrides,
+        capture_stream_output,
     )
 }
 
@@ -1456,6 +1476,7 @@ pub fn run_task_with_progress(
         emit_progress,
         &[],
         ExecutionOverrides::default(),
+        false,
     )
 }
 
@@ -1473,6 +1494,7 @@ pub fn run_task_with_progress_and_overrides(
         emit_progress,
         &[],
         overrides,
+        false,
     )
 }
 
@@ -1483,6 +1505,7 @@ pub fn run_task_with_progress_and_args_and_overrides(
     emit_progress: bool,
     args: &[String],
     overrides: ExecutionOverrides,
+    capture_stream_output: bool,
 ) -> Result<RunOutcome, RunError> {
     run_task_with_progress_and_args_and_overrides_with_policy(
         contract,
@@ -1491,6 +1514,7 @@ pub fn run_task_with_progress_and_args_and_overrides(
         emit_progress,
         args,
         overrides,
+        capture_stream_output,
         None,
     )
 }
@@ -1502,6 +1526,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
     emit_progress: bool,
     args: &[String],
     overrides: ExecutionOverrides,
+    capture_stream_output: bool,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<RunOutcome, RunError> {
     let outcome = run_task_internal(
@@ -1511,7 +1536,10 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
         args,
         overrides,
         policy_env,
-        TaskExecutionMode::Stream { emit_progress },
+        TaskExecutionMode::Stream {
+            emit_progress,
+            capture_output: capture_stream_output,
+        },
     )?;
 
     Ok(RunOutcome {
@@ -2145,7 +2173,10 @@ fn container_names_for_label(
 
 #[derive(Debug, Clone, Copy)]
 enum TaskExecutionMode {
-    Stream { emit_progress: bool },
+    Stream {
+        emit_progress: bool,
+        capture_output: bool,
+    },
     Capture,
 }
 
@@ -2337,12 +2368,14 @@ fn run_task_internal(
     let mut preflight_loader = match mode {
         TaskExecutionMode::Stream {
             emit_progress: true,
+            ..
         } => StreamPhaseLoader::start_for_preflight(&preparing_loader_label(
             task_name,
             preferred_backend,
         )),
         TaskExecutionMode::Stream {
             emit_progress: false,
+            ..
         }
         | TaskExecutionMode::Capture => None,
     };
@@ -2356,6 +2389,37 @@ fn run_task_internal(
             return Err(error);
         }
     };
+    if let ResolvedExecutionBackend::Container { lifecycle, .. } = &backend
+        && matches!(lifecycle, Lifecycle::Ephemeral)
+    {
+        let effective = effective_task_execution(contract, task_name, overrides);
+        let runtime = contract
+            .tasks
+            .get(task_name)
+            .and_then(|task| task.service_runtime_for_backend(Backend::Container));
+        if let Some(runtime) = runtime {
+            let publications =
+                task_container_publication_details(contract, task_name, effective.backend)
+                    .into_iter()
+                    .map(|(_, publication)| publication)
+                    .collect::<Vec<_>>();
+            let runtime_publications = task_runtime_listener_publications(Some(runtime));
+            if !runtime_publications.is_empty() {
+                let projection = prepare_container_runtime_projection(
+                    task_name,
+                    Some(runtime),
+                    &publications,
+                    &runtime_publications,
+                    true,
+                    overrides.host_port,
+                )?;
+                preflight_container_host_publications(
+                    task_name,
+                    &projection.listener_publications,
+                )?;
+            }
+        }
+    }
     if let Some(task) = contract.tasks.get(task_name)
         && let Err(error) = preflight_host_port_override(
             task_name,
@@ -2460,26 +2524,58 @@ fn run_host_shell_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, String> {
     match mode {
-        TaskExecutionMode::Stream { .. } => {
+        TaskExecutionMode::Stream { capture_output, .. } => {
             let mut process = shell_command(command);
             process.current_dir(working_dir);
-            process
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
-            process
-                .spawn()
-                .and_then(|mut child| child.wait())
-                .map(|status| TaskCommandOutput {
+            if capture_output {
+                let mut child = process
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|error| format!("failed to execute `{command}`: {error}"))?;
+                let stdout_handle = child.stdout.take().map(|stdout| {
+                    thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), None, true))
+                });
+                let stderr_handle = child.stderr.take().map(|stderr| {
+                    thread::spawn(move || stream_reader_to_sink(stderr, io::stderr(), None, true))
+                });
+                let status = child
+                    .wait()
+                    .map_err(|error| format!("failed to execute `{command}`: {error}"))?;
+                let stdout = join_stream_reader(stdout_handle)
+                    .map_err(|error| format!("failed to execute `{command}`: {error}"))?;
+                let stderr = join_stream_reader(stderr_handle)
+                    .map_err(|error| format!("failed to execute `{command}`: {error}"))?;
+
+                Ok(TaskCommandOutput {
                     exit_code: status.code().unwrap_or(1),
-                    stdout: String::new(),
-                    stderr: String::new(),
+                    stdout,
+                    stderr,
                     target: None,
                     runtime: None,
                     service_termination: None,
                     execution_note: None,
                 })
-                .map_err(|error| format!("failed to execute `{command}`: {error}"))
+            } else {
+                process
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit());
+                process
+                    .spawn()
+                    .and_then(|mut child| child.wait())
+                    .map(|status| TaskCommandOutput {
+                        exit_code: status.code().unwrap_or(1),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        target: None,
+                        runtime: None,
+                        service_termination: None,
+                        execution_note: None,
+                    })
+                    .map_err(|error| format!("failed to execute `{command}`: {error}"))
+            }
         }
         TaskExecutionMode::Capture => shell_command(command)
             .current_dir(working_dir)
@@ -4564,18 +4660,89 @@ fn execute_remote_task_command(
     };
 
     match mode {
-        TaskExecutionMode::Stream { emit_progress } => {
-            let exit_code = if emit_progress {
-                run_streaming_command_with_loader(
-                    &mut remote_command,
-                    &running_loader_label_for_backend(task_name, Backend::Remote),
-                )
-                .map_err(|source| RunError::SpawnFailed {
+        TaskExecutionMode::Stream {
+            emit_progress,
+            capture_output,
+        } => {
+            if emit_progress {
+                if capture_output {
+                    let output = run_streaming_command_with_capture_with_loader(
+                        &mut remote_command,
+                        &running_loader_label_for_backend(task_name, Backend::Remote),
+                    )
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                    Ok(TaskCommandOutput {
+                        exit_code: output.exit_code,
+                        stdout: output.stdout,
+                        stderr: output.stderr,
+                        target: Some(target.to_string()),
+                        runtime: None,
+                        service_termination: None,
+                        execution_note: None,
+                    })
+                } else {
+                    let exit_code = run_streaming_command_with_loader(
+                        &mut remote_command,
+                        &running_loader_label_for_backend(task_name, Backend::Remote),
+                    )
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                    Ok(TaskCommandOutput {
+                        exit_code,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        target: Some(target.to_string()),
+                        runtime: None,
+                        service_termination: None,
+                        execution_note: None,
+                    })
+                }
+            } else if capture_output {
+                let mut child = remote_command
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let stdout_handle = child.stdout.take().map(|stdout| {
+                    thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), None, true))
+                });
+                let stderr_handle = child.stderr.take().map(|stderr| {
+                    thread::spawn(move || stream_reader_to_sink(stderr, io::stderr(), None, true))
+                });
+                let status = child.wait().map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
-                })?
+                })?;
+                let stdout =
+                    join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let stderr =
+                    join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                Ok(TaskCommandOutput {
+                    exit_code: status.code().unwrap_or(1),
+                    stdout,
+                    stderr,
+                    target: Some(target.to_string()),
+                    runtime: None,
+                    service_termination: None,
+                    execution_note: None,
+                })
             } else {
-                remote_command
+                let exit_code = remote_command
                     .stdin(Stdio::inherit())
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit())
@@ -4585,18 +4752,18 @@ fn execute_remote_task_command(
                         source,
                     })?
                     .code()
-                    .unwrap_or(1)
-            };
+                    .unwrap_or(1);
 
-            Ok(TaskCommandOutput {
-                exit_code,
-                stdout: String::new(),
-                stderr: String::new(),
-                target: Some(target.to_string()),
-                runtime: None,
-                service_termination: None,
-                execution_note: None,
-            })
+                Ok(TaskCommandOutput {
+                    exit_code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    target: Some(target.to_string()),
+                    runtime: None,
+                    service_termination: None,
+                    execution_note: None,
+                })
+            }
         }
         TaskExecutionMode::Capture => {
             let output = remote_command
@@ -4688,7 +4855,7 @@ fn execute_backend_provider_task_command(
     let mut provider_command = shell_command(provider_command);
 
     match mode {
-        TaskExecutionMode::Stream { emit_progress } => {
+        TaskExecutionMode::Stream { emit_progress, .. } => {
             if emit_progress {
                 eprintln!("RUN {task_name}");
             }
@@ -5056,7 +5223,10 @@ fn execute_native_task_command(
     process.current_dir(working_dir).envs(env_overrides.iter());
 
     match mode {
-        TaskExecutionMode::Stream { emit_progress } => {
+        TaskExecutionMode::Stream {
+            emit_progress,
+            capture_output,
+        } => {
             if emit_progress {
                 let loader = StreamPhaseLoader::start(&running_loader_label(task_name, backend));
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
@@ -5073,13 +5243,13 @@ fn execute_native_task_command(
                 let stdout_notifier = notifier.clone();
                 let stdout_handle = child.stdout.take().map(|stdout| {
                     thread::spawn(move || {
-                        stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, false)
+                        stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, capture_output)
                     })
                 });
                 let stderr_notifier = notifier;
                 let stderr_handle = child.stderr.take().map(|stderr| {
                     thread::spawn(move || {
-                        stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, false)
+                        stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, capture_output)
                     })
                 });
 
@@ -5088,12 +5258,12 @@ fn execute_native_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-                let _ =
+                let stdout =
                     join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
                         task: task_name.to_string(),
                         source,
                     })?;
-                let _ =
+                let stderr =
                     join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
                         task: task_name.to_string(),
                         source,
@@ -5104,33 +5274,69 @@ fn execute_native_task_command(
 
                 Ok(TaskCommandOutput {
                     exit_code: status.code().unwrap_or(1),
-                    stdout: String::new(),
-                    stderr: String::new(),
+                    stdout,
+                    stderr,
                     target: None,
                     runtime,
                     service_termination: None,
                     execution_note: None,
                 })
             } else {
-                let mut child = process
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .spawn()
-                    .map_err(|source| RunError::SpawnFailed {
-                        task: task_name.to_string(),
-                        source,
-                    })?;
+                let mut child = if capture_output {
+                    process
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                } else {
+                    process
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .spawn()
+                }
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+                let stdout_handle = if capture_output {
+                    child.stdout.take().map(|stdout| {
+                        thread::spawn(move || {
+                            stream_reader_to_sink(stdout, io::stdout(), None, true)
+                        })
+                    })
+                } else {
+                    None
+                };
+                let stderr_handle = if capture_output {
+                    child.stderr.take().map(|stderr| {
+                        thread::spawn(move || {
+                            stream_reader_to_sink(stderr, io::stderr(), None, true)
+                        })
+                    })
+                } else {
+                    None
+                };
                 let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
                 let status = child.wait().map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
+                let stdout =
+                    join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let stderr =
+                    join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
 
                 Ok(TaskCommandOutput {
                     exit_code: status.code().unwrap_or(1),
-                    stdout: String::new(),
-                    stderr: String::new(),
+                    stdout,
+                    stderr,
                     target: None,
                     runtime,
                     service_termination: None,
@@ -7615,25 +7821,45 @@ fn exec_persistent_container_task_command(
         .arg(command_with_path_export(command, path_export));
 
     match mode {
-        TaskExecutionMode::Stream { .. } => {
-            let exit_code = run_streaming_command_with_loader(
-                &mut container,
-                &running_loader_label_for_backend(task_name, Backend::Container),
-            )
-            .map_err(|source| RunError::SpawnFailed {
-                task: task_name.to_string(),
-                source,
-            })?;
+        TaskExecutionMode::Stream { capture_output, .. } => {
+            if capture_output {
+                let output = run_streaming_command_with_capture_with_loader(
+                    &mut container,
+                    &running_loader_label_for_backend(task_name, Backend::Container),
+                )
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+                Ok(TaskCommandOutput {
+                    exit_code: output.exit_code,
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                    target: Some(container_name.to_string()),
+                    runtime: None,
+                    service_termination: None,
+                    execution_note: None,
+                })
+            } else {
+                let exit_code = run_streaming_command_with_loader(
+                    &mut container,
+                    &running_loader_label_for_backend(task_name, Backend::Container),
+                )
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
 
-            Ok(TaskCommandOutput {
-                exit_code,
-                stdout: String::new(),
-                stderr: String::new(),
-                target: Some(container_name.to_string()),
-                runtime: None,
-                service_termination: None,
-                execution_note: None,
-            })
+                Ok(TaskCommandOutput {
+                    exit_code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    target: Some(container_name.to_string()),
+                    runtime: None,
+                    service_termination: None,
+                    execution_note: None,
+                })
+            }
         }
         TaskExecutionMode::Capture => {
             let output = container
@@ -8281,7 +8507,8 @@ mod tests {
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, projected_runtime_public_endpoint_line, resolve_execution_backend,
         resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
-        run_task_with_args, run_task_with_overrides, run_task_with_progress, running_loader_label,
+        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
+        run_task_with_overrides, run_task_with_progress, running_loader_label,
         running_loader_label_for_backend,
     };
     use crate::schema::{
@@ -9062,6 +9289,37 @@ tasks:
     }
 
     #[test]
+    fn run_task_stream_capture_collects_output_when_enabled() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: |
+      printf stream-out
+      printf stream-err >&2
+"#,
+        );
+
+        let outcome = run_task_with_args_with_overrides_and_stream_capture(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &[],
+            ExecutionOverrides::default(),
+            true,
+        )
+        .expect("stream run with capture should succeed");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(outcome.stdout.contains("stream-out"), "{}", outcome.stdout);
+        assert!(outcome.stderr.contains("stream-err"), "{}", outcome.stderr);
+    }
+
+    #[test]
     fn executes_script_tasks() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -9719,7 +9977,7 @@ exec "$(dirname "$0")/docker-real" "$@"
             env::set_var("PATH", &joined_path);
         }
 
-        let outcome = super::run_task_captured_with_overrides(
+        let error = super::run_task_captured_with_overrides(
             &fixture.contract,
             fixture.file_path(),
             "dev",
@@ -9728,7 +9986,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                 ..ExecutionOverrides::default()
             },
         )
-        .expect("override publication should avoid occupied default host port");
+        .expect_err("host-port override should be rejected when projected port mode is auto");
 
         match original_path {
             Some(path) => unsafe {
@@ -9739,58 +9997,16 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
-            "ready"
-        );
-        let runtime = outcome
-            .runtime
-            .expect("override run should report runtime metadata");
-        let listener = runtime
-            .listeners
-            .get("http")
-            .expect("http listener should be present");
-        let host = listener
-            .resolved
-            .as_ref()
-            .and_then(|resolved| resolved.host.as_ref())
-            .expect("http listener should resolve a host endpoint");
-        assert_eq!(host.port, 3003);
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
-            "http://127.0.0.1:3003/|127.0.0.1|3003|http://127.0.0.1:3003/"
-        );
-        let runtime_json = serde_json::to_value(&runtime).expect("runtime should serialize");
-        assert_eq!(runtime_json["primary_endpoint"]["host"]["port"], 3003);
-        assert_eq!(
-            runtime_json["listeners"]["http"]["resolved"]["host"]["port"],
-            3003
-        );
-
-        let state_dir = bin_dir.join("docker-state");
-        let publication_snapshots = fs::read_dir(&state_dir)
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                name.ends_with(".publish")
-                    .then(|| fs::read_to_string(entry.path()).ok())
-                    .flatten()
-            })
-            .collect::<Vec<_>>();
+        assert!(matches!(
+            &error,
+            RunError::HostPortOverrideRequiresFixedProjectedPort {
+                task,
+                listener
+            } if task == "dev" && listener == "http"
+        ));
         assert!(
-            publication_snapshots
-                .iter()
-                .any(|snapshot| snapshot.contains("127.0.0.1:3003:3000/tcp")),
-            "expected create publication args to use the override: {publication_snapshots:?}"
-        );
-        assert!(
-            publication_snapshots
-                .iter()
-                .all(|snapshot| !snapshot.contains("127.0.0.1:3000:3000/tcp")),
-            "engine publication args should not keep the contract default when override is set: {publication_snapshots:?}"
+            !fixture.dir.path().join("prepared.txt").exists(),
+            "task should not execute when host-port override is invalid"
         );
     }
 
@@ -9883,7 +10099,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                 ..ExecutionOverrides::default()
             },
         )
-        .expect_err("occupied override host port should fail cleanly");
+        .expect_err("host-port override should be rejected when projected port mode is auto");
 
         match original_path {
             Some(path) => unsafe {
@@ -9894,20 +10110,16 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        match error {
-            RunError::HostPublicationConflict {
-                task,
-                listener,
-                address,
-                port,
-            } => {
-                assert_eq!(task, "dev");
-                assert_eq!(listener, "http");
-                assert_eq!(address, "127.0.0.1");
-                assert_eq!(port, 3003);
-            }
-            other => panic!("expected host publication conflict, got {other}"),
-        }
+        assert!(
+            matches!(
+                &error,
+                RunError::HostPortOverrideRequiresFixedProjectedPort {
+                    task,
+                    listener
+                } if task == "dev" && listener == "http"
+            ),
+            "expected host-port override requires fixed projected port error, got {error:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -9995,7 +10207,7 @@ exec "$(dirname "$0")/docker-real" "$@"
             env::set_var("PATH", &joined_path);
         }
 
-        let outcome = super::run_task_captured_with_overrides(
+        let error = super::run_task_captured_with_overrides(
             &fixture.contract,
             fixture.file_path(),
             "dev",
@@ -10004,7 +10216,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                 ..ExecutionOverrides::default()
             },
         )
-        .expect("dependency tasks should not inherit requested task publications");
+        .expect_err("host-port override requires fixed projected listener");
 
         match original_path {
             Some(path) => unsafe {
@@ -10015,39 +10227,16 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("setup.txt")).unwrap(),
-            "setup"
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
-            "ready"
-        );
-
-        let state_dir = bin_dir.join("docker-state");
-        let publication_snapshots = fs::read_dir(&state_dir)
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                name.ends_with(".publish")
-                    .then(|| fs::read_to_string(entry.path()).ok())
-                    .flatten()
-            })
-            .collect::<Vec<_>>();
+        assert!(matches!(
+            &error,
+            RunError::HostPortOverrideRequiresFixedProjectedPort {
+                task,
+                listener
+            } if task == "dev" && listener == "http"
+        ));
         assert!(
-            publication_snapshots
-                .iter()
-                .any(|snapshot| snapshot.contains("127.0.0.1:3003:3000/tcp")),
-            "expected requested task publication args to use the override: {publication_snapshots:?}"
-        );
-        assert!(
-            publication_snapshots
-                .iter()
-                .all(|snapshot| !snapshot.contains("127.0.0.1:3000:3000/tcp")),
-            "dependency tasks should not inherit requested task runtime publication args: {publication_snapshots:?}"
+            !fixture.dir.path().join("setup.txt").exists(),
+            "dependencies should not run when host-port override is invalid"
         );
     }
 
@@ -10131,8 +10320,8 @@ exec "$(dirname "$0")/docker-real" "$@"
             env::set_var("PATH", &joined_path);
         }
 
-        let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev")
-            .expect_err("without override, declared fixed host port should still be used");
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect("auto host publication should resolve an ephemeral port");
 
         match original_path {
             Some(path) => unsafe {
@@ -10143,20 +10332,23 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        match error {
-            RunError::HostPublicationConflict {
-                task,
-                listener,
-                address,
-                port,
-            } => {
-                assert_eq!(task, "dev");
-                assert_eq!(listener, "http");
-                assert_eq!(address, "127.0.0.1");
-                assert_eq!(port, 3000);
-            }
-            other => panic!("expected host publication conflict, got {other}"),
-        }
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        let runtime = outcome.runtime.expect("runtime should resolve");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("http listener should have host resolution");
+        assert_eq!(host.address, "127.0.0.1");
+        assert!(host.port > 0);
     }
 
     #[cfg(unix)]

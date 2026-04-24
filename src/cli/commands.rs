@@ -64,18 +64,18 @@ use crate::output::{
     DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSourceEntry,
     EnvSourceStatus, EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionPlanFailure,
     ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
-    ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
-    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory,
-    InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds,
-    InitSelectedPackOptions, InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure,
-    PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline,
-    ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
-    ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
-    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
-    ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    ExecutionReceiptEnvSource, ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary,
+    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
+    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
+    InitPackSeeds, InitSelectedPackOptions, InitSuccess, MemberServicesSuccess, OutputFormat,
+    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
+    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary,
+    ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution,
+    UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
+    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
     WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
@@ -107,7 +107,8 @@ use crate::runner::{
     resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
     resolve_task_env_details_with_policy, run_interrupt_requested,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
-    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
+    run_task_with_args_with_overrides_and_stream_capture,
+    run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, ExtensionSpec, Lifecycle,
@@ -2962,6 +2963,7 @@ pub fn run_command(
     debug: bool,
     show_receipt: bool,
     stream: bool,
+    persist_logs: bool,
 ) -> CommandOutput {
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
@@ -3033,6 +3035,7 @@ pub fn run_command(
             &normalized_task_inputs,
             show_receipt,
             run_command_streaming_enabled(stream),
+            persist_logs,
         ) {
             Ok(stderr) => CommandOutput {
                 stdout: String::new(),
@@ -21136,8 +21139,8 @@ mod tests {
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
-        DetectComparison, DetectComparisonRemoval, ExecutionReceipt, ExecutionReceiptSummary,
-        ExecutionSummary, TaskSummary,
+        DetectComparison, DetectComparisonRemoval, ExecutionReceipt, ExecutionReceiptLogs,
+        ExecutionReceiptSummary, ExecutionSummary, TaskSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -21368,6 +21371,141 @@ tasks:
         assert!(!output.contains("rerun `ota validate ./ota.yaml`"));
 
         env::set_current_dir(cwd).expect("restore current dir");
+    }
+
+    #[test]
+    fn capture_durable_run_logs_writes_repo_local_artifacts_when_enabled() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            "version: 1\nproject:\n  name: demo\ntasks:\n  dev:\n    run: echo ok\n",
+        )
+        .expect("write contract");
+
+        let result = super::capture_durable_run_logs(
+            &contract_path,
+            "dev",
+            None,
+            "stdout line\n",
+            "stderr line\n",
+            true,
+        );
+        let logs = result.logs.expect("logs should be captured");
+        assert!(result.warning.is_none());
+        assert!(logs.dir.starts_with(".ota/state/logs/"));
+        assert_eq!(
+            fs::read_to_string(repo.path().join(&logs.stdout)).expect("read stdout log"),
+            "stdout line\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join(&logs.stderr)).expect("read stderr log"),
+            "stderr line\n"
+        );
+    }
+
+    #[test]
+    fn execution_receipt_renderers_show_logs_when_present() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: Some(ExecutionReceiptLogs {
+                dir: String::from(".ota/state/logs/20260424-dev"),
+                stdout: String::from(".ota/state/logs/20260424-dev/stdout.log"),
+                stderr: String::from(".ota/state/logs/20260424-dev/stderr.log"),
+            }),
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "READY", None, Some(0))],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let receipt_text = strip_ansi_codes(&render_execution_receipt_text(&receipt));
+        assert!(receipt_text.contains("Logs:"));
+        assert!(receipt_text.contains("Dir: .ota/state/logs/20260424-dev"));
+        assert!(receipt_text.contains("Stdout: .ota/state/logs/20260424-dev/stdout.log"));
+        assert!(receipt_text.contains("Stderr: .ota/state/logs/20260424-dev/stderr.log"));
+
+        let summary = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(summary.contains("Logs:"), "{summary}");
+        assert!(
+            summary.contains(".ota/state/logs/20260424-dev"),
+            "{summary}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_persists_logs_and_reports_their_location() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  dev:
+    run: sh -c 'printf "stdout line\n"; printf "stderr line\n" >&2'
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "dev",
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            true,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Logs:"), "{stderr}");
+        assert!(stderr.contains(".ota/state/logs/"), "{stderr}");
+
+        let logs_root = repo.path().join(".ota").join("state").join("logs");
+        let run_dirs = fs::read_dir(&logs_root)
+            .expect("read logs root")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(run_dirs.len(), 1, "expected one run log directory");
+        let run_dir = &run_dirs[0];
+        assert_eq!(
+            fs::read_to_string(run_dir.join("stdout.log")).expect("read stdout log"),
+            "stdout line\n"
+        );
+        assert_eq!(
+            fs::read_to_string(run_dir.join("stderr.log")).expect("read stderr log"),
+            "stderr line\n"
+        );
     }
 
     #[test]
@@ -22453,6 +22591,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            logs: None,
             service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -22566,6 +22705,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            logs: None,
             service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -24801,6 +24941,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            logs: None,
             service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -24844,6 +24985,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            logs: None,
             service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -24866,6 +25008,45 @@ tasks:
         ));
 
         assert!(rendered.contains("Status:    failed"));
+    }
+
+    #[test]
+    fn execution_summary_surfaces_log_capture_warning_in_note() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: Some(String::from(
+                "repair task `dev`; log capture failed: failed to create log directory",
+            )),
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(rendered.contains("log capture failed: failed to create log directory"));
     }
 
     #[test]
@@ -24937,6 +25118,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: Some(runtime),
+            logs: None,
             service_termination: Some(ServiceTermination {
                 kind: ServiceTerminationKind::ServiceStopped,
                 cause: ServiceTerminationCause::OomKilled,
@@ -24981,6 +25163,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            logs: None,
             service_termination: Some(ServiceTermination {
                 kind: ServiceTerminationKind::ServiceStopped,
                 cause: ServiceTerminationCause::ExitedNonZero,
@@ -25301,6 +25484,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: None,
+            logs: None,
             service_termination: None,
             workloads,
             policy: Vec::new(),
@@ -25429,6 +25613,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             runtime: Some(runtime),
+            logs: None,
             service_termination: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -27222,6 +27407,119 @@ fn looks_like_repo_candidate(repo_root: &Path) -> bool {
         .any(|marker| repo_root.join(marker).is_file())
 }
 
+#[derive(Clone, Debug)]
+struct RunLogCaptureResult {
+    logs: Option<ExecutionReceiptLogs>,
+    warning: Option<String>,
+}
+
+fn capture_durable_run_logs(
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    stdout: &str,
+    stderr: &str,
+    enabled: bool,
+) -> RunLogCaptureResult {
+    if !enabled {
+        return RunLogCaptureResult {
+            logs: None,
+            warning: None,
+        };
+    }
+
+    match write_durable_run_logs(contract_path, task_name, member, stdout, stderr) {
+        Ok(logs) => RunLogCaptureResult {
+            logs: Some(logs),
+            warning: None,
+        },
+        Err(error) => RunLogCaptureResult {
+            logs: None,
+            warning: Some(format!("log capture failed: {error}")),
+        },
+    }
+}
+
+fn write_durable_run_logs(
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<ExecutionReceiptLogs, String> {
+    let repo_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let logs_root = repo_root.join(".ota").join("state").join("logs");
+    fs::create_dir_all(&logs_root).map_err(|error| {
+        format!(
+            "failed to create log directory `{}`: {error}",
+            compact_path(&logs_root, ".")
+        )
+    })?;
+
+    let stamp = OffsetDateTime::now_utc()
+        .format(&format_description!(
+            "[year][month][day]-[hour][minute][second]-[subsecond digits:3]Z"
+        ))
+        .map_err(|error| format!("failed to format run log timestamp: {error}"))?;
+    let task_slug = sanitize_log_component(task_name, "task");
+    let member_suffix = member.map(|value| format!("-{}", sanitize_log_component(value, "member")));
+    let run_id = format!(
+        "{stamp}-{task_slug}{}-{}",
+        member_suffix.unwrap_or_default(),
+        std::process::id()
+    );
+    let run_dir = logs_root.join(run_id);
+    fs::create_dir_all(&run_dir).map_err(|error| {
+        format!(
+            "failed to create run log directory `{}`: {error}",
+            compact_path(&run_dir, ".")
+        )
+    })?;
+
+    let stdout_path = run_dir.join("stdout.log");
+    let stderr_path = run_dir.join("stderr.log");
+    fs::write(&stdout_path, stdout).map_err(|error| {
+        format!(
+            "failed to write stdout log `{}`: {error}",
+            compact_path(&stdout_path, ".")
+        )
+    })?;
+    fs::write(&stderr_path, stderr).map_err(|error| {
+        format!(
+            "failed to write stderr log `{}`: {error}",
+            compact_path(&stderr_path, ".")
+        )
+    })?;
+
+    Ok(ExecutionReceiptLogs {
+        dir: repo_relative_log_path(repo_root, &run_dir),
+        stdout: repo_relative_log_path(repo_root, &stdout_path),
+        stderr: repo_relative_log_path(repo_root, &stderr_path),
+    })
+}
+
+fn sanitize_log_component(value: &str, fallback: &str) -> String {
+    let mut output = value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect::<String>();
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let output = output.trim_matches('-');
+    if output.is_empty() {
+        fallback.to_string()
+    } else {
+        output.to_string()
+    }
+}
+
+fn repo_relative_log_path(repo_root: &Path, path: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .map(|relative| relative.to_string_lossy().to_string())
+        .unwrap_or_else(|_| compact_path(path, "."))
+}
+
 fn run_contract_targets(
     task_name: &str,
     resolved_path: &Path,
@@ -27230,6 +27528,7 @@ fn run_contract_targets(
     task_inputs: &[String],
     show_receipt: bool,
     stream_output: bool,
+    persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     if members.is_empty() {
         let target = load_and_validate_target(resolved_path, None).map_err(|error| {
@@ -27243,6 +27542,7 @@ fn run_contract_targets(
             task_inputs,
             show_receipt,
             stream_output,
+            persist_logs,
         );
     }
 
@@ -27265,6 +27565,7 @@ fn run_contract_targets(
             task_inputs,
             show_receipt,
             stream_output,
+            persist_logs,
         )?);
     }
 
@@ -27279,6 +27580,7 @@ fn run_single_contract_target(
     task_inputs: &[String],
     show_receipt: bool,
     stream_output: bool,
+    persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
     if stream_output {
@@ -27290,6 +27592,7 @@ fn run_single_contract_target(
             task_inputs,
             show_receipt,
             &details_footer,
+            persist_logs,
         );
     }
 
@@ -27301,6 +27604,7 @@ fn run_single_contract_target(
         task_inputs,
         show_receipt,
         &details_footer,
+        persist_logs,
     )
 }
 
@@ -27312,16 +27616,26 @@ fn run_single_contract_target_streaming(
     task_inputs: &[String],
     show_receipt: bool,
     details_footer: &str,
+    persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let task_name = canonical_declared_task_name(&target.contract, task_name);
-    match run_task_with_args_with_overrides(
+    match run_task_with_args_with_overrides_and_stream_capture(
         &target.contract,
         &target.contract_path,
         task_name.as_str(),
         task_inputs,
         overrides,
+        persist_logs,
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
+            let log_capture = capture_durable_run_logs(
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                &outcome.stdout,
+                &outcome.stderr,
+                persist_logs,
+            );
             let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -27336,6 +27650,7 @@ fn run_single_contract_target_streaming(
                 None,
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -27358,6 +27673,14 @@ fn run_single_contract_target_streaming(
             Ok(output)
         }
         Ok(outcome) => {
+            let log_capture = capture_durable_run_logs(
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                &outcome.stdout,
+                &outcome.stderr,
+                persist_logs,
+            );
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
             let mut receipt = run_execution_receipt(
                 &target.contract,
@@ -27379,6 +27702,7 @@ fn run_single_contract_target_streaming(
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -27408,6 +27732,15 @@ fn run_single_contract_target_streaming(
             })
         }
         Err(error) => {
+            let error_detail = error.to_string();
+            let log_capture = capture_durable_run_logs(
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                "",
+                &error_detail,
+                persist_logs,
+            );
             let next_note = match &error {
                 RunError::RuntimeListenerResolutionFailed {
                     task,
@@ -27420,7 +27753,7 @@ fn run_single_contract_target_streaming(
                     details_footer
                 ),
             };
-            let receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -27433,6 +27766,7 @@ fn run_single_contract_target_streaming(
                 None,
                 Some(next_note),
             );
+            apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -27466,6 +27800,7 @@ fn run_single_contract_target_captured(
     task_inputs: &[String],
     show_receipt: bool,
     details_footer: &str,
+    persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let task_name = canonical_declared_task_name(&target.contract, task_name);
     match run_task_captured_with_args_with_overrides_with_policy(
@@ -27477,6 +27812,14 @@ fn run_single_contract_target_captured(
         None,
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
+            let log_capture = capture_durable_run_logs(
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                &outcome.stdout,
+                &outcome.stderr,
+                persist_logs,
+            );
             let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -27491,6 +27834,7 @@ fn run_single_contract_target_captured(
                 None,
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -27513,6 +27857,14 @@ fn run_single_contract_target_captured(
             Ok(output)
         }
         Ok(outcome) => {
+            let log_capture = capture_durable_run_logs(
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                &outcome.stdout,
+                &outcome.stderr,
+                persist_logs,
+            );
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
             let mut receipt = run_execution_receipt(
                 &target.contract,
@@ -27531,6 +27883,7 @@ fn run_single_contract_target_captured(
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -27560,6 +27913,15 @@ fn run_single_contract_target_captured(
             })
         }
         Err(error) => {
+            let error_detail = error.to_string();
+            let log_capture = capture_durable_run_logs(
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                "",
+                &error_detail,
+                persist_logs,
+            );
             let next_note = match &error {
                 RunError::RuntimeListenerResolutionFailed {
                     task,
@@ -27572,7 +27934,7 @@ fn run_single_contract_target_captured(
                     details_footer
                 ),
             };
-            let receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -27585,6 +27947,7 @@ fn run_single_contract_target_captured(
                 None,
                 Some(next_note),
             );
+            apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -27627,6 +27990,19 @@ fn canonical_declared_task_name(contract: &Contract, requested_task_name: &str) 
     }
 
     requested_task_name.to_string()
+}
+
+fn apply_run_log_capture_to_receipt(
+    receipt: &mut ExecutionReceipt,
+    log_capture: RunLogCaptureResult,
+) {
+    receipt.logs = log_capture.logs;
+    if let Some(warning) = log_capture.warning {
+        receipt.next = Some(match receipt.next.take() {
+            Some(next) if !next.trim().is_empty() => format!("{next}; {warning}"),
+            _ => warning,
+        });
+    }
 }
 
 fn task_cli_alias(task_name: &str) -> String {
@@ -29233,6 +29609,7 @@ fn run_execution_receipt(
             })
             .collect(),
         runtime,
+        logs: None,
         service_termination: None,
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, contract_path, backend),
@@ -31374,6 +31751,25 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         }
     }
 
+    if let Some(logs) = receipt.logs.as_ref() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Logs:")));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Dir:"),
+            paint_code(&logs.dir)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Stdout:"),
+            paint_code(&logs.stdout)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Stderr:"),
+            paint_code(&logs.stderr)
+        ));
+    }
+
     if !receipt.policy.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Policy:")));
         for line in &receipt.policy {
@@ -31557,6 +31953,11 @@ fn render_execution_receipt_summary_block(
             note = format!("{note}; {service_note}");
         }
     }
+    if let Some(log_warning) = receipt_log_capture_warning(receipt)
+        && !note.contains(log_warning)
+    {
+        note = format!("{note}; {log_warning}");
+    }
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
@@ -31596,6 +31997,9 @@ fn render_execution_receipt_summary_block(
                 &format!("{secondary_count} additional endpoint(s)"),
             ));
         }
+    }
+    if let Some(logs) = receipt.logs.as_ref() {
+        lines.push(summary_detail_line("Logs:", &logs.dir));
     }
     lines.push(summary_detail_line("Task:", task));
     let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
@@ -31643,6 +32047,13 @@ fn requested_task_note_from_receipt(receipt: &ExecutionReceipt, task: &str) -> O
         let detail = step.detail.as_deref()?;
         let note = detail.strip_prefix("requested task; ").unwrap_or(detail);
         (!note.is_empty()).then(|| note.to_string())
+    })
+}
+
+fn receipt_log_capture_warning(receipt: &ExecutionReceipt) -> Option<&str> {
+    receipt.next.as_deref().and_then(|next| {
+        next.split("; ")
+            .find(|part| part.starts_with("log capture failed:"))
     })
 }
 
@@ -33408,6 +33819,7 @@ fn repo_execution_receipt(
             })
             .collect(),
         runtime: None,
+        logs: None,
         service_termination: None,
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, path, execution_backend),
@@ -33936,6 +34348,7 @@ fn workspace_up_receipt(
             .collect(),
         env_sources,
         runtime: None,
+        logs: None,
         service_termination: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
@@ -34003,6 +34416,7 @@ fn workspace_status_receipt(
         env: BTreeMap::new(),
         env_sources: Vec::new(),
         runtime: None,
+        logs: None,
         service_termination: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
@@ -34079,6 +34493,7 @@ fn workspace_run_receipt(
             .collect(),
         env_sources,
         runtime: None,
+        logs: None,
         service_termination: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
@@ -34579,6 +34994,7 @@ fn run_up_setup_task(
             true,
             &[],
             overrides,
+            false,
             policy_env,
         )
         .map(|outcome| CommandRunResult {
@@ -37810,6 +38226,7 @@ fn run_workspace_repo_task(
                         false,
                         task_args,
                         ExecutionOverrides::default(),
+                        false,
                         Some(&repo.policy_env),
                     )
                     .map(|result| CommandRunResult {
