@@ -101,6 +101,33 @@ fn backend_for_mode(mode: DoctorMode) -> Backend {
     }
 }
 
+fn rerun_doctor_command(mode: DoctorMode) -> &'static str {
+    match mode {
+        DoctorMode::Native => "ota doctor",
+        DoctorMode::Container => "ota doctor --mode container",
+        DoctorMode::Remote => "ota doctor --mode remote",
+    }
+}
+
+fn doctor_mode_for_service(contract: &Contract, service: &ServiceSpec) -> DoctorMode {
+    let Some(readiness) = service.readiness.as_ref() else {
+        return DoctorMode::Native;
+    };
+
+    let backend = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.contexts.get(readiness.from.as_str()))
+        .map(|context| context.backend)
+        .unwrap_or(Backend::Native);
+
+    match backend {
+        Backend::Native => DoctorMode::Native,
+        Backend::Container => DoctorMode::Container,
+        Backend::Remote => DoctorMode::Remote,
+    }
+}
+
 fn contract_has_remote_execution_context(contract: &Contract) -> bool {
     contract.execution.as_ref().is_some_and(|execution| {
         execution.preferred == Some(Backend::Remote)
@@ -1792,8 +1819,13 @@ pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -
     let working_dir = contract_working_dir(contract_path);
 
     if let Some(service) = contract.services.get(name)
-        && let Some(finding) =
-            service_finding(contract, name, service, working_dir, DoctorMode::Native)
+        && let Some(finding) = service_finding(
+            contract,
+            name,
+            service,
+            working_dir,
+            doctor_mode_for_service(contract, service),
+        )
     {
         findings.push(finding);
     }
@@ -2463,6 +2495,7 @@ fn service_finding(
     working_dir: &Path,
     mode: DoctorMode,
 ) -> Option<Finding> {
+    let rerun_doctor = rerun_doctor_command(mode);
     if let Some(readiness) = &service.readiness {
         return match run_service_readiness(contract, name, service, working_dir, readiness) {
             Ok(CheckStatus::Passed) => None,
@@ -2479,10 +2512,10 @@ fn service_finding(
                     readiness.from.as_str(),
                 ),
                 next: match service.start_command(name) {
-                    Some(start) => format!("run `{start}` and re-run `ota doctor`"),
+                    Some(start) => format!("run `{start}` and re-run `{rerun_doctor}`"),
                     None => format!(
-                        "repair `{name}` from context `{}` and rerun `ota doctor`",
-                        readiness.from
+                        "repair `{name}` from context `{}` and rerun `{rerun_doctor}`",
+                        readiness.from,
                     ),
                 },
             }),
@@ -2500,7 +2533,7 @@ fn service_finding(
                     readiness.from.as_str(),
                     &error,
                 ),
-                next: service_readiness_execution_next(name, readiness.from.as_str()),
+                next: service_readiness_execution_next(name, readiness.from.as_str(), mode),
             }),
         };
     }
@@ -2520,9 +2553,9 @@ fn service_finding(
                 summary: format!("Service healthcheck failed: {name}"),
                 why: format!("service `{name}` did not pass its configured healthcheck"),
                 next: match service.start_command(name) {
-                    Some(start) => format!("run `{start}` and re-run `ota doctor`"),
+                    Some(start) => format!("run `{start}` and re-run `{rerun_doctor}`"),
                     None => format!(
-                        "start or repair `{name}` and re-run its healthcheck: {healthcheck}, then rerun `ota doctor`"
+                        "start or repair `{name}` and re-run its healthcheck: {healthcheck}, then rerun `{rerun_doctor}`"
                     ),
                 },
             }),
@@ -2535,7 +2568,7 @@ fn service_finding(
                 summary: format!("Service healthcheck timed out: {name}"),
                 why: format!("service `{name}` did not become ready within {}ms", timeout),
                 next: format!(
-                    "make `services.{name}.healthcheck` complete faster or raise `services.{name}.timeout`, then rerun `ota doctor`"
+                    "make `services.{name}.healthcheck` complete faster or raise `services.{name}.timeout`, then rerun `{rerun_doctor}`"
                 ),
             }),
         };
@@ -2603,9 +2636,10 @@ fn service_readiness_execution_why(
     }
 }
 
-fn service_readiness_execution_next(name: &str, context_name: &str) -> String {
+fn service_readiness_execution_next(name: &str, context_name: &str, mode: DoctorMode) -> String {
     format!(
-        "repair execution context `{context_name}` or move `services.{name}.readiness.from` to a context Ota can execute, then rerun `ota doctor`"
+        "repair execution context `{context_name}` or move `services.{name}.readiness.from` to a context Ota can execute, then rerun `{}`",
+        rerun_doctor_command(mode)
     )
 }
 
@@ -6860,6 +6894,102 @@ tasks:
             report.findings[0]
                 .why
                 .contains("projected endpoint is `127.0.0.1:5432`")
+        );
+    }
+
+    #[test]
+    fn diagnose_service_infers_container_mode_for_contextual_readiness_guidance() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: ota
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      app:
+        address: postgres
+        port: 5432
+    readiness:
+      from: app
+      run: exit 1
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_service(&contract, synthetic_contract_path(), "postgres");
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert!(
+            report.findings[0]
+                .next
+                .contains("rerun `ota doctor --mode container`"),
+            "{}",
+            report.findings[0].next
+        );
+    }
+
+    #[test]
+    fn container_mode_service_readiness_failure_uses_container_rerun_guidance() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: ota
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      app:
+        address: postgres
+        port: 5432
+    readiness:
+      from: app
+      run: exit 1
+"#,
+        )
+        .unwrap();
+
+        let report =
+            diagnose_contract_in_mode(&contract, synthetic_contract_path(), DoctorMode::Container);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary.starts_with("Service readiness"))
+            .expect("expected service readiness finding");
+        assert!(
+            finding.next.contains("rerun `ota doctor --mode container`"),
+            "{}",
+            finding.next
         );
     }
 
