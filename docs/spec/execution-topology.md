@@ -85,6 +85,7 @@ Each context answers:
 - which image or target it uses when relevant
 - which service networks it can attach to
 - which runtimes and tools belong to that context
+- which parent context (optional) it extends from
 
 Proposed direction:
 
@@ -93,6 +94,18 @@ execution:
   default_context: app
 
   contexts:
+    app-base:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      requirements:
+        runtimes:
+          java: ">=21"
+          node: ">=24.14.1"
+        tools:
+          maven: "*"
+
     host:
       backend: native
       requirements:
@@ -101,10 +114,8 @@ execution:
           lsof: "*"
 
     app:
-      backend: container
-      lifecycle: persistent
+      extends: app-base
       container:
-        image: maven:3.9.14-eclipse-temurin-21-noble
         resources:
           memory:
             minimum: 2GiB
@@ -112,13 +123,13 @@ execution:
       attachments:
         compose:
           - local
-      requirements:
-        runtimes:
-          java: ">=21"
-          node: ">=24.14.1"
-        tools:
-          maven: "*"
 ```
+
+Inheritance merge rules:
+
+- scalar fields override
+- maps merge recursively
+- lists replace
 
 This keeps `docker` on the host context instead of pretending the app container should carry it.
 

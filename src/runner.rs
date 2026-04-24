@@ -4350,6 +4350,7 @@ fn persistent_container_shape_token(
     context_name: Option<&str>,
     image: &str,
     engine: &str,
+    compose_networks: &[String],
     publications: &[ContainerPortPublication],
     isolated_paths: &[String],
     memory_bytes: Option<u64>,
@@ -4360,6 +4361,9 @@ fn persistent_container_shape_token(
         .hash(&mut hasher);
     image.hash(&mut hasher);
     engine.hash(&mut hasher);
+    for compose_network in compose_networks {
+        compose_network.hash(&mut hasher);
+    }
     for publication in publications {
         publication.bind_port.hash(&mut hasher);
         publication.host_address.hash(&mut hasher);
@@ -6147,14 +6151,27 @@ fn classify_container_service_termination(
         .and_then(|state| state.exit_code)
         .unwrap_or(exit_code);
 
+    let inspected_exit_code = termination_state.and_then(|state| state.exit_code);
     let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
         ServiceTerminationCause::OomKilled
-    } else if interrupted || is_interrupt_exit_code(effective_exit_code) {
+    } else if let Some(inspected_exit_code) = inspected_exit_code {
+        if is_interrupt_exit_code(inspected_exit_code) {
+            ServiceTerminationCause::Interrupted
+        } else if inspected_exit_code > 0 {
+            ServiceTerminationCause::ExitedNonZero
+        } else if inspected_exit_code == 0 {
+            ServiceTerminationCause::Exited
+        } else {
+            ServiceTerminationCause::Unknown
+        }
+    } else if is_interrupt_exit_code(effective_exit_code) {
         ServiceTerminationCause::Interrupted
     } else if effective_exit_code > 0 {
         ServiceTerminationCause::ExitedNonZero
     } else if effective_exit_code == 0 {
         ServiceTerminationCause::Exited
+    } else if interrupted {
+        ServiceTerminationCause::Interrupted
     } else {
         ServiceTerminationCause::Unknown
     };
@@ -6543,6 +6560,7 @@ fn execute_persistent_container_task_command(
         context_name,
         image,
         engine,
+        compose_networks,
         publications,
         dependency_isolation_paths,
         memory_bytes,
@@ -6865,6 +6883,65 @@ fn ensure_persistent_container_ready(
             } else {
                 PersistentContainerReconciliation::created()
             },
+        ));
+    }
+
+    let existing_labels = persistent_container_labels_for_name(task_name, engine, container_name)?;
+    let recreate_due_to_current_shape_drift = existing_labels
+        .get(OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY)
+        .is_some_and(|label| label == family_token)
+        && existing_labels
+            .get(OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY)
+            .is_none_or(|label| label != shape_token);
+    if recreate_due_to_current_shape_drift {
+        let remove = remove_persistent_container(engine, container_name, task_name)?;
+        if remove.exit_code != 0 {
+            return Ok(PersistentContainerEnsureResult::Failure(
+                container_command_failure(remove, container_name.to_string()),
+            ));
+        }
+        let create = create_persistent_container(
+            task_name,
+            working_dir,
+            context_name,
+            repo_ownership_token,
+            image,
+            engine,
+            container_name,
+            family_token,
+            shape_token,
+            compose_networks,
+            memory_bytes,
+            publications,
+            listener_publications,
+            dependency_isolation_paths,
+        )?;
+        if create.exit_code != 0 {
+            if let Some(port) = parse_container_host_port_conflict(&create.stderr)
+                && let Some((listener_name, publication)) = listener_publications
+                    .iter()
+                    .find(|(_, publication)| publication.host_port == Some(port))
+            {
+                return Err(RunError::HostPublicationConflict {
+                    task: task_name.to_string(),
+                    listener: listener_name.clone(),
+                    address: publication.host_address.clone(),
+                    port,
+                });
+            }
+            return Ok(PersistentContainerEnsureResult::Failure(
+                container_command_failure(create, container_name.to_string()),
+            ));
+        }
+        if let Some(failure) =
+            ensure_container_networks(engine, container_name, compose_networks, task_name)?
+        {
+            return Ok(PersistentContainerEnsureResult::Failure(
+                container_command_failure(failure, container_name.to_string()),
+            ));
+        }
+        return Ok(PersistentContainerEnsureResult::Ready(
+            PersistentContainerReconciliation::recreated("execution shape changed"),
         ));
     }
 
@@ -13040,7 +13117,7 @@ tasks:
     }
 
     #[test]
-    fn container_service_classification_prefers_user_interrupt() {
+    fn container_service_classification_prefers_inspected_exit_cause_over_interrupt_flag() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -13111,7 +13188,7 @@ tasks:
 
         assert_eq!(
             service_termination.cause,
-            super::ServiceTerminationCause::Interrupted
+            super::ServiceTerminationCause::Exited
         );
     }
 
@@ -13188,6 +13265,79 @@ tasks:
         assert_eq!(
             service_termination.cause,
             super::ServiceTerminationCause::ExitedNonZero
+        );
+    }
+
+    #[test]
+    fn container_service_classification_uses_interrupt_exit_code_without_inspect_state() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref());
+        let resolved_runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let service_termination = super::classify_container_service_termination(
+            runtime,
+            Some(&resolved_runtime),
+            true,
+            None,
+            130,
+            true,
+            "ota-ephemeral-test",
+        )
+        .expect("service termination should classify");
+
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::Interrupted
         );
     }
 
@@ -13582,6 +13732,108 @@ execution:
         isolated_paths:
           - node_modules
           - .pnpm-store
+tasks:
+  setup:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        )
+        .unwrap();
+        let second = run_task(&second_contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container recreated (execution shape changed)")
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "readyready"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 2);
+        assert_eq!(log.matches("rm").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_container_recreates_when_compose_attachment_shape_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        compose:
+          - local
+tasks:
+  setup:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+        let second_contract = parse_contract_str(
+            fixture.file_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        compose:
+          - qredex-core
 tasks:
   setup:
     context: app

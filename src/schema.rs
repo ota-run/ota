@@ -20,8 +20,9 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
 const MEMORY_KIB: u64 = 1024;
@@ -167,21 +168,15 @@ pub enum RepoWorkspaceType {
     Monorepo,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct Execution {
-    #[serde(default)]
     pub preferred: Option<Backend>,
-    #[serde(default)]
     pub supported: Vec<Backend>,
-    #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
-    #[serde(default)]
     pub backends: Option<ExecutionBackends>,
-    #[serde(default)]
     pub default_context: Option<String>,
-    #[serde(default)]
     pub contexts: BTreeMap<String, ExecutionContext>,
+    context_resolution_errors: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -199,6 +194,403 @@ impl Execution {
         self.contexts
             .get_key_value(name)
             .map(|(name, context)| (name.as_str(), context))
+    }
+
+    pub fn context_resolution_errors(&self) -> &[String] {
+        &self.context_resolution_errors
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ExecutionWire {
+    #[serde(default)]
+    preferred: Option<Backend>,
+    #[serde(default)]
+    supported: Vec<Backend>,
+    #[serde(default)]
+    lifecycle: Option<Lifecycle>,
+    #[serde(default)]
+    backends: Option<ExecutionBackends>,
+    #[serde(default)]
+    default_context: Option<String>,
+    #[serde(default)]
+    contexts: BTreeMap<String, ExecutionContextWire>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ExecutionContextWire {
+    #[serde(default)]
+    extends: Option<String>,
+    #[serde(default)]
+    backend: Option<Backend>,
+    #[serde(default)]
+    lifecycle: Option<Lifecycle>,
+    #[serde(default)]
+    container: Option<ContainerBackendWire>,
+    #[serde(default)]
+    remote: Option<RemoteBackendWire>,
+    #[serde(default)]
+    requirements: Option<ExecutionContextRequirementsWire>,
+    #[serde(default)]
+    attachments: Option<ExecutionContextAttachmentsWire>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ExecutionContextRequirementsWire {
+    #[serde(default)]
+    runtimes: BTreeMap<String, RuntimeRequirement>,
+    #[serde(default)]
+    tools: BTreeMap<String, ToolRequirement>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ExecutionContextAttachmentsWire {
+    #[serde(default)]
+    compose: Option<Vec<String>>,
+    #[serde(default)]
+    isolated_paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ContainerBackendWire {
+    #[serde(default)]
+    image: Option<String>,
+    #[serde(default)]
+    engines: Option<Vec<String>>,
+    #[serde(default)]
+    resources: Option<ContainerResourceSpecWire>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ContainerResourceSpecWire {
+    #[serde(default)]
+    memory: Option<ContainerMemoryResourceSpecWire>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ContainerMemoryResourceSpecWire {
+    #[serde(default)]
+    minimum: Option<String>,
+    #[serde(default)]
+    default: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct RemoteBackendWire {
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ExecutionContextMerged {
+    backend: Option<Backend>,
+    lifecycle: Option<Lifecycle>,
+    container: Option<ContainerBackendMerged>,
+    remote: Option<RemoteBackendMerged>,
+    requirements: ExecutionContextRequirements,
+    attachments: ExecutionContextAttachments,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ContainerBackendMerged {
+    image: Option<String>,
+    engines: Option<Vec<String>>,
+    resources: Option<ContainerResourceSpecMerged>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ContainerResourceSpecMerged {
+    memory: Option<ContainerMemoryResourceSpecMerged>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct ContainerMemoryResourceSpecMerged {
+    minimum: Option<String>,
+    default: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct RemoteBackendMerged {
+    provider: Option<String>,
+    target: Option<String>,
+    cwd: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for Execution {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ExecutionWire::deserialize(deserializer)?;
+        let (contexts, context_resolution_errors) = resolve_execution_contexts(&wire.contexts);
+        Ok(Self {
+            preferred: wire.preferred,
+            supported: wire.supported,
+            lifecycle: wire.lifecycle,
+            backends: wire.backends,
+            default_context: wire.default_context,
+            contexts,
+            context_resolution_errors,
+        })
+    }
+}
+
+fn resolve_execution_contexts(
+    contexts: &BTreeMap<String, ExecutionContextWire>,
+) -> (BTreeMap<String, ExecutionContext>, Vec<String>) {
+    let mut cache = BTreeMap::<String, ExecutionContextMerged>::new();
+    let mut failed = BTreeSet::<String>::new();
+    let mut stack = Vec::<String>::new();
+    let mut errors = Vec::<String>::new();
+    let mut resolved = BTreeMap::new();
+
+    for name in contexts.keys() {
+        let Some(merged) = resolve_execution_context(
+            name,
+            contexts,
+            &mut cache,
+            &mut failed,
+            &mut stack,
+            &mut errors,
+        ) else {
+            continue;
+        };
+        match finalize_execution_context(name, merged) {
+            Ok(context) => {
+                resolved.insert(name.clone(), context);
+            }
+            Err(error) => {
+                failed.insert(name.clone());
+                errors.push(error);
+            }
+        }
+    }
+
+    (resolved, errors)
+}
+
+fn resolve_execution_context(
+    name: &str,
+    contexts: &BTreeMap<String, ExecutionContextWire>,
+    cache: &mut BTreeMap<String, ExecutionContextMerged>,
+    failed: &mut BTreeSet<String>,
+    stack: &mut Vec<String>,
+    errors: &mut Vec<String>,
+) -> Option<ExecutionContextMerged> {
+    if let Some(cached) = cache.get(name) {
+        return Some(cached.clone());
+    }
+
+    if failed.contains(name) {
+        return None;
+    }
+
+    if stack.iter().any(|entry| entry == name) {
+        let cycle_start = stack
+            .iter()
+            .position(|entry| entry == name)
+            .unwrap_or_default();
+        let mut cycle = stack[cycle_start..].to_vec();
+        cycle.push(name.to_string());
+        failed.insert(name.to_string());
+        errors.push(format!(
+            "`execution.contexts.{name}.extends` introduces an inheritance cycle: {}",
+            cycle.join(" -> ")
+        ));
+        return None;
+    }
+
+    let Some(context) = contexts.get(name) else {
+        failed.insert(name.to_string());
+        errors.push(format!(
+            "`execution.contexts.{name}` could not be resolved from declaration map"
+        ));
+        return None;
+    };
+
+    stack.push(name.to_string());
+    let mut merged = if let Some(parent_name) = context.extends.as_deref() {
+        let parent_name = parent_name.trim();
+        if parent_name.is_empty() {
+            let _ = stack.pop();
+            failed.insert(name.to_string());
+            errors.push(format!(
+                "`execution.contexts.{name}.extends` must not be empty"
+            ));
+            return None;
+        }
+        if !contexts.contains_key(parent_name) {
+            let _ = stack.pop();
+            failed.insert(name.to_string());
+            errors.push(format!(
+                "`execution.contexts.{name}.extends` references unknown context `{parent_name}`"
+            ));
+            return None;
+        }
+        let Some(parent_merged) =
+            resolve_execution_context(parent_name, contexts, cache, failed, stack, errors)
+        else {
+            let _ = stack.pop();
+            failed.insert(name.to_string());
+            return None;
+        };
+        if let (Some(parent_backend), Some(child_backend)) =
+            (parent_merged.backend, context.backend)
+            && parent_backend != child_backend
+        {
+            let _ = stack.pop();
+            failed.insert(name.to_string());
+            errors.push(format!(
+                "`execution.contexts.{name}.backend` `{}` conflicts with inherited backend `{}` from `execution.contexts.{name}.extends`; backend-family overrides across `extends` are not supported",
+                backend_label(child_backend),
+                backend_label(parent_backend),
+            ));
+            return None;
+        }
+        parent_merged
+    } else {
+        ExecutionContextMerged::default()
+    };
+    merge_execution_context(&mut merged, context);
+    let _ = stack.pop();
+
+    cache.insert(name.to_string(), merged.clone());
+    Some(merged)
+}
+
+fn merge_execution_context(target: &mut ExecutionContextMerged, source: &ExecutionContextWire) {
+    if let Some(backend) = source.backend {
+        target.backend = Some(backend);
+    }
+    if let Some(lifecycle) = source.lifecycle {
+        target.lifecycle = Some(lifecycle);
+    }
+    if let Some(container) = source.container.as_ref() {
+        let merged = target
+            .container
+            .get_or_insert_with(ContainerBackendMerged::default);
+        merge_container_backend(merged, container);
+    }
+    if let Some(remote) = source.remote.as_ref() {
+        let merged = target
+            .remote
+            .get_or_insert_with(RemoteBackendMerged::default);
+        merge_remote_backend(merged, remote);
+    }
+    if let Some(requirements) = source.requirements.as_ref() {
+        target
+            .requirements
+            .runtimes
+            .extend(requirements.runtimes.clone());
+        target.requirements.tools.extend(requirements.tools.clone());
+    }
+    if let Some(attachments) = source.attachments.as_ref() {
+        if let Some(compose) = attachments.compose.as_ref() {
+            target.attachments.compose = compose.clone();
+        }
+        if let Some(isolated_paths) = attachments.isolated_paths.as_ref() {
+            target.attachments.isolated_paths = isolated_paths.clone();
+        }
+    }
+}
+
+fn merge_container_backend(target: &mut ContainerBackendMerged, source: &ContainerBackendWire) {
+    if let Some(image) = source.image.as_ref() {
+        target.image = Some(image.clone());
+    }
+    if let Some(engines) = source.engines.as_ref() {
+        target.engines = Some(engines.clone());
+    }
+    if let Some(resources) = source.resources.as_ref() {
+        let merged = target
+            .resources
+            .get_or_insert_with(ContainerResourceSpecMerged::default);
+        merge_container_resources(merged, resources);
+    }
+}
+
+fn merge_container_resources(
+    target: &mut ContainerResourceSpecMerged,
+    source: &ContainerResourceSpecWire,
+) {
+    if let Some(memory) = source.memory.as_ref() {
+        let merged = target
+            .memory
+            .get_or_insert_with(ContainerMemoryResourceSpecMerged::default);
+        if let Some(minimum) = memory.minimum.as_ref() {
+            merged.minimum = Some(minimum.clone());
+        }
+        if let Some(default) = memory.default.as_ref() {
+            merged.default = Some(default.clone());
+        }
+    }
+}
+
+fn merge_remote_backend(target: &mut RemoteBackendMerged, source: &RemoteBackendWire) {
+    if let Some(provider) = source.provider.as_ref() {
+        target.provider = Some(provider.clone());
+    }
+    if let Some(target_name) = source.target.as_ref() {
+        target.target = Some(target_name.clone());
+    }
+    if let Some(cwd) = source.cwd.as_ref() {
+        target.cwd = Some(cwd.clone());
+    }
+}
+
+fn finalize_execution_context(
+    name: &str,
+    merged: ExecutionContextMerged,
+) -> Result<ExecutionContext, String> {
+    let backend = merged.backend.ok_or_else(|| {
+        format!(
+            "`execution.contexts.{name}` does not resolve a backend; set `backend` directly or inherit it via `extends`"
+        )
+    })?;
+
+    let container = merged.container.map(|container| ContainerBackend {
+        image: container.image.unwrap_or_default(),
+        engines: container.engines.unwrap_or_default(),
+        resources: container.resources.map(|resources| ContainerResourceSpec {
+            memory: resources.memory.map(|memory| ContainerMemoryResourceSpec {
+                minimum: memory.minimum,
+                default: memory.default,
+            }),
+        }),
+    });
+    let remote = merged.remote.map(|remote| RemoteBackend {
+        provider: remote.provider.unwrap_or_default(),
+        target: remote.target,
+        cwd: remote.cwd,
+    });
+
+    Ok(ExecutionContext {
+        backend,
+        lifecycle: merged.lifecycle,
+        container,
+        remote,
+        requirements: merged.requirements,
+        attachments: merged.attachments,
+    })
+}
+
+fn backend_label(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
     }
 }
 

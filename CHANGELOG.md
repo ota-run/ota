@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added additive named-context inheritance for execution topology: `execution.contexts.<name>.extends` now resolves parent context shape with deterministic merge semantics (scalars override, maps merge, lists replace) while preserving both existing single-context shorthand (`execution.preferred`/`execution.lifecycle`/`execution.backends`) and existing named-context contracts
+- moved `execution.contexts.<name>.extends` semantic failures (`unknown parent`, `cycle`, unresolved backend) into validator findings, and now reject backend-family switches across inheritance (`container`/`remote`/`native`) with explicit errors instead of inherited cross-backend drift
+- tightened streamed service-stop classification so inspected container exit evidence wins over late interrupt flags, preserving real crash/exit causes instead of rewriting them as `Interrupted`
+- made persistent container reconciliation treat Compose attachment namespaces as part of execution shape, so changing `execution.contexts.<name>.attachments.compose` now recreates stale persistent backends instead of silently reusing containers bound to the old Compose network family
+- made streamed `ota up` provisioning progress environment-aware: the loader now shows the selected native/container/remote target and container lifecycle/image where relevant instead of a generic preparation spinner
+
 ## 1.6.1
 
 - refreshed the README entry surface with a tighter brand hero, release/status badges, a reduced primary nav, and direct links to the live get-started, docs, reference, examples, governance, releases, Discord, and X surfaces
