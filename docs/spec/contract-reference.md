@@ -301,6 +301,61 @@ execution:
             default: 3GiB
 ```
 
+Execution authoring patterns (all supported):
+
+1. Single-context shorthand (lean repos with one execution shape):
+
+```yaml
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+```
+
+2. Named contexts (repos with multiple explicit execution planes):
+
+```yaml
+execution:
+  default_context: development
+  contexts:
+    development:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+    verify:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+```
+
+3. Named contexts with `extends` (multi-context repos that want less repetition):
+
+```yaml
+execution:
+  default_context: development
+  contexts:
+    node-base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+    development:
+      extends: node-base
+      container:
+        resources:
+          memory:
+            minimum: 2GiB
+            default: 3GiB
+    verify:
+      extends: node-base
+```
+
+`extends` is optional. It reduces repetition for named contexts; it does not replace shorthand for simple repos.
+
 Supported backend values:
 
 - `native`
