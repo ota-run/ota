@@ -3459,7 +3459,19 @@ fn selected_task_context_for_backend<'a>(
     backend: Backend,
 ) -> Option<(&'a str, &'a ExecutionContext)> {
     let execution = contract.execution.as_ref()?;
-    let task = contract.tasks.get(task_name)?;
+    let Some(task) = contract.tasks.get(task_name) else {
+        if let Some((name, context)) = execution.default_context()
+            && context.backend == backend
+        {
+            return Some((name, context));
+        }
+
+        return execution
+            .contexts
+            .iter()
+            .find(|(_, context)| context.backend == backend)
+            .map(|(name, context)| (name.as_str(), context));
+    };
     let branch_context = task
         .mode_execution_branch(backend)
         .and_then(|branch| branch.context.as_deref())
