@@ -1004,6 +1004,8 @@ const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
 
 static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
+static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 static RUN_INTERRUPT_HANDLER: Once = Once::new();
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
@@ -1644,6 +1646,7 @@ fn install_run_interrupt_handler() {
     RUN_INTERRUPT_HANDLER.call_once(|| {
         ctrlc::set_handler(|| {
             RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+            RUN_INTERRUPT_EPOCH.fetch_add(1, Ordering::Relaxed);
         })
         .expect("run interrupt handler should install successfully");
         #[cfg(unix)]
@@ -1653,14 +1656,17 @@ fn install_run_interrupt_handler() {
             unsafe {
                 low_level::register(SIGTERM, || {
                     RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+                    RUN_INTERRUPT_EPOCH.fetch_add(1, Ordering::Relaxed);
                 })
                 .expect("run interrupt handler should install SIGTERM");
                 low_level::register(SIGHUP, || {
                     RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+                    RUN_INTERRUPT_EPOCH.fetch_add(1, Ordering::Relaxed);
                 })
                 .expect("run interrupt handler should install SIGHUP");
                 low_level::register(SIGQUIT, || {
                     RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+                    RUN_INTERRUPT_EPOCH.fetch_add(1, Ordering::Relaxed);
                 })
                 .expect("run interrupt handler should install SIGQUIT");
             }
@@ -1668,16 +1674,16 @@ fn install_run_interrupt_handler() {
     });
 }
 
-pub(crate) fn run_interrupt_requested() -> bool {
-    RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed)
-}
-
 fn is_interrupt_exit_code(exit_code: i32) -> bool {
     exit_code == 130 || exit_code == 143
 }
 
-fn interruption_observed_for_exit(exit_code: i32) -> bool {
-    run_interrupt_requested() && is_interrupt_exit_code(exit_code)
+fn current_run_interrupt_epoch() -> u64 {
+    RUN_INTERRUPT_EPOCH.load(Ordering::Relaxed)
+}
+
+fn interruption_observed_since(epoch: u64) -> bool {
+    current_run_interrupt_epoch() != epoch
 }
 
 fn interruption_execution_note(interrupted: bool) -> Option<String> {
@@ -4689,6 +4695,7 @@ fn execute_remote_task_command(
         } => {
             if emit_progress {
                 if capture_output {
+                    let interrupt_epoch = current_run_interrupt_epoch();
                     let output = run_streaming_command_with_capture_with_loader(
                         &mut remote_command,
                         &running_loader_label_for_backend(task_name, Backend::Remote),
@@ -4697,7 +4704,7 @@ fn execute_remote_task_command(
                         task: task_name.to_string(),
                         source,
                     })?;
-                    let interrupted = interruption_observed_for_exit(output.exit_code);
+                    let interrupted = interruption_observed_since(interrupt_epoch);
                     Ok(TaskCommandOutput {
                         exit_code: output.exit_code,
                         stdout: output.stdout,
@@ -4709,6 +4716,7 @@ fn execute_remote_task_command(
                         interrupted,
                     })
                 } else {
+                    let interrupt_epoch = current_run_interrupt_epoch();
                     let exit_code = run_streaming_command_with_loader(
                         &mut remote_command,
                         &running_loader_label_for_backend(task_name, Backend::Remote),
@@ -4717,7 +4725,7 @@ fn execute_remote_task_command(
                         task: task_name.to_string(),
                         source,
                     })?;
-                    let interrupted = interruption_observed_for_exit(exit_code);
+                    let interrupted = interruption_observed_since(interrupt_epoch);
                     Ok(TaskCommandOutput {
                         exit_code,
                         stdout: String::new(),
@@ -4730,6 +4738,7 @@ fn execute_remote_task_command(
                     })
                 }
             } else if capture_output {
+                let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = remote_command
                     .stdin(Stdio::inherit())
                     .stdout(Stdio::piped())
@@ -4750,7 +4759,7 @@ fn execute_remote_task_command(
                     source,
                 })?;
                 let exit_code = status.code().unwrap_or(1);
-                let interrupted = interruption_observed_for_exit(exit_code);
+                let interrupted = interruption_observed_since(interrupt_epoch);
                 let stdout =
                     join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
                         task: task_name.to_string(),
@@ -4772,6 +4781,7 @@ fn execute_remote_task_command(
                     interrupted,
                 })
             } else {
+                let interrupt_epoch = current_run_interrupt_epoch();
                 let exit_code = remote_command
                     .stdin(Stdio::inherit())
                     .stdout(Stdio::inherit())
@@ -4783,7 +4793,7 @@ fn execute_remote_task_command(
                     })?
                     .code()
                     .unwrap_or(1);
-                let interrupted = interruption_observed_for_exit(exit_code);
+                let interrupted = interruption_observed_since(interrupt_epoch);
 
                 Ok(TaskCommandOutput {
                     exit_code,
@@ -4798,6 +4808,7 @@ fn execute_remote_task_command(
             }
         }
         TaskExecutionMode::Capture => {
+            let interrupt_epoch = current_run_interrupt_epoch();
             let output = remote_command
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
@@ -4809,7 +4820,7 @@ fn execute_remote_task_command(
                     source,
                 })?;
             let exit_code = output.status.code().unwrap_or(1);
-            let interrupted = interruption_observed_for_exit(exit_code);
+            let interrupted = interruption_observed_since(interrupt_epoch);
             Ok(TaskCommandOutput {
                 exit_code,
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -5263,6 +5274,7 @@ fn execute_native_task_command(
             capture_output,
         } => {
             if emit_progress {
+                let interrupt_epoch = current_run_interrupt_epoch();
                 let loader = StreamPhaseLoader::start(&running_loader_label(task_name, backend));
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
                 let mut child = process
@@ -5308,7 +5320,7 @@ fn execute_native_task_command(
                 }
 
                 let exit_code = status.code().unwrap_or(1);
-                let interrupted = interruption_observed_for_exit(exit_code);
+                let interrupted = interruption_observed_since(interrupt_epoch);
                 Ok(TaskCommandOutput {
                     exit_code,
                     stdout,
@@ -5320,6 +5332,7 @@ fn execute_native_task_command(
                     interrupted,
                 })
             } else {
+                let interrupt_epoch = current_run_interrupt_epoch();
                 let mut child = if capture_output {
                     process
                         .stdin(Stdio::inherit())
@@ -5372,7 +5385,7 @@ fn execute_native_task_command(
                     })?;
 
                 let exit_code = status.code().unwrap_or(1);
-                let interrupted = interruption_observed_for_exit(exit_code);
+                let interrupted = interruption_observed_since(interrupt_epoch);
                 Ok(TaskCommandOutput {
                     exit_code,
                     stdout,
@@ -5386,6 +5399,7 @@ fn execute_native_task_command(
             }
         }
         TaskExecutionMode::Capture => {
+            let interrupt_epoch = current_run_interrupt_epoch();
             let mut child = process
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
@@ -5420,7 +5434,7 @@ fn execute_native_task_command(
                 })?;
 
             let exit_code = status.code().unwrap_or(1);
-            let interrupted = interruption_observed_for_exit(exit_code);
+            let interrupted = interruption_observed_since(interrupt_epoch);
             Ok(TaskCommandOutput {
                 exit_code,
                 stdout,
@@ -5990,6 +6004,9 @@ fn start_runtime_readiness_probe(
     let thread_observed = Arc::clone(&observed);
     let thread_stop = Arc::clone(&stop);
     let address = host;
+    // This probe is diagnostic only. It records whether the projected host endpoint
+    // ever became reachable while the workload was running; it must not tear the
+    // workload down or impose a fixed startup deadline on service execution.
     let handle = thread::spawn(move || {
         let addr = format!("{address}:{port}");
         while !thread_stop.load(Ordering::Relaxed) {
@@ -6017,6 +6034,7 @@ fn classify_container_service_termination(
     readiness_observed: bool,
     termination_state: Option<&ContainerTerminationState>,
     exit_code: i32,
+    interrupted: bool,
     container_name: &str,
 ) -> Option<ServiceTermination> {
     let runtime = runtime?;
@@ -6039,7 +6057,7 @@ fn classify_container_service_termination(
 
     let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
         ServiceTerminationCause::OomKilled
-    } else if is_interrupt_exit_code(effective_exit_code) {
+    } else if interrupted || is_interrupt_exit_code(effective_exit_code) {
         ServiceTerminationCause::Interrupted
     } else if effective_exit_code > 0 {
         ServiceTerminationCause::ExitedNonZero
@@ -6254,6 +6272,7 @@ fn execute_ephemeral_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { capture_output, .. } => {
+            let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = ephemeral_container_stream_command(engine, &container_name);
             let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref());
             let output_result = run_streaming_command_with_capture_with_loader_options(
@@ -6272,7 +6291,7 @@ fn execute_ephemeral_container_task_command(
                     });
                 }
             };
-            let interrupted_by_user = interruption_observed_for_exit(output.exit_code);
+            let interrupted_by_user = interruption_observed_since(interrupt_epoch);
             let readiness_observed = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
                 .unwrap_or(false);
@@ -6284,6 +6303,7 @@ fn execute_ephemeral_container_task_command(
                 readiness_observed,
                 termination_state.as_ref(),
                 output.exit_code,
+                interrupted_by_user,
                 &container_name,
             );
             let mut exit_code = output.exit_code;
@@ -6321,6 +6341,7 @@ fn execute_ephemeral_container_task_command(
             })
         }
         TaskExecutionMode::Capture => {
+            let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = Command::new(engine);
             container.arg("start").arg("-ai").arg(&container_name);
             let child = container
@@ -6341,7 +6362,7 @@ fn execute_ephemeral_container_task_command(
                 }
             })?;
             let output_exit_code = output.status.code().unwrap_or(1);
-            let interrupted_by_user = interruption_observed_for_exit(output_exit_code);
+            let interrupted_by_user = interruption_observed_since(interrupt_epoch);
             let readiness_observed = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
                 .unwrap_or(false);
@@ -6353,6 +6374,7 @@ fn execute_ephemeral_container_task_command(
                 readiness_observed,
                 termination_state.as_ref(),
                 output_exit_code,
+                interrupted_by_user,
                 &container_name,
             );
             let mut exit_code = output_exit_code;
@@ -6524,6 +6546,7 @@ fn execute_persistent_container_task_command(
         readiness_observed,
         termination_state.as_ref(),
         output.exit_code,
+        output.interrupted,
         &container_name,
     );
     if output.service_termination.is_some() && output.exit_code == 0 {
@@ -6597,6 +6620,7 @@ fn execute_persistent_container_task_command(
             readiness_observed,
             termination_state.as_ref(),
             output.exit_code,
+            output.interrupted,
             &container_name,
         );
         if output.service_termination.is_some() && output.exit_code == 0 {
@@ -7870,6 +7894,7 @@ fn exec_persistent_container_task_command(
     match mode {
         TaskExecutionMode::Stream { capture_output, .. } => {
             if capture_output {
+                let interrupt_epoch = current_run_interrupt_epoch();
                 let output = run_streaming_command_with_capture_with_loader(
                     &mut container,
                     &running_loader_label_for_backend(task_name, Backend::Container),
@@ -7878,7 +7903,7 @@ fn exec_persistent_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-                let interrupted = interruption_observed_for_exit(output.exit_code);
+                let interrupted = interruption_observed_since(interrupt_epoch);
                 Ok(TaskCommandOutput {
                     exit_code: output.exit_code,
                     stdout: output.stdout,
@@ -7890,6 +7915,7 @@ fn exec_persistent_container_task_command(
                     interrupted,
                 })
             } else {
+                let interrupt_epoch = current_run_interrupt_epoch();
                 let exit_code = run_streaming_command_with_loader(
                     &mut container,
                     &running_loader_label_for_backend(task_name, Backend::Container),
@@ -7898,7 +7924,7 @@ fn exec_persistent_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-                let interrupted = interruption_observed_for_exit(exit_code);
+                let interrupted = interruption_observed_since(interrupt_epoch);
 
                 Ok(TaskCommandOutput {
                     exit_code,
@@ -7913,6 +7939,7 @@ fn exec_persistent_container_task_command(
             }
         }
         TaskExecutionMode::Capture => {
+            let interrupt_epoch = current_run_interrupt_epoch();
             let output = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
@@ -7924,7 +7951,7 @@ fn exec_persistent_container_task_command(
                     source,
                 })?;
             let exit_code = output.status.code().unwrap_or(1);
-            let interrupted = interruption_observed_for_exit(exit_code);
+            let interrupted = interruption_observed_since(interrupt_epoch);
             Ok(TaskCommandOutput {
                 exit_code,
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -12915,10 +12942,11 @@ tasks:
             Some(&resolved_runtime),
             true,
             Some(&super::ContainerTerminationState {
-                exit_code: Some(130),
+                exit_code: Some(0),
                 oom_killed: Some(false),
             }),
-            130,
+            0,
+            true,
             "ota-ephemeral-test",
         )
         .expect("service termination should classify");
@@ -12994,6 +13022,7 @@ tasks:
                 oom_killed: Some(false),
             }),
             1,
+            false,
             "ota-ephemeral-test",
         )
         .expect("service termination should classify");
