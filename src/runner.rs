@@ -6017,7 +6017,6 @@ fn classify_container_service_termination(
     readiness_observed: bool,
     termination_state: Option<&ContainerTerminationState>,
     exit_code: i32,
-    interrupted: bool,
     container_name: &str,
 ) -> Option<ServiceTermination> {
     let runtime = runtime?;
@@ -6040,8 +6039,6 @@ fn classify_container_service_termination(
 
     let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
         ServiceTerminationCause::OomKilled
-    } else if interrupted {
-        ServiceTerminationCause::Interrupted
     } else if is_interrupt_exit_code(effective_exit_code) {
         ServiceTerminationCause::Interrupted
     } else if effective_exit_code > 0 {
@@ -6287,7 +6284,6 @@ fn execute_ephemeral_container_task_command(
                 readiness_observed,
                 termination_state.as_ref(),
                 output.exit_code,
-                interrupted_by_user,
                 &container_name,
             );
             let mut exit_code = output.exit_code;
@@ -6357,7 +6353,6 @@ fn execute_ephemeral_container_task_command(
                 readiness_observed,
                 termination_state.as_ref(),
                 output_exit_code,
-                interrupted_by_user,
                 &container_name,
             );
             let mut exit_code = output_exit_code;
@@ -6529,7 +6524,6 @@ fn execute_persistent_container_task_command(
         readiness_observed,
         termination_state.as_ref(),
         output.exit_code,
-        output.interrupted,
         &container_name,
     );
     if output.service_termination.is_some() && output.exit_code == 0 {
@@ -6603,7 +6597,6 @@ fn execute_persistent_container_task_command(
             readiness_observed,
             termination_state.as_ref(),
             output.exit_code,
-            output.interrupted,
             &container_name,
         );
         if output.service_termination.is_some() && output.exit_code == 0 {
@@ -12926,7 +12919,6 @@ tasks:
                 oom_killed: Some(false),
             }),
             130,
-            true,
             "ota-ephemeral-test",
         )
         .expect("service termination should classify");
@@ -13002,7 +12994,6 @@ tasks:
                 oom_killed: Some(false),
             }),
             1,
-            false,
             "ota-ephemeral-test",
         )
         .expect("service termination should classify");
