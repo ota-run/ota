@@ -12204,9 +12204,7 @@ fn write_detected_merge(
 
     let comparison =
         build_detect_comparison(&existing_contract, &report, DetectRemovalScope::Drift);
-    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let high_confidence_fields = detect_merge_eligible_fields(&report);
 
     let apply_all = apply_all || apply.iter().any(|field| field == ".");
     let selected_fields = apply
@@ -16152,9 +16150,7 @@ fn selected_detect_comparison(
             error: comparison.error.clone(),
         });
     }
-    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let high_confidence_fields = detect_merge_eligible_fields(report);
 
     let changes = comparison
         .changes
@@ -16204,6 +16200,22 @@ fn detect_high_confidence_inference_fields(inferences: &[Inference]) -> Vec<Stri
         .filter(|inference| inference.confidence >= Confidence::High)
         .map(|inference| inference.field.clone())
         .collect()
+}
+
+fn detect_merge_eligible_fields(report: &DetectReport) -> BTreeSet<String> {
+    let mut fields = detect_high_confidence_inference_fields(&report.inferences)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    for (task_name, task) in &report.contract.tasks {
+        if !task.internal {
+            continue;
+        }
+        let run_field = format!("tasks.{task_name}.run");
+        if fields.contains(&run_field) {
+            fields.insert(format!("tasks.{task_name}.internal"));
+        }
+    }
+    fields
 }
 
 fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
@@ -21429,20 +21441,12 @@ tasks:
                 tasks,
                 ..DetectContract::default()
             },
-            inferences: vec![
-                Inference {
-                    field: String::from("tasks.setup.run"),
-                    value: String::from("npm install"),
-                    source: String::from("package.json#scripts.setup"),
-                    confidence: Confidence::High,
-                },
-                Inference {
-                    field: String::from("tasks.setup.internal"),
-                    value: String::from("true"),
-                    source: String::from("package.json#scripts.setup"),
-                    confidence: Confidence::High,
-                },
-            ],
+            inferences: vec![Inference {
+                field: String::from("tasks.setup.run"),
+                value: String::from("npm install"),
+                source: String::from("package.json#scripts.setup"),
+                confidence: Confidence::High,
+            }],
         };
 
         let apply = vec![String::from("tasks.setup.internal")];
@@ -21462,6 +21466,65 @@ tasks:
 
         let merged = fs::read_to_string(&contract_path).expect("read merged contract");
         assert!(merged.contains("internal: true"), "{merged}");
+    }
+
+    #[test]
+    fn detect_merge_apply_rejects_generated_task_internal_without_high_confidence_run() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  setup:
+    run: npm install
+"#,
+        )
+        .expect("write existing contract");
+
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            String::from("setup"),
+            DetectTask {
+                description: None,
+                run: String::from("npm install"),
+                notes: None,
+                internal: true,
+                safe_for_agent: false,
+            },
+        );
+        let report = DetectReport {
+            root: repo.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                project: Some(DetectProject {
+                    name: String::from("demo"),
+                }),
+                tasks,
+                ..DetectContract::default()
+            },
+            inferences: vec![Inference {
+                field: String::from("tasks.setup.run"),
+                value: String::from("npm install"),
+                source: String::from("package.json#scripts.setup"),
+                confidence: Confidence::Medium,
+            }],
+        };
+
+        let apply = vec![String::from("tasks.setup.internal")];
+        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect merge json");
+        assert_eq!(json["ok"], true, "{}", output.stdout);
+        assert_eq!(json["written"], false, "{}", output.stdout);
+
+        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
+        assert!(!merged.contains("internal: true"), "{merged}");
     }
 
     #[test]
@@ -25504,6 +25567,122 @@ tasks:
     }
 
     #[test]
+    fn interrupted_service_receipt_summary_status_is_interrupted() {
+        let mut receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("dev")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(130))],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+        let service_termination = receipt.service_termination.clone();
+        super::apply_interrupted_run_classification(&mut receipt, service_termination.as_ref());
+
+        assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        assert_eq!(receipt.summary.error_count, 0);
+        assert!(receipt.summary.info_count > 0);
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(
+            rendered.contains("service interrupted by user"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Status:    failed"), "{rendered}");
+    }
+
+    #[test]
+    fn interrupted_non_service_receipt_summary_status_is_interrupted() {
+        let mut receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "dev",
+                "FAILED",
+                Some(String::from("requested task; task interrupted by user")),
+                Some(130),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+        super::apply_interrupted_run_classification(&mut receipt, None);
+
+        assert_eq!(receipt.steps[0].status, "INTERRUPTED");
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+    }
+
+    #[test]
     fn execution_summary_uses_workload_endpoint_when_runtime_is_absent() {
         let mut workloads = BTreeMap::new();
         workloads.insert(
@@ -27742,6 +27921,10 @@ fn run_single_contract_target_streaming(
                 None,
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_interrupted_run_classification(
+                &mut receipt,
+                outcome.service_termination.as_ref(),
+            );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let mut output = String::new();
             if show_receipt {
@@ -27794,6 +27977,10 @@ fn run_single_contract_target_streaming(
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_interrupted_run_classification(
+                &mut receipt,
+                outcome.service_termination.as_ref(),
+            );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
                 &receipt,
@@ -27926,6 +28113,10 @@ fn run_single_contract_target_captured(
                 None,
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_interrupted_run_classification(
+                &mut receipt,
+                outcome.service_termination.as_ref(),
+            );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let mut output = String::new();
             if show_receipt {
@@ -27975,6 +28166,10 @@ fn run_single_contract_target_captured(
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            apply_interrupted_run_classification(
+                &mut receipt,
+                outcome.service_termination.as_ref(),
+            );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
                 &receipt,
@@ -28094,6 +28289,48 @@ fn apply_run_log_capture_to_receipt(
             Some(next) if !next.trim().is_empty() => format!("{next}; {warning}"),
             _ => warning,
         });
+    }
+}
+
+fn receipt_reports_user_interruption(
+    receipt: &ExecutionReceipt,
+    service_termination: Option<&ServiceTermination>,
+) -> bool {
+    service_termination
+        .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
+        || run_interrupt_requested()
+        || receipt.steps.iter().any(|step| {
+            step.detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("interrupted by user"))
+        })
+}
+
+fn apply_interrupted_run_classification(
+    receipt: &mut ExecutionReceipt,
+    service_termination: Option<&ServiceTermination>,
+) {
+    if !receipt_reports_user_interruption(receipt, service_termination) {
+        return;
+    }
+
+    let mut marked = false;
+    for step in &mut receipt.steps {
+        if step.exit_code.is_some_and(|exit_code| exit_code != 0) || step.status.trim() == "FAILED"
+        {
+            step.status = String::from("INTERRUPTED");
+            marked = true;
+        }
+    }
+    if !marked && let Some(step) = receipt.steps.last_mut() {
+        step.status = String::from("INTERRUPTED");
+    }
+
+    if receipt.summary.error_count > 0 {
+        receipt.summary.error_count = 0;
+    }
+    if receipt.summary.info_count == 0 {
+        receipt.summary.info_count = 1;
     }
 }
 
@@ -32155,6 +32392,7 @@ fn summary_detail_line(label: &str, value: &str) -> String {
 fn render_execution_receipt_status(status: &str) -> String {
     match status.trim() {
         "READY" => paint("READY", "1;38;2;0;255;120"),
+        "INTERRUPTED" => paint("INTERRUPTED", "1;38;2;0;255;255"),
         "NOT READY" | "BLOCKED" | "WARN" => paint(status.trim(), "1;38;2;255;235;59"),
         value if value.contains("FAILED") => render_failed_status_label(value),
         other => paint(other, "1;37"),
@@ -32266,6 +32504,7 @@ fn secondary_receipt_endpoint_count(receipt: &ExecutionReceipt) -> usize {
 fn render_execution_summary_status_value(status: &str) -> String {
     match status.trim() {
         "success" => paint("success", "1;38;2;0;255;120"),
+        "interrupted" => paint("interrupted", "1;38;2;0;255;255"),
         "blocked" => paint("blocked", "1;38;2;255;235;59"),
         "skipped" => paint("skipped", "1;38;2;180;180;180"),
         "preview" => paint("preview", "1;38;2;0;255;255"),
@@ -33746,6 +33985,7 @@ fn execution_receipt_step(
 fn execution_summary_status_for_step(step: &ExecutionReceiptStep) -> &'static str {
     match step.status.trim() {
         "READY" => "success",
+        "INTERRUPTED" => "interrupted",
         "PREVIEW" => "preview",
         "SKIPPED" | "NOT ACQUIRED" => "skipped",
         "NOT READY" => match step.label.trim() {
@@ -33790,6 +34030,13 @@ fn aggregate_execution_summary_status(
 
     if ok {
         return String::from("success");
+    }
+
+    if mapped_statuses
+        .iter()
+        .any(|status| *status == "interrupted")
+    {
+        return String::from("interrupted");
     }
 
     if mapped_statuses.iter().any(|status| *status == "failed") {

@@ -5978,6 +5978,7 @@ fn classify_container_service_termination(
     readiness_observed: bool,
     termination_state: Option<&ContainerTerminationState>,
     exit_code: i32,
+    interrupted_by_user: bool,
     container_name: &str,
 ) -> Option<ServiceTermination> {
     let runtime = runtime?;
@@ -5995,7 +5996,9 @@ fn classify_container_service_termination(
 
     let after_readiness = true;
 
-    let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
+    let cause = if interrupted_by_user {
+        ServiceTerminationCause::Interrupted
+    } else if termination_state.and_then(|state| state.oom_killed) == Some(true) {
         ServiceTerminationCause::OomKilled
     } else if exit_code == 130 || exit_code == 143 {
         ServiceTerminationCause::Interrupted
@@ -6234,12 +6237,14 @@ fn execute_ephemeral_container_task_command(
             };
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
+            let interrupted_by_user = run_interrupt_requested();
             let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
                 readiness_observed,
                 termination_state.as_ref(),
                 output.exit_code,
+                interrupted_by_user,
                 &container_name,
             );
             let mut exit_code = output.exit_code;
@@ -6305,12 +6310,14 @@ fn execute_ephemeral_container_task_command(
             let output_exit_code = output.status.code().unwrap_or(1);
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
+            let interrupted_by_user = run_interrupt_requested();
             let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
                 readiness_observed,
                 termination_state.as_ref(),
                 output_exit_code,
+                interrupted_by_user,
                 &container_name,
             );
             let mut exit_code = output_exit_code;
@@ -6479,12 +6486,14 @@ fn execute_persistent_container_task_command(
         .map(RuntimeReadinessProbe::stop_and_collect)
         .unwrap_or(false);
     let termination_state = inspect_container_termination_state(task_name, engine, &container_name);
+    let interrupted_by_user = run_interrupt_requested();
     output.service_termination = classify_container_service_termination(
         runtime,
         resolved_runtime.as_ref(),
         readiness_observed,
         termination_state.as_ref(),
         output.exit_code,
+        interrupted_by_user,
         &container_name,
     );
     if output.service_termination.is_some() && output.exit_code == 0 {
@@ -6552,12 +6561,14 @@ fn execute_persistent_container_task_command(
             .unwrap_or(false);
         let termination_state =
             inspect_container_termination_state(task_name, engine, &container_name);
+        let interrupted_by_user = run_interrupt_requested();
         output.service_termination = classify_container_service_termination(
             runtime,
             resolved_runtime.as_ref(),
             readiness_observed,
             termination_state.as_ref(),
             output.exit_code,
+            interrupted_by_user,
             &container_name,
         );
         if output.service_termination.is_some() && output.exit_code == 0 {
@@ -12805,6 +12816,82 @@ tasks:
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
         assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[test]
+    fn container_service_classification_prefers_user_interrupt() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref());
+        let resolved_runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let service_termination = super::classify_container_service_termination(
+            runtime,
+            Some(&resolved_runtime),
+            true,
+            Some(&super::ContainerTerminationState {
+                exit_code: Some(0),
+                oom_killed: Some(false),
+            }),
+            0,
+            true,
+            "ota-ephemeral-test",
+        )
+        .expect("service termination should classify");
+
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::Interrupted
+        );
     }
 
     #[cfg(unix)]
