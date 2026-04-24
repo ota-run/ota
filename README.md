@@ -21,27 +21,53 @@
 
    If you need additional information or have any questions, please email: os@ota.run
 -->
-
 <div align="center">
-  <img src="docs/assets/ota-icon.svg" alt="ota Logo" width="110" height="110" />
+  <img src="docs/assets/ota-icon.svg" alt="ota logo" width="110" height="110" />
+  <h1>ota</h1>
+  <p><strong>Open repo-readiness infrastructure for humans, CI, and AI agents.</strong></p>
+  <p><strong>Doctor first. Contract second.</strong></p>
+  <p>
+    Give every repo one explicit contract for diagnosis, setup, execution, and safe automation
+    instead of guessing from README drift.
+  </p>
+  <p>
+    <a href="https://github.com/ota-run/ota/releases"><img src="https://img.shields.io/github/v/release/ota-run/ota?style=flat-square" alt="Latest release" /></a>
+    <a href="https://github.com/ota-run/ota/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/release-gate.yml?branch=main&style=flat-square&label=release%20gate" alt="Release gate status" /></a>
+    <a href="https://github.com/ota-run/ota/actions/workflows/docs-quality.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/docs-quality.yml?branch=main&style=flat-square&label=docs" alt="Docs quality status" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/ota-run/ota?style=flat-square" alt="License" /></a>
+    <a href="https://github.com/ota-run/ota/stargazers"><img src="https://img.shields.io/github/stars/ota-run/ota?style=flat-square" alt="GitHub stars" /></a>
+  </p>
+  <p><strong>Built for</strong> humans, CI, AI agents, containers, and multi-repo workspaces.</p>
+  <p>
+    <a href="https://ota.run/docs/getting-started">Get Started</a> ·
+    <a href="https://ota.run/docs">Docs</a> ·
+    <a href="https://ota.run/docs/reference">Reference</a> ·
+    <a href="https://ota.run">Website</a>
+  </p>
+  <p>
+    <a href="https://ota.run/docs/install">Install</a> ·
+    <a href="https://ota.run/docs/quickstart">Quickstart</a> ·
+    <a href="https://ota.run/docs/examples">Examples</a> ·
+    <a href="https://ota.run/docs/reference/governance">Governance</a> ·
+    <a href="https://github.com/ota-run/ota/releases">Releases</a>
+  </p>
+  <p>
+    <a href="https://discord.gg/45mBMzSkKC">Discord</a> ·
+    <a href="https://x.com/otaready">X</a>
+  </p>
 </div>
 
-# `ota`
+---
 
-<div align="center">
-  <img src="docs/assets/ota-social-card.png" alt="ota social card showing repo readiness and doctor output" width="1280" />
-</div>
-
-<div align="center"><strong>DOCTOR FIRST, CONTRACT SECOND.</strong></div>
-
-## What problem ota solves
+## One explicit contract for repo readiness
 
 Most repos fail the same way:
 
-- setup lives in README prose, shell scripts, and tribal knowledge instead of one contract
-- new contributors guess which tools, versions, and paths they need
-- CI and local setup drift apart
-- diagnosis happens too late, after the repo already feels broken
+- setup is split across README prose, shell scripts, manifests, and tribal knowledge
+- contributors guess which runtimes, tools, versions, and task order the repo actually needs
+- local, CI, and container workflows drift apart
+- AI agents see partial guidance and make unsafe assumptions
+- diagnosis starts after the repo already feels broken
 
 ota is not another task runner or package manager. It gives every repo one explicit contract for
 what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents
@@ -49,13 +75,15 @@ can answer why a repo is or is not runnable without guesswork.
 
 ota fixes that by making readiness explicit and machine-readable:
 
-- `ota doctor` tells you what is missing and why
+- `ota doctor` shows what is missing and the next safe step
+- `ota validate` keeps the contract honest before humans, CI, or agents rely on it
 - `ota init` writes a starter contract when the repo needs one
 - `ota up` prepares the repo from the contract instead of from guesswork
-- `ota run` executes tasks through the same declared contract
+- `ota run` executes declared work through the same contract every time
 - `ota detect` turns repo signals into a contract you can review when you are authoring or refining the file
 
-The result is a repo that is easier to trust, easier to onboard, and easier to keep consistent across humans, AI agents, CI, and containers.
+The result is a repo that is easier to trust, easier to onboard, and easier to operate across
+humans, CI, containers, and AI agents.
 
 ## Installation
 
@@ -108,7 +136,8 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
 ```
 
-See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and source fallback details.
+See [Install](https://ota.run/docs/install) for the public install path and
+[docs/installation.md](docs/installation.md) for repo-local mirror/CDN and source fallback details.
 
 ## Quickstart
 
@@ -286,6 +315,7 @@ If the contract declares agent guidance, `ota doctor --json` and `ota explain --
 same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
 
 Example contracts:
+
 - [basic-node](examples/basic-node/ota.yaml) - Node / TypeScript starter
 - [basic-dotnet](examples/basic-dotnet/ota.yaml) - C# / .NET starter
 - [basic-java](examples/basic-java/ota.yaml) - Maven starter
@@ -669,6 +699,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 ## Documentation
 
 ### Start here
+
 - [One-team rollout](docs/adoption/one-team-rollout.md)
 - [Worked example: existing repo](docs/adoption/worked-example-existing-repo.md)
 - [Command reference](docs/spec/command-reference.md)
@@ -684,12 +715,14 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Docs clarity spec](docs/spec/docs-clarity-spec.md)
 
 ### Core concepts
+
 - [Philosophy](docs/philosophy.md)
 - [Governance](docs/policy/governance.md)
 - [Compatibility policy](docs/spec/compatibility-policy.md)
 - [Support policy](docs/spec/support-policy.md)
 
 ### Design and engineering
+
 - [Security posture](docs/design/security-posture.md)
 - [Performance budget](docs/design/performance-budget.md)
 - [Doctor quality bar](docs/design/doctor-quality-bar.md)
@@ -698,6 +731,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Detect write gate](docs/design/detect-write-gate.md)
 
 ### Planning and roadmap
+
 - [V1 phases](docs/planning/v1/phases.md)
 - [V1 release gate](docs/planning/v1/release-gate.md)
 - [V2 plan](docs/planning/v2/plan.md)
@@ -715,6 +749,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Roadmap](ROADMAP.md)
 
 ### Contributing
+
 - [Contributing guide](CONTRIBUTING.md)
 
 ## Examples
@@ -727,6 +762,7 @@ Choose by goal:
 - realistic reference shape: [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml), [Full contract example](examples/full-contract/ota.yaml), [ota-run/examples](https://github.com/ota-run/examples)
 
 ### Minimal contracts
+
 - [Basic Node](examples/basic-node/ota.yaml) - Node / TypeScript starter
 - [Basic .NET](examples/basic-dotnet/ota.yaml) - C# / .NET starter
 - [Basic Java](examples/basic-java/ota.yaml) - Maven starter
@@ -736,11 +772,13 @@ Choose by goal:
 - [Basic Script](examples/basic-script/ota.yaml) - Script-only starter
 
 ### Mixed and realistic repos
+
 - [Mixed Node + Python](examples/mixed-node-python/ota.yaml) - Polyglot app example
 - [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml) - Frontend/backend split example
 - [Full contract example](examples/full-contract/ota.yaml) - Exhaustive contract reference
 - [ota-run/examples](https://github.com/ota-run/examples) - advanced, production-adjacent examples and templates
 
 ### Workspace
+
 - [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter; use `ota workspace doctor` to review readiness and `ota workspace up` to prepare the stack.
 - [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow; use `ota workspace init` first, then `ota workspace up` to acquire and prepare repos.
