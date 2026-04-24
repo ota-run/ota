@@ -644,9 +644,9 @@ ota run dev --memory 4GiB
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
 - supports mode-aware task branches under `tasks.<name>.execution.modes`
-- when `tasks.<name>.execution.default_mode` is declared and `--mode` is omitted, `ota run` uses that mode branch
+- when `tasks.<name>.execution.default_mode` is declared and `--mode` is omitted, `ota run` uses that mode as the default execution plane
 - when `--mode` is set, `ota run` uses the matching mode branch for the task
-- if the selected mode has no declared task branch, `ota run` fails clearly
+- if the selected mode has no declared task branch, `ota run` falls back to the task-level execution body and task-level execution settings
 - selected mode branches can override task `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`
 - resolves task execution backend from:
   - `tasks.<name>.execution.default_mode` when set
@@ -697,6 +697,8 @@ ota doctor [PATH]
 ota doctor --mode native [PATH]
 ota doctor --mode container [PATH]
 ota doctor --json [PATH]
+ota doctor --fix --dry-run [PATH]
+ota doctor --fix [PATH]
 ota doctor --member api [PATH]
 ota doctor --member api --member web --json [PATH]
 ```
@@ -717,6 +719,9 @@ ota doctor --member api --member web --json [PATH]
 - `ssh` / `tsh` targets without `user@host`
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
+- when repo-local runtime state is git-backed but `.ota/state/` is not ignored, reports a fixable repo-hygiene finding
+- `--fix --dry-run` previews deterministic safe fixes without writing files
+- `--fix` applies only supported deterministic safe fixes; current scope is `.gitignore` hygiene for `.ota/state/`
 - in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
 - in container mode, ota also uses safe non-mutating installability probes for the shipped mutating provisioning adapters when policy-backed provisioning is declared
 - in container mode, `apt` findings distinguish pinned-version unavailable, package unavailable, and apt-index/source failures when the backend evidence supports that classification
@@ -753,6 +758,7 @@ JSON output:
 - `ok`
 - `path`
 - `agent` when the contract declares agent guidance
+- `fix` when `--fix` is requested, including planned/applied action status and any write failures
 - `findings`
 - findings may also include `provenance` / `provenance_key` when ota can trace the diagnosis back to the repo contract, org policy, or repo signals
 - monorepo root summaries include grouped per-member results in `members`

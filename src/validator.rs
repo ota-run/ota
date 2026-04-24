@@ -26,9 +26,10 @@ use crate::execution::{
     matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
 use crate::schema::{
-    AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExtensionKind, RuntimeRequirement,
-    ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
-    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, parse_memory_size_bytes,
+    AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExtensionKind,
+    RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
+    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    parse_memory_size_bytes,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1064,36 +1065,15 @@ fn validate_task_mode_execution(
     mode_execution: &crate::schema::TaskModeExecutionSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if !mode_execution.modes.any() {
+    if mode_execution.default_mode.is_none() && !mode_execution.modes.any() {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` `execution` must declare at least one mode branch under `execution.modes`"
+            "task `{task_name}` `execution` must declare `default_mode` or at least one mode branch under `execution.modes`"
         )));
         return;
     }
 
-    if let Some(default_mode) = mode_execution.default_mode
-        && mode_execution
-            .modes
-            .branch_for_backend(default_mode)
-            .is_none()
-    {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` declares `execution.default_mode: {}` but `execution.modes.{}` is missing",
-            backend_mode_name(default_mode),
-            backend_mode_name(default_mode),
-        )));
-    }
-    let effective_default_mode = task_execution_backend(contract, task, Backend::Native);
-    if mode_execution
-        .modes
-        .branch_for_backend(effective_default_mode)
-        .is_none()
-    {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` resolves to default mode `{}` but does not declare `execution.modes.{}`; add that mode branch or set `execution.default_mode` explicitly",
-            backend_mode_name(effective_default_mode),
-            backend_mode_name(effective_default_mode),
-        )));
+    if let Some(default_mode) = mode_execution.default_mode {
+        validate_task_default_mode_resolution(contract, task_name, task, default_mode, errors);
     }
 
     for (mode, branch) in mode_execution.modes.iter() {
@@ -1150,6 +1130,68 @@ fn validate_task_mode_execution(
         if let Some(runtime) = branch.runtime.as_ref() {
             let backend = task_execution_backend(contract, task, mode);
             validate_task_runtime(task_name, runtime, backend, errors);
+        }
+    }
+}
+
+fn validate_task_default_mode_resolution(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    default_mode: Backend,
+    errors: &mut Vec<ValidationError>,
+) {
+    match default_mode {
+        Backend::Native => {}
+        Backend::Container => {
+            let execution = contract.execution.as_ref();
+            let context = resolved_task_context_for_backend(contract, task, Backend::Container);
+            let container = context
+                .and_then(|context| context.container.as_ref())
+                .or_else(|| {
+                    execution
+                        .and_then(|execution| execution.backends.as_ref())
+                        .and_then(|backends| backends.container.as_ref())
+                });
+            if container.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` declares `execution.default_mode: container` but container execution is not configured; declare a container context or `execution.backends.container.image`"
+                )));
+            }
+
+            let lifecycle = task
+                .mode_execution_branch(Backend::Container)
+                .and_then(|branch| branch.lifecycle)
+                .or_else(|| context.and_then(|context| context.lifecycle))
+                .or_else(|| execution.and_then(|execution| execution.lifecycle));
+            if lifecycle.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` declares `execution.default_mode: container` but container lifecycle is not configured; declare a container context lifecycle or `execution.lifecycle`"
+                )));
+            }
+        }
+        Backend::Remote => {
+            let execution = contract.execution.as_ref();
+            let context = resolved_task_context_for_backend(contract, task, Backend::Remote);
+            let remote = context
+                .and_then(|context| context.remote.as_ref())
+                .or_else(|| {
+                    execution
+                        .and_then(|execution| execution.backends.as_ref())
+                        .and_then(|backends| backends.remote.as_ref())
+                });
+            let Some(remote) = remote else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` declares `execution.default_mode: remote` but remote execution is not configured; declare a remote context or `execution.backends.remote.provider`"
+                )));
+                return;
+            };
+
+            if remote.target.as_deref().map_or(true, str::is_empty) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` declares `execution.default_mode: remote` but remote target is not configured; declare a remote context target or `execution.backends.remote.target`"
+                )));
+            }
         }
     }
 }
@@ -1552,6 +1594,64 @@ fn task_execution_context_name<'a>(
     task.context
         .as_deref()
         .or_else(|| execution.default_context.as_deref())
+}
+
+fn resolved_task_context_for_backend<'a>(
+    contract: &'a Contract,
+    task: &'a TaskSpec,
+    backend: Backend,
+) -> Option<&'a ExecutionContext> {
+    let execution = contract.execution.as_ref()?;
+    let branch_context = task
+        .mode_execution_branch(backend)
+        .and_then(|branch| branch.context.as_deref())
+        .filter(|context_name| {
+            execution
+                .contexts
+                .get(*context_name)
+                .is_some_and(|context| context.backend == backend)
+        });
+
+    let context_name = if let Some(context_name) = branch_context {
+        Some(context_name)
+    } else if let Some(context_name) = task.context.as_deref() {
+        if execution
+            .contexts
+            .get(context_name)
+            .is_some_and(|context| context.backend == backend)
+        {
+            Some(context_name)
+        } else if execution
+            .default_context()
+            .is_some_and(|(_, context)| context.backend == backend)
+        {
+            execution.default_context().map(|(name, _)| name)
+        } else {
+            execution
+                .contexts
+                .iter()
+                .find(|(_, context)| context.backend == backend)
+                .map(|(name, _)| name.as_str())
+        }
+    } else if let Some((name, context)) = execution.default_context() {
+        if context.backend == backend {
+            Some(name)
+        } else {
+            execution
+                .contexts
+                .iter()
+                .find(|(_, context)| context.backend == backend)
+                .map(|(name, _)| name.as_str())
+        }
+    } else {
+        execution
+            .contexts
+            .iter()
+            .find(|(_, context)| context.backend == backend)
+            .map(|(name, _)| name.as_str())
+    }?;
+
+    execution.contexts.get(context_name)
 }
 
 fn backend_mode_name(backend: Backend) -> &'static str {
@@ -3600,12 +3700,7 @@ tasks:
         )
         .unwrap();
 
-        let errors = validate_contract(&contract).unwrap_err();
-        assert_eq!(errors.errors().len(), 1);
-        assert_eq!(
-            errors.errors()[0].to_string(),
-            "task `start` declares `execution.default_mode: container` but `execution.modes.container` is missing"
-        );
+        assert!(validate_contract(&contract).is_ok());
     }
 
     #[test]
@@ -3656,6 +3751,7 @@ execution:
         image: ghcr.io/ota/test:latest
 tasks:
   start:
+    run: echo native
     execution:
       modes:
         container:
@@ -3664,11 +3760,83 @@ tasks:
         )
         .unwrap();
 
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn allows_mode_execution_with_default_mode_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    run: echo native
+    execution:
+      default_mode: native
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_container_default_mode_without_container_execution_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    run: echo container
+    execution:
+      default_mode: container
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.iter().any(|message| {
+            message.contains("execution.default_mode: container")
+                && message.contains("container execution is not configured")
+        }));
+        assert!(messages.iter().any(|message| {
+            message.contains("execution.default_mode: container")
+                && message.contains("container lifecycle is not configured")
+        }));
+    }
+
+    #[test]
+    fn rejects_empty_task_mode_execution_block() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    run: echo start
+    execution: {}
+"#,
+        )
+        .unwrap();
+
         let errors = validate_contract(&contract).unwrap_err();
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `start` resolves to default mode `native` but does not declare `execution.modes.native`; add that mode branch or set `execution.default_mode` explicitly"
+            "task `start` `execution` must declare `default_mode` or at least one mode branch under `execution.modes`"
         );
     }
 

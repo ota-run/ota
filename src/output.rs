@@ -86,7 +86,32 @@ pub struct DoctorSuccess<'a> {
     pub adapter_bootstrap: Option<&'a AdapterBootstrapDiagnostics>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: &'a BTreeMap<String, ExtensionSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<DoctorFixSummary>,
     pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorFixSummary {
+    pub requested: bool,
+    pub dry_run: bool,
+    pub fixable_count: usize,
+    pub planned_count: usize,
+    pub applied_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<DoctorFixActionSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorFixActionSummary {
+    pub key: String,
+    pub path: String,
+    pub change: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

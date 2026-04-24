@@ -879,10 +879,10 @@ Fields:
 `execution` mode rules:
 
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
-- if `default_mode` is declared, the matching `modes.<default_mode>` branch must exist
+- `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`
-- when a selected branch omits `run`/`script`, ota falls back to the task-level execution body (including OS variants)
-- if a task declares mode branches and the selected mode has no matching branch, `ota run` fails clearly instead of silently picking another mode
+- when a selected branch omits `run`/`script`, or when no branch exists for the selected mode, ota falls back to the task-level execution body (including OS variants)
+- use `modes.<mode>` only for mode-specific overrides; you do not need an empty branch such as `modes.native: {}` just to pair with `default_mode: native`
 - `modes.native.lifecycle` and `modes.remote.lifecycle` are invalid; lifecycle is only valid for container execution
 
 `runtime` fields:

@@ -23136,6 +23136,37 @@ tasks:
     }
 
     #[test]
+    fn doctor_fix_runtime_mode_still_plans_gitignore_hygiene_fix() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+
+        let output = run_with([
+            "ota",
+            "doctor",
+            "--fix",
+            "--dry-run",
+            "--mode",
+            "container",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["fix"]["planned_count"], 1);
+        assert_eq!(json["fix"]["actions"][0]["key"], "repo_gitignore_ota_state");
+    }
+
+    #[test]
     fn detect_write_json_reports_written_config_with_ownership_metadata() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
