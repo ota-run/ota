@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added `ota run --log` durable run artifacts under `.ota/state/logs/<run-id>/` (`stdout.log` and `stderr.log`) for native/container runs, including ephemeral container runs that clean up immediately after failure or interruption; run receipts/summaries now surface log paths, streamed runs now tee output into the same artifacts, and log-capture write failures are surfaced directly in run output notes instead of failing silently
 - made ephemeral container `ota run` interruption-aware: Ctrl-C now still attempts to remove the repo-owned container created for that run, and the final run summary reports incomplete cleanup instead of silently leaving interrupted residue behind
 - reclaims repo-owned orphaned ephemeral containers on later runs before starting new ephemeral container execution, uses bounded conflict-recovery retries, and can reclaim legacy running ephemerals without `dev.ota.owner_pid` when they are the stale published-port holder blocking a new run
 - hardened `ota clean` cleanup integrity: drift rediscovery now keys off repo ownership labels plus `.ota/state/managed-engines`, falls back to best-effort local engine probing only when no repo engine evidence exists, and keeps ownership-ambiguous managed state visible without unsafe deletion
