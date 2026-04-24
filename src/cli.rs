@@ -5903,9 +5903,10 @@ tasks:
         assert!(stdout.contains(
             "» single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`)"
         ));
-        assert!(stdout.contains(
-            "» named contexts (`execution.default_context` / `execution.contexts`)"
-        ));
+        assert!(
+            stdout
+                .contains("» named contexts (`execution.default_context` / `execution.contexts`)")
+        );
         assert!(stdout.contains("» choose one: shorthand-only or named contexts"));
         assert!(stdout.contains("» remove root shorthand and keep named contexts"));
         assert!(stdout.contains("» or remove named contexts and keep shorthand"));
@@ -8892,11 +8893,14 @@ execution:
         assert!(stdout.contains("EXECUTION PLAN"));
         assert!(stdout.contains("[member api]"));
         assert!(stdout.contains("RESOLVED"));
-        assert!(stdout.contains("Backend: `container` (contract preferred)"));
-        assert!(stdout.contains("Contract:"));
-        assert!(stdout.contains("api/ota.yaml"));
-        assert!(stdout.contains("Target strategy: ephemeral per-run container"));
-        assert!(stdout.contains("Project: api"));
+        assert!(stdout.contains("Plan"));
+        assert!(stdout.contains("Backend: `container`"));
+        assert!(stdout.contains("Why"));
+        assert!(
+            stdout.contains("default execution comes from root shorthand `execution.preferred`")
+        );
+        assert!(!stdout.contains("Contract:"));
+        assert!(!stdout.contains("Target strategy:"));
     }
 
     #[test]
@@ -12471,6 +12475,28 @@ tasks:
         assert!(!stderr.contains("`cleanup` exited with code 7"));
         assert!(!stderr.contains("Why: task `cleanup` returned a non-zero exit code"));
         assert!(!stderr.contains("ota run cleanup --stream"));
+    }
+
+    #[test]
+    fn run_stream_failure_retains_output_excerpt_without_log_persistence() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  fail:
+    run: sh -c 'echo startup failed >&2; exit 7'
+"#,
+        );
+
+        let output = run_with(["ota", "run", "fail", "--stream", fixture.path()]);
+
+        assert_eq!(output.exit_code, 7);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Task Failed"), "{stderr}");
+        assert!(stderr.contains("Output:"), "{stderr}");
+        assert!(stderr.contains("startup failed"), "{stderr}");
     }
 
     #[test]

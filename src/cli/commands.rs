@@ -275,6 +275,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
                 &where_value,
                 &task_name,
                 exit_code,
+                None,
                 &next_steps,
                 summary_block.as_ref().map(|value| value.as_str()),
                 None,
@@ -339,6 +340,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
                 &where_value,
                 &task_name,
                 exit_code,
+                None,
                 &[],
                 summary_block.as_ref().map(|value| value.as_str()),
                 None,
@@ -384,6 +386,7 @@ fn render_task_exit_failure_text(
     where_value: &str,
     task_name: &str,
     exit_code: i32,
+    excerpt: Option<&OutputExcerpt>,
     next_steps: &[String],
     summary_block: Option<&str>,
     receipt_text: Option<&str>,
@@ -411,6 +414,9 @@ fn render_task_exit_failure_text(
         &task_exit_failure_why_lines(task_name, exit_code),
         None,
     );
+    if let Some(excerpt) = excerpt {
+        append_output_excerpt_section(&mut out, excerpt);
+    }
     if !next_steps.is_empty() {
         append_error_detail_section(&mut out, "Next:", next_steps, None);
     }
@@ -421,6 +427,22 @@ fn render_task_exit_failure_text(
     }
     append_summary_block(&mut out, summary_block);
     out
+}
+
+fn append_output_excerpt_section(output: &mut String, excerpt: &OutputExcerpt) {
+    output.push_str(&format!("\n{}", error_key("Output:")));
+    output.push_str(&format!(
+        "\n  {} {}",
+        finding_detail_bullet(FindingSeverity::Error),
+        output_excerpt_notice(excerpt)
+    ));
+    for line in &excerpt.lines {
+        output.push_str(&format!(
+            "\n  {} {}",
+            finding_detail_bullet(FindingSeverity::Error),
+            line
+        ));
+    }
 }
 
 fn execution_context_from_summary_block(summary_block: Option<&str>) -> Option<String> {
@@ -1339,8 +1361,14 @@ fn resolve_execution_plan(
     let task_name = "execution plan";
     let (backend, lifecycle) = effective_execution(contract, overrides);
     let effective = effective_task_execution(contract, task_name, overrides);
+    let execution = contract.execution.as_ref();
     let backend_source = if overrides.backend.is_some() {
         "override"
+    } else if execution
+        .and_then(|execution| execution.default_context.as_deref())
+        .is_some_and(|name| effective.context_name == Some(name))
+    {
+        "default context"
     } else if contract
         .execution
         .as_ref()
@@ -1353,6 +1381,11 @@ fn resolve_execution_plan(
     };
     let mut lifecycle_source = if overrides.lifecycle.is_some() {
         String::from("override")
+    } else if execution
+        .and_then(|execution| execution.default_context.as_deref())
+        .is_some_and(|name| effective.context_name == Some(name) && effective.lifecycle.is_some())
+    {
+        String::from("context lifecycle")
     } else if contract
         .execution
         .as_ref()
@@ -20562,6 +20595,141 @@ fn format_execution_context_brief(context: &ExecutionContextSummary<'_>) -> Stri
     format!("{} ({})", context.name, details.join(", "))
 }
 
+fn execution_context_plan_details(context: &ExecutionContextSummary<'_>) -> String {
+    let mut details = vec![context.backend.to_string()];
+    if let Some(lifecycle) = context.lifecycle {
+        details.push(lifecycle.to_string());
+    }
+    if let Some(container) = context.container.as_ref() {
+        details.push(format!("image={}", container.image));
+    }
+    if let Some(remote) = context.remote.as_ref() {
+        details.push(format!("provider={}", remote.provider));
+        if let Some(target) = remote.target {
+            details.push(format!("target={target}"));
+        }
+    }
+    if let Some(attachments) = context.attachments.as_ref()
+        && !attachments.compose.is_empty()
+    {
+        details.push(format!("compose={}", attachments.compose.join("+")));
+    }
+
+    details.join(", ")
+}
+
+fn selected_execution_plan_context_name<'a>(
+    execution: Option<&'a ExecutionSummary<'_>>,
+    resolved: &ExecutionPlanResolved,
+) -> Option<&'a str> {
+    let execution = execution?;
+    if resolved.backend_source == "default context" {
+        return execution.default_context;
+    }
+
+    execution
+        .contexts
+        .iter()
+        .find(|context| {
+            context.backend == resolved.backend
+                && (resolved.lifecycle.is_none()
+                    || context.lifecycle == resolved.lifecycle.as_deref())
+                && match (context.container.as_ref(), resolved.image.as_deref()) {
+                    (Some(container), Some(image)) => container.image == image,
+                    (None, None) => true,
+                    _ => false,
+                }
+                && match (context.remote.as_ref(), resolved.provider.as_deref()) {
+                    (Some(remote), Some(provider)) => remote.provider == provider,
+                    (None, None) => true,
+                    _ => false,
+                }
+        })
+        .map(|context| context.name)
+}
+
+fn render_execution_plan_why_lines(
+    declared_execution: Option<&ExecutionSummary<'_>>,
+    resolved: &ExecutionPlanResolved,
+    selected_context: Option<&str>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    match resolved.backend_source.as_str() {
+        "default context" => {
+            if let Some(default_context) =
+                declared_execution.and_then(|execution| execution.default_context)
+            {
+                lines.push(format!(
+                    "default execution comes from `execution.default_context: {default_context}`"
+                ));
+            }
+        }
+        "contract preferred" => {
+            lines.push(String::from(
+                "default execution comes from root shorthand `execution.preferred`",
+            ));
+        }
+        "override" => {
+            lines.push(format!(
+                "execution backend was overridden at the command line to `{}`",
+                resolved.backend
+            ));
+        }
+        _ => {}
+    }
+
+    if let Some(context_name) = selected_context {
+        lines.push(format!(
+            "`{context_name}` resolves to `backend: {}`",
+            resolved.backend
+        ));
+        if resolved.lifecycle_source.as_deref() == Some("context lifecycle")
+            && let Some(lifecycle) = resolved.lifecycle.as_deref()
+        {
+            lines.push(format!(
+                "`{context_name}` provides `lifecycle: {lifecycle}`"
+            ));
+        }
+    } else if let Some(lifecycle) = resolved.lifecycle.as_deref() {
+        lines.push(format!(
+            "resolved execution uses `backend: {}` with `lifecycle: {lifecycle}`",
+            resolved.backend
+        ));
+    } else {
+        lines.push(format!(
+            "resolved execution uses `backend: {}`",
+            resolved.backend
+        ));
+    }
+
+    lines
+}
+
+fn render_execution_plan_contexts_text(
+    execution: &ExecutionSummary<'_>,
+    selected_context: Option<&str>,
+) -> String {
+    let mut stdout = String::new();
+    stdout.push_str(&paint_section_title("Available Contexts"));
+    for context in &execution.contexts {
+        stdout.push_str(&format!(
+            "\n{} {}{}",
+            summary_bullet(),
+            paint_backticked_code(context.name),
+            if execution.default_context == Some(context.name) {
+                paint(" (default)", "2")
+            } else if selected_context == Some(context.name) {
+                paint(" (selected)", "2")
+            } else {
+                String::new()
+            }
+        ));
+        stdout.push_str(&format!("\n  {}", execution_context_plan_details(context)));
+    }
+    stdout
+}
+
 fn render_execution_plan_text(
     path: &str,
     contract_path: &Path,
@@ -20575,29 +20743,29 @@ fn render_execution_plan_text(
         format_command_header("EXECUTION PLAN", path),
         render_resolved_status()
     );
+    let selected_context = selected_execution_plan_context_name(declared_execution, resolved);
 
-    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Resolved")));
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Plan")));
     stdout.push_str(&format!(
-        "{} {} {} ({})",
+        "{} {} {}",
         summary_bullet(),
         paint_key("Backend:"),
-        paint_backticked_code(&resolved.backend),
-        resolved.backend_source
+        paint_backticked_code(&resolved.backend)
     ));
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint_key("Contract:"),
-        compact_contract_path(contract_path)
-    ));
-    if let Some(lifecycle) = resolved.lifecycle.as_deref() {
-        let source = resolved.lifecycle_source.as_deref().unwrap_or("implicit");
+    if let Some(context_name) = selected_context {
         stdout.push_str(&format!(
-            "\n{} {} {} ({})",
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Context:"),
+            paint_backticked_code(context_name)
+        ));
+    }
+    if let Some(lifecycle) = resolved.lifecycle.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
             summary_bullet(),
             paint_key("Lifecycle:"),
-            paint_backticked_code(lifecycle),
-            source
+            paint_backticked_code(lifecycle)
         ));
     }
     if let Some(image) = resolved.image.as_deref() {
@@ -20616,7 +20784,7 @@ fn render_execution_plan_text(
             paint_backticked_code(engine)
         ));
     }
-    if !resolved.engine_candidates.is_empty() {
+    if resolved.engine.is_none() && !resolved.engine_candidates.is_empty() {
         stdout.push_str(&format!(
             "\n{} {} {}",
             summary_bullet(),
@@ -20640,12 +20808,6 @@ fn render_execution_plan_text(
             paint_backticked_code(target)
         ));
     }
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint_key("Target strategy:"),
-        resolved.target_strategy
-    ));
     if let Some(cwd) = resolved.cwd.as_deref() {
         stdout.push_str(&format!(
             "\n{} {} {}",
@@ -20655,13 +20817,35 @@ fn render_execution_plan_text(
         ));
     }
 
-    stdout.push_str(&format!(
-        "\n\n{}",
-        render_contract_identity_text(contract_identity)
-    ));
+    let why_lines = render_execution_plan_why_lines(declared_execution, resolved, selected_context);
+    if !why_lines.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Why")));
+        for line in why_lines {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                summary_bullet(),
+                render_backticked_text(&line, Some(contract_path))
+            ));
+        }
+    }
 
     if let Some(execution) = declared_execution {
-        stdout.push_str(&format!("\n\n{}", render_execution_summary_text(execution)));
+        if !execution.contexts.is_empty() {
+            stdout.push_str(&format!(
+                "\n\n{}",
+                render_execution_plan_contexts_text(execution, selected_context)
+            ));
+        } else {
+            stdout.push_str(&format!(
+                "\n\n{}",
+                render_contract_identity_text(contract_identity)
+            ));
+        }
+    } else {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            render_contract_identity_text(contract_identity)
+        ));
     }
 
     if let Some(overrides) = overrides {
@@ -21695,7 +21879,7 @@ mod tests {
     };
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
-        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, RunError, ServiceTermination,
+        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
         simulate_run_interrupt_for_test,
     };
@@ -24154,7 +24338,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn execution_plan_mode_container_requires_generic_shorthand_image() {
+    fn execution_plan_mode_container_uses_named_context_shape() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_mutex_lock();
@@ -24205,7 +24389,7 @@ tasks:
         )
         .unwrap();
 
-        let error = super::resolve_execution_plan(
+        let resolved = super::resolve_execution_plan(
             &contract,
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides {
@@ -24213,7 +24397,7 @@ tasks:
                 ..ExecutionOverrides::default()
             },
         )
-        .expect_err("generic container plan should require shorthand image");
+        .expect("generic container plan should resolve from the named context");
 
         match original_path {
             Some(path) => unsafe {
@@ -24224,7 +24408,14 @@ tasks:
             },
         }
 
-        assert!(matches!(error, RunError::MissingContainerImage { .. }));
+        assert_eq!(resolved.backend, "container");
+        assert_eq!(resolved.backend_source, "override");
+        assert_eq!(resolved.lifecycle.as_deref(), Some("ephemeral"));
+        assert_eq!(
+            resolved.lifecycle_source.as_deref(),
+            Some("context lifecycle")
+        );
+        assert_eq!(resolved.image.as_deref(), Some("ghcr.io/ota/dev:latest"));
     }
 
     #[test]
@@ -27100,6 +27291,7 @@ tasks:
             "./ota.yaml",
             "setup:dev",
             137,
+            None,
             &[String::from(
                 "run `ota tasks --use` to inspect runnable task usage",
             )],
@@ -27119,6 +27311,52 @@ tasks:
             rendered.contains("exit code `137` usually means the process was killed (SIGKILL), often due to OOM or container runtime termination"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn run_failure_text_includes_output_excerpt_when_available() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "Error starting ApplicationContext\nConnection refused",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("Output:"), "{rendered}");
+        assert!(
+            rendered.contains("showing 2 of 2 lines around the most relevant output")
+                || rendered.contains("showing last 2 of 2 lines")
+                || rendered.contains("showing first 2 of 2 lines"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Error starting ApplicationContext"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Connection refused"), "{rendered}");
     }
 
     #[test]
@@ -29459,7 +29697,7 @@ fn run_single_contract_target_streaming(
         task_name.as_str(),
         task_inputs,
         overrides,
-        persist_logs,
+        true,
         prepared_logs.live_log.clone(),
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
@@ -30020,7 +30258,8 @@ fn render_run_captured_failure_text(
         );
     }
     let mut next_steps = Vec::new();
-    if run_output_excerpt(stdout, stderr, 20).is_some() {
+    let excerpt = run_output_excerpt(stdout, stderr, 20);
+    if excerpt.is_some() {
         next_steps.push(format!(
             "rerun `{}` for live task output if the excerpt is insufficient",
             repo_run_stream_command(task_name, member)
@@ -30031,6 +30270,7 @@ fn render_run_captured_failure_text(
         where_value,
         task_name,
         exit_code,
+        excerpt.as_ref(),
         &next_steps,
         Some(summary),
         receipt_text,
