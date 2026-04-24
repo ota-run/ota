@@ -1728,6 +1728,12 @@ fn interruption_observed_since(epoch: u64) -> bool {
     current_run_interrupt_epoch() != epoch
 }
 
+#[cfg(test)]
+pub(crate) fn simulate_run_interrupt_for_test() {
+    RUN_INTERRUPT_REQUESTED.store(true, Ordering::Relaxed);
+    RUN_INTERRUPT_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
 fn interruption_execution_note(interrupted: bool) -> Option<String> {
     interrupted.then(|| String::from("task interrupted by user"))
 }

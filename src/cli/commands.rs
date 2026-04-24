@@ -21174,6 +21174,7 @@ mod tests {
     use crate::runner::{
         CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
+        simulate_run_interrupt_for_test,
     };
     use crate::schema::{Backend, Lifecycle, parse_memory_size_bytes};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
@@ -21671,6 +21672,67 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Logs:"), "{stderr}");
+        assert!(stderr.contains(".ota/state/logs/"), "{stderr}");
+
+        let logs_root = repo.path().join(".ota").join("state").join("logs");
+        let run_dirs = fs::read_dir(&logs_root)
+            .expect("read logs root")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(run_dirs.len(), 1, "expected one run log directory");
+        let run_dir = &run_dirs[0];
+        assert_eq!(
+            fs::read_to_string(run_dir.join("stdout.log")).expect("read stdout log"),
+            "stdout line\n"
+        );
+        assert_eq!(
+            fs::read_to_string(run_dir.join("stderr.log")).expect("read stderr log"),
+            "stderr line\n"
+        );
+    }
+
+    #[test]
+    fn streamed_run_command_persists_logs_when_interrupted() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  dev:
+    run: sh -c 'printf "stdout line\n"; printf "stderr line\n" >&2; sleep 0.2; exit 130'
+"#,
+        )
+        .expect("write contract");
+
+        let interrupt_thread = std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            simulate_run_interrupt_for_test();
+        });
+
+        let output = super::run_command(
+            "dev",
+            Some(repo.path()),
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            false,
+            false,
+            true,
+            true,
+        );
+
+        interrupt_thread.join().expect("interrupt thread should finish");
+
+        assert_eq!(output.exit_code, 130);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("INFO  Task interrupted"), "{stderr}");
+        assert!(stderr.contains("Status:    interrupted"), "{stderr}");
         assert!(stderr.contains(".ota/state/logs/"), "{stderr}");
 
         let logs_root = repo.path().join(".ota").join("state").join("logs");
@@ -25523,9 +25585,56 @@ tasks:
             rendered.contains("service interrupted by user"),
             "{rendered}"
         );
+        assert!(
+            rendered.contains("container `ota-ephemeral-deadbeef` was interrupted by user (exit code `130`)"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Status:    interrupted"), "{rendered}");
         assert!(!rendered.contains("Status:    failed"), "{rendered}");
         assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
+    }
+
+    #[test]
+    fn run_failure_text_reports_interrupted_service_without_zero_exit_code_noise() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            0,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(0),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("container `ota-ephemeral-deadbeef` was interrupted by user"), "{rendered}");
+        assert!(!rendered.contains("exit code `0`"), "{rendered}");
     }
 
     #[test]
@@ -28908,9 +29017,19 @@ fn render_service_interrupted_text(
         paint_code(task_name)
     ));
     let why_lines = vec![format!(
-        "container `{}` was interrupted (exit code `{}`)",
-        service_termination.container,
-        service_termination.exit_code.unwrap_or(130)
+        "{}",
+        if service_termination.exit_code == Some(0) {
+            format!(
+                "container `{}` was interrupted by user",
+                service_termination.container
+            )
+        } else {
+            format!(
+                "container `{}` was interrupted by user (exit code `{}`)",
+                service_termination.container,
+                service_termination.exit_code.unwrap_or(130)
+            )
+        }
     )];
     append_error_detail_section(&mut out, "Why:", &why_lines, None);
     let next_steps = vec![format!(
