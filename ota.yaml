@@ -232,10 +232,7 @@ tasks:
     notes: |
       Use this after local changes when you want the installed ota binary to point at this checkout.
     category: dev
-    execution:
-      default_mode: native
-      modes:
-        native: { }
+    default_mode: native
     run: ./scripts/install.sh --from-source
     variants:
       - when:
@@ -250,8 +247,6 @@ tasks:
     category: dev
     execution:
       default_mode: native
-      modes:
-        native: {}
     run: ./scripts/install.sh --from-source
     variants:
       - when:

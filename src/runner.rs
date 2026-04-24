@@ -551,8 +551,6 @@ pub enum RunError {
         "task `{task}` does not define a default execution and no variant matches the current os `{os}`"
     )]
     NoMatchingTaskVariant { task: String, os: String },
-    #[error("task `{task}` does not declare an execution branch for mode `{mode}`")]
-    MissingTaskModeExecution { task: String, mode: String },
     #[error("failed to start task `{task}`: {source}")]
     SpawnFailed {
         task: String,
@@ -2789,17 +2787,6 @@ fn execute_task_with_hooks(
     }
 
     let backend_kind = resolved_execution_backend_kind(&backend);
-    if task
-        .execution
-        .as_ref()
-        .is_some_and(|execution| execution.modes.any())
-        && task.mode_execution_branch(backend_kind).is_none()
-    {
-        return Err(RunError::MissingTaskModeExecution {
-            task: task_name.to_string(),
-            mode: backend_mode_name(backend_kind).to_string(),
-        });
-    }
     let execution =
         if let Some(execution) = task.resolved_execution_for_backend(backend_kind, current_os) {
             execution
@@ -3428,14 +3415,6 @@ pub fn effective_execution(
         });
 
     (backend, lifecycle)
-}
-
-fn backend_mode_name(backend: Backend) -> &'static str {
-    match backend {
-        Backend::Native => "native",
-        Backend::Container => "container",
-        Backend::Remote => "remote",
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -4459,19 +4438,6 @@ pub(crate) fn resolve_execution_backend(
     let effective = effective_task_execution(contract, task_name, overrides);
     let preferred = effective.backend;
     let lifecycle = effective.lifecycle;
-    if let Some(task) = contract.tasks.get(task_name)
-        && task
-            .execution
-            .as_ref()
-            .is_some_and(|execution| execution.modes.any())
-        && task.mode_execution_branch(preferred).is_none()
-    {
-        return Err(RunError::MissingTaskModeExecution {
-            task: task_name.to_string(),
-            mode: backend_mode_name(preferred).to_string(),
-        });
-    }
-
     match preferred {
         Backend::Native => {
             if overrides.memory.is_some() {
@@ -14341,6 +14307,7 @@ project:
   name: ota
 tasks:
   start:
+    run: echo native
     execution:
       default_mode: native
       modes:
@@ -14361,11 +14328,60 @@ tasks:
             },
         )
         .unwrap_err();
-        assert!(matches!(
-            error,
-            RunError::MissingTaskModeExecution { task, mode }
-                if task == "start" && mode == "container"
-        ));
+        assert!(matches!(error, RunError::InvalidTaskExecution { task } if task == "start"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_uses_default_mode_without_redundant_matching_branch() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    run: printf "native" > mode-output.txt
+    execution:
+      default_mode: native
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "start").unwrap();
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("mode-output.txt")).unwrap(),
+            "native"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_uses_top_level_execution_for_unbranched_default_mode() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  start:
+    run: printf "native" > default-output.txt
+    execution:
+      default_mode: native
+      modes:
+        container:
+          run: printf "container" > default-output.txt
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "start").unwrap();
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("default-output.txt")).unwrap(),
+            "native"
+        );
     }
 
     #[cfg(unix)]

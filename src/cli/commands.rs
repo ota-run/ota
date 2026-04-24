@@ -24223,6 +24223,66 @@ tasks:
     }
 
     #[test]
+    fn doctor_report_context_keeps_selected_context_target_when_probe_target_differs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: doctor-context
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    a-persistent:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/persistent:latest
+    z-ephemeral:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/ephemeral:latest
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .expect("contract should parse");
+
+        let selected_target = crate::runner::ephemeral_container_name(
+            Path::new("/tmp"),
+            "ghcr.io/ota/ephemeral:latest",
+            "docker",
+        );
+        let mismatched_probe_target = crate::runner::ephemeral_container_name(
+            Path::new("/tmp"),
+            "ghcr.io/ota/persistent:latest",
+            "docker",
+        );
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: Some(mismatched_probe_target),
+            findings: Vec::new(),
+        };
+
+        let phase = super::doctor_report_execution_context(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            DoctorMode::Container,
+            &report,
+        );
+
+        assert_eq!(phase.context.as_deref(), Some("z-ephemeral"));
+        assert_eq!(phase.image.as_deref(), Some("ghcr.io/ota/ephemeral:latest"));
+        assert_eq!(phase.target.as_deref(), Some(selected_target.as_str()));
+    }
+
+    #[test]
     fn execution_policy_lines_show_package_aliases_when_policy_maps_packages() {
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
@@ -36293,7 +36353,7 @@ fn doctor_report_execution_context(
     report: &DoctorReport,
 ) -> PhaseExecutionContext {
     let mut context = doctor_phase_execution_context(contract, path, mode);
-    if mode == DoctorMode::Container {
+    if mode == DoctorMode::Container && context.target.is_none() {
         context.target = report.execution_target.clone();
     }
     context

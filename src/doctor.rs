@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -926,6 +927,9 @@ impl Finding {
     pub(crate) fn code(&self) -> &'static str {
         match self.summary.as_str() {
             "No tasks defined in contract" => "OTA_TASKS_MISSING",
+            "Repo local runtime state is not ignored by git" => {
+                "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE"
+            }
             "Ephemeral lifecycle is execution-only" => "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY",
             "Ephemeral lifecycle is advisory in native mode" => "OTA_LIFECYCLE_EPHEMERAL_ADVISORY",
             s if s.starts_with("Missing execution backend CLI: ") => "OTA_BACKEND_CLI_MISSING",
@@ -1850,6 +1854,10 @@ fn diagnose_contract_with_scope(
             })
             .unwrap_or_default()
     };
+    if let Some(finding) = detect_missing_ota_state_gitignore(contract_path) {
+        findings.push(finding);
+    }
+
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
         let container_probe = diagnose_execution_backend(contract, &mut findings, mode);
@@ -4702,6 +4710,54 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
+}
+
+pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime state";
+pub(crate) const OTA_STATE_GITIGNORE_ENTRY: &str = ".ota/state/";
+
+fn gitignore_has_ota_state_entry(contents: &str) -> bool {
+    contents
+        .lines()
+        .any(|line| matches!(line.trim(), ".ota/state/" | ".ota/state" | ".ota/state/*"))
+}
+
+pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, String> {
+    let git_dir = root.join(".git");
+    let gitignore_path = root.join(".gitignore");
+    if !git_dir.exists() && !gitignore_path.exists() {
+        return Ok(false);
+    }
+
+    if !gitignore_path.exists() {
+        return Ok(true);
+    }
+
+    let contents = fs::read_to_string(&gitignore_path)
+        .map_err(|error| format!("failed to read `{}`: {}", gitignore_path.display(), error))?;
+    Ok(!gitignore_has_ota_state_entry(&contents))
+}
+
+pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option<Finding> {
+    let root = contract_working_dir(contract_path);
+    match repo_missing_ota_state_gitignore(root) {
+        Ok(true) => Some(Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Repo local runtime state is not ignored by git"),
+            why: String::from(
+                "`.ota/state/` stores Ota-owned local runtime state; if it is tracked by git, local execution residue can pollute repo diffs and diagnosis artifacts",
+            ),
+            next: String::from(
+                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/` to `.gitignore`, or add the ignore rule manually",
+            ),
+        }),
+        Ok(false) => None,
+        Err(error) => Some(Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Repo `.gitignore` could not be inspected"),
+            why: format!("ota could not inspect whether `.ota/state/` is ignored: {error}"),
+            next: String::from("repair `.gitignore` readability and rerun `ota doctor`"),
+        }),
+    }
 }
 
 fn extract_version_token(output: &str) -> Option<String> {
