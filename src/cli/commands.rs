@@ -21560,6 +21560,34 @@ tasks:
     }
 
     #[test]
+    fn streaming_structured_error_logs_persist_error_detail_in_prepared_stderr_log() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            "version: 1\nproject:\n  name: demo\ntasks:\n  dev:\n    run: echo ok\n",
+        )
+        .expect("write contract");
+
+        let prepared = super::prepare_streaming_durable_run_logs(&contract_path, "dev", None, true);
+        let result = super::capture_streaming_structured_error_logs(
+            &prepared,
+            "structured startup failure",
+            &contract_path,
+            "dev",
+            None,
+            true,
+        );
+
+        let logs = result.logs.expect("prepared logs should be preserved");
+        assert!(result.warning.is_none(), "{:?}", result.warning);
+        assert_eq!(
+            fs::read_to_string(repo.path().join(&logs.stderr)).expect("read stderr log"),
+            "structured startup failure"
+        );
+    }
+
+    #[test]
     fn execution_receipt_renderers_show_logs_when_present() {
         let receipt = ExecutionReceipt {
             ok: true,
@@ -27869,6 +27897,44 @@ fn prepare_streaming_durable_run_logs(
     }
 }
 
+fn capture_streaming_structured_error_logs(
+    prepared_logs: &PreparedStreamingRunLogs,
+    error_detail: &str,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    enabled: bool,
+) -> RunLogCaptureResult {
+    if let (Some(logs), Some(live_log)) = (
+        prepared_logs.capture.logs.clone(),
+        prepared_logs.live_log.as_ref(),
+    ) {
+        match live_log.stderr.lock() {
+            Ok(mut stderr) => match stderr.write_all(error_detail.as_bytes()) {
+                Ok(()) => {
+                    let _ = stderr.flush();
+                    RunLogCaptureResult {
+                        logs: Some(logs),
+                        warning: prepared_logs.capture.warning.clone(),
+                    }
+                }
+                Err(error) => RunLogCaptureResult {
+                    logs: Some(logs),
+                    warning: Some(format!("log capture failed: {error}")),
+                },
+            },
+            Err(_) => RunLogCaptureResult {
+                logs: Some(logs),
+                warning: Some(String::from(
+                    "log capture failed: durable log handle lock was poisoned",
+                )),
+            },
+        }
+    } else {
+        capture_durable_run_logs(contract_path, task_name, member, "", error_detail, enabled)
+    }
+}
+
 fn create_durable_run_log_paths(
     contract_path: &Path,
     task_name: &str,
@@ -28202,18 +28268,14 @@ fn run_single_contract_target_streaming(
         }
         Err(error) => {
             let error_detail = error.to_string();
-            let log_capture = if prepared_logs.capture.logs.is_some() {
-                prepared_logs.capture.clone()
-            } else {
-                capture_durable_run_logs(
-                    &target.contract_path,
-                    task_name.as_str(),
-                    member,
-                    "",
-                    &error_detail,
-                    persist_logs,
-                )
-            };
+            let log_capture = capture_streaming_structured_error_logs(
+                &prepared_logs,
+                &error_detail,
+                &target.contract_path,
+                task_name.as_str(),
+                member,
+                persist_logs,
+            );
             let next_note = match &error {
                 RunError::RuntimeListenerResolutionFailed {
                     task,
