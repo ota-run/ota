@@ -385,6 +385,7 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, inspects the merged member contract
 - reuses the same backend and lifecycle resolution path as `ota run` and `ota up`
+- when named contexts use `execution.contexts.<name>.extends`, planning resolves the merged context first and reports that concrete backend/lifecycle/image shape
 - reports the resolved backend, lifecycle, image, container-engine selection, and target strategy
 - fails with the same backend-configuration errors as runtime execution when the selected native/container/remote path is not actually runnable from the current contract
 - shows the deterministic per-run target name for ephemeral containers, but does not create that target
@@ -711,6 +712,7 @@ ota doctor --member api --member web --json [PATH]
 - checks configured env requirements, declared checks, and service healthchecks in native mode
 - checks required execution backends for the selected `--mode` and resolved contexts
 - `--mode native` diagnoses host/native readiness; `--mode container` diagnoses selected container context requirements
+- context diagnostics use the resolved named-context shape after `extends` merge, while legacy shorthand remains supported for one-context contracts
 - warns on suspicious remote target shape:
 - `ssh` / `tsh` targets without `user@host`
 - `kubectl` targets not starting with `pod/`
@@ -1057,6 +1059,7 @@ Current behavior:
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails
 - runs the `setup` task if one exists, using the configured execution backend when present
+- when setup binds to a named context that uses `extends`, `ota up` uses the merged context backend/lifecycle/image shape
 - can override execution mode and lifecycle for the `setup` phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - the current `setup` backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution

@@ -35,7 +35,10 @@ use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::execution::{container_engine_candidates, selected_container_engine};
+use crate::execution::{
+    container_engine_candidates, container_engine_candidates_from_backend,
+    selected_container_engine, selected_container_engine_from_backend,
+};
 use crate::policy_pack::{
     LoadPolicyPackError, LoadedOrgPolicyPack, ProvisioningAction, ProvisioningBackendRequest,
     ProvisioningPlan, ProvisioningTargetKind, load_org_policy_pack_auto_details,
@@ -51,8 +54,8 @@ use crate::runner::{
     resolve_declared_env_source_value, run_backend_command_captured,
 };
 use crate::schema::{
-    Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RequirementSurface,
-    RuntimeRequirement, ServiceSpec, ToolRequirement,
+    Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
+    RequirementSurface, RuntimeRequirement, ServiceSpec, ToolRequirement,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -105,6 +108,24 @@ fn contract_has_remote_execution_context(contract: &Contract) -> bool {
                 .values()
                 .any(|context| context.backend == Backend::Remote)
     })
+}
+
+fn first_execution_context_for_backend<'a>(
+    contract: &'a Contract,
+    backend: Backend,
+) -> Option<(&'a str, &'a crate::schema::ExecutionContext)> {
+    let execution = contract.execution.as_ref()?;
+    if let Some((name, context)) = execution.default_context()
+        && context.backend == backend
+    {
+        return Some((name, context));
+    }
+
+    execution
+        .contexts
+        .iter()
+        .find(|(_, context)| context.backend == backend)
+        .map(|(name, context)| (name.as_str(), context))
 }
 
 fn precondition_requirement_surface(contract: &Contract, mode: DoctorMode) -> RequirementSurface {
@@ -2057,30 +2078,43 @@ fn diagnose_execution_backend(
     };
 
     if mode == DoctorMode::Container {
-        let Some(container) = execution
+        if let Some((_, context)) =
+            first_execution_context_for_backend(contract, Backend::Container)
+            && let Some(container) = context.container.as_ref()
+        {
+            let Some(engine) = selected_container_engine_from_backend(Some(container)) else {
+                diagnose_container_backend_cli_for_container(container, findings);
+                return None;
+            };
+
+            return Some(ContainerProbeContext {
+                image: container.image.clone(),
+                engine,
+            });
+        }
+
+        if let Some(container) = execution
             .backends
             .as_ref()
             .and_then(|backends| backends.container.as_ref())
-        else {
-            findings.push(container_mode_not_configured_finding());
-            return None;
-        };
+        {
+            let Some(engine) = selected_container_engine(contract) else {
+                diagnose_container_backend_cli(contract, findings);
+                return None;
+            };
 
-        let Some(engine) = selected_container_engine(contract) else {
-            diagnose_container_backend_cli(contract, findings);
-            return None;
-        };
+            return Some(ContainerProbeContext {
+                image: container.image.clone(),
+                engine,
+            });
+        }
 
-        return Some(ContainerProbeContext {
-            image: container.image.clone(),
-            engine,
-        });
+        findings.push(container_mode_not_configured_finding());
+        return None;
     }
 
     if mode == DoctorMode::Remote {
-        let Some(remote) = execution
-            .default_context()
-            .filter(|(_, context)| context.backend == Backend::Remote)
+        let Some(remote) = first_execution_context_for_backend(contract, Backend::Remote)
             .and_then(|(_, context)| context.remote.as_ref())
             .or_else(|| {
                 execution
@@ -4308,7 +4342,23 @@ fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) 
 }
 
 fn diagnose_container_backend_cli(contract: &Contract, findings: &mut Vec<Finding>) {
-    let engines = container_engine_candidates(contract);
+    diagnose_container_backend_cli_for_candidates(container_engine_candidates(contract), findings);
+}
+
+fn diagnose_container_backend_cli_for_container(
+    container: &ContainerBackend,
+    findings: &mut Vec<Finding>,
+) {
+    diagnose_container_backend_cli_for_candidates(
+        container_engine_candidates_from_backend(Some(container)),
+        findings,
+    );
+}
+
+fn diagnose_container_backend_cli_for_candidates(
+    engines: Vec<String>,
+    findings: &mut Vec<Finding>,
+) {
     if engines.iter().any(|engine| command_available(engine)) {
         return;
     }
@@ -5762,6 +5812,98 @@ tasks:
         assert!(finding.next.contains("ota doctor --mode remote"));
         assert!(finding.next.contains("ota execution plan --mode remote"));
         assert!(!finding.next.contains("dedicated remote doctor mode ships"));
+    }
+
+    #[test]
+    fn container_mode_requirement_surface_includes_inherited_context_requirements() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app-base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+      requirements:
+        runtimes:
+          node: "24"
+        tools:
+          pnpm: "10"
+    app:
+      extends: app-base
+tasks:
+  dev:
+    context: app
+    run: pnpm dev
+"#,
+        )
+        .unwrap();
+
+        let surface = super::precondition_requirement_surface(&contract, DoctorMode::Container);
+        assert_eq!(
+            surface
+                .runtimes
+                .get("node")
+                .map(|requirement| requirement.version().to_string()),
+            Some(String::from("24"))
+        );
+        assert_eq!(
+            surface
+                .tools
+                .get("pnpm")
+                .map(|requirement| requirement.version().to_string()),
+            Some(String::from("10"))
+        );
+    }
+
+    #[test]
+    fn container_mode_uses_inherited_named_context_backend_configuration() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app-base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+        engines:
+          - missing-engine
+    app:
+      extends: app-base
+tasks:
+  dev:
+    context: app
+    run: pnpm dev
+"#,
+        )
+        .unwrap();
+
+        let report =
+            diagnose_contract_in_mode(&contract, synthetic_contract_path(), DoctorMode::Container);
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Missing container execution backend CLI: missing-engine"
+        }));
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| { finding.summary == "Container execution is not configured" })
+        );
     }
 
     #[test]

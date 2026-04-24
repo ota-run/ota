@@ -102,11 +102,11 @@ use crate::runner::{
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     StaleContainerOwnership, StreamLogTee, TaskExecutionRelation, clean_execution_report,
     clean_stale_execution, effective_execution, effective_task_execution,
-    env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
-    named_execution_context, persistent_container_name, reported_task_context_for_backend,
-    resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
-    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
-    run_task_captured_with_args_with_overrides_with_policy,
+    env_resolution_source_label, ephemeral_container_name, load_declared_env_sources,
+    load_policy_env_overlay, named_execution_context, persistent_container_name,
+    reported_task_context_for_backend, resolve_declared_env_source_value,
+    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
+    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
@@ -1337,6 +1337,7 @@ fn resolve_execution_plan(
 ) -> Result<ExecutionPlanResolved, RunError> {
     let task_name = "execution plan";
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let effective = effective_task_execution(contract, task_name, overrides);
     let backend_source = if overrides.backend.is_some() {
         "override"
     } else if contract
@@ -1349,7 +1350,7 @@ fn resolve_execution_plan(
     } else {
         "default"
     };
-    let lifecycle_source = if overrides.lifecycle.is_some() {
+    let mut lifecycle_source = if overrides.lifecycle.is_some() {
         String::from("override")
     } else if contract
         .execution
@@ -1364,7 +1365,6 @@ fn resolve_execution_plan(
     let resolved_backend = match resolve_execution_backend(contract, task_name, overrides) {
         Ok(resolved_backend) => Ok(resolved_backend),
         Err(RunError::MissingContainerBackendCli { .. }) if backend == Backend::Container => {
-            let effective = effective_task_execution(contract, task_name, overrides);
             let Some(container) = effective.container else {
                 return Err(RunError::MissingContainerImage {
                     task: task_name.to_string(),
@@ -1402,7 +1402,23 @@ fn resolve_execution_plan(
         }
         Err(error) => Err(error),
     }?;
-    let lifecycle_source = lifecycle.map(|_| lifecycle_source);
+
+    let resolved_lifecycle = match &resolved_backend {
+        ResolvedExecutionBackend::Container { lifecycle, .. } => Some(*lifecycle),
+        _ => lifecycle,
+    };
+    if backend == Backend::Container
+        && resolved_lifecycle.is_some()
+        && overrides.lifecycle.is_none()
+        && contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.lifecycle)
+            .is_none()
+    {
+        lifecycle_source = String::from("context lifecycle");
+    }
+    let lifecycle_source = resolved_lifecycle.map(|_| lifecycle_source.clone());
 
     let (image, engine, engine_candidates, provider, target, target_strategy, cwd) =
         match resolved_backend {
@@ -1434,7 +1450,10 @@ fn resolve_execution_plan(
                 (
                     Some(image),
                     Some(engine),
-                    container_engine_candidates(contract),
+                    effective
+                        .container
+                        .map(|container| container_engine_candidates_from_backend(Some(container)))
+                        .unwrap_or_else(|| container_engine_candidates(contract)),
                     None,
                     target,
                     target_strategy,
@@ -1473,7 +1492,7 @@ fn resolve_execution_plan(
     Ok(ExecutionPlanResolved {
         backend: format_backend(backend).to_string(),
         backend_source: backend_source.to_string(),
-        lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        lifecycle: resolved_lifecycle.map(format_lifecycle).map(str::to_string),
         lifecycle_source,
         image,
         engine,
@@ -21255,7 +21274,7 @@ mod tests {
     };
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
-        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, ServiceTermination,
+        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, RunError, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
         simulate_run_interrupt_for_test,
     };
@@ -23667,11 +23686,13 @@ execution:
   contexts:
     host:
       backend: native
-    app:
+    app-base:
       backend: container
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
+    app:
+      extends: app-base
 tasks:
   setup:
     context: app
@@ -23708,6 +23729,127 @@ tasks:
                 .as_deref()
                 .is_some_and(|target| target.starts_with("ota-"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execution_plan_mode_container_requires_generic_shorthand_image() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        write_executable_script(&docker_path, "#!/bin/sh\nexit 0\n");
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: execution-plan
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app-base:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+        engines:
+          - docker
+    app:
+      extends: app-base
+tasks:
+  dev:
+    context: app
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let error = super::resolve_execution_plan(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("generic container plan should require shorthand image");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(matches!(error, RunError::MissingContainerImage { .. }));
+    }
+
+    #[test]
+    fn doctor_container_phase_uses_selected_context_image_and_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: doctor-context
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    a-persistent:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/persistent:latest
+    z-ephemeral:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/ephemeral:latest
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .expect("contract should parse");
+
+        let phase = super::doctor_phase_execution_context(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            DoctorMode::Container,
+        );
+        let expected_target = crate::runner::ephemeral_container_name(
+            Path::new("/tmp"),
+            "ghcr.io/ota/ephemeral:latest",
+            "docker",
+        );
+
+        assert_eq!(phase.context.as_deref(), Some("z-ephemeral"));
+        assert_eq!(phase.image.as_deref(), Some("ghcr.io/ota/ephemeral:latest"));
+        assert_eq!(phase.target.as_deref(), Some(expected_target.as_str()));
     }
 
     #[test]
@@ -35483,6 +35625,80 @@ fn execution_context_container_backend<'a>(
         .and_then(|(_, context)| context.container.as_ref())
 }
 
+fn execution_context_remote_backend<'a>(
+    contract: &'a Contract,
+    context_name: Option<&str>,
+) -> Option<&'a crate::schema::RemoteBackend> {
+    context_name
+        .and_then(|name| named_execution_context(contract, name))
+        .and_then(|(_, context)| context.remote.as_ref())
+}
+
+fn phase_execution_image(
+    contract: &Contract,
+    backend: Backend,
+    context_name: Option<&str>,
+) -> Option<String> {
+    if backend != Backend::Container {
+        return None;
+    }
+    execution_context_container_backend(contract, context_name)
+        .map(|container| container.image.clone())
+        .or_else(|| execution_image(contract, backend))
+}
+
+fn phase_execution_target(
+    contract: &Contract,
+    path: &Path,
+    backend: Backend,
+    lifecycle: Option<Lifecycle>,
+    context_name: Option<&str>,
+) -> Option<String> {
+    match backend {
+        Backend::Native => None,
+        Backend::Remote => execution_context_remote_backend(contract, context_name)
+            .and_then(|remote| remote.target.clone())
+            .or_else(|| execution_target(contract, path, backend, lifecycle)),
+        Backend::Container => {
+            let container = execution_context_container_backend(contract, context_name);
+            match lifecycle {
+                Some(Lifecycle::Persistent) => container
+                    .map(|container| {
+                        let engine = selected_container_engine_from_backend(Some(container))
+                            .unwrap_or_else(|| {
+                                container_engine_candidates_from_backend(Some(container))
+                                    .into_iter()
+                                    .next()
+                                    .unwrap_or_else(|| String::from("docker"))
+                            });
+                        persistent_container_name(
+                            path.parent().unwrap_or(path),
+                            &container.image,
+                            &engine,
+                        )
+                    })
+                    .or_else(|| execution_target(contract, path, backend, lifecycle)),
+                Some(Lifecycle::Ephemeral) | None => container
+                    .map(|container| {
+                        let engine = selected_container_engine_from_backend(Some(container))
+                            .unwrap_or_else(|| {
+                                container_engine_candidates_from_backend(Some(container))
+                                    .into_iter()
+                                    .next()
+                                    .unwrap_or_else(|| String::from("docker"))
+                            });
+                        ephemeral_container_name(
+                            path.parent().unwrap_or(path),
+                            &container.image,
+                            &engine,
+                        )
+                    })
+                    .or_else(|| ephemeral_container_target(contract, path)),
+            }
+        }
+    }
+}
+
 fn effective_phase_container_backend<'a>(
     contract: &'a Contract,
     backend: Backend,
@@ -35518,12 +35734,12 @@ fn selected_phase_execution_context(
         backend: Some(format_backend(backend).to_string()),
         context: context.clone(),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
-        image: execution_image(contract, backend),
+        image: phase_execution_image(contract, backend, context.as_deref()),
         container_memory_bytes: receipt_container_memory_bytes(
             effective_phase_container_backend(contract, backend, context.as_deref()),
             overrides.memory,
         ),
-        target: execution_target(contract, path, backend, lifecycle),
+        target: phase_execution_target(contract, path, backend, lifecycle, context.as_deref()),
     }
 }
 
@@ -35607,7 +35823,7 @@ fn doctor_phase_execution_context(
                 backend: Some(String::from("container")),
                 context: context.clone(),
                 lifecycle: Some(String::from("ephemeral")),
-                image: execution_image(contract, Backend::Container),
+                image: phase_execution_image(contract, Backend::Container, context.as_deref()),
                 container_memory_bytes: receipt_container_memory_bytes(
                     effective_phase_container_backend(
                         contract,
@@ -35616,15 +35832,30 @@ fn doctor_phase_execution_context(
                     ),
                     None,
                 ),
-                target: ephemeral_container_target(contract, path),
+                target: phase_execution_target(
+                    contract,
+                    path,
+                    Backend::Container,
+                    Some(Lifecycle::Ephemeral),
+                    context.as_deref(),
+                ),
             }
         }
-        DoctorMode::Remote => PhaseExecutionContext {
-            backend: Some(String::from("remote")),
-            context: matching_phase_execution_context_name(contract, Backend::Remote, None),
-            target: execution_target(contract, path, Backend::Remote, None),
-            ..PhaseExecutionContext::default()
-        },
+        DoctorMode::Remote => {
+            let context = matching_phase_execution_context_name(contract, Backend::Remote, None);
+            PhaseExecutionContext {
+                backend: Some(String::from("remote")),
+                context: context.clone(),
+                target: phase_execution_target(
+                    contract,
+                    path,
+                    Backend::Remote,
+                    None,
+                    context.as_deref(),
+                ),
+                ..PhaseExecutionContext::default()
+            }
+        }
     }
 }
 
@@ -35672,22 +35903,39 @@ fn provisioning_phase_execution_context(
                     ),
                     None,
                 ),
-                target: match lifecycle {
-                    Lifecycle::Persistent => {
-                        execution_target(contract, path, Backend::Container, Some(*lifecycle))
+                target: phase_execution_target(
+                    contract,
+                    path,
+                    Backend::Container,
+                    Some(*lifecycle),
+                    context.as_deref(),
+                )
+                .and_then(|target| {
+                    if *lifecycle == Lifecycle::Persistent {
+                        Some(target)
+                    } else {
+                        None
                     }
-                    Lifecycle::Ephemeral => None,
-                },
+                }),
             }
         }
-        ProvisioningExecutionTarget::Remote { context_name, .. } => PhaseExecutionContext {
-            backend: Some(String::from("remote")),
-            context: context_name
+        ProvisioningExecutionTarget::Remote { context_name, .. } => {
+            let context = context_name
                 .clone()
-                .or_else(|| matching_phase_execution_context_name(contract, Backend::Remote, None)),
-            target: execution_target(contract, path, Backend::Remote, None),
-            ..PhaseExecutionContext::default()
-        },
+                .or_else(|| matching_phase_execution_context_name(contract, Backend::Remote, None));
+            PhaseExecutionContext {
+                backend: Some(String::from("remote")),
+                context: context.clone(),
+                target: phase_execution_target(
+                    contract,
+                    path,
+                    Backend::Remote,
+                    None,
+                    context.as_deref(),
+                ),
+                ..PhaseExecutionContext::default()
+            }
+        }
     }
 }
 

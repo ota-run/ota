@@ -333,14 +333,15 @@ Current validation rule:
   - optional `attachments.compose` to attach container workloads to compose project networks
   - optional `attachments.isolated_paths` to mount Ota-managed, engine-owned named volumes over workspace-relative dependency paths such as `node_modules`
 - inheritance merge rules for `extends`:
-  - scalar fields override (`backend`, `lifecycle`, image/target/provider)
+  - scalar fields override within a backend family (`lifecycle`, image/target/provider)
   - maps merge recursively (`container.resources`, `requirements`, `attachments`)
   - lists replace (`container.engines`, `attachments.compose`, `attachments.isolated_paths`)
-- backend-family overrides across `extends` are rejected (for example inheriting from a `container` parent and setting child `backend: native`)
+- backend-family switches across `extends` are rejected (for example inheriting from a `container` parent and setting child `backend: native`)
 
 Current implementation:
 
 - `ota run` resolves a task context from `tasks.<name>.context` and `execution.default_context`, then executes that context's backend
+- runtime selection consumes resolved named contexts after `extends` merge, so `ota run`, `ota up`, `ota doctor`, and `ota execution plan` execute the merged concrete context shape instead of partial parent/child declarations
 - `execution.contexts` are used for context-scoped requirement checks and receipts
 - `tasks.<name>.context` lets a task declare a non-default execution context
 - named contexts can now share a base execution shape through `extends` while keeping single-context shorthand (`preferred`/`lifecycle`/`backends`) fully supported
