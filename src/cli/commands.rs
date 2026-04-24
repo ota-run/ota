@@ -44,10 +44,12 @@ use crate::contract_drift::{
 };
 use crate::detector::{Confidence, DetectContract, DetectReport, Inference, detect_repo};
 use crate::doctor::{
-    DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
-    diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
-    diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
-    diagnose_services_only, finding_targets_container_image, finding_targets_remote_backend,
+    DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_STATE_GITIGNORE_COMMENT,
+    OTA_STATE_GITIGNORE_ENTRY, command_available, command_version,
+    detect_missing_ota_state_gitignore, diagnose_checks_only, diagnose_contract,
+    diagnose_contract_in_mode, diagnose_policy_review, diagnose_preconditions,
+    diagnose_preconditions_with_mode, diagnose_service, diagnose_services_only,
+    finding_targets_container_image, finding_targets_remote_backend,
     provisioning_installability_finding,
 };
 use crate::execution::{
@@ -60,29 +62,29 @@ use crate::output::{
     ContractFieldProvenance, ContractIdentity, ContractIdentityCounts, ContractIdentityExecution,
     ContractIdentityMetadata, ContractIdentityProject, DetectComparison, DetectComparisonChange,
     DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
-    DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary,
-    DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSourceEntry,
-    EnvSourceStatus, EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionPlanFailure,
-    ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
-    ExecutionReceiptEnvSource, ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary,
-    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption,
-    InitPackSeeds, InitSelectedPackOptions, InitSuccess, MemberServicesSuccess, OutputFormat,
-    PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
-    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
-    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary,
-    ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution,
-    UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
-    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary,
+    DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind,
+    EnvEntryStatus, EnvFailure, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
+    ExecutionContextSummary, ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved,
+    ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptLogs,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
+    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
+    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffComparison,
+    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
+    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
+    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -3706,6 +3708,220 @@ fn doctor_invalid_contract_next_steps(contract_path: &Path) -> Vec<String> {
     ]
 }
 
+const DOCTOR_FIX_ACTION_OTA_STATE_GITIGNORE: &str = "repo_gitignore_ota_state";
+const DOCTOR_FIXABLE_OTA_STATE_GITIGNORE_CODE: &str = "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DoctorFixFileChange {
+    Create,
+    Append,
+}
+
+#[derive(Debug, Clone)]
+struct DoctorFixPlanAction {
+    key: &'static str,
+    path: PathBuf,
+    path_display: String,
+    change: DoctorFixFileChange,
+    preview: String,
+}
+
+fn gitignore_has_ota_state_entry(contents: &str) -> bool {
+    contents
+        .lines()
+        .any(|line| matches!(line.trim(), ".ota/state/" | ".ota/state" | ".ota/state/*"))
+}
+
+fn ota_state_gitignore_block() -> String {
+    format!("{OTA_STATE_GITIGNORE_COMMENT}\n{OTA_STATE_GITIGNORE_ENTRY}\n")
+}
+
+fn plan_ota_state_gitignore_fix(root: &Path) -> Result<Option<DoctorFixPlanAction>, String> {
+    let gitignore_path = root.join(".gitignore");
+    let path_display = compact_path(&gitignore_path, ".gitignore");
+    let block = ota_state_gitignore_block();
+
+    if gitignore_path.exists() {
+        let contents = fs::read_to_string(&gitignore_path)
+            .map_err(|error| format!("failed to read `{}`: {}", gitignore_path.display(), error))?;
+        if gitignore_has_ota_state_entry(&contents) {
+            return Ok(None);
+        }
+        let mut preview = String::new();
+        if !contents.is_empty() && !contents.ends_with('\n') {
+            preview.push('\n');
+        }
+        if !contents.is_empty() {
+            preview.push('\n');
+        }
+        preview.push_str(&block);
+        Ok(Some(DoctorFixPlanAction {
+            key: DOCTOR_FIX_ACTION_OTA_STATE_GITIGNORE,
+            path: gitignore_path,
+            path_display,
+            change: DoctorFixFileChange::Append,
+            preview,
+        }))
+    } else {
+        Ok(Some(DoctorFixPlanAction {
+            key: DOCTOR_FIX_ACTION_OTA_STATE_GITIGNORE,
+            path: gitignore_path,
+            path_display,
+            change: DoctorFixFileChange::Create,
+            preview: block,
+        }))
+    }
+}
+
+fn apply_ota_state_gitignore_fix(action: &DoctorFixPlanAction) -> Result<(), String> {
+    match action.change {
+        DoctorFixFileChange::Create => fs::write(&action.path, &action.preview)
+            .map_err(|error| format!("failed to write `{}`: {}", action.path.display(), error)),
+        DoctorFixFileChange::Append => {
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .open(&action.path)
+                .map_err(|error| {
+                    format!(
+                        "failed to open `{}` for append: {}",
+                        action.path.display(),
+                        error
+                    )
+                })?;
+            file.write_all(action.preview.as_bytes())
+                .map_err(|error| format!("failed to append `{}`: {}", action.path.display(), error))
+        }
+    }
+}
+
+fn doctor_fix_change_label(change: DoctorFixFileChange) -> &'static str {
+    match change {
+        DoctorFixFileChange::Create => "create_file",
+        DoctorFixFileChange::Append => "append_block",
+    }
+}
+
+fn doctor_fixable_finding_count(report: &DoctorReport) -> usize {
+    report
+        .findings
+        .iter()
+        .filter(|finding| finding.code() == DOCTOR_FIXABLE_OTA_STATE_GITIGNORE_CODE)
+        .count()
+}
+
+fn run_doctor_fix(
+    report: &DoctorReport,
+    repo_root: &Path,
+    dry_run: bool,
+) -> Result<DoctorFixSummary, String> {
+    let mut summary = DoctorFixSummary {
+        requested: true,
+        dry_run,
+        fixable_count: doctor_fixable_finding_count(report),
+        planned_count: 0,
+        applied_count: 0,
+        actions: Vec::new(),
+        errors: Vec::new(),
+    };
+
+    if summary.fixable_count == 0 {
+        return Ok(summary);
+    }
+
+    let action = plan_ota_state_gitignore_fix(repo_root)?;
+    if let Some(action) = action {
+        summary.planned_count = 1;
+        if dry_run {
+            summary.actions.push(DoctorFixActionSummary {
+                key: action.key.to_string(),
+                path: action.path_display,
+                change: doctor_fix_change_label(action.change).to_string(),
+                status: String::from("planned"),
+                preview: Some(action.preview),
+            });
+        } else {
+            match apply_ota_state_gitignore_fix(&action) {
+                Ok(()) => {
+                    summary.applied_count = 1;
+                    summary.actions.push(DoctorFixActionSummary {
+                        key: action.key.to_string(),
+                        path: action.path_display,
+                        change: doctor_fix_change_label(action.change).to_string(),
+                        status: String::from("applied"),
+                        preview: None,
+                    });
+                }
+                Err(error) => {
+                    summary.errors.push(error);
+                    summary.actions.push(DoctorFixActionSummary {
+                        key: action.key.to_string(),
+                        path: action.path_display,
+                        change: doctor_fix_change_label(action.change).to_string(),
+                        status: String::from("failed"),
+                        preview: Some(action.preview),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+fn render_doctor_fix_text(summary: &DoctorFixSummary) -> String {
+    let mut stdout = String::new();
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Fixes")));
+
+    if summary.fixable_count == 0 {
+        stdout.push_str(&format!(
+            "\n  {} no supported deterministic repo-hygiene fixes are needed",
+            list_bullet()
+        ));
+        return stdout;
+    }
+
+    if summary.dry_run {
+        stdout.push_str(&format!(
+            "\n  {} preview mode: no files were modified",
+            list_bullet()
+        ));
+    } else if summary.errors.is_empty() {
+        stdout.push_str(&format!(
+            "\n  {} applied {} safe fix{}",
+            list_bullet(),
+            summary.applied_count,
+            if summary.applied_count == 1 { "" } else { "es" }
+        ));
+    } else {
+        stdout.push_str(&format!(
+            "\n  {} attempted safe fixes but at least one write failed",
+            list_bullet()
+        ));
+    }
+
+    for action in &summary.actions {
+        stdout.push_str(&format!(
+            "\n  {} {} ({}, {})",
+            list_bullet(),
+            paint_code(&action.path),
+            action.change,
+            action.status
+        ));
+        if let Some(preview) = action.preview.as_ref() {
+            stdout.push_str("\n    Planned change:");
+            for line in preview.lines() {
+                stdout.push_str(&format!("\n      {line}"));
+            }
+        }
+    }
+
+    for error in &summary.errors {
+        stdout.push_str(&format!("\n  {} {error}", list_bullet()));
+    }
+
+    stdout
+}
+
 fn wrong_repo_contract_target_output(
     command: &str,
     target_path: &Path,
@@ -4690,6 +4906,8 @@ pub fn doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
     members: &[String],
+    fix: bool,
+    fix_dry_run: bool,
     mode: DoctorMode,
     format: OutputFormat,
     debug: bool,
@@ -4704,6 +4922,16 @@ pub fn doctor(
             vec![String::from("DEBUG command=doctor")],
         );
     }
+    if fix && members.len() > 1 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--fix` currently supports at most one `--member` target"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=doctor")],
+        );
+    }
 
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
@@ -4711,44 +4939,79 @@ pub fn doctor(
         | Err(ResolveContractError::MissingExplicitDirectory { path: start }) => {
             let root = Path::new(&start);
             let report = diagnose_contractless_repo(root);
+            let fix_summary = if fix {
+                Some(match run_doctor_fix(&report, root, fix_dry_run) {
+                    Ok(summary) => summary,
+                    Err(error) => DoctorFixSummary {
+                        requested: true,
+                        dry_run: fix_dry_run,
+                        fixable_count: 0,
+                        planned_count: 0,
+                        applied_count: 0,
+                        actions: Vec::new(),
+                        errors: vec![error],
+                    },
+                })
+            } else {
+                None
+            };
+            let fix_failed = fix_summary
+                .as_ref()
+                .is_some_and(|summary| !summary.errors.is_empty());
             let empty_extensions = BTreeMap::new();
             let synthetic_contract_path = root.join(DEFAULT_CONTRACT_FILE);
 
             return finalize_debug(
                 match format {
-                    OutputFormat::Text => render_doctor_text(
-                        &compact_repo_path(root),
-                        &synthetic_contract_path,
-                        None,
-                        None,
-                        &empty_extensions,
-                        None,
-                        report,
-                    ),
-                    OutputFormat::Json => CommandOutput {
-                        stdout: to_json(&DoctorSuccess {
-                            ok: false,
-                            path: &start,
-                            mode: mode.as_str(),
-                            summary: doctor_summary(&report, DoctorVerdict::NotReady),
-                            finding_groups: doctor_finding_group_summaries(
-                                &report.findings,
-                                Some(mode),
-                            ),
-                            agent: None,
-                            execution: None,
-                            provisioning: report.provisioning.as_ref().map(|value| &value.plan),
-                            provisioning_request: report
-                                .provisioning
-                                .as_ref()
-                                .map(|value| &value.request),
-                            adapter_bootstrap: report.adapter_bootstrap.as_ref(),
-                            extensions: &empty_extensions,
-                            findings: &report.findings,
-                        }),
-                        stderr: None,
-                        exit_code: 1,
-                    },
+                    OutputFormat::Text => {
+                        let mut output = render_doctor_text(
+                            &compact_repo_path(root),
+                            &synthetic_contract_path,
+                            None,
+                            None,
+                            &empty_extensions,
+                            None,
+                            report,
+                        );
+                        if let Some(summary) = fix_summary.as_ref() {
+                            output.stdout.push_str(&render_doctor_fix_text(summary));
+                            if !summary.errors.is_empty() {
+                                output.exit_code = 1;
+                            }
+                        }
+                        output
+                    }
+                    OutputFormat::Json => {
+                        let mut output = CommandOutput {
+                            stdout: to_json(&DoctorSuccess {
+                                ok: false,
+                                path: &start,
+                                mode: mode.as_str(),
+                                summary: doctor_summary(&report, DoctorVerdict::NotReady),
+                                finding_groups: doctor_finding_group_summaries(
+                                    &report.findings,
+                                    Some(mode),
+                                ),
+                                agent: None,
+                                execution: None,
+                                provisioning: report.provisioning.as_ref().map(|value| &value.plan),
+                                provisioning_request: report
+                                    .provisioning
+                                    .as_ref()
+                                    .map(|value| &value.request),
+                                adapter_bootstrap: report.adapter_bootstrap.as_ref(),
+                                extensions: &empty_extensions,
+                                fix: fix_summary.clone(),
+                                findings: &report.findings,
+                            }),
+                            stderr: None,
+                            exit_code: 1,
+                        };
+                        if fix_failed {
+                            output.exit_code = 1;
+                        }
+                        output
+                    }
                 },
                 debug,
                 vec![String::from("DEBUG command=doctor")],
@@ -4807,6 +5070,30 @@ pub fn doctor(
                     &target.contract_path,
                     &mut report.findings,
                 );
+                let fix_summary = if fix {
+                    let summary = match run_doctor_fix(
+                        &report,
+                        contract_working_dir(&target.contract_path),
+                        fix_dry_run,
+                    ) {
+                        Ok(summary) => summary,
+                        Err(error) => DoctorFixSummary {
+                            requested: true,
+                            dry_run: fix_dry_run,
+                            fixable_count: 0,
+                            planned_count: 0,
+                            applied_count: 0,
+                            actions: Vec::new(),
+                            errors: vec![error],
+                        },
+                    };
+                    Some(summary)
+                } else {
+                    None
+                };
+                let fix_failed = fix_summary
+                    .as_ref()
+                    .is_some_and(|summary| !summary.errors.is_empty());
                 let agent_summary = target
                     .contract
                     .agent
@@ -4959,37 +5246,56 @@ pub fn doctor(
                     }
 
                     match format {
-                        OutputFormat::Text => CommandOutput {
-                            stdout: text_sections.join("\n\n"),
-                            stderr: None,
-                            exit_code: if overall_ok { 0 } else { 1 },
-                        },
+                        OutputFormat::Text => {
+                            let mut output = CommandOutput {
+                                stdout: text_sections.join("\n\n"),
+                                stderr: None,
+                                exit_code: if overall_ok { 0 } else { 1 },
+                            };
+                            if let Some(summary) = fix_summary.as_ref() {
+                                output.stdout.push_str(&render_doctor_fix_text(summary));
+                                if !summary.errors.is_empty() {
+                                    output.exit_code = 1;
+                                }
+                            }
+                            output
+                        }
                         OutputFormat::Json => CommandOutput {
                             stdout: to_json_value(json!({
                                 "ok": overall_ok,
                                 "path": path_display,
                                 "summary": check_summary,
                                 "agent": agent_summary,
+                                "fix": fix_summary,
                                 "findings": report.findings,
                                 "members": member_results,
                             })),
                             stderr: None,
-                            exit_code: if overall_ok { 0 } else { 1 },
+                            exit_code: if overall_ok && !fix_failed { 0 } else { 1 },
                         },
                     }
                 } else {
                     match format {
-                        OutputFormat::Text => render_doctor_text(
-                            &text_path_display,
-                            &target.contract_path,
-                            agent_summary.as_ref(),
-                            execution_summary.as_ref(),
-                            &target.contract.extensions,
-                            Some(mode),
-                            report,
-                        ),
+                        OutputFormat::Text => {
+                            let mut output = render_doctor_text(
+                                &text_path_display,
+                                &target.contract_path,
+                                agent_summary.as_ref(),
+                                execution_summary.as_ref(),
+                                &target.contract.extensions,
+                                Some(mode),
+                                report,
+                            );
+                            if let Some(summary) = fix_summary.as_ref() {
+                                output.stdout.push_str(&render_doctor_fix_text(summary));
+                                if !summary.errors.is_empty() {
+                                    output.exit_code = 1;
+                                }
+                            }
+                            output
+                        }
                         OutputFormat::Json => {
-                            let exit_code = if report.ok { 0 } else { 1 };
+                            let exit_code = if report.ok && !fix_failed { 0 } else { 1 };
                             CommandOutput {
                                 stdout: to_json(&DoctorSuccess {
                                     ok: report.ok,
@@ -5020,6 +5326,7 @@ pub fn doctor(
                                         .map(|value| &value.request),
                                     adapter_bootstrap: report.adapter_bootstrap.as_ref(),
                                     extensions: &target.contract.extensions,
+                                    fix: fix_summary.clone(),
                                     findings: &report.findings,
                                 }),
                                 stderr: None,
@@ -5206,6 +5513,10 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
             "run `ota detect --dry-run` to review inferred fields, or run `ota init --bootstrap` to create a starter contract",
         ),
     }];
+
+    if let Some(finding) = detect_missing_ota_state_gitignore(&root.join(DEFAULT_CONTRACT_FILE)) {
+        findings.push(finding);
+    }
 
     let detect_report = match detect_repo(root) {
         Ok(report) => Some(report),
@@ -12148,6 +12459,19 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         }
     }
 
+    if let Err(error) = ensure_ota_state_gitignored(&report.root) {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
+
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
@@ -12219,6 +12543,13 @@ fn protected_path_for_write(contract: &Contract, root: &Path, target: &Path) -> 
             None
         }
     })
+}
+
+fn ensure_ota_state_gitignored(root: &Path) -> Result<(), String> {
+    if let Some(action) = plan_ota_state_gitignore_fix(root)? {
+        apply_ota_state_gitignore_fix(&action)?;
+    }
+    Ok(())
 }
 
 fn write_detected_merge(
@@ -12503,6 +12834,19 @@ fn write_detected_merge(
         };
     }
 
+    if let Err(error) = ensure_ota_state_gitignored(&report.root) {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
+
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
@@ -12676,6 +13020,19 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
             };
         }
     };
+
+    if let Err(error) = ensure_ota_state_gitignored(&report.root) {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
 
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
@@ -14304,6 +14661,19 @@ fn render_init(
                     written: false,
                     error: &error,
                     next,
+                })),
+            };
+        }
+
+        if let Err(error) = ensure_ota_state_gitignored(&report.root) {
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
                 })),
             };
         }
