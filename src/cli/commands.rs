@@ -105,8 +105,8 @@ use crate::runner::{
     load_declared_env_sources, load_policy_env_overlay, named_execution_context,
     persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
-    resolve_task_env_details_with_policy, run_interrupt_requested,
-    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
+    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
+    run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
@@ -12204,7 +12204,9 @@ fn write_detected_merge(
 
     let comparison =
         build_detect_comparison(&existing_contract, &report, DetectRemovalScope::Drift);
-    let high_confidence_fields = detect_merge_eligible_fields(&report);
+    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
 
     let apply_all = apply_all || apply.iter().any(|field| field == ".");
     let selected_fields = apply
@@ -16150,7 +16152,9 @@ fn selected_detect_comparison(
             error: comparison.error.clone(),
         });
     }
-    let high_confidence_fields = detect_merge_eligible_fields(report);
+    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
 
     let changes = comparison
         .changes
@@ -16200,22 +16204,6 @@ fn detect_high_confidence_inference_fields(inferences: &[Inference]) -> Vec<Stri
         .filter(|inference| inference.confidence >= Confidence::High)
         .map(|inference| inference.field.clone())
         .collect()
-}
-
-fn detect_merge_eligible_fields(report: &DetectReport) -> BTreeSet<String> {
-    let mut fields = detect_high_confidence_inference_fields(&report.inferences)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    for (task_name, task) in &report.contract.tasks {
-        if !task.internal {
-            continue;
-        }
-        let run_field = format!("tasks.{task_name}.run");
-        if fields.contains(&run_field) {
-            fields.insert(format!("tasks.{task_name}.internal"));
-        }
-    }
-    fields
 }
 
 fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
@@ -21441,12 +21429,20 @@ tasks:
                 tasks,
                 ..DetectContract::default()
             },
-            inferences: vec![Inference {
-                field: String::from("tasks.setup.run"),
-                value: String::from("npm install"),
-                source: String::from("package.json#scripts.setup"),
-                confidence: Confidence::High,
-            }],
+            inferences: vec![
+                Inference {
+                    field: String::from("tasks.setup.run"),
+                    value: String::from("npm install"),
+                    source: String::from("package.json#scripts.setup"),
+                    confidence: Confidence::High,
+                },
+                Inference {
+                    field: String::from("tasks.setup.internal"),
+                    value: String::from("true"),
+                    source: String::from("package.json#scripts.setup"),
+                    confidence: Confidence::High,
+                },
+            ],
         };
 
         let apply = vec![String::from("tasks.setup.internal")];
@@ -21510,7 +21506,7 @@ tasks:
                 field: String::from("tasks.setup.run"),
                 value: String::from("npm install"),
                 source: String::from("package.json#scripts.setup"),
-                confidence: Confidence::Medium,
+                confidence: Confidence::High,
             }],
         };
 
@@ -25438,6 +25434,7 @@ tasks:
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(137),
             }),
+            false,
             None,
             "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
         ));
@@ -25483,6 +25480,7 @@ tasks:
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
             }),
+            false,
             None,
             "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
         ));
@@ -25535,7 +25533,6 @@ tasks:
             )),
         );
         let summary = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
-        crate::runner::set_run_interrupt_requested(true);
         let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
             &contract,
             Path::new("./ota.yaml"),
@@ -25549,10 +25546,10 @@ tasks:
             "",
             None,
             None,
+            true,
             None,
             &summary,
         ));
-        crate::runner::set_run_interrupt_requested(false);
 
         assert!(rendered.contains("INFO  Task interrupted"), "{rendered}");
         assert!(
@@ -25610,7 +25607,11 @@ tasks:
             next: None,
         };
         let service_termination = receipt.service_termination.clone();
-        super::apply_interrupted_run_classification(&mut receipt, service_termination.as_ref());
+        super::apply_interrupted_run_classification(
+            &mut receipt,
+            service_termination.as_ref(),
+            false,
+        );
 
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
         assert_eq!(receipt.summary.error_count, 0);
@@ -25671,7 +25672,7 @@ tasks:
             },
             next: None,
         };
-        super::apply_interrupted_run_classification(&mut receipt, None);
+        super::apply_interrupted_run_classification(&mut receipt, None, false);
 
         assert_eq!(receipt.steps[0].status, "INTERRUPTED");
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
@@ -25725,9 +25726,7 @@ tasks:
             next: None,
         };
 
-        crate::runner::set_run_interrupt_requested(true);
-        super::apply_interrupted_run_classification(&mut receipt, None);
-        crate::runner::set_run_interrupt_requested(false);
+        super::apply_interrupted_run_classification(&mut receipt, None, false);
 
         assert_eq!(receipt.steps[0].status, "FAILED");
         assert_eq!(receipt.summary.error_count, 1);
@@ -25748,7 +25747,6 @@ tasks:
 "#,
         )
         .expect("contract should parse");
-        crate::runner::set_run_interrupt_requested(true);
         let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
             &contract,
             Path::new("./ota.yaml"),
@@ -25762,10 +25760,10 @@ tasks:
             "boom",
             None,
             None,
+            false,
             None,
             "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
         ));
-        crate::runner::set_run_interrupt_requested(false);
 
         assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
         assert!(!rendered.contains("INFO  Task interrupted"), "{rendered}");
@@ -28013,6 +28011,7 @@ fn run_single_contract_target_streaming(
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
+                outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let mut output = String::new();
@@ -28069,6 +28068,7 @@ fn run_single_contract_target_streaming(
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
+                outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
@@ -28091,6 +28091,7 @@ fn run_single_contract_target_streaming(
                     &outcome.stderr,
                     outcome.runtime.as_ref(),
                     outcome.service_termination.as_ref(),
+                    outcome.interrupted,
                     receipt_text.as_deref(),
                     &summary,
                 ),
@@ -28205,6 +28206,7 @@ fn run_single_contract_target_captured(
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
+                outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let mut output = String::new();
@@ -28258,6 +28260,7 @@ fn run_single_contract_target_captured(
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
+                outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             let summary = render_execution_receipt_summary_block(
@@ -28280,6 +28283,7 @@ fn run_single_contract_target_captured(
                     &outcome.stderr,
                     outcome.runtime.as_ref(),
                     outcome.service_termination.as_ref(),
+                    outcome.interrupted,
                     receipt_text.as_deref(),
                     &summary,
                 ),
@@ -28388,26 +28392,28 @@ fn exit_code_indicates_user_interruption(exit_code: i32) -> bool {
 fn receipt_reports_user_interruption(
     receipt: &ExecutionReceipt,
     service_termination: Option<&ServiceTermination>,
+    interrupted: bool,
 ) -> bool {
-    service_termination
-        .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
+    interrupted
+        || service_termination
+            .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
         || receipt.steps.iter().any(|step| {
             step.detail
                 .as_deref()
                 .is_some_and(|detail| detail.contains("interrupted by user"))
         })
-        || (run_interrupt_requested()
-            && receipt.steps.iter().any(|step| {
-                step.exit_code
-                    .is_some_and(exit_code_indicates_user_interruption)
-            }))
+        || receipt
+            .steps
+            .iter()
+            .any(|step| step.status.trim() == "INTERRUPTED")
 }
 
 fn apply_interrupted_run_classification(
     receipt: &mut ExecutionReceipt,
     service_termination: Option<&ServiceTermination>,
+    interrupted: bool,
 ) {
-    if !receipt_reports_user_interruption(receipt, service_termination) {
+    if !receipt_reports_user_interruption(receipt, service_termination, interrupted) {
         return;
     }
 
@@ -28474,6 +28480,7 @@ fn render_run_captured_failure_text(
     stderr: &str,
     runtime: Option<&ResolvedTaskRuntime>,
     service_termination: Option<&ServiceTermination>,
+    interrupted: bool,
     receipt_text: Option<&str>,
     summary: &str,
 ) -> String {
@@ -28503,7 +28510,7 @@ fn render_run_captured_failure_text(
             receipt_text,
         );
     }
-    if run_interrupt_requested() && exit_code_indicates_user_interruption(exit_code) {
+    if run_failure_reports_user_interruption(interrupted, exit_code, summary, receipt_text) {
         return render_task_interrupted_text(
             where_value,
             task_name,
@@ -28542,6 +28549,29 @@ fn render_run_captured_failure_text(
         Some(summary),
         receipt_text,
     )
+}
+
+fn run_failure_reports_user_interruption(
+    interrupted: bool,
+    exit_code: i32,
+    summary_block: &str,
+    receipt_text: Option<&str>,
+) -> bool {
+    if interrupted {
+        return true;
+    }
+    if !exit_code_indicates_user_interruption(exit_code) {
+        return false;
+    }
+    let summary_plain = strip_ansi_codes(summary_block);
+    if summary_plain.contains("Status:    interrupted")
+        || summary_plain.contains("interrupted by user")
+    {
+        return true;
+    }
+    receipt_text
+        .map(strip_ansi_codes)
+        .is_some_and(|text| text.contains("interrupted by user") || text.contains("INTERRUPTED"))
 }
 
 fn render_task_interrupted_text(
