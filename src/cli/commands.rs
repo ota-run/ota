@@ -27015,6 +27015,49 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_reports_exited_service_as_interrupted_when_user_interrupt_observed() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            0,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Exited,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(0),
+            }),
+            true,
+            None,
+            "RUN SUMMARY\nStatus:    interrupted\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
+    }
+
+    #[test]
     fn run_failure_text_explains_exit_137_service_kill_and_aligns_container_summary() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -27423,6 +27466,61 @@ tasks:
         };
 
         super::apply_interrupted_run_classification(&mut receipt, None, false);
+
+        assert_eq!(receipt.steps[0].status, "FAILED");
+        assert_eq!(receipt.summary.error_count, 1);
+        assert_eq!(receipt.summary.info_count, 0);
+    }
+
+    #[test]
+    fn interrupted_signal_does_not_reclassify_nonzero_service_termination_in_receipt() {
+        let mut receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("dev")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(1),
+            }),
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+        let service_termination = receipt.service_termination.clone();
+        super::apply_interrupted_run_classification(
+            &mut receipt,
+            service_termination.as_ref(),
+            true,
+        );
 
         assert_eq!(receipt.steps[0].status, "FAILED");
         assert_eq!(receipt.summary.error_count, 1);
@@ -30309,9 +30407,11 @@ fn receipt_reports_user_interruption(
     service_termination: Option<&ServiceTermination>,
     interrupted: bool,
 ) -> bool {
+    if let Some(service_termination) = service_termination {
+        return service_termination_reports_user_interruption(service_termination, interrupted);
+    }
+
     interrupted
-        || service_termination
-            .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
         || receipt.steps.iter().any(|step| {
             step.detail
                 .as_deref()
@@ -30321,6 +30421,19 @@ fn receipt_reports_user_interruption(
             .steps
             .iter()
             .any(|step| step.status.trim() == "INTERRUPTED")
+}
+
+fn service_termination_reports_user_interruption(
+    service_termination: &ServiceTermination,
+    interrupted: bool,
+) -> bool {
+    match service_termination.cause {
+        ServiceTerminationCause::Interrupted => true,
+        ServiceTerminationCause::Exited => interrupted,
+        ServiceTerminationCause::ExitedNonZero
+        | ServiceTerminationCause::OomKilled
+        | ServiceTerminationCause::Unknown => false,
+    }
 }
 
 fn apply_interrupted_run_classification(
@@ -30401,10 +30514,7 @@ fn render_run_captured_failure_text(
     summary: &str,
 ) -> String {
     if let Some(service_termination) = service_termination {
-        if matches!(
-            service_termination.cause,
-            ServiceTerminationCause::Interrupted
-        ) {
+        if service_termination_reports_user_interruption(service_termination, interrupted) {
             return render_service_interrupted_text(
                 where_value,
                 task_name,
