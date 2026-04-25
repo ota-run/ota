@@ -8128,7 +8128,11 @@ cleanup_listener_owners() {
 }
 
 cleanup_pidfile_owner
-cleanup_listener_owners || exit 1
+cleanup_listener_owners
+cleanup_listener_owners_status=$?
+if [ "$cleaned" != "1" ] && [ "$cleanup_listener_owners_status" -ne 0 ]; then
+  exit 1
+fi
 if [ "$cleaned" = "1" ]; then printf cleaned; fi
 exit 0
 "#;
