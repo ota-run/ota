@@ -269,6 +269,12 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         return out;
     }
 
+    if let Some(missing) = detect_missing_contract_context(&body_message) {
+        render_missing_contract_guidance(&mut out, where_label, &body_message, missing, false);
+        append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
+        return out;
+    }
+
     if let Some((why, next_steps)) = split_embedded_next_block(&body_message) {
         if let Some((task_name, exit_code)) = parse_task_exit_failure_line(&why) {
             return render_task_exit_failure_text(
@@ -325,12 +331,6 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
                 }
             }
         }
-        append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
-        return out;
-    }
-
-    if let Some(missing) = detect_missing_contract_context(&body_message) {
-        render_missing_contract_guidance(&mut out, where_label, &body_message, missing);
         append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
         return out;
     }
@@ -665,27 +665,31 @@ fn render_missing_contract_guidance(
     where_label: &str,
     message: &str,
     context: MissingContractContext,
+    include_where: bool,
 ) {
-    out.push_str(&format!(
-        "\n{} {}",
-        error_key("Where:"),
-        paint_code(where_label)
-    ));
-    out.push_str(&format!("\n{} {}", error_key("Why:"), message));
+    if include_where {
+        out.push_str(&format!(
+            "\n{} {}",
+            error_key("Where:"),
+            paint_code(where_label)
+        ));
+    }
+    let why = split_embedded_next_block(message)
+        .map(|(why, _)| why)
+        .filter(|why| !why.trim().is_empty())
+        .unwrap_or_else(|| message.to_string());
+    out.push_str(&format!("\n{} {}", error_key("Why:"), why));
     match context {
         MissingContractContext::Repo => {
             out.push_str(&format_error_next_timeline(&[
+                String::from("run this command from a repo directory that contains `ota.yaml`"),
                 format!(
                     "run {} to create a starter contract",
                     paint_code("`ota init`")
                 ),
                 format!(
-                    "or run {} to preview inferred fields",
-                    paint_code("`ota detect --dry-run`")
-                ),
-                format!(
-                    "or run {} to write a detected contract",
-                    paint_code("`ota detect --write`")
+                    "or run {} to preview what Ota would generate",
+                    paint_code("`ota init --dry-run`")
                 ),
             ]));
         }
@@ -3102,7 +3106,7 @@ pub fn run_command(
         Ok(target) => target,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                CommandOutput::failure(stylize_text_failure("ota run", &error.to_string())),
                 debug,
                 vec![
                     String::from("DEBUG command=run"),
@@ -4101,6 +4105,23 @@ fn command_message_failure_text(
     let compact_message = compact_backticked_paths(message);
     let where_value = infer_failure_where(default_where, &compact_message);
 
+    if let Some(missing) = detect_missing_contract_context(&compact_message) {
+        let mut stdout = format_command_header(command, &where_value);
+        stdout.push_str(&format!(
+            "\n\n{}  {}",
+            render_severity(FindingSeverity::Error),
+            paint(summary, "1;37")
+        ));
+        render_missing_contract_guidance(
+            &mut stdout,
+            &where_value,
+            &compact_message,
+            missing,
+            true,
+        );
+        return stdout;
+    }
+
     if let Some((why, next_steps)) = split_embedded_next_block(&compact_message) {
         let why_lines = why
             .lines()
@@ -4109,17 +4130,6 @@ fn command_message_failure_text(
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
         return structured_error_text(command, &where_value, summary, &why_lines, &next_steps);
-    }
-
-    if let Some(missing) = detect_missing_contract_context(&compact_message) {
-        let mut stdout = format_command_header(command, &where_value);
-        stdout.push_str(&format!(
-            "\n\n{}  {}",
-            render_severity(FindingSeverity::Error),
-            paint(summary, "1;37")
-        ));
-        render_missing_contract_guidance(&mut stdout, &where_value, &compact_message, missing);
-        return stdout;
     }
 
     structured_error_text(
@@ -9556,7 +9566,7 @@ fn workspace_target_resolution_text(command: &str, rerun_command: &str, error: &
             render_severity(FindingSeverity::Error),
             paint("Workspace target could not be resolved", "1;37")
         ));
-        render_missing_contract_guidance(&mut stdout, &where_value, &compact_error, missing);
+        render_missing_contract_guidance(&mut stdout, &where_value, &compact_error, missing, true);
         return stdout;
     }
 
@@ -9742,6 +9752,7 @@ fn render_workspace_validate_failure(
                     "ota workspace validate",
                     &compact_error,
                     missing,
+                    false,
                 );
             } else {
                 out.push_str(&format!("\n{} {}", error_key("Why:"), compact_error));
@@ -22482,6 +22493,45 @@ tasks:
     }
 
     #[test]
+    fn run_command_missing_contract_guidance_avoids_contract_dependent_next_steps() {
+        let _guard = cwd_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let cwd = env::current_dir().expect("current dir");
+        env::set_current_dir(repo.path()).expect("set current dir");
+
+        let output = super::run_command(
+            "dev",
+            None,
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            false,
+        );
+
+        env::set_current_dir(cwd).expect("restore current dir");
+
+        assert_ne!(output.exit_code, 0);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("no `ota.yaml` found from `.` upward"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("ota tasks --use"), "{stderr}");
+        assert!(
+            stderr.contains("run this command from a repo directory that contains `ota.yaml`"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("run `ota init` to create a starter contract"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
     fn clean_text_uses_reviewed_header_when_only_ambiguous_state_is_reported() {
         let report = CleanExecutionReport {
             skipped_ambiguous_persistent_containers: 2,
@@ -27073,7 +27123,10 @@ tasks:
         ));
 
         assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
-        assert!(!rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(
+            !rendered.contains("INFO  Service interrupted"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Status:    failed"), "{rendered}");
         assert!(
             rendered.contains("Note:      service stopped after readiness; container exited"),
@@ -28157,6 +28210,108 @@ tasks:
     }
 
     #[test]
+    fn execution_summary_hides_endpoint_for_failed_service_before_startup() {
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                crate::runner::ResolvedTaskRuntimeListener {
+                    protocol: crate::schema::TaskRuntimeProtocol::Http,
+                    bind: crate::runner::ResolvedTaskRuntimeBind {
+                        address: String::from("0.0.0.0"),
+                        port: 8787,
+                    },
+                    resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                        host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                            address: String::from("127.0.0.1"),
+                            port: 8787,
+                            url: Some(String::from("http://127.0.0.1:8787/")),
+                        }),
+                    }),
+                },
+            )]),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 8787,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 8787,
+                    url: Some(String::from("http://127.0.0.1:8787/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: vec![crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 8787,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 8787,
+                    url: Some(String::from("http://127.0.0.1:8787/")),
+                },
+                primary: true,
+            }],
+        };
+
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("sandbox:ctx")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-test")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: Some(runtime),
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "sandbox",
+                "FAILED",
+                None,
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("sandbox"),
+            "RUN SUMMARY",
+        ));
+
+        assert!(!rendered.contains("Endpoint:"), "{rendered}");
+    }
+
+    #[test]
     fn runtime_listener_lines_label_primary_and_secondary_listeners() {
         let runtime = crate::runner::ResolvedTaskRuntime {
             kind: crate::schema::TaskRuntimeKind::Service,
@@ -28427,6 +28582,29 @@ execution:
         assert!(rendered.contains("`install-from-source` exited with code 101"));
         assert!(rendered.contains("Why: task `install-from-source` returned a non-zero exit code"));
         assert!(rendered.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
+    }
+
+    #[test]
+    fn stylize_text_failure_prioritizes_missing_contract_guidance_over_embedded_task_footer() {
+        let rendered = strip_ansi_codes(&stylize_text_failure(
+            "ota run",
+            "no `ota.yaml` found from `.` upward\n\nNext: run `ota tasks --use` to inspect runnable task usage",
+        ));
+
+        assert!(rendered.contains("Operation failed"), "{rendered}");
+        assert!(
+            rendered.contains("no `ota.yaml` found from `.` upward"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("ota tasks --use"), "{rendered}");
+        assert!(
+            rendered.contains("run this command from a repo directory that contains `ota.yaml`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("run `ota init` to create a starter contract"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -30720,10 +30898,10 @@ fn receipt_reports_user_interruption(
         return true;
     }
 
-    let has_interrupt_exit_code = receipt
-        .steps
-        .iter()
-        .any(|step| step.exit_code.is_some_and(exit_code_indicates_user_interruption));
+    let has_interrupt_exit_code = receipt.steps.iter().any(|step| {
+        step.exit_code
+            .is_some_and(exit_code_indicates_user_interruption)
+    });
     if has_interrupt_exit_code {
         return true;
     }
@@ -30733,8 +30911,9 @@ fn receipt_reports_user_interruption(
     }
 
     let has_non_interrupt_nonzero = receipt.steps.iter().any(|step| {
-        step.exit_code
-            .is_some_and(|exit_code| exit_code != 0 && !exit_code_indicates_user_interruption(exit_code))
+        step.exit_code.is_some_and(|exit_code| {
+            exit_code != 0 && !exit_code_indicates_user_interruption(exit_code)
+        })
     });
     !has_non_interrupt_nonzero
 }
@@ -35374,6 +35553,15 @@ fn secondary_runtime_endpoint_count(runtime: &crate::runner::ResolvedTaskRuntime
 }
 
 fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
+    if !receipt.ok
+        && !receipt
+            .service_termination
+            .as_ref()
+            .is_some_and(|termination| termination.after_readiness)
+    {
+        return None;
+    }
+
     receipt
         .runtime
         .as_ref()

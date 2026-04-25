@@ -130,6 +130,7 @@ Use the minimum context, tokens, tool calls, edits, and validation needed to com
 - **Default to the long-term product fix, not the local workaround.** If the real blocker is inside Ota and fixable, fix the blocker instead of teaching users to route around it.
 - **Favor standardization, observability, deterministic behavior, contract clarity, and clean boundaries** over clever shortcuts.
 - **Do not normalize hacks, repo-local band-aids, or user-burdening escape hatches** as the primary solution when a correct platform fix is feasible.
+- **Do not introduce repo-local glue to compensate for fixable Ota platform gaps** when the correct Ota fix is feasible.
 - **Call out drift, weak boundaries, duplicated responsibility, leaky abstractions, and anything that undermines Ota as infrastructure.**
 - **Treat naming, schema shape, CLI behavior, JSON output, and execution semantics as strategic product decisions, not local implementation details.**
 - **When several options are viable, recommend the one that best improves long-term reliability, maintainability, developer experience, and adoption leverage.**
