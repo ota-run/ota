@@ -21879,7 +21879,7 @@ mod tests {
     };
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
-        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, ServiceTermination,
+        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, RunError, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
         simulate_run_interrupt_for_test,
     };
@@ -26956,6 +26956,54 @@ tasks:
     }
 
     #[test]
+    fn run_structured_error_text_aligns_container_summary_for_persistent_bind_conflict() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            &RunError::PersistentContainerListenerBindConflict {
+                task: String::from("dev"),
+                listener: String::from("http"),
+                address: String::from("0.0.0.0"),
+                port: 8080,
+                container: String::from("ota-persistent-deadbeef"),
+            },
+            "RUN SUMMARY\nContainer: stale-summary-id\nStatus:    failed\nNote:      placeholder",
+            None,
+        ));
+
+        assert!(rendered.contains("Listener bind conflict"), "{rendered}");
+        assert!(rendered.contains("Field: tasks.dev.runtime.listeners.http.bind.port"));
+        assert!(rendered.contains("Container: ota-persistent-deadbeef"), "{rendered}");
+        assert!(!rendered.contains("Container: stale-summary-id"), "{rendered}");
+    }
+
+    #[test]
     fn run_failure_text_reports_interrupted_non_service_with_cleanup_note() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -29845,6 +29893,12 @@ fn run_single_contract_target_streaming(
                     details_footer
                 ),
             };
+            let error_target = match &error {
+                RunError::PersistentContainerListenerBindConflict { container, .. } => {
+                    Some(container.clone())
+                }
+                _ => None,
+            };
             let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -29854,7 +29908,7 @@ fn run_single_contract_target_streaming(
                 &[],
                 1,
                 false,
-                None,
+                error_target,
                 None,
                 Some(next_note),
             );
@@ -30037,6 +30091,12 @@ fn run_single_contract_target_captured(
                     details_footer
                 ),
             };
+            let error_target = match &error {
+                RunError::PersistentContainerListenerBindConflict { container, .. } => {
+                    Some(container.clone())
+                }
+                _ => None,
+            };
             let mut receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -30046,7 +30106,7 @@ fn run_single_contract_target_captured(
                 &[],
                 1,
                 false,
-                None,
+                error_target,
                 None,
                 Some(next_note),
             );
@@ -31614,7 +31674,12 @@ fn render_run_structured_error_text(
             output.push_str(summary_block);
             return output;
         }
-        RunError::PersistentContainerListenerBindConflict { task, listener, .. } => {
+        RunError::PersistentContainerListenerBindConflict {
+            task,
+            listener,
+            container,
+            ..
+        } => {
             let mut output = structured_field_error_text(
                 "RUN",
                 &text_path_display,
@@ -31630,7 +31695,13 @@ fn render_run_structured_error_text(
                 output.push_str(receipt_text);
             }
             output.push('\n');
-            output.push_str(summary_block);
+            if let Some(summary_override) =
+                summary_with_container_override(Some(summary_block), container)
+            {
+                output.push_str(&summary_override);
+            } else {
+                output.push_str(summary_block);
+            }
             return output;
         }
         RunError::RuntimeListenerResolutionFailed {

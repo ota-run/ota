@@ -6759,7 +6759,6 @@ fn execute_persistent_container_task_command(
             .as_ref()
             .map(service_termination_execution_note),
     );
-
     if output.exit_code != 0 && persistent_container_exec_hit_stopped_container(&output.stderr) {
         let remove = remove_persistent_container(engine, &container_name, task_name)?;
         if remove.exit_code != 0 {
@@ -8837,6 +8836,8 @@ mod tests {
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
 
     use tempfile::{TempDir, tempdir};
 
@@ -8857,6 +8858,7 @@ mod tests {
         resolve_task_env_details, run_task, run_task_captured, run_task_with_args,
         run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
         run_task_with_progress, running_loader_label, running_loader_label_for_backend,
+        simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -13076,6 +13078,92 @@ tasks:
         assert!(labels.contains(super::OTA_MANAGED_CONTAINER_LABEL));
         assert!(labels.contains(super::OTA_PERSISTENT_CONTAINER_LABEL));
         assert!(labels.contains(super::OTA_REPO_CONTAINER_LABEL_KEY));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_persistent_service_run_reuses_shared_backend_on_next_run() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    run: sleep 2
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let interrupt_thread = thread::spawn(|| {
+            thread::sleep(Duration::from_millis(1000));
+            simulate_run_interrupt_for_test();
+        });
+        let first = run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+            .expect("first run should complete");
+        interrupt_thread
+            .join()
+            .expect("interrupt thread should finish");
+        let second = run_task(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(first.interrupted);
+        assert_eq!(
+            second.execution_note.as_deref(),
+            Some("persistent container reused")
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 1);
+        assert_eq!(log.matches("rm").count(), 0, "{log}");
     }
 
     #[cfg(unix)]
