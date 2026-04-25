@@ -349,8 +349,30 @@ pub(crate) fn run_streaming_command_with_capture_with_loader_options(
     capture_output: bool,
     live_log: Option<&StreamLogTee>,
 ) -> io::Result<StreamingCommandOutput> {
+    run_streaming_command_with_capture_with_loader_hook_options(
+        command,
+        label,
+        echo_stderr,
+        capture_output,
+        live_log,
+        |_| {},
+    )
+}
+
+pub(crate) fn run_streaming_command_with_capture_with_loader_hook_options<F>(
+    command: &mut Command,
+    label: &str,
+    echo_stderr: bool,
+    capture_output: bool,
+    live_log: Option<&StreamLogTee>,
+    on_notifier_ready: F,
+) -> io::Result<StreamingCommandOutput>
+where
+    F: FnOnce(Option<StreamPhaseNotifier>),
+{
     let loader = StreamPhaseLoader::start(label);
     let notifier = loader.as_ref().map(|loader| loader.notifier());
+    on_notifier_ready(notifier.clone());
     let mut child = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
@@ -6189,6 +6211,7 @@ fn resolved_runtime_probe_target(runtime: &ResolvedTaskRuntime) -> Option<(Strin
 fn start_runtime_readiness_probe(
     runtime: Option<&ResolvedTaskRuntime>,
     announce_ready_endpoint: bool,
+    notifier: Option<StreamPhaseNotifier>,
 ) -> Option<RuntimeReadinessProbe> {
     let runtime = runtime?;
     if !resolved_runtime_has_public_endpoint(runtime) {
@@ -6209,6 +6232,7 @@ fn start_runtime_readiness_probe(
     // This probe is diagnostic only. It records whether the projected host endpoint
     // ever became reachable while the workload was running; it must not tear the
     // workload down or impose a fixed startup deadline on service execution.
+    let probe_notifier = notifier;
     let handle = thread::spawn(move || {
         let addr = format!("{address}:{port}");
         while !thread_stop.load(Ordering::Relaxed) {
@@ -6219,7 +6243,13 @@ fn start_runtime_readiness_probe(
             {
                 thread_observed.store(true, Ordering::Relaxed);
                 if let Some(line) = ready_line.as_deref() {
-                    eprintln!("{line}");
+                    if let Some(notifier) = probe_notifier.as_ref() {
+                        let _guard = notifier.begin_output();
+                        eprintln!("{line}");
+                    } else {
+                        clear_stream_phase_line();
+                        eprintln!("{line}");
+                    }
                 }
                 break;
             }
@@ -6277,10 +6307,10 @@ fn classify_container_service_termination(
         ServiceTerminationCause::Interrupted
     } else if effective_exit_code > 0 {
         ServiceTerminationCause::ExitedNonZero
-    } else if effective_exit_code == 0 {
-        ServiceTerminationCause::Exited
     } else if interrupted {
         ServiceTerminationCause::Interrupted
+    } else if effective_exit_code == 0 {
+        ServiceTerminationCause::Exited
     } else {
         ServiceTerminationCause::Unknown
     };
@@ -6322,6 +6352,13 @@ fn service_termination_execution_note(service_termination: &ServiceTermination) 
     } else {
         format!("service stopped before readiness; {cause}")
     }
+}
+
+fn should_cleanup_interrupted_persistent_service_workload(
+    service_termination: Option<&ServiceTermination>,
+) -> bool {
+    service_termination
+        .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
 }
 
 fn inspect_container_termination_state(
@@ -6508,13 +6545,17 @@ fn execute_ephemeral_container_task_command(
         } => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = ephemeral_container_stream_command(engine, &container_name);
-            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref(), true);
-            let output_result = run_streaming_command_with_capture_with_loader_options(
+            let mut readiness_probe = None;
+            let output_result = run_streaming_command_with_capture_with_loader_hook_options(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
                 false,
                 capture_output,
                 live_log.as_ref(),
+                |notifier| {
+                    readiness_probe =
+                        start_runtime_readiness_probe(prepared_runtime.as_ref(), true, notifier);
+                },
             );
             let output = match output_result {
                 Ok(output) => output,
@@ -6588,7 +6629,8 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref(), false);
+            let readiness_probe =
+                start_runtime_readiness_probe(prepared_runtime.as_ref(), false, None);
             let output = child.wait_with_output().map_err(|source| {
                 let _ = remove_persistent_container(engine, &container_name, task_name);
                 RunError::SpawnFailed {
@@ -6770,6 +6812,7 @@ fn execute_persistent_container_task_command(
     let readiness_probe = start_runtime_readiness_probe(
         resolved_runtime.as_ref(),
         matches!(mode, TaskExecutionMode::Stream { .. }),
+        None,
     );
     let mut output = exec_persistent_container_task_command(
         task_name,
@@ -6808,17 +6851,14 @@ fn execute_persistent_container_task_command(
             .as_ref()
             .map(service_termination_execution_note),
     );
-    if output
-        .service_termination
-        .as_ref()
-        .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
-    {
+    if should_cleanup_interrupted_persistent_service_workload(output.service_termination.as_ref()) {
         output.execution_note = merge_execution_note(
             output.execution_note,
             cleanup_interrupted_persistent_service_workload_and_note(
                 task_name,
                 engine,
                 &container_name,
+                runtime,
             ),
         );
     }
@@ -6863,6 +6903,7 @@ fn execute_persistent_container_task_command(
         let readiness_probe = start_runtime_readiness_probe(
             resolved_runtime.as_ref(),
             matches!(mode, TaskExecutionMode::Stream { .. }),
+            None,
         );
         let mut output = exec_persistent_container_task_command(
             task_name,
@@ -6901,17 +6942,16 @@ fn execute_persistent_container_task_command(
                 .as_ref()
                 .map(service_termination_execution_note),
         );
-        if output
-            .service_termination
-            .as_ref()
-            .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
-        {
+        if should_cleanup_interrupted_persistent_service_workload(
+            output.service_termination.as_ref(),
+        ) {
             output.execution_note = merge_execution_note(
                 output.execution_note,
                 cleanup_interrupted_persistent_service_workload_and_note(
                     task_name,
                     engine,
                     &container_name,
+                    runtime,
                 ),
             );
         }
@@ -7866,21 +7906,97 @@ fn cleanup_interrupted_persistent_service_workload_and_note(
     task_name: &str,
     engine: &str,
     container_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
 ) -> Option<String> {
     let pidfile = persistent_service_workload_pidfile_path(task_name);
+    let fixed_bind_ports = runtime
+        .into_iter()
+        .flat_map(|runtime| runtime.listeners.values())
+        .filter_map(|listener| {
+            (listener.bind.port.mode == crate::schema::TaskRuntimePortMode::Fixed)
+                .then_some(listener.bind.port.value)
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let fixed_bind_ports = fixed_bind_ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
     let cleanup_script = format!(
         "pidfile={pidfile}; \
-if [ ! -s \"$pidfile\" ]; then exit 0; fi; \
-read pid started < \"$pidfile\" || {{ rm -f \"$pidfile\"; exit 0; }}; \
-current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); \
-if [ -z \"$current\" ] || [ \"$current\" != \"$started\" ]; then rm -f \"$pidfile\"; exit 0; fi; \
-kill -TERM \"$pid\" 2>/dev/null || true; \
-i=0; \
-while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 20 ]; do i=$((i+1)); sleep 0.1; done; \
-if kill -0 \"$pid\" 2>/dev/null; then kill -KILL \"$pid\" 2>/dev/null || true; sleep 0.1; fi; \
-if kill -0 \"$pid\" 2>/dev/null; then exit 1; fi; \
-rm -f \"$pidfile\"; printf cleaned; exit 0",
+ports={ports}; \
+cleaned=0; \
+port_listening() {{ \
+  target=\"$1\"; \
+  awk -v port=\"$target\" 'BEGIN {{ found = 0 }} NR > 1 {{ split($2, a, \":\"); if ($4 == \"0A\" && toupper(a[2]) == port) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; \
+}}; \
+terminate_pid_tree() {{ \
+  pid=\"$1\"; \
+  [ -n \"$pid\" ] || return 0; \
+  [ \"$pid\" = \"$$\" ] && return 0; \
+  [ \"$pid\" = \"1\" ] && return 0; \
+  children=$(cat \"/proc/$pid/task/$pid/children\" 2>/dev/null || true); \
+  for child in $children; do terminate_pid_tree \"$child\"; done; \
+  kill -TERM \"$pid\" 2>/dev/null || true; \
+  i=0; \
+  while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 20 ]; do i=$((i+1)); sleep 0.1; done; \
+  if kill -0 \"$pid\" 2>/dev/null; then kill -KILL \"$pid\" 2>/dev/null || true; sleep 0.1; fi; \
+  kill -0 \"$pid\" 2>/dev/null && return 1; \
+  return 0; \
+}}; \
+cleanup_pidfile_owner() {{ \
+  [ -s \"$pidfile\" ] || return 0; \
+  read pid started < \"$pidfile\" || {{ rm -f \"$pidfile\"; return 0; }}; \
+  current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); \
+  if [ -z \"$current\" ] || [ \"$current\" != \"$started\" ]; then rm -f \"$pidfile\"; return 0; fi; \
+  terminate_pid_tree \"$pid\" || return 1; \
+  cleaned=1; \
+  rm -f \"$pidfile\"; \
+}}; \
+cleanup_listener_owners() {{ \
+  [ -n \"$ports\" ] || return 0; \
+  find_listener_owner_pids() {{ \
+    target_hex=\"$1\"; \
+    inodes=$(awk -v target=\"$target_hex\" 'BEGIN {{ found = 0 }} NR > 1 {{ split($2, a, \":\"); if ($4 == \"0A\" && toupper(a[2]) == target && $10 ~ /^[0-9]+$/) {{ print $10; found = 1 }} }} END {{ if (!found) exit 1 }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true); \
+    [ -n \"$inodes\" ] || return 0; \
+    owners=\"\"; \
+    for inode in $inodes; do \
+      for fd in /proc/[0-9]*/fd/*; do \
+        [ -e \"$fd\" ] || continue; \
+        link=$(readlink \"$fd\" 2>/dev/null || true); \
+        [ \"$link\" = \"socket:[$inode]\" ] || continue; \
+        pid=${{fd#/proc/}}; \
+        pid=${{pid%%/*}}; \
+        [ \"$pid\" = \"$$\" ] && continue; \
+        [ \"$pid\" = \"1\" ] && continue; \
+        case \" $owners \" in \
+          *\" $pid \"*) ;; \
+          *) owners=\"$owners $pid\" ;; \
+        esac; \
+      done; \
+    done; \
+    printf '%s\n' \"$owners\"; \
+  }}; \
+  for port in $ports; do \
+    hex=$(printf '%04X' \"$port\"); \
+    owners=$(find_listener_owner_pids \"$hex\"); \
+    for pid in $owners; do \
+      terminate_pid_tree \"$pid\" || return 1; \
+      cleaned=1; \
+    done; \
+  done; \
+  for port in $ports; do \
+    hex=$(printf '%04X' \"$port\"); \
+    if port_listening \"$hex\"; then return 1; fi; \
+  done; \
+}}; \
+cleanup_pidfile_owner || exit 1; \
+cleanup_listener_owners || exit 1; \
+if [ \"$cleaned\" = \"1\" ]; then printf cleaned; fi; \
+exit 0",
         pidfile = shell_quote(&pidfile),
+        ports = shell_quote(&fixed_bind_ports),
     );
     match container_command_output(
         engine,
@@ -13360,6 +13476,7 @@ project:
             "dev",
             "docker",
             container_name,
+            None,
         );
 
         let mut exited = false;
@@ -13394,6 +13511,176 @@ project:
             !Path::new(&pidfile).exists(),
             "cleanup should remove pidfile"
         );
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn interrupted_persistent_service_cleanup_kills_listener_owner_pid() {
+        use std::net::{TcpListener, TcpStream};
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "ota-persistent-test";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        File::create(state_dir.join(format!("{container_name}.running"))).unwrap();
+
+        let reserved = TcpListener::bind("127.0.0.1:0").expect("should reserve local port");
+        let listener_port = reserved.local_addr().expect("listener local addr").port();
+        drop(reserved);
+
+        let listener_source = fixture.dir.path().join("listener-owner.rs");
+        let listener_binary = fixture.dir.path().join("listener-owner");
+        fs::write(
+            &listener_source,
+            r#"use std::net::TcpListener;
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let port = std::env::args()
+        .nth(1)
+        .expect("port arg")
+        .parse::<u16>()
+        .expect("valid port");
+    let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind listener");
+    listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    loop {
+        let _ = listener.accept();
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+"#,
+        )
+        .unwrap();
+        let rustc = Command::new("rustc")
+            .arg(&listener_source)
+            .arg("-O")
+            .arg("-o")
+            .arg(&listener_binary)
+            .output()
+            .expect("rustc should run");
+        assert!(
+            rustc.status.success(),
+            "rustc failed: {}",
+            String::from_utf8_lossy(&rustc.stderr)
+        );
+
+        let mut listener_owner = Command::new(&listener_binary)
+            .arg(listener_port.to_string())
+            .spawn()
+            .expect("listener owner should start");
+        let mut connected = false;
+        for _ in 0..30 {
+            if TcpStream::connect(("127.0.0.1", listener_port)).is_ok() {
+                connected = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(connected, "listener owner should accept connections");
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {listener_port}
+"#
+            ),
+        )
+        .expect("runtime fixture contract should parse");
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref())
+            .expect("runtime should exist");
+
+        let note = super::cleanup_interrupted_persistent_service_workload_and_note(
+            "dev",
+            "docker",
+            container_name,
+            Some(runtime),
+        );
+
+        let mut exited = false;
+        for _ in 0..30 {
+            if listener_owner.try_wait().unwrap().is_some() {
+                exited = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if !exited {
+            let _ = Command::new("kill")
+                .args(["-KILL", &listener_owner.id().to_string()])
+                .status();
+        }
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(
+            note.as_deref(),
+            Some("interrupted service workload cleaned up inside persistent backend")
+        );
+        assert!(exited, "cleanup should stop the listener owner process");
+        let rebound =
+            TcpListener::bind(("127.0.0.1", listener_port)).expect("port should be free again");
+        drop(rebound);
     }
 
     #[cfg(unix)]
@@ -13917,6 +14204,163 @@ tasks:
         assert_eq!(
             service_termination.cause,
             super::ServiceTerminationCause::Interrupted
+        );
+    }
+
+    #[test]
+    fn container_service_classification_uses_interrupt_flag_without_inspect_state_on_zero_exit() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref());
+        let resolved_runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let service_termination = super::classify_container_service_termination(
+            runtime,
+            Some(&resolved_runtime),
+            true,
+            None,
+            0,
+            true,
+            "ota-persistent-test",
+        )
+        .expect("service termination should classify");
+
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::Interrupted
+        );
+        assert!(
+            super::should_cleanup_interrupted_persistent_service_workload(Some(
+                &service_termination
+            ))
+        );
+    }
+
+    #[test]
+    fn container_service_classification_preserves_nonzero_exit_without_inspect_state_when_interrupt_arrives_late()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref());
+        let resolved_runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let service_termination = super::classify_container_service_termination(
+            runtime,
+            Some(&resolved_runtime),
+            true,
+            None,
+            1,
+            true,
+            "ota-persistent-test",
+        )
+        .expect("service termination should classify");
+
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::ExitedNonZero
+        );
+        assert!(
+            !super::should_cleanup_interrupted_persistent_service_workload(Some(
+                &service_termination
+            ))
         );
     }
 
@@ -18330,7 +18774,7 @@ case "$command" in
     printf "exec\n" >> "$host_dir/docker-log.txt"
     if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
       case "$3" in
-        *"/proc/net/tcp"*)
+        "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null || true")
           if [ -f "$state_dir/$name.proc-net" ]; then
             cat "$state_dir/$name.proc-net"
           fi
