@@ -733,7 +733,7 @@ pub(crate) fn diagnose_workspace_repo(
                     repo.name, source_url
                 ),
                 None => format!(
-                    "create `{}` and re-run `ota workspace doctor`",
+                    "create `{}` and rerun `ota workspace doctor`",
                     repo.path.display()
                 ),
             },

@@ -1070,7 +1070,7 @@ Current behavior:
 - can override execution mode and lifecycle for the `setup` phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - the current `setup` backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
-- re-runs readiness diagnosis
+- reruns readiness diagnosis
 - still runs service start commands, service healthchecks, and diagnosis on the host today
 - returns `READY` or `NOT READY`
 - reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`

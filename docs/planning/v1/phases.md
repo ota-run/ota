@@ -182,7 +182,7 @@ Provide the zero-knowledge command that takes a user from unknown state to clear
 - run blocking precondition checks
 - verify runtimes and tools required for setup
 - run `setup` task if present
-- re-run readiness validation after setup
+- rerun readiness validation after setup
 - return explicit ready or not-ready result
 
 ### Exit Criteria

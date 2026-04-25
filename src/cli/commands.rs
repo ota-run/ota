@@ -5640,7 +5640,7 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
                 severity: FindingSeverity::Warn,
                 summary: String::from("Could not inspect repo signals"),
                 why: format!("automatic repo detection failed: {error}"),
-                next: String::from("fix the unreadable repo files and re-run `ota doctor`"),
+                next: String::from("fix the unreadable repo files and rerun `ota doctor`"),
             });
             None
         }
@@ -9785,7 +9785,7 @@ fn render_workspace_validate_failure(
     }
 
     out.push_str(&format_error_next_timeline(&[format!(
-        "repair the listed issue(s), then re-run `{}`",
+        "repair the listed issue(s), then rerun `{}`",
         paint_code("ota workspace validate")
     )]));
     out
@@ -24818,13 +24818,13 @@ policies:
                 severity: FindingSeverity::Error,
                 summary: String::from("Service healthcheck failed: postgres"),
                 why: String::from("service `postgres` did not pass its configured healthcheck"),
-                next: String::from("run `docker compose up -d postgres` and re-run `ota doctor`"),
+                next: String::from("run `docker compose up -d postgres` and rerun `ota doctor`"),
             },
             Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Service healthcheck failed: redis"),
                 why: String::from("service `redis` did not pass its configured healthcheck"),
-                next: String::from("run `docker compose up -d redis` and re-run `ota doctor`"),
+                next: String::from("run `docker compose up -d redis` and rerun `ota doctor`"),
             },
             Finding {
                 severity: FindingSeverity::Error,
@@ -24843,11 +24843,11 @@ policies:
         assert_eq!(groups[2].action_key, "service-health-timeout-api");
         assert_eq!(
             groups[0].action_next,
-            "run `docker compose up -d postgres` and re-run `ota doctor`"
+            "run `docker compose up -d postgres` and rerun `ota doctor`"
         );
         assert_eq!(
             groups[1].action_next,
-            "run `docker compose up -d redis` and re-run `ota doctor`"
+            "run `docker compose up -d redis` and rerun `ota doctor`"
         );
     }
 
@@ -25320,7 +25320,7 @@ policies:
                 why: String::from(
                     "failed to parse policy pack\n`./.ota/org-policy.yaml`: policies.provisioning.curl: missing field `source`",
                 ),
-                next: String::from("repair `./.ota/org-policy.yaml` and re-run `ota doctor`"),
+                next: String::from("repair `./.ota/org-policy.yaml` and rerun `ota doctor`"),
             }],
         };
         let summary = super::DoctorSummary {
@@ -25335,7 +25335,7 @@ policies:
                 why: String::from(
                     "failed to parse policy pack\n`./.ota/org-policy.yaml`: policies.provisioning.curl: missing field `source`",
                 ),
-                next: String::from("repair `./.ota/org-policy.yaml` and re-run `ota doctor`"),
+                next: String::from("repair `./.ota/org-policy.yaml` and rerun `ota doctor`"),
                 provenance: None,
                 provenance_key: None,
             }),
@@ -25354,7 +25354,7 @@ policies:
 
         assert!(
             text.contains(
-                "repair `./.ota/org-policy.yaml` and re-run `ota doctor --mode container`"
+                "repair `./.ota/org-policy.yaml` and rerun `ota doctor --mode container`"
             )
         );
     }
@@ -25372,7 +25372,7 @@ policies:
                 why: String::from(
                     "failed to parse policy pack\n`./.ota/org-policy.yaml`: policies.provisioning.curl: missing field `source`",
                 ),
-                next: String::from("repair `./.ota/org-policy.yaml` and re-run `ota doctor`"),
+                next: String::from("repair `./.ota/org-policy.yaml` and rerun `ota doctor`"),
             }],
         };
         let summary = super::DoctorSummary {
@@ -25397,7 +25397,7 @@ policies:
 
         assert!(
             text.contains(
-                "repair `./.ota/org-policy.yaml` and re-run `ota doctor --mode container`"
+                "repair `./.ota/org-policy.yaml` and rerun `ota doctor --mode container`"
             )
         );
     }
@@ -40520,7 +40520,7 @@ fn run_workspace_repo_up(
                         None => format!("workspace repo `{}` could not be acquired", repo_name),
                     },
                     next: String::from(
-                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before re-running `ota workspace up`",
+                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before rerunning `ota workspace up`",
                     ),
                 }],
                 service: None,
@@ -40569,7 +40569,7 @@ fn run_workspace_repo_up(
                     summary: format!("Repo acquisition failed: {}", repo_name),
                     why: error,
                     next: String::from(
-                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before re-running `ota workspace up`",
+                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before rerunning `ota workspace up`",
                     ),
                 }],
                 service: None,
@@ -40730,7 +40730,7 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
             },
             summary: format!("Blocked by failed dependency: {dependency}"),
             why: format!("workspace repo depends on `{dependency}`, which did not become ready"),
-            next: format!("repair `{dependency}` first, then re-run `ota workspace up`"),
+            next: format!("repair `{dependency}` first, then rerun `ota workspace up`"),
         }],
         service: None,
         source_url: None,
@@ -40803,7 +40803,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                         repo_name, source_url
                     ),
                     None => format!(
-                        "create `{}` and re-run `ota workspace diff`",
+                        "create `{}` and rerun `ota workspace diff`",
                         repo.path.display()
                     ),
                 },
@@ -40840,7 +40840,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                     repo.contract_path.display()
                 ),
                 next: format!(
-                    "restore `{}` and re-run `ota workspace diff`",
+                    "restore `{}` and rerun `ota workspace diff`",
                     repo.contract_path.display()
                 ),
             }],
@@ -40880,7 +40880,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                         repo_name, error
                     ),
                     next: String::from(
-                        "fix the local git repository state, then re-run `ota workspace diff`",
+                        "fix the local git repository state, then rerun `ota workspace diff`",
                     ),
                 }],
             };
@@ -40928,7 +40928,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                     repo_name
                 ),
                 next: String::from(
-                    "declare `source.ref` or configure an upstream branch, then re-run `ota workspace diff`",
+                    "declare `source.ref` or configure an upstream branch, then rerun `ota workspace diff`",
                 ),
             }],
         };
@@ -40972,7 +40972,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                         repo_name, error
                     ),
                     next: String::from(
-                        "fix the local git repository state, then re-run `ota workspace diff`",
+                        "fix the local git repository state, then rerun `ota workspace diff`",
                     ),
                 }],
             };
@@ -41251,7 +41251,7 @@ fn blocked_workspace_repo_refresh(
             },
             summary: format!("Blocked by failed dependency: {dependency}"),
             why: format!("workspace repo depends on `{dependency}`, which did not become ready"),
-            next: format!("repair `{dependency}` first, then re-run `ota workspace refresh`"),
+            next: format!("repair `{dependency}` first, then rerun `ota workspace refresh`"),
         }],
         service: None,
         source_url: None,
@@ -41291,7 +41291,7 @@ fn blocked_workspace_repo_run(
                 "workspace repo `{}` depends on `{dependency}`, which did not complete successfully",
                 repo_name
             ),
-            next: format!("repair `{dependency}` first, then re-run `ota workspace run {task}`"),
+            next: format!("repair `{dependency}` first, then rerun `ota workspace run {task}`"),
         }],
         source_url: None,
         source_ref: None,
@@ -41440,7 +41440,7 @@ fn run_workspace_repo_refresh(
                         repo_name, source_url
                     ),
                     None => format!(
-                        "create `{}` and re-run `ota workspace refresh`",
+                        "create `{}` and rerun `ota workspace refresh`",
                         repo.path.display()
                     ),
                 },
@@ -41535,7 +41535,7 @@ fn run_workspace_repo_refresh(
                         repo_name, error
                     ),
                     next: String::from(
-                        "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before re-running `ota workspace refresh`",
+                        "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before rerunning `ota workspace refresh`",
                     ),
                 }],
                 source_url: repo.source_url.clone(),
@@ -41578,7 +41578,7 @@ fn run_workspace_repo_refresh(
                     repo.source_url.as_deref().unwrap_or("unknown source")
                 ),
                 next: String::from(
-                    "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before re-running `ota workspace refresh`",
+                    "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before rerunning `ota workspace refresh`",
                 ),
             }],
             source_url: repo.source_url.clone(),
@@ -41673,7 +41673,7 @@ fn run_workspace_repo_task(
                         None => format!("workspace repo `{}` could not be acquired", repo_name),
                     },
                     next: format!(
-                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before re-running `ota workspace run {task}`"
+                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before rerunning `ota workspace run {task}`"
                     ),
                 }],
                 source_url: repo.source_url.clone(),
@@ -41718,7 +41718,7 @@ fn run_workspace_repo_task(
                         repo_name, error
                     ),
                     next: format!(
-                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before re-running `ota workspace run {task}`"
+                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before rerunning `ota workspace run {task}`"
                     ),
                 }],
                 source_url: repo.source_url.clone(),
@@ -41918,7 +41918,7 @@ fn run_workspace_repo_task(
                             render_run_error(error)
                         ),
                         next: format!(
-                            "repair repo `{}` task `{}` and re-run `ota workspace run {}`",
+                            "repair repo `{}` task `{}` and rerun `ota workspace run {}`",
                             repo_name, task, task
                         ),
                     }],
@@ -42097,7 +42097,7 @@ fn check_workspace_repo(
                     ),
                     None => {
                         format!(
-                            "create `{}` and re-run `ota workspace check`",
+                            "create `{}` and rerun `ota workspace check`",
                             repo.path.display()
                         )
                     }
