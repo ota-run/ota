@@ -55,7 +55,7 @@ Current behavior:
 5. verify required service healthchecks as readiness gates
 6. stop in the `services` phase if required services still are not ready
 7. run `setup` if present
-8. re-run readiness diagnosis
+8. rerun readiness diagnosis
 
 Important boundaries:
 

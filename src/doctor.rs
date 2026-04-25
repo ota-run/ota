@@ -2512,7 +2512,7 @@ fn service_finding(
                     readiness.from.as_str(),
                 ),
                 next: match service.start_command(name) {
-                    Some(start) => format!("run `{start}` and re-run `{rerun_doctor}`"),
+                    Some(start) => format!("run `{start}` and rerun `{rerun_doctor}`"),
                     None => format!(
                         "repair `{name}` from context `{}` and rerun `{rerun_doctor}`",
                         readiness.from,
@@ -2553,9 +2553,9 @@ fn service_finding(
                 summary: format!("Service healthcheck failed: {name}"),
                 why: format!("service `{name}` did not pass its configured healthcheck"),
                 next: match service.start_command(name) {
-                    Some(start) => format!("run `{start}` and re-run `{rerun_doctor}`"),
+                    Some(start) => format!("run `{start}` and rerun `{rerun_doctor}`"),
                     None => format!(
-                        "start or repair `{name}` and re-run its healthcheck: {healthcheck}, then rerun `{rerun_doctor}`"
+                        "start or repair `{name}` and rerun its healthcheck: {healthcheck}, then rerun `{rerun_doctor}`"
                     ),
                 },
             }),
@@ -3352,7 +3352,7 @@ fn policy_error_finding(err: LoadPolicyPackError) -> Finding {
         summary: String::from("Invalid org policy pack"),
         why: err.to_string(),
         next: format!(
-            "repair `{}` and re-run `ota doctor`",
+            "repair `{}` and rerun `ota doctor`",
             compact_display_path(Path::new(err.path()))
         ),
     }
