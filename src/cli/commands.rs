@@ -274,6 +274,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
             return render_task_exit_failure_text(
                 &where_value,
                 &task_name,
+                None,
                 exit_code,
                 None,
                 &next_steps,
@@ -339,6 +340,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
             return render_task_exit_failure_text(
                 &where_value,
                 &task_name,
+                None,
                 exit_code,
                 None,
                 &[],
@@ -384,7 +386,8 @@ fn parse_task_exit_failure_line(line: &str) -> Option<(String, i32)> {
 
 fn render_task_exit_failure_text(
     where_value: &str,
-    task_name: &str,
+    failed_step_name: &str,
+    requested_task_name: Option<&str>,
     exit_code: i32,
     excerpt: Option<&OutputExcerpt>,
     next_steps: &[String],
@@ -398,8 +401,24 @@ fn render_task_exit_failure_text(
     );
     out.push_str(&format!(
         "\n{}",
-        stylize_inline_text(&format!("`{task_name}` exited with code {exit_code}"))
+        stylize_inline_text(&format!(
+            "`{failed_step_name}` exited with code {exit_code}"
+        ))
     ));
+    if let Some(requested_task_name) = requested_task_name
+        && requested_task_name != failed_step_name
+    {
+        out.push_str(&format!(
+            "\n{} {}",
+            paint_key("Requested:"),
+            paint_code(requested_task_name)
+        ));
+        out.push_str(&format!(
+            "\n{} {}",
+            paint_key("Failed Step:"),
+            paint_code(failed_step_name)
+        ));
+    }
     if let Some(context) = execution_context_from_summary_block(summary_block) {
         out.push_str(&format!("\n{} {context}", paint_key("Context:")));
     }
@@ -411,7 +430,7 @@ fn render_task_exit_failure_text(
     append_error_detail_section(
         &mut out,
         "Why:",
-        &task_exit_failure_why_lines(task_name, exit_code),
+        &task_exit_failure_why_lines(failed_step_name, requested_task_name, exit_code),
         None,
     );
     if let Some(excerpt) = excerpt {
@@ -27055,6 +27074,65 @@ tasks:
 
         assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
         assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(
+            rendered.contains("Note:      service interrupted by user"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Note:      service stopped after readiness; container exited"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_failure_text_reports_dependency_service_interrupt_as_interrupted() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+  dev:clean:
+    depends_on:
+      - dev
+    run: echo clean
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev:clean",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            true,
+            None,
+            "RUN SUMMARY\nTask:      dev:clean\nStatus:    interrupted\nNote:      service interrupted by user",
+        ));
+
+        assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(!rendered.contains("ERROR  Task Failed"), "{rendered}");
+        assert!(rendered.contains("Task: dev"), "{rendered}");
+        assert!(rendered.contains("Task:      dev:clean"), "{rendered}");
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
     }
 
     #[test]
@@ -27568,6 +27646,7 @@ tasks:
         let rendered = strip_ansi_codes(&super::render_task_exit_failure_text(
             "./ota.yaml",
             "setup:dev",
+            None,
             137,
             None,
             &[String::from(
@@ -27587,6 +27666,50 @@ tasks:
         );
         assert!(
             rendered.contains("exit code `137` usually means the process was killed (SIGKILL), often due to OOM or container runtime termination"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn task_exit_failure_text_explains_dependency_failure_for_requested_task() {
+        let rendered = strip_ansi_codes(&super::render_task_exit_failure_text(
+            "./ota.yaml",
+            "dev",
+            Some("dev:clean"),
+            1,
+            None,
+            &[],
+            Some("RUN SUMMARY\nTask:      dev:clean\nStatus:    failed"),
+            None,
+        ));
+
+        assert!(rendered.contains("Requested: dev:clean"), "{rendered}");
+        assert!(rendered.contains("Failed Step: dev"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "requested task `dev:clean` failed because dependency step `dev` returned a non-zero exit code"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn task_exit_failure_text_keeps_simple_wording_when_requested_matches_failed_step() {
+        let rendered = strip_ansi_codes(&super::render_task_exit_failure_text(
+            "./ota.yaml",
+            "dev",
+            Some("dev"),
+            1,
+            None,
+            &[],
+            Some("RUN SUMMARY\nTask:      dev\nStatus:    failed"),
+            None,
+        ));
+
+        assert!(!rendered.contains("Requested:"), "{rendered}");
+        assert!(!rendered.contains("Failed Step:"), "{rendered}");
+        assert!(
+            rendered.contains("task `dev` returned a non-zero exit code"),
             "{rendered}"
         );
     }
@@ -30571,6 +30694,7 @@ fn render_run_captured_failure_text(
     render_task_exit_failure_text(
         where_value,
         task_name,
+        Some(requested_task_name),
         exit_code,
         excerpt.as_ref(),
         &next_steps,
@@ -30707,7 +30831,7 @@ fn render_service_interrupted_text(
     let summary_override = summary_with_container_override(
         summary_with_note_override(
             summary_with_status.as_deref(),
-            &service_termination_summary_note(service_termination),
+            &service_interrupted_summary_note(service_termination),
         )
         .as_deref(),
         &service_termination.container,
@@ -30720,6 +30844,14 @@ fn render_service_interrupted_text(
         out.push_str(summary_block);
     }
     out
+}
+
+fn service_interrupted_summary_note(service_termination: &ServiceTermination) -> String {
+    if service_termination.after_readiness {
+        String::from("service interrupted by user")
+    } else {
+        String::from("service interrupted by user before readiness")
+    }
 }
 
 fn render_service_stopped_failure_text(
@@ -30870,16 +31002,35 @@ fn service_termination_subject(service_termination: &ServiceTermination) -> Stri
     )
 }
 
-fn task_exit_failure_why_lines(task_name: &str, exit_code: i32) -> Vec<String> {
+fn task_exit_failure_why_lines(
+    failed_step_name: &str,
+    requested_task_name: Option<&str>,
+    exit_code: i32,
+) -> Vec<String> {
+    let dependency_failure_line = requested_task_name
+        .filter(|requested| *requested != failed_step_name)
+        .map(|requested| {
+            format!(
+                "requested task `{requested}` failed because dependency step `{failed_step_name}` returned a non-zero exit code"
+            )
+        });
+
     if exit_code == 137 {
-        vec![
-            format!("task `{task_name}` returned non-zero exit code `137`"),
+        let mut lines = vec![dependency_failure_line.unwrap_or_else(|| {
+            format!("task `{failed_step_name}` returned non-zero exit code `137`")
+        })];
+        lines.push(
             String::from(
                 "exit code `137` usually means the process was killed (SIGKILL), often due to OOM or container runtime termination",
             ),
-        ]
+        );
+        lines
     } else {
-        vec![format!("task `{task_name}` returned a non-zero exit code")]
+        vec![
+            dependency_failure_line.unwrap_or_else(|| {
+                format!("task `{failed_step_name}` returned a non-zero exit code")
+            }),
+        ]
     }
 }
 

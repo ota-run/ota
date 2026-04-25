@@ -1798,6 +1798,36 @@ fn interruption_execution_note(interrupted: bool) -> Option<String> {
     interrupted.then(|| String::from("task interrupted by user"))
 }
 
+fn propagate_step_result_to_run_state(
+    state: &mut TaskRunState,
+    relation: &TaskExecutionRelation,
+    command_output: &TaskCommandOutput,
+) {
+    let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
+    if requested_relation {
+        state.runtime = command_output.runtime.clone();
+        state.service_termination = command_output.service_termination.clone();
+        state.interrupted = command_output.interrupted;
+        return;
+    }
+
+    if command_output.interrupted {
+        state.interrupted = true;
+    }
+
+    if state.service_termination.is_none()
+        && command_output
+            .service_termination
+            .as_ref()
+            .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
+    {
+        state.service_termination = command_output.service_termination.clone();
+        if state.runtime.is_none() {
+            state.runtime = command_output.runtime.clone();
+        }
+    }
+}
+
 pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
     clean_execution_report(contract, contract_path).map(|report| report.cleaned_any())
 }
@@ -2914,7 +2944,7 @@ fn execute_task_with_hooks(
     state.stdout.push_str(&command_output.stdout);
     state.stderr.push_str(&command_output.stderr);
     if state.target.is_none() {
-        state.target = command_output.target;
+        state.target = command_output.target.clone();
     }
     let requested_execution_note = if requested_relation {
         let mut notes = Vec::new();
@@ -2928,13 +2958,11 @@ fn execute_task_with_hooks(
     } else {
         None
     };
+    propagate_step_result_to_run_state(state, &relation, &command_output);
     if requested_relation {
-        state.runtime = command_output.runtime;
-        state.service_termination = command_output.service_termination.clone();
         if let Some(note) = requested_execution_note.clone() {
             state.execution_note = Some(note);
         }
-        state.interrupted = command_output.interrupted;
     }
     state.task_steps.push(ExecutedTaskStep {
         name: task_name.to_string(),
@@ -14689,6 +14717,96 @@ tasks:
             super::ServiceTerminationCause::Interrupted
         );
         assert!(!service_termination.after_readiness);
+    }
+
+    #[test]
+    fn dependency_step_interrupt_propagates_to_top_level_run_state() {
+        let mut state = super::TaskRunState::default();
+        let runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+        let output = super::TaskCommandOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: String::new(),
+            target: Some(String::from("ota-ephemeral-test")),
+            runtime: Some(runtime.clone()),
+            service_termination: Some(super::ServiceTermination {
+                kind: super::ServiceTerminationKind::ServiceStopped,
+                cause: super::ServiceTerminationCause::Interrupted,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-test"),
+                exit_code: Some(130),
+            }),
+            execution_note: Some(String::from(
+                "service stopped after readiness; container was interrupted",
+            )),
+            interrupted: true,
+        };
+
+        super::propagate_step_result_to_run_state(
+            &mut state,
+            &TaskExecutionRelation::DependsOn {
+                parent: String::from("dev:clean"),
+            },
+            &output,
+        );
+
+        assert!(state.interrupted);
+        assert_eq!(state.service_termination, output.service_termination);
+        assert_eq!(state.runtime, Some(runtime));
+    }
+
+    #[test]
+    fn dependency_step_nonzero_failure_does_not_fake_interruption_at_top_level() {
+        let mut state = super::TaskRunState::default();
+        let output = super::TaskCommandOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: String::new(),
+            target: None,
+            runtime: None,
+            service_termination: Some(super::ServiceTermination {
+                kind: super::ServiceTerminationKind::ServiceStopped,
+                cause: super::ServiceTerminationCause::ExitedNonZero,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-test"),
+                exit_code: Some(1),
+            }),
+            execution_note: None,
+            interrupted: false,
+        };
+
+        super::propagate_step_result_to_run_state(
+            &mut state,
+            &TaskExecutionRelation::DependsOn {
+                parent: String::from("dev:clean"),
+            },
+            &output,
+        );
+
+        assert!(!state.interrupted);
+        assert!(state.service_termination.is_none());
+        assert!(state.runtime.is_none());
     }
 
     #[test]
