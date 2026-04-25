@@ -2873,7 +2873,8 @@ fn execute_task_with_hooks(
     }
 
     for dependency in &task.depends_on {
-        let dependency_backend = resolve_execution_backend(contract, dependency, requested_overrides)?;
+        let dependency_backend =
+            resolve_execution_backend(contract, dependency, requested_overrides)?;
         let dependency_exit = execute_task_with_hooks(
             contract,
             contract_path,
@@ -4646,7 +4647,10 @@ pub(crate) fn resolve_execution_backend(
 
     if let Some(override_backend) = overrides.backend
         && let Some(task) = contract.tasks.get(task_name)
-        && task.execution.as_ref().is_some_and(|execution| execution.modes.any())
+        && task
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.modes.any())
         && task.mode_default_backend() != Some(override_backend)
         && task.mode_execution_branch(override_backend).is_none()
     {
@@ -6879,9 +6883,8 @@ fn execute_persistent_container_task_command(
                 dependency_isolation_paths,
             )? {
                 PersistentContainerEnsureResult::Ready(_) => {
-                    reconciliation = PersistentContainerReconciliation::recreated(
-                        "execution shape changed",
-                    );
+                    reconciliation =
+                        PersistentContainerReconciliation::recreated("execution shape changed");
                 }
                 PersistentContainerEnsureResult::Failure(failure) => {
                     return Ok(failure);
@@ -8060,6 +8063,7 @@ cleanup_pidfile_owner() {
   current=$(cut -d' ' -f22 "/proc/$pid/stat" 2>/dev/null || true)
   if [ -z "$current" ] || [ "$current" != "$started" ]; then
     rm -f "$pidfile"
+    cleaned=1
     return 0
   fi
   terminate_pid_tree "$pid"
@@ -8130,11 +8134,11 @@ cleanup_listener_owners() {
 cleanup_pidfile_owner
 cleanup_listener_owners
 cleanup_listener_owners_status=$?
-if [ "$cleaned" != "1" ] && [ "$cleanup_listener_owners_status" -ne 0 ]; then
-  exit 1
+if [ "$cleaned" = "1" ] || [ "$cleanup_listener_owners_status" -eq 0 ]; then
+  [ "$cleaned" = "1" ] && printf cleaned
+  exit 0
 fi
-if [ "$cleaned" = "1" ]; then printf cleaned; fi
-exit 0
+exit 1
 "#;
     match container_command_output_with_stdin(
         engine,
@@ -8156,9 +8160,9 @@ exit 0
             String::from("interrupted service workload cleaned up inside persistent backend"),
         ),
         Ok(output) if output.exit_code == 0 => None,
-        Ok(output) if output.stdout.contains("cleaned") => Some(
-            String::from("interrupted service workload cleaned up inside persistent backend"),
-        ),
+        Ok(output) if output.stdout.contains("cleaned") => Some(String::from(
+            "interrupted service workload cleaned up inside persistent backend",
+        )),
         Ok(_) => {
             let ports_note = fixed_bind_ports
                 .iter()
@@ -11877,9 +11881,7 @@ tasks:
         if first.exit_code != 0 {
             panic!(
                 "first run exited with {}: stdout={:?} stderr={:?}",
-                first.exit_code,
-                first.stdout,
-                first.stderr
+                first.exit_code, first.stdout, first.stderr
             );
         }
         assert_eq!(second.exit_code, 0);
@@ -13598,9 +13600,7 @@ tasks:
         if first.exit_code != 0 {
             panic!(
                 "first run exited with {}: stdout={:?} stderr={:?}",
-                first.exit_code,
-                first.stdout,
-                first.stderr
+                first.exit_code, first.stdout, first.stderr
             );
         }
         assert_eq!(second.exit_code, 0);
@@ -14131,9 +14131,7 @@ tasks:
         if first.exit_code != 0 {
             panic!(
                 "first run exited with {}: stdout={:?} stderr={:?}",
-                first.exit_code,
-                first.stdout,
-                first.stderr
+                first.exit_code, first.stdout, first.stderr
             );
         }
 
@@ -14259,9 +14257,7 @@ tasks:
         if first.exit_code != 0 {
             panic!(
                 "first run exited with {}: stdout={:?} stderr={:?}",
-                first.exit_code,
-                first.stdout,
-                first.stderr
+                first.exit_code, first.stdout, first.stderr
             );
         }
         assert_eq!(second.exit_code, 0);
