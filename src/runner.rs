@@ -8019,17 +8019,17 @@ cleaned=0
 
 port_listening() {
   target="$1"
-  awk -v port="$target" '
+  awk -v port="$target" '\''
     BEGIN { found = 0 }
     NR > 1 {
       split($2, a, ":");
-      if ($4 == "0A" && toupper(a[2]) == port && $10 ~ /^[0-9]+$/) {
+      if (($4 == "0A" || $4 == "0a") && toupper(a[2]) == toupper(port)) {
         found = 1
         exit
       }
     }
     END { exit(found ? 0 : 1) }
-  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+  '\'' /proc/net/tcp /proc/net/tcp6 2>/dev/null
 }
 
 terminate_pid_tree() {
@@ -8068,17 +8068,17 @@ cleanup_pidfile_owner() {
 
 find_listener_owner_pids() {
   target_hex="$1"
-  inodes=$(awk -v target="$target_hex" '
+  inodes=$(awk -v target="$target_hex" '\''
     BEGIN { found = 0 }
     NR > 1 {
       split($2, a, ":");
-      if ($4 == "0A" && toupper(a[2]) == target && $10 ~ /^[0-9]+$/) {
+      if (($4 == "0A" || $4 == "0a") && toupper(a[2]) == toupper(target)) {
         print $10
         found = 1
       }
     }
     END { if (!found) exit 1 }
-  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true)
+  '\'' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true)
   [ -n "$inodes" ] || return 0
   owners=""
   for inode in $inodes; do
