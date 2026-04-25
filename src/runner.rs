@@ -7942,103 +7942,165 @@ fn cleanup_interrupted_persistent_service_workload_and_note(
                 .flatten()
         })
         .collect::<Vec<_>>();
-    let fixed_bind_ports = fixed_bind_ports
+    let fixed_bind_ports_arg = fixed_bind_ports
         .iter()
         .map(u16::to_string)
         .collect::<Vec<_>>()
         .join(" ");
-    let cleanup_script = format!(
-        "pidfile={pidfile}; \
-ports={ports}; \
-cleaned=0; \
-port_listening() {{ \
-  target=\"$1\"; \
-  awk -v port=\"$target\" 'BEGIN {{ found = 0 }} NR > 1 {{ split($2, a, \":\"); if ($4 == \"0A\" && toupper(a[2]) == port) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; \
-}}; \
-terminate_pid_tree() {{ \
-  pid=\"$1\"; \
-  [ -n \"$pid\" ] || return 0; \
-  [ \"$pid\" = \"$$\" ] && return 0; \
-  [ \"$pid\" = \"1\" ] && return 0; \
-  children=$(cat \"/proc/$pid/task/$pid/children\" 2>/dev/null || true); \
-  for child in $children; do terminate_pid_tree \"$child\"; done; \
-  kill -TERM \"$pid\" 2>/dev/null || true; \
-  i=0; \
-  while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 20 ]; do i=$((i+1)); sleep 0.1; done; \
-  if kill -0 \"$pid\" 2>/dev/null; then kill -KILL \"$pid\" 2>/dev/null || true; sleep 0.1; fi; \
-  kill -0 \"$pid\" 2>/dev/null && return 1; \
-  return 0; \
-}}; \
-cleanup_pidfile_owner() {{ \
-  [ -s \"$pidfile\" ] || return 0; \
-  read pid started < \"$pidfile\" || {{ rm -f \"$pidfile\"; return 0; }}; \
-  current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); \
-  if [ -z \"$current\" ] || [ \"$current\" != \"$started\" ]; then rm -f \"$pidfile\"; return 0; fi; \
-  terminate_pid_tree \"$pid\" || return 1; \
-  cleaned=1; \
-  rm -f \"$pidfile\"; \
-}}; \
-cleanup_listener_owners() {{ \
-  [ -n \"$ports\" ] || return 0; \
-  find_listener_owner_pids() {{ \
-    target_hex=\"$1\"; \
-    inodes=$(awk -v target=\"$target_hex\" 'BEGIN {{ found = 0 }} NR > 1 {{ split($2, a, \":\"); if ($4 == \"0A\" && toupper(a[2]) == target && $10 ~ /^[0-9]+$/) {{ print $10; found = 1 }} }} END {{ if (!found) exit 1 }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true); \
-    [ -n \"$inodes\" ] || return 0; \
-    owners=\"\"; \
-    for inode in $inodes; do \
-      for fd in /proc/[0-9]*/fd/*; do \
-        [ -e \"$fd\" ] || continue; \
-        link=$(readlink \"$fd\" 2>/dev/null || true); \
-        [ \"$link\" = \"socket:[$inode]\" ] || continue; \
-        pid=${{fd#/proc/}}; \
-        pid=${{pid%%/*}}; \
-        [ \"$pid\" = \"$$\" ] && continue; \
-        [ \"$pid\" = \"1\" ] && continue; \
-        case \" $owners \" in \
-          *\" $pid \"*) ;; \
-          *) owners=\"$owners $pid\" ;; \
-        esac; \
-      done; \
-    done; \
-    printf '%s\n' \"$owners\"; \
-  }}; \
-  for port in $ports; do \
-    hex=$(printf '%04X' \"$port\"); \
-    owners=$(find_listener_owner_pids \"$hex\"); \
-    for pid in $owners; do \
-      terminate_pid_tree \"$pid\" || return 1; \
-      cleaned=1; \
-    done; \
-  done; \
-  for port in $ports; do \
-    hex=$(printf '%04X' \"$port\"); \
-    if port_listening \"$hex\"; then return 1; fi; \
-  done; \
-}}; \
-cleanup_pidfile_owner || exit 1; \
-cleanup_listener_owners || exit 1; \
-if [ \"$cleaned\" = \"1\" ]; then printf cleaned; fi; \
-exit 0",
-        pidfile = shell_quote(&pidfile),
-        ports = shell_quote(&fixed_bind_ports),
-    );
-    match container_command_output(
+    let cleanup_script = r#"
+pidfile=$1
+ports=$2
+cleaned=0
+
+port_listening() {
+  target="$1"
+  awk -v port="$target" '
+    BEGIN { found = 0 }
+    NR > 1 {
+      split($2, a, ":");
+      if ($4 == "0A" && toupper(a[2]) == port && $10 ~ /^[0-9]+$/) {
+        found = 1
+        exit
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+terminate_pid_tree() {
+  pid="$1"
+  [ -n "$pid" ] || return 0
+  [ "$pid" = "$$" ] && return 0
+  [ "$pid" = "1" ] && return 0
+  children=$(cat "/proc/$pid/task/$pid/children" 2>/dev/null || true)
+  for child in $children; do terminate_pid_tree "$child"; done
+  kill -TERM "$pid" 2>/dev/null || true
+  i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
+    i=$((i + 1))
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    sleep 0.1
+  fi
+  kill -0 "$pid" 2>/dev/null && return 1
+  return 0
+}
+
+cleanup_pidfile_owner() {
+  [ -s "$pidfile" ] || return 0
+  read pid started < "$pidfile" || { rm -f "$pidfile"; return 0; }
+  current=$(cut -d' ' -f22 "/proc/$pid/stat" 2>/dev/null || true)
+  if [ -z "$current" ] || [ "$current" != "$started" ]; then
+    rm -f "$pidfile"
+    return 0
+  fi
+  terminate_pid_tree "$pid" || return 1
+  cleaned=1
+  rm -f "$pidfile"
+}
+
+find_listener_owner_pids() {
+  target_hex="$1"
+  inodes=$(awk -v target="$target_hex" '
+    BEGIN { found = 0 }
+    NR > 1 {
+      split($2, a, ":");
+      if ($4 == "0A" && toupper(a[2]) == target && $10 ~ /^[0-9]+$/) {
+        print $10
+        found = 1
+      }
+    }
+    END { if (!found) exit 1 }
+  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true)
+  [ -n "$inodes" ] || return 0
+  owners=""
+  for inode in $inodes; do
+    for fd in /proc/[0-9]*/fd/*; do
+      [ -e "$fd" ] || continue
+      link=$(readlink "$fd" 2>/dev/null || true)
+      [ "$link" = "socket:[$inode]" ] || continue
+      pid=${fd#/proc/}
+      pid=${pid%%/*}
+      [ "$pid" = "$$" ] && continue
+      [ "$pid" = "1" ] && continue
+      case " $owners " in
+        *" $pid "*) ;;
+        *) owners="$owners $pid" ;;
+      esac
+    done
+  done
+  printf '%s\n' "$owners"
+}
+
+cleanup_listener_owners() {
+  [ -n "$ports" ] || return 0
+  attempt=0
+  while [ "$attempt" -lt 20 ]; do
+    for port in $ports; do
+      hex=$(printf '%04X' "$port")
+      owners=$(find_listener_owner_pids "$hex")
+      for pid in $owners; do
+        terminate_pid_tree "$pid" || return 1
+        cleaned=1
+      done
+    done
+    all_free=1
+    for port in $ports; do
+      hex=$(printf '%04X' "$port")
+      if port_listening "$hex"; then
+        all_free=0
+        break
+      fi
+    done
+    [ "$all_free" = "1" ] && return 0
+    attempt=$((attempt + 1))
+    sleep 0.1
+  done
+  return 1
+}
+
+cleanup_pidfile_owner || exit 1
+cleanup_listener_owners || exit 1
+if [ "$cleaned" = "1" ]; then printf cleaned; fi
+exit 0
+"#;
+    match container_command_output_with_stdin(
         engine,
-        &["exec", "-i", container_name, "sh", "-lc", &cleanup_script],
+        &[
+            "exec",
+            "-i",
+            container_name,
+            "sh",
+            "-s",
+            "--",
+            &pidfile,
+            &fixed_bind_ports_arg,
+        ],
+        cleanup_script,
         None,
         task_name,
     ) {
-        Ok(output) if output.exit_code == 0 => output.stdout.contains("cleaned").then_some(
+        Ok(output) if output.exit_code == 0 && output.stdout.contains("cleaned") => Some(
             String::from("interrupted service workload cleaned up inside persistent backend"),
         ),
-        Ok(output) => Some(format!(
-            "interrupted service workload cleanup failed in `{container_name}`: {}",
-            container_command_failure_details(
-                engine,
-                &["exec", "-i", container_name, "sh", "-lc", &cleanup_script],
-                &output
-            )
-        )),
+        Ok(output) if output.exit_code == 0 => None,
+        Ok(_) => {
+            let ports_note = fixed_bind_ports
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let port_note = if ports_note.is_empty() {
+                String::new()
+            } else {
+                format!("; fixed listener port(s) {ports_note} remained in use")
+            };
+            Some(format!(
+                "interrupted service workload cleanup failed in `{container_name}`{port_note}"
+            ))
+        }
         Err(error) => Some(format!(
             "interrupted service workload cleanup failed in `{container_name}`: {error}"
         )),
@@ -8516,6 +8578,47 @@ fn container_command_output(
         task: task_name.to_string(),
         source,
     })?;
+    Ok(ContainerCommandOutput {
+        exit_code: output.status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn container_command_output_with_stdin(
+    engine: &str,
+    args: &[&str],
+    stdin: &str,
+    working_dir: Option<&Path>,
+    task_name: &str,
+) -> Result<ContainerCommandOutput, RunError> {
+    let mut container = Command::new(engine);
+    container.args(args);
+    container
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(working_dir) = working_dir {
+        container.current_dir(working_dir);
+    }
+    let mut child = container.spawn().map_err(|source| RunError::SpawnFailed {
+        task: task_name.to_string(),
+        source,
+    })?;
+    if let Some(mut child_stdin) = child.stdin.take() {
+        child_stdin
+            .write_all(stdin.as_bytes())
+            .map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|source| RunError::SpawnFailed {
+            task: task_name.to_string(),
+            source,
+        })?;
     Ok(ContainerCommandOutput {
         exit_code: output.status.code().unwrap_or(1),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -13705,6 +13808,96 @@ tasks:
         let rebound =
             TcpListener::bind(("127.0.0.1", listener_port)).expect("port should be free again");
         drop(rebound);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_persistent_service_cleanup_failure_note_is_concise() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "ota-persistent-test";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+
+        let runtime_contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .expect("runtime fixture contract should parse");
+        let runtime = runtime_contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref())
+            .expect("runtime should exist");
+
+        let note = super::cleanup_interrupted_persistent_service_workload_and_note(
+            "dev",
+            "docker",
+            container_name,
+            Some(runtime),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let note = note.expect("cleanup should report a failure note");
+        assert!(note.contains("cleanup failed"), "{note}");
+        assert!(!note.contains("sh -lc"), "{note}");
+        assert!(!note.contains("/proc/net/tcp"), "{note}");
     }
 
     #[cfg(unix)]
@@ -19063,6 +19256,12 @@ case "$command" in
       exit 128
     fi
     printf "exec\n" >> "$host_dir/docker-log.txt"
+    if [ "$1" = "sh" ] && [ "$2" = "-s" ]; then
+      shift 2
+      [ "${1:-}" = "--" ] && shift
+      cd "$host_dir" || exit 1
+      exec /bin/sh -s -- "$@"
+    fi
     if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
       case "$3" in
         "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null || true")
