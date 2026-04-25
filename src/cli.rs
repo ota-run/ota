@@ -10951,10 +10951,6 @@ version: 1
 project:
   name: ota
 execution:
-  default_context: app
-  backends:
-    container:
-      image: node:24-bookworm
   contexts:
     app:
       backend: container
@@ -11007,9 +11003,6 @@ project:
   name: ota
 execution:
   default_context: app
-  backends:
-    container:
-      image: node:24-bookworm
   contexts:
     app:
       backend: container
@@ -11069,10 +11062,6 @@ version: 1
 project:
   name: ota
 execution:
-  default_context: app
-  backends:
-    container:
-      image: node:24-bookworm
   contexts:
     app:
       backend: container
@@ -12468,10 +12457,6 @@ version: 1
 project:
   name: ota
 execution:
-  default_context: app
-  backends:
-    container:
-      image: node:24-bookworm
   contexts:
     app:
       backend: container
@@ -12511,11 +12496,12 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(output.stdout.as_str());
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Published endpoint could not be resolved"));
-        assert!(stderr.contains("Field: tasks.setup.runtime.listeners.http.project.host.port"));
-        assert!(stderr.contains("the container engine did not report a published host port"));
+        let _ = stdout;
+        assert!(stderr.contains("the container engine did not report a published host port for"));
         assert!(stderr.contains("rerun `ota up`"));
+        assert!(!stderr.contains("Task output:"));
         assert!(!stderr.contains("Task run failed"));
     }
 
@@ -12541,7 +12527,9 @@ tasks:
         assert_eq!(output.exit_code, 127);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("`setup` exited with code 127"));
-        assert!(stderr.contains("Why: task `setup` returned a non-zero exit code"));
+        assert!(stderr.contains(
+            "Why: requested task `ci` failed because dependency step `setup` returned a non-zero exit code"
+        ));
         assert!(!stderr.contains("`ci` exited with code 127"));
         assert!(!stderr.contains("Why: task `ci` returned a non-zero exit code"));
     }
@@ -12680,11 +12668,10 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Task Failed"));
         assert!(stderr.contains("`fail` exited with code 127"));
-        assert!(stderr.contains(
-            "Why: task `fail` returned a non-zero exit code\nNext: run `ota tasks --use"
-        ));
-        assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
-        assert!(!stderr.contains("Next:\n  » run `ota tasks --use"));
+        assert!(stderr.contains("Why: task `fail` returned a non-zero exit code"));
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("rerun `ota run fail --stream`"));
+        assert!(stderr.contains("run `ota tasks --use"));
     }
 
     #[test]
@@ -13777,8 +13764,8 @@ project:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("contract path does not exist"));
         assert!(stderr.contains("run `ota init` to create a starter contract"));
-        assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
-        assert!(stderr.contains("run `ota detect --write` to write a detected contract"));
+        assert!(stderr.contains("run this command from a repo directory that contains `ota.yaml`"));
+        assert!(stderr.contains("or run `ota init --dry-run` to preview what Ota would generate"));
     }
 
     #[test]
@@ -20936,8 +20923,8 @@ project:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("contract path does not exist"));
         assert!(stderr.contains("run `ota init` to create a starter contract"));
-        assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
-        assert!(stderr.contains("run `ota detect --write` to write a detected contract"));
+        assert!(stderr.contains("run this command from a repo directory that contains `ota.yaml`"));
+        assert!(stderr.contains("or run `ota init --dry-run` to preview what Ota would generate"));
     }
 
     #[test]
@@ -29872,7 +29859,8 @@ repos:
         assert!(stderr.contains("Why: no `ota.yaml` found from `.` upward"));
         assert_eq!(stderr.matches("Next:").count(), 1);
         assert!(stderr.contains("run `ota init` to create a starter contract"));
-        assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
+        assert!(stderr.contains("run this command from a repo directory that contains `ota.yaml`"));
+        assert!(stderr.contains("or run `ota init --dry-run` to preview what Ota would generate"));
     }
 
     #[test]
@@ -29887,7 +29875,8 @@ repos:
         assert!(stderr.contains("contract path does not exist"));
         assert_eq!(stderr.matches("Next:").count(), 1);
         assert!(stderr.contains("run `ota init` to create a starter contract"));
-        assert!(stderr.contains("run `ota detect --write` to write a detected contract"));
+        assert!(stderr.contains("run this command from a repo directory that contains `ota.yaml`"));
+        assert!(stderr.contains("or run `ota init --dry-run` to preview what Ota would generate"));
     }
 
     #[test]

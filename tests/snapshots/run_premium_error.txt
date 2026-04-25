@@ -2,6 +2,10 @@
 `install:from:source` exited with code 7
 Where: <TMP>/ota.yaml
 Why: task `install:from:source` returned a non-zero exit code
+Output:
+  » showing 2 of 2 lines around the most relevant output
+  » build log
+  » trace line
 Next:
   » rerun `ota run install:from:source --stream` for live task output if the excerpt is insufficient
   » run `ota tasks --use <TMP>` to inspect runnable task usage
