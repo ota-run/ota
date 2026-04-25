@@ -4047,18 +4047,17 @@ fn runtime_public_env_from_resolved_runtime(
     env
 }
 
-fn projected_runtime_public_endpoint_line(
-    runtime_env: &BTreeMap<String, String>,
-) -> Option<String> {
-    runtime_env
-        .get("OTA_PUBLIC_URL")
-        .map(|endpoint| format!("\n\n🦦 Endpoint (planned): {endpoint}\n\n"))
-}
-
-fn print_projected_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
-    if let Some(line) = projected_runtime_public_endpoint_line(runtime_env) {
-        eprintln!("{line}");
-    }
+fn ready_runtime_public_endpoint_line(runtime: &ResolvedTaskRuntime) -> Option<String> {
+    runtime
+        .primary_endpoint
+        .as_ref()
+        .or_else(|| runtime.exposed_endpoints.first())
+        .map(|endpoint| {
+            format!(
+                "\n\n🦦 Endpoint: {}\n\n",
+                resolved_runtime_host_endpoint_text(&endpoint.host)
+            )
+        })
 }
 
 fn resolved_runtime_host_endpoint_text(host: &ResolvedTaskRuntimeHost) -> String {
@@ -5935,9 +5934,6 @@ fn execute_container_task_command(
                 )?;
                 let mut resolved_env = env_overrides.clone();
                 resolved_env.extend(projection.env.clone());
-                if matches!(mode, TaskExecutionMode::Stream { .. }) {
-                    print_projected_runtime_public_endpoint(&projection.env);
-                }
                 if let Err(preflight_error) = preflight_container_host_publications(
                     task_name,
                     &projection.listener_publications,
@@ -6162,6 +6158,7 @@ fn resolved_runtime_probe_target(runtime: &ResolvedTaskRuntime) -> Option<(Strin
 
 fn start_runtime_readiness_probe(
     runtime: Option<&ResolvedTaskRuntime>,
+    announce_ready_endpoint: bool,
 ) -> Option<RuntimeReadinessProbe> {
     let runtime = runtime?;
     if !resolved_runtime_has_public_endpoint(runtime) {
@@ -6171,6 +6168,9 @@ fn start_runtime_readiness_probe(
     if host.trim().is_empty() || port == 0 {
         return None;
     }
+    let ready_line = announce_ready_endpoint
+        .then(|| ready_runtime_public_endpoint_line(runtime))
+        .flatten();
     let observed = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
     let thread_observed = Arc::clone(&observed);
@@ -6188,6 +6188,9 @@ fn start_runtime_readiness_probe(
                 })
             {
                 thread_observed.store(true, Ordering::Relaxed);
+                if let Some(line) = ready_line.as_deref() {
+                    eprintln!("{line}");
+                }
                 break;
             }
             thread::sleep(Duration::from_millis(150));
@@ -6463,7 +6466,7 @@ fn execute_ephemeral_container_task_command(
         } => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = ephemeral_container_stream_command(engine, &container_name);
-            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref());
+            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref(), true);
             let output_result = run_streaming_command_with_capture_with_loader_options(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
@@ -6543,7 +6546,7 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref());
+            let readiness_probe = start_runtime_readiness_probe(prepared_runtime.as_ref(), false);
             let output = child.wait_with_output().map_err(|source| {
                 let _ = remove_persistent_container(engine, &container_name, task_name);
                 RunError::SpawnFailed {
@@ -6722,10 +6725,10 @@ fn execute_persistent_container_task_command(
         }
         Err(error) => return Err(error),
     };
-    if matches!(mode, TaskExecutionMode::Stream { .. }) {
-        print_projected_runtime_public_endpoint(&resolved_env);
-    }
-    let readiness_probe = start_runtime_readiness_probe(resolved_runtime.as_ref());
+    let readiness_probe = start_runtime_readiness_probe(
+        resolved_runtime.as_ref(),
+        matches!(mode, TaskExecutionMode::Stream { .. }),
+    );
     let mut output = exec_persistent_container_task_command(
         task_name,
         command,
@@ -6797,7 +6800,10 @@ fn execute_persistent_container_task_command(
             &fixed_expected_host_ports,
             env_overrides,
         )?;
-        let readiness_probe = start_runtime_readiness_probe(resolved_runtime.as_ref());
+        let readiness_probe = start_runtime_readiness_probe(
+            resolved_runtime.as_ref(),
+            matches!(mode, TaskExecutionMode::Stream { .. }),
+        );
         let mut output = exec_persistent_container_task_command(
             task_name,
             command,
@@ -8846,19 +8852,20 @@ mod tests {
 
     use super::{
         CapturedRunOutcome, ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep,
-        ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend, RunError,
-        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, StreamLogTee,
-        TaskExecutionMode, TaskExecutionRelation, TaskRunState, clean_execution,
-        clean_execution_report, container_identity_seed, contract_working_dir, current_os,
-        effective_task_execution, ephemeral_container_stream_command, execute_task_with_hooks,
-        persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
-        plan_task_execution, preflight_container_host_publications,
-        prepare_container_runtime_projection, preparing_loader_label,
-        projected_runtime_public_endpoint_line, resolve_execution_backend, resolve_task_env,
-        resolve_task_env_details, run_task, run_task_captured, run_task_with_args,
-        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
-        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
-        simulate_run_interrupt_for_test,
+        ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend,
+        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
+        ResolvedTaskRuntimeHost, RunError, RuntimeListenerHostPublicationFailure,
+        RuntimeListenerResolutionKind, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
+        TaskRunState, clean_execution, clean_execution_report, container_identity_seed,
+        contract_working_dir, current_os, effective_task_execution,
+        ephemeral_container_stream_command, execute_task_with_hooks, persistent_cleanup_targets,
+        persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
+        preflight_container_host_publications, prepare_container_runtime_projection,
+        preparing_loader_label, ready_runtime_public_endpoint_line, resolve_execution_backend,
+        resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
+        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
+        run_task_with_overrides, run_task_with_progress, running_loader_label,
+        running_loader_label_for_backend, simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -10164,16 +10171,31 @@ tasks:
     }
 
     #[test]
-    fn projected_runtime_public_endpoint_line_uses_resolved_public_url() {
-        let mut runtime_env = BTreeMap::new();
-        runtime_env.insert(
-            String::from("OTA_PUBLIC_URL"),
-            String::from("http://127.0.0.1:49153/"),
-        );
+    fn ready_runtime_public_endpoint_line_uses_resolved_public_url() {
+        let runtime = ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 49153,
+                    url: Some(String::from("http://127.0.0.1:49153/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
 
         assert_eq!(
-            projected_runtime_public_endpoint_line(&runtime_env).as_deref(),
-            Some("\n\n🦦 Endpoint (planned): http://127.0.0.1:49153/\n\n")
+            ready_runtime_public_endpoint_line(&runtime).as_deref(),
+            Some("\n\n🦦 Endpoint: http://127.0.0.1:49153/\n\n")
         );
     }
 
