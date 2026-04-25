@@ -8023,7 +8023,7 @@ port_listening() {
     BEGIN { found = 0 }
     NR > 1 {
       split($2, a, ":");
-      if (($4 == "0A" || $4 == "0a") && toupper(a[2]) == toupper(port)) {
+      if (($4 == "0A" || $4 == "0a") && (toupper(a[2]) == toupper(port) || a[2] == port)) {
         found = 1
         exit
       }
@@ -8072,7 +8072,7 @@ find_listener_owner_pids() {
     BEGIN { found = 0 }
     NR > 1 {
       split($2, a, ":");
-      if (($4 == "0A" || $4 == "0a") && toupper(a[2]) == toupper(target)) {
+      if (($4 == "0A" || $4 == "0a") && (toupper(a[2]) == toupper(target) || a[2] == target)) {
         print $10
         found = 1
       }
