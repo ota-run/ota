@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- No unreleased changes yet.
+
+## 1.6.3
+
+- No user-visible changes beyond the patch version and release metadata in this build.
 
 ## 1.6.2
 
