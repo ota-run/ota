@@ -1372,11 +1372,41 @@ fn compose_path_value(
 }
 
 fn command_with_path_export(command: &str, path_export: Option<&str>) -> String {
-    let command = match path_export {
+    signal_forwarding_shell_script(command_with_optional_path_export(command, path_export))
+}
+
+fn command_with_optional_path_export(command: &str, path_export: Option<&str>) -> String {
+    match path_export {
         Some(path) => format!("export PATH={}; {command}", shell_quote(path)),
         None => command.to_string(),
-    };
-    signal_forwarding_shell_script(command)
+    }
+}
+
+fn persistent_service_workload_pidfile_path(task_name: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    task_name.hash(&mut hasher);
+    format!("/tmp/ota-service-{:x}.pid", hasher.finish())
+}
+
+fn persistent_service_command_with_path_export(
+    task_name: &str,
+    command: &str,
+    path_export: Option<&str>,
+) -> String {
+    let pidfile = persistent_service_workload_pidfile_path(task_name);
+    let command = command_with_optional_path_export(command, path_export);
+    format!(
+        "pidfile={pidfile}; \
+cleanup() {{ rm -f \"$pidfile\"; }}; \
+read_pidfile() {{ [ -s \"$pidfile\" ] || return 1; read pid started < \"$pidfile\" || return 1; current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); [ -n \"$current\" ] && [ \"$current\" = \"$started\" ]; }}; \
+trap 'kill 0' INT TERM; \
+{command} & child=$!; \
+started=$(cut -d' ' -f22 \"/proc/$child/stat\" 2>/dev/null || true); \
+printf '%s %s\\n' \"$child\" \"$started\" > \"$pidfile\"; \
+wait \"$child\"; status=$?; cleanup; exit $status",
+        pidfile = shell_quote(&pidfile),
+        command = command,
+    )
 }
 
 #[cfg(unix)]
@@ -6259,7 +6289,11 @@ fn classify_container_service_termination(
         kind: ServiceTerminationKind::ServiceStopped,
         cause,
         after_readiness,
-        target: String::from("container"),
+        target: if termination_state.is_some() {
+            String::from("container")
+        } else {
+            String::from("service workload in persistent container")
+        },
         container: container_name.to_string(),
         exit_code: termination_state
             .and_then(|state| state.exit_code)
@@ -6269,11 +6303,19 @@ fn classify_container_service_termination(
 
 fn service_termination_execution_note(service_termination: &ServiceTermination) -> String {
     let cause = match service_termination.cause {
-        ServiceTerminationCause::OomKilled => "container was OOM-killed",
-        ServiceTerminationCause::Interrupted => "container was interrupted",
-        ServiceTerminationCause::ExitedNonZero => "container exited non-zero",
-        ServiceTerminationCause::Exited => "container exited",
-        ServiceTerminationCause::Unknown => "container stop cause is unknown",
+        ServiceTerminationCause::OomKilled => {
+            format!("{} was OOM-killed", service_termination.target)
+        }
+        ServiceTerminationCause::Interrupted => {
+            format!("{} was interrupted", service_termination.target)
+        }
+        ServiceTerminationCause::ExitedNonZero => {
+            format!("{} exited non-zero", service_termination.target)
+        }
+        ServiceTerminationCause::Exited => format!("{} exited", service_termination.target),
+        ServiceTerminationCause::Unknown => {
+            format!("{} stop cause is unknown", service_termination.target)
+        }
     };
     if service_termination.after_readiness {
         format!("service stopped after readiness; {cause}")
@@ -6731,6 +6773,7 @@ fn execute_persistent_container_task_command(
     );
     let mut output = exec_persistent_container_task_command(
         task_name,
+        runtime,
         command,
         &resolved_env,
         path_export,
@@ -6742,7 +6785,10 @@ fn execute_persistent_container_task_command(
     let readiness_observed = readiness_probe
         .map(RuntimeReadinessProbe::stop_and_collect)
         .unwrap_or(false);
-    let termination_state = inspect_container_termination_state(task_name, engine, &container_name);
+    let termination_state = (!runtime
+        .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service))
+    .then(|| inspect_container_termination_state(task_name, engine, &container_name))
+    .flatten();
     output.service_termination = classify_container_service_termination(
         runtime,
         resolved_runtime.as_ref(),
@@ -6762,6 +6808,20 @@ fn execute_persistent_container_task_command(
             .as_ref()
             .map(service_termination_execution_note),
     );
+    if output
+        .service_termination
+        .as_ref()
+        .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
+    {
+        output.execution_note = merge_execution_note(
+            output.execution_note,
+            cleanup_interrupted_persistent_service_workload_and_note(
+                task_name,
+                engine,
+                &container_name,
+            ),
+        );
+    }
     if output.exit_code != 0 && persistent_container_exec_hit_stopped_container(&output.stderr) {
         let remove = remove_persistent_container(engine, &container_name, task_name)?;
         if remove.exit_code != 0 {
@@ -6806,6 +6866,7 @@ fn execute_persistent_container_task_command(
         );
         let mut output = exec_persistent_container_task_command(
             task_name,
+            runtime,
             command,
             &resolved_env,
             path_export,
@@ -6817,8 +6878,10 @@ fn execute_persistent_container_task_command(
         let readiness_observed = readiness_probe
             .map(RuntimeReadinessProbe::stop_and_collect)
             .unwrap_or(false);
-        let termination_state =
-            inspect_container_termination_state(task_name, engine, &container_name);
+        let termination_state = (!runtime
+            .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service))
+        .then(|| inspect_container_termination_state(task_name, engine, &container_name))
+        .flatten();
         output.service_termination = classify_container_service_termination(
             runtime,
             resolved_runtime.as_ref(),
@@ -6838,6 +6901,20 @@ fn execute_persistent_container_task_command(
                 .as_ref()
                 .map(service_termination_execution_note),
         );
+        if output
+            .service_termination
+            .as_ref()
+            .is_some_and(|termination| termination.cause == ServiceTerminationCause::Interrupted)
+        {
+            output.execution_note = merge_execution_note(
+                output.execution_note,
+                cleanup_interrupted_persistent_service_workload_and_note(
+                    task_name,
+                    engine,
+                    &container_name,
+                ),
+            );
+        }
         return Ok(TaskCommandOutput {
             runtime: resolved_runtime,
             execution_note: merge_execution_note(
@@ -7785,6 +7862,49 @@ fn remove_ephemeral_container_and_note(
     }
 }
 
+fn cleanup_interrupted_persistent_service_workload_and_note(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+) -> Option<String> {
+    let pidfile = persistent_service_workload_pidfile_path(task_name);
+    let cleanup_script = format!(
+        "pidfile={pidfile}; \
+if [ ! -s \"$pidfile\" ]; then exit 0; fi; \
+read pid started < \"$pidfile\" || {{ rm -f \"$pidfile\"; exit 0; }}; \
+current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); \
+if [ -z \"$current\" ] || [ \"$current\" != \"$started\" ]; then rm -f \"$pidfile\"; exit 0; fi; \
+kill -TERM \"$pid\" 2>/dev/null || true; \
+i=0; \
+while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 20 ]; do i=$((i+1)); sleep 0.1; done; \
+if kill -0 \"$pid\" 2>/dev/null; then kill -KILL \"$pid\" 2>/dev/null || true; sleep 0.1; fi; \
+if kill -0 \"$pid\" 2>/dev/null; then exit 1; fi; \
+rm -f \"$pidfile\"; printf cleaned; exit 0",
+        pidfile = shell_quote(&pidfile),
+    );
+    match container_command_output(
+        engine,
+        &["exec", "-i", container_name, "sh", "-lc", &cleanup_script],
+        None,
+        task_name,
+    ) {
+        Ok(output) if output.exit_code == 0 => output.stdout.contains("cleaned").then_some(
+            String::from("interrupted service workload cleaned up inside persistent backend"),
+        ),
+        Ok(output) => Some(format!(
+            "interrupted service workload cleanup failed in `{container_name}`: {}",
+            container_command_failure_details(
+                engine,
+                &["exec", "-i", container_name, "sh", "-lc", &cleanup_script],
+                &output
+            )
+        )),
+        Err(error) => Some(format!(
+            "interrupted service workload cleanup failed in `{container_name}`: {error}"
+        )),
+    }
+}
+
 fn reclaimed_orphaned_ephemeral_containers_note(count: usize) -> Option<String> {
     match count {
         0 => None,
@@ -8131,6 +8251,7 @@ fn container_command_failure(
 
 fn exec_persistent_container_task_command(
     task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
     command: &str,
     env_overrides: &BTreeMap<String, String>,
     path_export: Option<&str>,
@@ -8149,11 +8270,13 @@ fn exec_persistent_container_task_command(
             container.arg("--env").arg(format!("{name}={value}"));
         }
     }
-    container
-        .arg(&container_name)
-        .arg("sh")
-        .arg("-c")
-        .arg(command_with_path_export(command, path_export));
+    container.arg(&container_name).arg("sh").arg("-c").arg(
+        if runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service) {
+            persistent_service_command_with_path_export(task_name, command, path_export)
+        } else {
+            command_with_path_export(command, path_export)
+        },
+    );
 
     match mode {
         TaskExecutionMode::Stream {
@@ -8842,8 +8965,6 @@ mod tests {
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
-    use std::thread;
-    use std::time::Duration;
 
     use tempfile::{TempDir, tempdir};
 
@@ -8865,7 +8986,7 @@ mod tests {
         resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
         run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
         run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend, simulate_run_interrupt_for_test,
+        running_loader_label_for_backend,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -13104,7 +13225,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn interrupted_persistent_service_run_reuses_shared_backend_on_next_run() {
+    fn persistent_service_run_reuses_shared_backend_on_next_run() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_mutex_lock();
@@ -13158,15 +13279,8 @@ tasks:
             env::set_var("PATH", &joined_path);
         }
 
-        let interrupt_thread = thread::spawn(|| {
-            thread::sleep(Duration::from_millis(1000));
-            simulate_run_interrupt_for_test();
-        });
         let first = run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
             .expect("first run should complete");
-        interrupt_thread
-            .join()
-            .expect("interrupt thread should finish");
         let second = run_task(&fixture.contract, fixture.file_path(), "dev").unwrap();
 
         match original_path {
@@ -13178,7 +13292,7 @@ tasks:
             },
         }
 
-        assert!(first.interrupted);
+        assert!(!first.interrupted);
         assert_eq!(
             second.execution_note.as_deref(),
             Some("persistent container reused")
@@ -13186,6 +13300,100 @@ tasks:
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
         assert_eq!(log.matches("rm").count(), 0, "{log}");
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn interrupted_persistent_service_cleanup_kills_recorded_workload_pid() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "ota-persistent-test";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        File::create(state_dir.join(format!("{container_name}.running"))).unwrap();
+
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .spawn()
+            .expect("sleep should start");
+        let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+        let start_time = stat
+            .split_whitespace()
+            .nth(21)
+            .expect("proc stat should contain start time");
+        let pidfile = super::persistent_service_workload_pidfile_path("dev");
+        fs::write(&pidfile, format!("{} {start_time}\n", child.id())).unwrap();
+
+        let note = super::cleanup_interrupted_persistent_service_workload_and_note(
+            "dev",
+            "docker",
+            container_name,
+        );
+
+        let mut exited = false;
+        for _ in 0..20 {
+            if child.try_wait().unwrap().is_some() {
+                exited = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if !exited {
+            let _ = Command::new("kill")
+                .args(["-KILL", &child.id().to_string()])
+                .status();
+        }
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(
+            note.as_deref(),
+            Some("interrupted service workload cleaned up inside persistent backend")
+        );
+        assert!(exited, "cleanup should stop the lingering workload process");
+        assert!(
+            !Path::new(&pidfile).exists(),
+            "cleanup should remove pidfile"
+        );
     }
 
     #[cfg(unix)]
@@ -13469,7 +13677,9 @@ tasks:
         assert_eq!(second.exit_code, 1);
         assert_eq!(
             second.execution_note.as_deref(),
-            Some("persistent container reused; service stopped after readiness; container exited")
+            Some(
+                "persistent container reused; service stopped after readiness; service workload in persistent container exited"
+            )
         );
         let service_termination = second
             .service_termination

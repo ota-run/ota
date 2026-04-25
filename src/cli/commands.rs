@@ -26999,8 +26999,14 @@ tasks:
 
         assert!(rendered.contains("Listener bind conflict"), "{rendered}");
         assert!(rendered.contains("Field: tasks.dev.runtime.listeners.http.bind.port"));
-        assert!(rendered.contains("Container: ota-persistent-deadbeef"), "{rendered}");
-        assert!(!rendered.contains("Container: stale-summary-id"), "{rendered}");
+        assert!(
+            rendered.contains("Container: ota-persistent-deadbeef"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Container: stale-summary-id"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -30433,21 +30439,15 @@ fn render_service_interrupted_text(
         paint_key("Task:"),
         paint_code(task_name)
     ));
-    let why_lines = vec![format!(
-        "{}",
-        if service_termination.exit_code == Some(0) {
-            format!(
-                "container `{}` was interrupted by user",
-                service_termination.container
-            )
-        } else {
-            format!(
-                "container `{}` was interrupted by user (exit code `{}`)",
-                service_termination.container,
-                service_termination.exit_code.unwrap_or(130)
-            )
-        }
-    )];
+    let subject = service_termination_subject(service_termination);
+    let why_lines = vec![if service_termination.exit_code == Some(0) {
+        format!("{subject} was interrupted by user")
+    } else {
+        format!(
+            "{subject} was interrupted by user (exit code `{}`)",
+            service_termination.exit_code.unwrap_or(130)
+        )
+    }];
     append_error_detail_section(&mut out, "Why:", &why_lines, None);
     let next_steps = vec![format!(
         "rerun `{}` when ready",
@@ -30506,6 +30506,7 @@ fn render_service_stopped_failure_text(
     ));
 
     let endpoint = runtime.and_then(primary_runtime_endpoint);
+    let subject = service_termination_subject(service_termination);
     let mut why_lines = vec![if service_termination.after_readiness {
         match endpoint {
             Some(endpoint) => {
@@ -30517,37 +30518,29 @@ fn render_service_stopped_failure_text(
         format!("service task `{task_name}` stopped before readiness")
     }];
     let cause_detail = match service_termination.cause {
-        ServiceTerminationCause::OomKilled => format!(
-            "container `{}` was OOM-killed by the container engine",
-            service_termination.container
-        ),
+        ServiceTerminationCause::OomKilled => {
+            format!("{subject} was OOM-killed by the container engine")
+        }
         ServiceTerminationCause::Interrupted => format!(
-            "container `{}` was interrupted (exit code `{}`)",
-            service_termination.container,
+            "{subject} was interrupted (exit code `{}`)",
             service_termination.exit_code.unwrap_or(130)
         ),
         ServiceTerminationCause::ExitedNonZero => {
             if service_termination.exit_code == Some(137) {
                 format!(
-                    "container `{}` was killed (exit code `137`, SIGKILL), often due to OOM or container runtime termination",
-                    service_termination.container
+                    "{subject} was killed (exit code `137`, SIGKILL), often due to OOM or container runtime termination"
                 )
             } else {
                 format!(
-                    "container `{}` exited with status `{}`",
-                    service_termination.container,
+                    "{subject} exited with status `{}`",
                     service_termination.exit_code.unwrap_or(1)
                 )
             }
         }
-        ServiceTerminationCause::Exited => format!(
-            "container `{}` exited after readiness",
-            service_termination.container
-        ),
-        ServiceTerminationCause::Unknown => format!(
-            "container `{}` stopped with an unknown termination cause",
-            service_termination.container
-        ),
+        ServiceTerminationCause::Exited => format!("{subject} exited after readiness"),
+        ServiceTerminationCause::Unknown => {
+            format!("{subject} stopped with an unknown termination cause")
+        }
     };
     why_lines.push(cause_detail);
     append_error_detail_section(&mut out, "Why:", &why_lines, None);
@@ -30602,22 +30595,30 @@ fn service_termination_summary_note(service_termination: &ServiceTermination) ->
     } else {
         "service stopped before readiness"
     };
+    let target = service_termination.target.as_str();
     match service_termination.cause {
-        ServiceTerminationCause::OomKilled => format!("{prefix}; container was OOM-killed"),
+        ServiceTerminationCause::OomKilled => format!("{prefix}; {target} was OOM-killed"),
         ServiceTerminationCause::Interrupted => String::from("service interrupted by user"),
         ServiceTerminationCause::ExitedNonZero => {
             if service_termination.exit_code == Some(137) {
-                format!("{prefix}; container was killed (exit 137, SIGKILL)")
+                format!("{prefix}; {target} was killed (exit 137, SIGKILL)")
             } else {
                 format!(
-                    "{prefix}; container exited with status {}",
+                    "{prefix}; {target} exited with status {}",
                     service_termination.exit_code.unwrap_or(1)
                 )
             }
         }
-        ServiceTerminationCause::Exited => format!("{prefix}; container exited"),
-        ServiceTerminationCause::Unknown => format!("{prefix}; container stop cause is unknown"),
+        ServiceTerminationCause::Exited => format!("{prefix}; {target} exited"),
+        ServiceTerminationCause::Unknown => format!("{prefix}; {target} stop cause is unknown"),
     }
+}
+
+fn service_termination_subject(service_termination: &ServiceTermination) -> String {
+    format!(
+        "{} `{}`",
+        service_termination.target, service_termination.container
+    )
 }
 
 fn task_exit_failure_why_lines(task_name: &str, exit_code: i32) -> Vec<String> {
