@@ -394,6 +394,10 @@ Current validation rule:
   - maps merge recursively (`container.resources`, `requirements`, `attachments`)
   - lists replace (`container.engines`, `attachments.compose`, `attachments.isolated_paths`)
 - backend-family switches across `extends` are rejected (for example inheriting from a `container` parent and setting child `backend: native`)
+- `extends` is additive inheritance within one backend family, not a generic "inherit anything, then replace `backend` later" escape hatch
+- invalid example:
+  - parent `backend: native`, child `extends: parent`, child `backend: container`
+  - ota rejects this because the parent and child do not share one execution shape
 
 Current implementation:
 

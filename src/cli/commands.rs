@@ -27034,7 +27034,7 @@ tasks:
     }
 
     #[test]
-    fn run_failure_text_reports_exited_service_as_interrupted_when_user_interrupt_observed() {
+    fn run_failure_text_keeps_clean_service_exit_as_failure_even_with_late_interrupt_signal() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
             r#"
@@ -27069,18 +27069,14 @@ tasks:
             }),
             true,
             None,
-            "RUN SUMMARY\nStatus:    interrupted\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
         ));
 
-        assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
-        assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(!rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:    failed"), "{rendered}");
         assert!(
-            rendered.contains("Note:      service interrupted by user"),
-            "{rendered}"
-        );
-        assert!(
-            !rendered.contains("Note:      service stopped after readiness; container exited"),
+            rendered.contains("Note:      service stopped after readiness; container exited"),
             "{rendered}"
         );
     }
@@ -27551,6 +27547,56 @@ tasks:
     }
 
     #[test]
+    fn late_interrupt_signal_with_nonzero_exit_does_not_reclassify_non_service_failure() {
+        let mut receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "dev",
+                "FAILED",
+                Some(String::from("requested task")),
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        super::apply_interrupted_run_classification(&mut receipt, None, true);
+
+        assert_eq!(receipt.steps[0].status, "FAILED");
+        assert_eq!(receipt.summary.error_count, 1);
+        assert_eq!(receipt.summary.info_count, 0);
+    }
+
+    #[test]
     fn interrupted_signal_does_not_reclassify_nonzero_service_termination_in_receipt() {
         let mut receipt = ExecutionReceipt {
             ok: false,
@@ -27577,6 +27623,61 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(1),
+            }),
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+        let service_termination = receipt.service_termination.clone();
+        super::apply_interrupted_run_classification(
+            &mut receipt,
+            service_termination.as_ref(),
+            true,
+        );
+
+        assert_eq!(receipt.steps[0].status, "FAILED");
+        assert_eq!(receipt.summary.error_count, 1);
+        assert_eq!(receipt.summary.info_count, 0);
+    }
+
+    #[test]
+    fn interrupted_signal_does_not_reclassify_clean_service_exit_in_receipt() {
+        let mut receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("dev")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Exited,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(0),
             }),
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -27633,6 +27734,79 @@ tasks:
             None,
             None,
             false,
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
+        assert!(!rendered.contains("INFO  Task interrupted"), "{rendered}");
+    }
+
+    #[test]
+    fn run_failure_text_reports_sigquit_exit_as_user_interruption_without_raw_flag() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            131,
+            "",
+            "",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("INFO  Task interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(!rendered.contains("ERROR  Task Failed"), "{rendered}");
+    }
+
+    #[test]
+    fn run_failure_text_keeps_generic_failure_for_late_interrupt_with_nonzero_exit() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "boom",
+            None,
+            None,
+            true,
             None,
             "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
         ));
@@ -30522,7 +30696,7 @@ fn apply_run_log_capture_to_receipt(
 }
 
 fn exit_code_indicates_user_interruption(exit_code: i32) -> bool {
-    exit_code == 130 || exit_code == 143
+    exit_code == 129 || exit_code == 130 || exit_code == 131 || exit_code == 143
 }
 
 fn receipt_reports_user_interruption(
@@ -30531,28 +30705,44 @@ fn receipt_reports_user_interruption(
     interrupted: bool,
 ) -> bool {
     if let Some(service_termination) = service_termination {
-        return service_termination_reports_user_interruption(service_termination, interrupted);
+        return service_termination_reports_user_interruption(service_termination);
     }
 
-    interrupted
-        || receipt.steps.iter().any(|step| {
-            step.detail
-                .as_deref()
-                .is_some_and(|detail| detail.contains("interrupted by user"))
-        })
-        || receipt
-            .steps
-            .iter()
-            .any(|step| step.status.trim() == "INTERRUPTED")
+    if receipt.steps.iter().any(|step| {
+        step.detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("interrupted by user"))
+    }) || receipt
+        .steps
+        .iter()
+        .any(|step| step.status.trim() == "INTERRUPTED")
+    {
+        return true;
+    }
+
+    let has_interrupt_exit_code = receipt
+        .steps
+        .iter()
+        .any(|step| step.exit_code.is_some_and(exit_code_indicates_user_interruption));
+    if has_interrupt_exit_code {
+        return true;
+    }
+
+    if !interrupted {
+        return false;
+    }
+
+    let has_non_interrupt_nonzero = receipt.steps.iter().any(|step| {
+        step.exit_code
+            .is_some_and(|exit_code| exit_code != 0 && !exit_code_indicates_user_interruption(exit_code))
+    });
+    !has_non_interrupt_nonzero
 }
 
-fn service_termination_reports_user_interruption(
-    service_termination: &ServiceTermination,
-    interrupted: bool,
-) -> bool {
+fn service_termination_reports_user_interruption(service_termination: &ServiceTermination) -> bool {
     match service_termination.cause {
         ServiceTerminationCause::Interrupted => true,
-        ServiceTerminationCause::Exited => interrupted,
+        ServiceTerminationCause::Exited => false,
         ServiceTerminationCause::ExitedNonZero
         | ServiceTerminationCause::OomKilled
         | ServiceTerminationCause::Unknown => false,
@@ -30637,7 +30827,7 @@ fn render_run_captured_failure_text(
     summary: &str,
 ) -> String {
     if let Some(service_termination) = service_termination {
-        if service_termination_reports_user_interruption(service_termination, interrupted) {
+        if service_termination_reports_user_interruption(service_termination) {
             return render_service_interrupted_text(
                 where_value,
                 task_name,
@@ -30709,21 +30899,17 @@ fn run_failure_reports_user_interruption(
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> bool {
-    if interrupted {
-        return true;
-    }
-    if !exit_code_indicates_user_interruption(exit_code) {
-        return false;
-    }
     let summary_plain = strip_ansi_codes(summary_block);
-    if summary_plain.contains("Status:    interrupted")
+    let marker_indicates_interruption = summary_plain.contains("Status:    interrupted")
         || summary_plain.contains("interrupted by user")
-    {
+        || receipt_text.map(strip_ansi_codes).is_some_and(|text| {
+            text.contains("interrupted by user") || text.contains("INTERRUPTED")
+        });
+    if marker_indicates_interruption {
         return true;
     }
-    receipt_text
-        .map(strip_ansi_codes)
-        .is_some_and(|text| text.contains("interrupted by user") || text.contains("INTERRUPTED"))
+
+    exit_code_indicates_user_interruption(exit_code) || (interrupted && exit_code == 0)
 }
 
 fn render_task_interrupted_text(
