@@ -8085,23 +8085,24 @@ find_listener_owner_pids() {
     }
     END { if (!found) exit 1 }
   '\'' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true)
-  [ -n "$inodes" ] || return 0
   owners=""
-  for inode in $inodes; do
-    for fd in /proc/[0-9]*/fd/*; do
-      [ -e "$fd" ] || continue
-      link=$(readlink "$fd" 2>/dev/null || true)
-      [ "$link" = "socket:[$inode]" ] || continue
-      pid=${fd#/proc/}
-      pid=${pid%%/*}
-      [ "$pid" = "$$" ] && continue
-      [ "$pid" = "1" ] && continue
-      case " $owners " in
-        *" $pid "*) ;;
-        *) owners="$owners $pid" ;;
-      esac
+  if [ -n "$inodes" ]; then
+    for inode in $inodes; do
+      for fd in /proc/[0-9]*/fd/*; do
+        [ -e "$fd" ] || continue
+        link=$(readlink "$fd" 2>/dev/null || true)
+        [ "$link" = "socket:[$inode]" ] || continue
+        pid=${fd#/proc/}
+        pid=${pid%%/*}
+        [ "$pid" = "$$" ] && continue
+        [ "$pid" = "1" ] && continue
+        case " $owners " in
+          *" $pid "*) ;;
+          *) owners="$owners $pid" ;;
+        esac
+      done
     done
-  done
+  fi
   if [ -z "$owners" ] && command -v ss >/dev/null 2>&1; then
     ss_pids=$(ss -H -ltnp "sport = :$target_port" 2>/dev/null | awk '
       {
@@ -8116,6 +8117,24 @@ find_listener_owner_pids() {
       }
     ')
     for pid in $ss_pids; do
+      case " $owners " in
+        *" $pid "*) ;;
+        *) owners="$owners $pid" ;;
+      esac
+    done
+  fi
+  if [ -z "$owners" ] && command -v lsof >/dev/null 2>&1; then
+    lsof_pids=$(lsof -nP -iTCP:"$target_port" -sTCP:LISTEN -t 2>/dev/null || true)
+    for pid in $lsof_pids; do
+      case " $owners " in
+        *" $pid "*) ;;
+        *) owners="$owners $pid" ;;
+      esac
+    done
+  fi
+  if [ -z "$owners" ] && command -v fuser >/dev/null 2>&1; then
+    fuser_pids=$(fuser -n tcp "$target_port" 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) print $i}')
+    for pid in $fuser_pids; do
       case " $owners " in
         *" $pid "*) ;;
         *) owners="$owners $pid" ;;
