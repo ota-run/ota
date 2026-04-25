@@ -8051,7 +8051,6 @@ terminate_pid_tree() {
     kill -KILL "$pid" 2>/dev/null || true
     sleep 0.5
   fi
-  kill -0 "$pid" 2>/dev/null && return 1
   return 0
 }
 
@@ -8063,7 +8062,7 @@ cleanup_pidfile_owner() {
     rm -f "$pidfile"
     return 0
   fi
-  terminate_pid_tree "$pid" || return 1
+  terminate_pid_tree "$pid"
   cleaned=1
   rm -f "$pidfile"
 }
@@ -8098,7 +8097,7 @@ find_listener_owner_pids() {
       esac
     done
   done
-  printf '%s\n' "$owners"
+  printf '\''%s\n'\'' "$owners"
 }
 
 cleanup_listener_owners() {
@@ -8106,16 +8105,16 @@ cleanup_listener_owners() {
   attempt=0
   while [ "$attempt" -lt 20 ]; do
     for port in $ports; do
-      hex=$(printf '%04X' "$port")
+      hex=$(printf '\''%04X'\'' "$port")
       owners=$(find_listener_owner_pids "$hex")
       for pid in $owners; do
-        terminate_pid_tree "$pid" || return 1
+        terminate_pid_tree "$pid"
         cleaned=1
       done
     done
     all_free=1
     for port in $ports; do
-      hex=$(printf '%04X' "$port")
+      hex=$(printf '\''%04X'\'' "$port")
       if port_listening "$hex"; then
         all_free=0
         break
@@ -8128,7 +8127,7 @@ cleanup_listener_owners() {
   return 1
 }
 
-cleanup_pidfile_owner || exit 1
+cleanup_pidfile_owner
 cleanup_listener_owners || exit 1
 if [ "$cleaned" = "1" ]; then printf cleaned; fi
 exit 0
