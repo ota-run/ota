@@ -8037,9 +8037,10 @@ terminate_pid_tree() {
   [ -n "$pid" ] || return 0
   [ "$pid" = "$$" ] && return 0
   [ "$pid" = "1" ] && return 0
-  children=$(cat "/proc/$pid/task/$pid/children" 2>/dev/null || true)
+  children=$(cat "/proc/$pid/task/$pid/children" 2>/dev/null || pgrep -P "$pid" 2>/dev/null || true)
   for child in $children; do terminate_pid_tree "$child"; done
   kill -TERM "$pid" 2>/dev/null || true
+  sleep 0.1
   i=0
   while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
     i=$((i + 1))
@@ -8047,7 +8048,7 @@ terminate_pid_tree() {
   done
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL "$pid" 2>/dev/null || true
-    sleep 0.1
+    sleep 0.2
   fi
   kill -0 "$pid" 2>/dev/null && return 1
   return 0
