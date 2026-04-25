@@ -26843,6 +26843,132 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_reports_pre_readiness_service_interrupt_explicitly() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(
+            rendered.contains("INFO  Task interrupted before readiness"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("service task `dev` was interrupted by user before it became ready"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(!rendered.contains("Status:    failed"), "{rendered}");
+    }
+
+    #[test]
+    fn run_failure_text_keeps_pre_readiness_service_nonzero_as_failure() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "startup failed",
+            Some(&runtime),
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
+        assert!(
+            !rendered.contains("Task interrupted before readiness"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_reports_interrupted_service_without_zero_exit_code_noise() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -30424,10 +30550,15 @@ fn render_service_interrupted_text(
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> String {
+    let title = if service_termination.after_readiness {
+        "Service interrupted"
+    } else {
+        "Task interrupted before readiness"
+    };
     let mut out = format!(
         "{}  {}",
         render_severity(FindingSeverity::Info),
-        paint("Service interrupted", "1;37")
+        paint(title, "1;37")
     );
     out.push_str(&format!(
         "\n{} {}",
@@ -30440,7 +30571,9 @@ fn render_service_interrupted_text(
         paint_code(task_name)
     ));
     let subject = service_termination_subject(service_termination);
-    let why_lines = vec![if service_termination.exit_code == Some(0) {
+    let why_lines = vec![if !service_termination.after_readiness {
+        format!("service task `{task_name}` was interrupted by user before it became ready")
+    } else if service_termination.exit_code == Some(0) {
         format!("{subject} was interrupted by user")
     } else {
         format!(
@@ -30598,7 +30731,13 @@ fn service_termination_summary_note(service_termination: &ServiceTermination) ->
     let target = service_termination.target.as_str();
     match service_termination.cause {
         ServiceTerminationCause::OomKilled => format!("{prefix}; {target} was OOM-killed"),
-        ServiceTerminationCause::Interrupted => String::from("service interrupted by user"),
+        ServiceTerminationCause::Interrupted => {
+            if service_termination.after_readiness {
+                String::from("service interrupted by user")
+            } else {
+                String::from("service interrupted by user before readiness")
+            }
+        }
         ServiceTerminationCause::ExitedNonZero => {
             if service_termination.exit_code == Some(137) {
                 format!("{prefix}; {target} was killed (exit 137, SIGKILL)")
