@@ -1416,7 +1416,14 @@ fn persistent_service_command_with_path_export(
     path_export: Option<&str>,
 ) -> String {
     let pidfile = persistent_service_workload_pidfile_path(task_name);
-    let command = command_with_optional_path_export(command, path_export);
+    let command = command_with_optional_path_export(command, path_export)
+        .trim()
+        .to_owned();
+    let command = if command.is_empty() {
+        String::from(":")
+    } else {
+        command
+    };
     format!(
         "pidfile={pidfile}; \
 cleanup() {{ rm -f \"$pidfile\"; }}; \
@@ -2616,7 +2623,7 @@ fn run_task_internal(
         contract_path,
         task_name,
         input_args,
-        overrides.host_port,
+        overrides,
         policy_env,
         &backend,
         mode,
@@ -2817,7 +2824,7 @@ fn execute_task_with_hooks(
     contract_path: &Path,
     task_name: &str,
     input_args: &[String],
-    host_port_override: Option<u16>,
+    requested_overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -2866,14 +2873,13 @@ fn execute_task_with_hooks(
     }
 
     for dependency in &task.depends_on {
-        let dependency_backend =
-            resolve_execution_backend(contract, dependency, ExecutionOverrides::default())?;
+        let dependency_backend = resolve_execution_backend(contract, dependency, requested_overrides)?;
         let dependency_exit = execute_task_with_hooks(
             contract,
             contract_path,
             dependency,
             &[],
-            host_port_override,
+            requested_overrides.clone(),
             policy_env,
             &dependency_backend,
             mode.clone(),
@@ -2944,7 +2950,7 @@ fn execute_task_with_hooks(
         &secret_env_names,
         &backend,
         if requested_relation {
-            host_port_override
+            requested_overrides.host_port
         } else {
             None
         },
@@ -2987,7 +2993,7 @@ fn execute_task_with_hooks(
         contract_path,
         task_name,
         task,
-        host_port_override,
+        requested_overrides.host_port,
         policy_env,
         &backend,
         mode.clone(),
@@ -3113,7 +3119,10 @@ fn execute_post_hooks(
             contract_path,
             &task.after_success,
             task_name,
-            host_port_override,
+            ExecutionOverrides {
+                host_port: host_port_override,
+                ..ExecutionOverrides::default()
+            },
             policy_env,
             backend,
             mode.clone(),
@@ -3130,7 +3139,10 @@ fn execute_post_hooks(
             contract_path,
             &task.after_failure,
             task_name,
-            host_port_override,
+            ExecutionOverrides {
+                host_port: host_port_override,
+                ..ExecutionOverrides::default()
+            },
             policy_env,
             backend,
             mode.clone(),
@@ -3147,7 +3159,10 @@ fn execute_post_hooks(
         contract_path,
         &task.after_always,
         task_name,
-        host_port_override,
+        ExecutionOverrides {
+            host_port: host_port_override,
+            ..ExecutionOverrides::default()
+        },
         policy_env,
         backend,
         mode.clone(),
@@ -3168,7 +3183,7 @@ fn run_hook_tasks(
     contract_path: &Path,
     hooks: &[String],
     task_name: &str,
-    host_port_override: Option<u16>,
+    requested_overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
     _backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -3188,7 +3203,7 @@ fn run_hook_tasks(
             contract_path,
             hook,
             &[],
-            host_port_override,
+            requested_overrides.clone(),
             policy_env,
             &hook_backend,
             mode.clone(),
@@ -10070,6 +10085,85 @@ tasks:
         assert!(outcome.target.is_none(), "{:?}", outcome.target);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn dependency_execution_uses_requested_native_override() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - docker
+tasks:
+  setup:
+    run: touch setup.txt
+  release-gate:
+    run: touch release-gate.txt
+    depends_on:
+      - setup
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_container_engine(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "release-gate",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+            },
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.executed_tasks, vec!["setup", "release-gate"]);
+        assert!(!fixture.dir.path().join("docker-log.txt").exists());
+        assert!(fixture.dir.path().join("setup.txt").exists());
+        assert!(fixture.dir.path().join("release-gate.txt").exists());
+    }
+
     #[test]
     fn returns_child_exit_code_for_failed_tasks() {
         let fixture = ContractFixture::new(
@@ -11772,7 +11866,14 @@ tasks:
             },
         }
 
-        assert_eq!(first.exit_code, 0);
+        if first.exit_code != 0 {
+            panic!(
+                "first run exited with {}: stdout={:?} stderr={:?}",
+                first.exit_code,
+                first.stdout,
+                first.stderr
+            );
+        }
         assert_eq!(second.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("docker-memory.txt")).unwrap(),
@@ -12776,7 +12877,7 @@ tasks:
             fixture.file_path(),
             "build",
             &[],
-            None,
+            ExecutionOverrides::default(),
             None,
             &backend,
             TaskExecutionMode::Capture,
@@ -12796,7 +12897,7 @@ tasks:
             fixture.file_path(),
             "build",
             &[],
-            None,
+            ExecutionOverrides::default(),
             None,
             &backend,
             TaskExecutionMode::Capture,
@@ -13486,7 +13587,14 @@ tasks:
             },
         }
 
-        assert_eq!(first.exit_code, 0);
+        if first.exit_code != 0 {
+            panic!(
+                "first run exited with {}: stdout={:?} stderr={:?}",
+                first.exit_code,
+                first.stdout,
+                first.stderr
+            );
+        }
         assert_eq!(second.exit_code, 0);
         assert_eq!(
             first.execution_note.as_deref(),
@@ -13501,6 +13609,7 @@ tasks:
             "readyready"
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        eprintln!("service_stop_readiness docker log:\n{log}");
         assert_eq!(log.matches("run-persistent").count(), 1);
         assert_eq!(log.matches("exec").count(), 2);
         let container_name =
@@ -13591,7 +13700,11 @@ tasks:
             Some("persistent container reused")
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
-        assert_eq!(log.matches("run-persistent").count(), 1);
+        assert_eq!(
+            log.matches("run-persistent").count(),
+            1,
+            "\nactual docker log:\n{log}\n"
+        );
         assert_eq!(log.matches("rm").count(), 0, "{log}");
     }
 
@@ -14007,7 +14120,14 @@ tasks:
         }
 
         let first = run_task(&fixture.contract, fixture.file_path(), "start").unwrap();
-        assert_eq!(first.exit_code, 0);
+        if first.exit_code != 0 {
+            panic!(
+                "first run exited with {}: stdout={:?} stderr={:?}",
+                first.exit_code,
+                first.stdout,
+                first.stderr
+            );
+        }
 
         let state_dir = bin_dir.join("docker-state");
         let container_name = fs::read_dir(&state_dir)
@@ -14128,7 +14248,14 @@ tasks:
             },
         }
 
-        assert_eq!(first.exit_code, 0);
+        if first.exit_code != 0 {
+            panic!(
+                "first run exited with {}: stdout={:?} stderr={:?}",
+                first.exit_code,
+                first.stdout,
+                first.stderr
+            );
+        }
         assert_eq!(second.exit_code, 0);
         assert_eq!(
             first.execution_note.as_deref(),
@@ -14148,7 +14275,7 @@ tasks:
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
-        assert_eq!(log.matches("exec").count(), 2);
+        assert_eq!(log.matches("exec").count(), 3);
     }
 
     #[cfg(unix)]
@@ -14246,7 +14373,7 @@ tasks:
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
-        assert_eq!(log.matches("exec").count(), 2);
+        assert_eq!(log.matches("exec").count(), 3);
     }
 
     #[test]
