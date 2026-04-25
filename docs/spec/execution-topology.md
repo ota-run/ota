@@ -131,9 +131,31 @@ Inheritance merge rules:
 - maps merge recursively
 - lists replace
 - backend-family switches across `extends` are rejected
+- `extends` is additive inheritance inside one execution family, not a generic reuse mechanism where a child inherits arbitrary parent fields and then swaps `backend`
 - `extends` is additive for multi-context repos; simple repos can keep single-context shorthand (`preferred` / `lifecycle` / `backends`)
 - root shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) must not be combined with `execution.default_context` or `execution.contexts`; contracts choose either shorthand-only or context mode
 - `ota run`, `ota up`, `ota doctor`, and `ota execution plan` consume the resolved merged context shape, not the raw partial parent/child declarations
+
+Invalid example:
+
+```yaml
+execution:
+  default_context: app
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+    app:
+      extends: host
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+```
+
+Ota rejects this shape because `host` and `app` do not share one execution family. If contexts only share generic metadata, model that metadata separately or duplicate it intentionally rather than crossing backend families through `extends`.
 
 This keeps `docker` on the host context instead of pretending the app container should carry it.
 
