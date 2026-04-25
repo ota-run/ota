@@ -8152,6 +8152,9 @@ exit 0
             String::from("interrupted service workload cleaned up inside persistent backend"),
         ),
         Ok(output) if output.exit_code == 0 => None,
+        Ok(output) if output.stdout.contains("cleaned") => Some(
+            String::from("interrupted service workload cleaned up inside persistent backend"),
+        ),
         Ok(_) => {
             let ports_note = fixed_bind_ports
                 .iter()
