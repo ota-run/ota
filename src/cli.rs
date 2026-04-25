@@ -5059,6 +5059,12 @@ case "$command" in
     done
     host_dir=$(cat "$state_dir/$name.path")
     printf "exec\n" >> "$host_dir/docker-log.txt"
+    if [ "$1" = "sh" ] && [ "$2" = "-s" ]; then
+      shift 2
+      [ "$1" = "--" ] && shift
+      cd "$host_dir" || exit 1
+      exec /bin/sh -s -- "$@" < /dev/stdin
+    fi
     if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
       case "$3" in
         *"/proc/net/tcp"*)
