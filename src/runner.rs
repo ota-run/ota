@@ -8073,6 +8073,7 @@ cleanup_pidfile_owner() {
 
 find_listener_owner_pids() {
   target_hex="$1"
+  target_port="$2"
   inodes=$(awk -v target="$target_hex" '\''
     BEGIN { found = 0 }
     NR > 1 {
@@ -8101,6 +8102,26 @@ find_listener_owner_pids() {
       esac
     done
   done
+  if [ -z "$owners" ] && command -v ss >/dev/null 2>&1; then
+    ss_pids=$(ss -H -ltnp "sport = :$target_port" 2>/dev/null | awk '
+      {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /pid=/) {
+            match($i, /pid=([0-9]+)/, match_data)
+            if (match_data[1] != "") {
+              print match_data[1]
+            }
+          }
+        }
+      }
+    ')
+    for pid in $ss_pids; do
+      case " $owners " in
+        *" $pid "*) ;;
+        *) owners="$owners $pid" ;;
+      esac
+    done
+  fi
   printf '\''%s\n'\'' "$owners"
 }
 
@@ -8110,7 +8131,7 @@ cleanup_listener_owners() {
   while [ "$attempt" -lt 20 ]; do
     for port in $ports; do
       hex=$(printf '\''%04X'\'' "$port")
-      owners=$(find_listener_owner_pids "$hex")
+      owners=$(find_listener_owner_pids "$hex" "$port")
       for pid in $owners; do
         terminate_pid_tree "$pid"
         cleaned=1
