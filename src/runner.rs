@@ -4052,7 +4052,7 @@ fn projected_runtime_public_endpoint_line(
 ) -> Option<String> {
     runtime_env
         .get("OTA_PUBLIC_URL")
-        .map(|endpoint| format!("\n🦦 Endpoint (planned): {endpoint}"))
+        .map(|endpoint| format!("\n\n🦦 Endpoint (planned): {endpoint}\n\n"))
 }
 
 fn print_projected_runtime_public_endpoint(runtime_env: &BTreeMap<String, String>) {
@@ -10171,7 +10171,7 @@ tasks:
 
         assert_eq!(
             projected_runtime_public_endpoint_line(&runtime_env).as_deref(),
-            Some("\n🦦 Endpoint (planned): http://127.0.0.1:49153/")
+            Some("\n\n🦦 Endpoint (planned): http://127.0.0.1:49153/\n\n")
         );
     }
 
