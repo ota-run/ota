@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+
+## 1.6.2
+
 - made `ota init`, `ota init --pack ...`, and repo-contract detect write flows (`ota detect --write`, `--merge`, `--rewrite`) automatically create or extend repo `.gitignore` files with `.ota/state/` so local Ota runtime state stays out of source control by default
 - added a first safe `ota doctor --fix` path with `--dry-run` preview mode, currently scoped to deterministic repo-hygiene repair for `.ota/state/` gitignore protection (`# Ota local runtime state` + `.ota/state/`) with planned/applied status surfaced in text and JSON output
 - tightened `ota doctor --fix` truthfulness and scope: contractless repos no longer surface `.ota/state/` gitignore repair before Ota is onboarded, dry-run/apply summaries now report only actually plannable file changes, and no-contract `--fix` output now points operators back to `ota detect --dry-run` / `ota init --bootstrap` instead of low-value hygiene mutations
