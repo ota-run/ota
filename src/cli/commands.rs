@@ -379,7 +379,9 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
 fn parse_task_exit_failure_line(line: &str) -> Option<(String, i32)> {
     let trimmed = line.trim();
     let remainder = trimmed.strip_prefix("task `")?;
-    let (task_name, exit_code) = remainder.split_once("` failed with exit code ")?;
+    let (task_name, exit_code) = remainder
+        .split_once("` failed with exit code ")
+        .or_else(|| remainder.split_once("` exited with code "))?;
     let exit_code = exit_code.trim().parse().ok()?;
     Some((task_name.to_string(), exit_code))
 }
@@ -37532,10 +37534,18 @@ fn doctor_report_execution_context(
     report: &DoctorReport,
 ) -> PhaseExecutionContext {
     let mut context = doctor_phase_execution_context(contract, path, mode);
-    if mode == DoctorMode::Container && context.target.is_none() {
+    if mode == DoctorMode::Container && contract_container_host_bound_scope_note_present(report) {
+        context.target = None;
+    } else if mode == DoctorMode::Container && context.target.is_none() {
         context.target = report.execution_target.clone();
     }
     context
+}
+
+fn contract_container_host_bound_scope_note_present(report: &DoctorReport) -> bool {
+    report.findings.iter().any(|finding| {
+        finding.summary == "Host-bound readiness checks are not evaluated in container mode"
+    })
 }
 
 fn provisioning_phase_execution_context(
