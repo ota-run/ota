@@ -575,6 +575,16 @@ pub enum RunError {
         port: u16,
     },
     #[error(
+        "task `{task}` listener `{listener}` cannot bind `{address}:{port}` because reused persistent container `{container}` already has that port in use"
+    )]
+    PersistentContainerListenerBindConflict {
+        task: String,
+        listener: String,
+        address: String,
+        port: u16,
+        container: String,
+    },
+    #[error(
         "task `{task}` cannot apply `--host-port` because no projected host listener is declared"
     )]
     HostPortOverrideNoProjectedListener { task: String },
@@ -4211,6 +4221,81 @@ fn preflight_container_host_publications(
     Ok(())
 }
 
+fn preflight_reused_persistent_container_listener_binds(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    engine: &str,
+    container_name: &str,
+) -> Result<(), RunError> {
+    let Some(runtime) = runtime else {
+        return Ok(());
+    };
+
+    let fixed_binds = runtime
+        .listeners
+        .iter()
+        .filter_map(|(listener_name, listener)| {
+            listener
+                .bind
+                .port
+                .value
+                .map(|port| (listener_name.clone(), listener.bind.address.clone(), port))
+        })
+        .collect::<Vec<_>>();
+    if fixed_binds.is_empty() {
+        return Ok(());
+    }
+
+    let probe = container_command_output(
+        engine,
+        &[
+            "exec",
+            "-i",
+            container_name,
+            "sh",
+            "-c",
+            "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null || true",
+        ],
+        None,
+        task_name,
+    )?;
+    if probe.exit_code != 0 {
+        return Ok(());
+    }
+
+    let listening_ports = proc_net_listening_tcp_ports(&probe.stdout);
+    for (listener_name, address, port) in fixed_binds {
+        if listening_ports.contains(&port) {
+            return Err(RunError::PersistentContainerListenerBindConflict {
+                task: task_name.to_string(),
+                listener: listener_name,
+                address,
+                port,
+                container: container_name.to_string(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn proc_net_listening_tcp_ports(contents: &str) -> BTreeSet<u16> {
+    contents
+        .lines()
+        .filter_map(parse_proc_net_listening_tcp_port)
+        .collect()
+}
+
+fn parse_proc_net_listening_tcp_port(line: &str) -> Option<u16> {
+    let columns = line.split_whitespace().collect::<Vec<_>>();
+    if columns.len() < 4 || columns[0] == "sl" || columns[3] != "0A" {
+        return None;
+    }
+
+    let (_, port_hex) = columns[1].rsplit_once(':')?;
+    u16::from_str_radix(port_hex, 16).ok()
+}
+
 fn build_resolved_runtime(
     runtime: &TaskRuntimeSpec,
     listeners: BTreeMap<String, ResolvedTaskRuntimeListener>,
@@ -6576,6 +6661,15 @@ fn execute_persistent_container_task_command(
         PersistentContainerEnsureResult::Ready(reconciliation) => reconciliation,
         PersistentContainerEnsureResult::Failure(failure) => return Ok(failure),
     };
+
+    if reconciliation.action == PersistentContainerReconciliationAction::Reused {
+        preflight_reused_persistent_container_listener_binds(
+            task_name,
+            runtime,
+            engine,
+            &container_name,
+        )?;
+    }
 
     let fixed_expected_host_ports = fixed_listener_host_ports(listener_publications);
     let (resolved_runtime, resolved_env) = match persistent_container_runtime_projection(
@@ -12986,6 +13080,111 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn reused_persistent_container_preflights_in_container_listener_bind_conflicts() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    run: echo start
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "start").unwrap();
+        assert_eq!(first.exit_code, 0);
+
+        let state_dir = bin_dir.join("docker-state");
+        let container_name = fs::read_dir(&state_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .find_map(|entry| {
+                let name = entry.file_name();
+                let name = name.to_str()?;
+                name.strip_suffix(".path").map(str::to_string)
+            })
+            .expect("persistent container name");
+        let proc_net = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000 100 0 0 10 0\n";
+        fs::write(
+            state_dir.join(format!("{container_name}.proc-net")),
+            proc_net,
+        )
+        .unwrap();
+
+        let error = run_task(&fixture.contract, fixture.file_path(), "start").unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::PersistentContainerListenerBindConflict {
+                task,
+                listener,
+                address,
+                port,
+                container,
+            } => {
+                assert_eq!(task, "start");
+                assert_eq!(listener, "http");
+                assert_eq!(address, "0.0.0.0");
+                assert_eq!(port, 8080);
+                assert_eq!(container, container_name);
+            }
+            other => panic!("expected in-container listener bind conflict, got {other}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn reuses_persistent_container_backend_with_auto_publication_across_runs() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -17809,6 +18008,16 @@ case "$command" in
       exit 128
     fi
     printf "exec\n" >> "$host_dir/docker-log.txt"
+    if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      case "$3" in
+        *"/proc/net/tcp"*)
+          if [ -f "$state_dir/$name.proc-net" ]; then
+            cat "$state_dir/$name.proc-net"
+          fi
+          exit 0
+          ;;
+      esac
+    fi
     cd "$host_dir" || exit 1
     exec /bin/sh -c "$3"
     ;;

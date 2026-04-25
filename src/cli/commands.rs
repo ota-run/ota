@@ -31324,6 +31324,29 @@ fn render_run_structured_error_text(
                 next_steps,
             )
         }
+        RunError::PersistentContainerListenerBindConflict {
+            task,
+            listener,
+            address,
+            port,
+            container,
+        } => (
+            String::from("Listener bind conflict"),
+            vec![
+                format!("persistent container `{container}` is being reused"),
+                format!(
+                    "task `{task}` listener `{listener}` needs `{address}:{port}` inside that container"
+                ),
+                format!("port `{port}` is already in use in the reused container"),
+                String::from("this usually means a prior workload process is still running"),
+            ],
+            vec![
+                format!("stop the process already using `{address}:{port}` inside the container"),
+                String::from("or run `ota clean` to recreate the persistent backend"),
+                format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
+                format!("rerun `{}`", repo_run_stream_command(task, member)),
+            ],
+        ),
         RunError::HostPortOverrideNoProjectedListener { task } => (
             String::from("Host port override is not applicable"),
             vec![format!(
@@ -31577,6 +31600,25 @@ fn render_run_structured_error_text(
                 "RUN",
                 &text_path_display,
                 &format!("tasks.{task}.runtime.listeners.{listener}.project.host.port"),
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            return output;
+        }
+        RunError::PersistentContainerListenerBindConflict { task, listener, .. } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
                 &summary,
                 &why_lines,
                 &next_steps,

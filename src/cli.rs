@@ -5059,6 +5059,16 @@ case "$command" in
     done
     host_dir=$(cat "$state_dir/$name.path")
     printf "exec\n" >> "$host_dir/docker-log.txt"
+    if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      case "$3" in
+        *"/proc/net/tcp"*)
+          if [ -f "$state_dir/$name.proc-net" ]; then
+            cat "$state_dir/$name.proc-net"
+          fi
+          exit 0
+          ;;
+      esac
+    fi
     cd "$host_dir" || exit 1
     exec /bin/sh -c "$3"
     ;;
@@ -12256,6 +12266,94 @@ exec "$(dirname "$0")/docker-real" "$@"
         assert!(!stderr.contains(
             "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_failure_reports_reused_persistent_container_listener_bind_conflict() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: node:24-bookworm
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let first = run_with(["ota", "run", "dev", fixture.path()]);
+        assert_eq!(first.exit_code, 0);
+
+        let state_dir = bin_dir.join("docker-state");
+        let container_name = fs::read_dir(&state_dir)
+            .expect("read docker state dir")
+            .filter_map(|entry| entry.ok())
+            .find_map(|entry| {
+                let name = entry.file_name();
+                let name = name.to_str()?;
+                name.strip_suffix(".path").map(str::to_string)
+            })
+            .expect("persistent container name");
+        fs::write(
+            state_dir.join(format!("{container_name}.proc-net")),
+            "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000 100 0 0 10 0\n",
+        )
+        .expect("write fake proc net");
+
+        let second = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(second.exit_code, 1);
+        let stderr = strip_ansi(second.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Listener bind conflict"), "{stderr}");
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port"));
+        assert!(stderr.contains(&format!(
+            "persistent container `{container_name}` is being reused"
+        )));
+        assert!(
+            stderr
+                .contains("task `dev` listener `http` needs `0.0.0.0:8080` inside that container")
+        );
+        assert!(stderr.contains("port `8080` is already in use in the reused container"));
+        assert!(stderr.contains("or run `ota clean` to recreate the persistent backend"));
+        assert!(!stderr.contains("Task Failed"));
     }
 
     #[cfg(unix)]
