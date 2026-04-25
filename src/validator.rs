@@ -1066,6 +1066,19 @@ fn validate_task_mode_execution(
     if let Some(default_mode) = mode_execution.default_mode {
         validate_task_default_mode_resolution(contract, task_name, task, default_mode, errors);
     }
+    if let Some(default_mode) = mode_execution.default_mode
+        && mode_execution.modes.any()
+        && mode_execution
+            .modes
+            .branch_for_backend(default_mode)
+            .is_none()
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` declares `execution.default_mode: {}` but no branch for `execution.modes.{}` exists",
+            backend_mode_name(default_mode),
+            backend_mode_name(default_mode)
+        )));
+    }
 
     for (mode, branch) in mode_execution.modes.iter() {
         let mode_name = backend_mode_name(mode);
@@ -3680,11 +3693,21 @@ tasks:
       modes:
         native:
           run: echo native
+execution:
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
 "#,
         )
         .unwrap();
 
-        assert!(validate_contract(&contract).is_ok());
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `start` declares `execution.default_mode: container` but no branch for `execution.modes.container` exists"
+        );
     }
 
     #[test]

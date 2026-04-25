@@ -4628,6 +4628,18 @@ pub(crate) fn resolve_execution_backend(
     let effective = effective_task_execution(contract, task_name, overrides);
     let preferred = effective.backend;
     let lifecycle = effective.lifecycle;
+
+    if let Some(override_backend) = overrides.backend
+        && let Some(task) = contract.tasks.get(task_name)
+        && task.execution.as_ref().is_some_and(|execution| execution.modes.any())
+        && task.mode_default_backend() != Some(override_backend)
+        && task.mode_execution_branch(override_backend).is_none()
+    {
+        return Err(RunError::InvalidTaskExecution {
+            task: task_name.to_string(),
+        });
+    }
+
     match preferred {
         Backend::Native => {
             if overrides.memory.is_some() {
@@ -6853,7 +6865,7 @@ fn execute_persistent_container_task_command(
             )? {
                 PersistentContainerEnsureResult::Ready(_) => {
                     reconciliation = PersistentContainerReconciliation::recreated(
-                        "projected host publication changed",
+                        "execution shape changed",
                     );
                 }
                 PersistentContainerEnsureResult::Failure(failure) => {
@@ -15237,7 +15249,7 @@ tasks:
         );
         assert_eq!(
             second.execution_note.as_deref(),
-            Some("persistent container recreated (projected host publication changed)")
+            Some("persistent container recreated (execution shape changed)")
         );
         let first_runtime = first
             .runtime
