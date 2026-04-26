@@ -10091,6 +10091,7 @@ tasks:
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn failed_host_dependency_does_not_inherit_parent_container_backend() {
         use std::os::unix::fs::PermissionsExt;
@@ -19757,7 +19758,7 @@ case "$command" in
       shift 2
       [ "${1:-}" = "--" ] && shift
       cd "$host_dir" || exit 1
-      exec /bin/sh -s -- "$@" < /dev/stdin
+      exec /bin/sh -s -- "$@"
     fi
     if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
       case "$3" in
