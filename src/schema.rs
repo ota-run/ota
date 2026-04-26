@@ -1236,6 +1236,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub inputs: BTreeMap<String, TaskInputSpec>,
     #[serde(default)]
+    pub targets: BTreeMap<String, TaskTargetSpec>,
+    #[serde(default)]
     pub run: Option<String>,
     #[serde(default)]
     pub script: Option<String>,
@@ -1550,6 +1552,44 @@ pub struct TaskInputSpec {
     pub default: Option<String>,
     #[serde(default)]
     pub allowed: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTargetSpec {
+    pub service: TaskTargetServiceRefSpec,
+    #[serde(default)]
+    pub override_input: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTargetServiceRefSpec {
+    pub task: String,
+    pub listener: String,
+    #[serde(default)]
+    pub address_view: TaskTargetAddressView,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTargetAddressView {
+    #[default]
+    Topology,
+    Host,
+    Internal,
+}
+
+pub(crate) fn task_target_env_name(name: &str) -> String {
+    let mut env = String::from("OTA_TARGET_");
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            env.push(ch.to_ascii_uppercase());
+        } else {
+            env.push('_');
+        }
+    }
+    env
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

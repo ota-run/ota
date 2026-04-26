@@ -29,7 +29,7 @@ use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExtensionKind,
     RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
     TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
-    parse_memory_size_bytes,
+    TaskTargetAddressView, parse_memory_size_bytes, task_target_env_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -914,6 +914,78 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
         }
 
+        let mut seen_override_inputs: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut seen_target_envs: BTreeMap<String, &str> = BTreeMap::new();
+        for (target_name, target) in &task.targets {
+            if target_name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare an empty target name under `targets`"
+                )));
+            }
+
+            if target.service.task.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` target `{target_name}` must not declare an empty `service.task`"
+                )));
+            }
+            if target.service.listener.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` target `{target_name}` must not declare an empty `service.listener`"
+                )));
+            }
+            let service_task_name = target.service.task.as_str();
+            if let Some(service_task) = tasks.get(service_task_name) {
+                if !task_declares_service_runtime(service_task) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` target `{target_name}` references `service.task: {service_task_name}`, but task `{service_task_name}` is not a service task"
+                    )));
+                } else if !task_declares_listener(service_task, target.service.listener.as_str()) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` target `{target_name}` references unknown listener `{}` on service task `{service_task_name}`",
+                        target.service.listener
+                    )));
+                }
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` target `{target_name}` references unknown `service.task: {service_task_name}`"
+                )));
+            }
+
+            if let Some(override_input) = target.override_input.as_deref() {
+                if override_input.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` target `{target_name}` must not declare an empty `override_input`"
+                    )));
+                } else if !task.inputs.contains_key(override_input) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` target `{target_name}` declares `override_input: {override_input}`, but task input `{override_input}` is not declared under `tasks.{name}.inputs`"
+                    )));
+                }
+                if let Some(previous_target) =
+                    seen_override_inputs.insert(override_input, target_name.as_str())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` targets `{previous_target}` and `{target_name}` both declare `override_input: {override_input}`; declare one override input per target binding"
+                    )));
+                }
+            } else {
+                let env_name = task_target_env_name(target_name);
+                if let Some(previous_target) =
+                    seen_target_envs.insert(env_name.clone(), target_name.as_str())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` targets `{previous_target}` and `{target_name}` both normalize to `{env_name}`; declare distinct target names or use `override_input` to avoid `OTA_TARGET_*` collisions"
+                    )));
+                }
+            }
+
+            match target.service.address_view {
+                TaskTargetAddressView::Topology
+                | TaskTargetAddressView::Host
+                | TaskTargetAddressView::Internal => {}
+            }
+        }
+
         let has_base_fields = task.run.is_some() || task.script.is_some();
         let has_mode_branches = task
             .execution
@@ -1136,6 +1208,42 @@ fn validate_task_mode_execution(
             validate_task_runtime(task_name, runtime, backend, errors);
         }
     }
+}
+
+fn task_declares_service_runtime(task: &TaskSpec) -> bool {
+    if task
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+    {
+        return true;
+    }
+
+    task.execution.as_ref().is_some_and(|execution| {
+        execution.modes.iter().any(|(_, branch)| {
+            branch
+                .runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+        })
+    })
+}
+
+fn task_declares_listener(task: &TaskSpec, listener_name: &str) -> bool {
+    if task.runtime.as_ref().is_some_and(|runtime| {
+        runtime.kind == TaskRuntimeKind::Service && runtime.listeners.contains_key(listener_name)
+    }) {
+        return true;
+    }
+
+    task.execution.as_ref().is_some_and(|execution| {
+        execution.modes.iter().any(|(_, branch)| {
+            branch.runtime.as_ref().is_some_and(|runtime| {
+                runtime.kind == TaskRuntimeKind::Service
+                    && runtime.listeners.contains_key(listener_name)
+            })
+        })
+    })
 }
 
 fn validate_task_default_mode_resolution(
@@ -3894,6 +4002,223 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn allows_task_target_binding_with_declared_service_listener_and_override_input() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    inputs:
+      base_url:
+        required: true
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        override_input: base_url
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_task_target_binding_with_unknown_service_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: missing
+          listener: http
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("references unknown `service.task: missing`")
+        }));
+    }
+
+    #[test]
+    fn rejects_task_target_binding_with_unknown_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: admin
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("references unknown listener `admin` on service task `dev`")
+        }));
+    }
+
+    #[test]
+    fn rejects_task_target_binding_override_input_when_input_is_missing() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+        override_input: base_url
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "declares `override_input: base_url`, but task input `base_url` is not declared",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_task_target_bindings_that_normalize_to_same_target_env_name() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api-url:
+        service:
+          task: dev
+          listener: http
+      api_url:
+        service:
+          task: dev
+          listener: http
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("both normalize to `OTA_TARGET_API_URL`")
+        }));
     }
 
     #[test]

@@ -968,10 +968,42 @@ Task input semantics:
 - `OTA_PUBLIC_URL_<LISTENER>`
 - `OTA_PUBLIC_URL` is the primary projected listener URL; use `OTA_PUBLIC_URL_<LISTENER>` for secondary listeners
 
+Task target binding semantics:
+
+- `tasks.<name>.targets.<target>` declares first-class local topology target identity
+- each target binding declares `service.task`, `service.listener`, and optional `service.address_view` (`topology`, `host`, `internal`)
+- optional `override_input` points at a declared task input used as an explicit operator override channel
+- resolution precedence is:
+  - explicit `override_input` value supplied by the operator
+  - resolved target binding URL
+  - compatibility literal input default (when declared and binding resolution is unavailable)
+- when `override_input` is omitted, resolved target bindings are exported to task execution as
+  `OTA_TARGET_<TARGET>` (for example target `api` -> `OTA_TARGET_API`)
+- `ota run` records target-resolution evidence in run receipts JSON under `receipt.steps[*].target_resolutions`
+- current slice resolves host/topology bindings from declared fixed `project.host` endpoints only; unresolved views (for example `internal`, or topology that cannot be resolved truthfully in the selected backend) fail clearly at run time
+
 Example:
 
 ```yaml
 tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
   api-automation-tests:
     description: Run API automation tests
     notes: |
@@ -993,6 +1025,13 @@ tasks:
         allowed:
           - true
           - false
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        override_input: base_url
   version:bump:
     inputs:
       version:
