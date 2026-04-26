@@ -8168,6 +8168,24 @@ cleanup_listener_owners() {
     attempt=$((attempt + 1))
     sleep 0.1
   done
+
+  if command -v fuser >/dev/null 2>&1; then
+    for port in $ports; do
+      fallback_pids=$(fuser -n tcp "$port" 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) print $i}')
+      for pid in $fallback_pids; do
+        terminate_pid_tree "$pid"
+        cleaned=1
+      done
+    done
+  fi
+
+  for port in $ports; do
+    hex=$(printf '\''%04X'\'' "$port")
+    if port_listening "$hex"; then
+      return 1
+    fi
+  done
+
   return 1
 }
 
