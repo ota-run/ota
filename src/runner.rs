@@ -8022,7 +8022,7 @@ cleaned=0
 
 port_listening() {
   target="$1"
-  awk -v port="$target" '\''
+  awk -v port="$target" '
     BEGIN { found = 0 }
     NR > 1 {
       split($2, a, ":");
@@ -8032,7 +8032,7 @@ port_listening() {
       }
     }
     END { exit(found ? 0 : 1) }
-  '\'' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
 }
 
 terminate_pid_tree() {
@@ -8076,7 +8076,7 @@ find_listener_owner_pids() {
   target_port="$2"
   owners=""
   if command -v ss >/dev/null 2>&1; then
-    ss_pids=$(ss -Htnlp "sport = :$target_port" 2>/dev/null | sed -n '\''s/.*pid=\([0-9][0-9]*\).*/\1/p'\'' | sort -u || true)
+    ss_pids=$(ss -Htnlp "sport = :$target_port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u || true)
     for pid in $ss_pids; do
       [ "$pid" = "$$" ] && continue
       [ "$pid" = "1" ] && continue
@@ -8098,7 +8098,7 @@ find_listener_owner_pids() {
     done
   fi
   if [ -z "$owners" ]; then
-    inodes=$(awk -v target="$target_hex" '\''
+    inodes=$(awk -v target="$target_hex" '
       BEGIN { found = 0 }
       NR > 1 {
         split($2, a, ":");
@@ -8108,7 +8108,7 @@ find_listener_owner_pids() {
         }
       }
       END { if (!found) exit 1 }
-    '\'' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true)
+    ' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u || true)
     if [ -n "$inodes" ]; then
       for inode in $inodes; do
         for fd in /proc/[0-9]*/fd/*; do
@@ -8138,7 +8138,7 @@ find_listener_owner_pids() {
       esac
     done
   fi
-  printf '\''%s\n'\'' "$owners"
+  printf '%s\n' "$owners"
 }
 
 cleanup_listener_owners() {
@@ -8146,7 +8146,7 @@ cleanup_listener_owners() {
   attempt=0
   while [ "$attempt" -lt 20 ]; do
     for port in $ports; do
-      hex=$(printf '\''%04X'\'' "$port")
+      hex=$(printf '%04X' "$port")
       owners=$(find_listener_owner_pids "$hex" "$port")
       for pid in $owners; do
         terminate_pid_tree "$pid"
@@ -8155,7 +8155,7 @@ cleanup_listener_owners() {
     done
     all_free=1
     for port in $ports; do
-      hex=$(printf '\''%04X'\'' "$port")
+      hex=$(printf '%04X' "$port")
       if port_listening "$hex"; then
         all_free=0
         break
