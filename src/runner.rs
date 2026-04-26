@@ -8180,13 +8180,13 @@ cleanup_listener_owners() {
   fi
 
   for port in $ports; do
-    hex=$(printf '\''%04X'\'' "$port")
+    hex=$(printf '%04X' "$port")
     if port_listening "$hex"; then
       return 1
     fi
   done
 
-  return 1
+  return 0
 }
 
 cleanup_pidfile_owner
