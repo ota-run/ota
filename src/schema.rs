@@ -176,6 +176,7 @@ pub struct Execution {
     pub backends: Option<ExecutionBackends>,
     pub default_context: Option<String>,
     pub contexts: BTreeMap<String, ExecutionContext>,
+    pub local_backends: BTreeMap<String, ExecutionLocalBackend>,
     context_resolution_errors: Vec<String>,
 }
 
@@ -216,6 +217,8 @@ struct ExecutionWire {
     default_context: Option<String>,
     #[serde(default)]
     contexts: BTreeMap<String, ExecutionContextWire>,
+    #[serde(default)]
+    local_backends: BTreeMap<String, ExecutionLocalBackend>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -342,6 +345,7 @@ impl<'de> Deserialize<'de> for Execution {
             backends: wire.backends,
             default_context: wire.default_context,
             contexts,
+            local_backends: wire.local_backends,
             context_resolution_errors,
         })
     }
@@ -673,6 +677,24 @@ pub struct ExecutionContext {
     pub requirements: ExecutionContextRequirements,
     #[serde(default)]
     pub attachments: ExecutionContextAttachments,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionLocalBackend {
+    pub backend: Backend,
+    pub lifecycle: Lifecycle,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub fulfillment: Option<ExecutionLocalBackendFulfillment>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionLocalBackendFulfillment {
+    None,
+    Run,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -1322,6 +1344,13 @@ impl TaskSpec {
             .or(self.runtime.as_ref())
     }
 
+    pub fn backend_binding_for_backend(&self, backend: Backend) -> Option<&str> {
+        self.runtime_for_backend(backend)
+            .and_then(|runtime| runtime.backend_binding.as_deref())
+            .map(str::trim)
+            .filter(|binding| !binding.is_empty())
+    }
+
     pub fn env_for_backend(&self, backend: Backend) -> BTreeMap<String, String> {
         let mut merged = self.env.clone();
         if let Some(branch) = self.mode_execution_branch(backend) {
@@ -1444,6 +1473,8 @@ impl TaskModeBranchSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskRuntimeSpec {
     pub kind: TaskRuntimeKind,
+    #[serde(default)]
+    pub backend_binding: Option<String>,
     #[serde(default)]
     pub listeners: BTreeMap<String, TaskRuntimeListenerSpec>,
 }

@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::execution::{
-    matching_declared_execution_context_name, normalize_dependency_isolated_path,
+    format_lifecycle, matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExtensionKind,
@@ -537,6 +537,50 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         );
         validate_tool_details(&context.requirements.tools, errors);
     }
+
+    for (name, local_backend) in &execution.local_backends {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`execution.local_backends` must not declare an empty backend name",
+            ));
+            continue;
+        }
+
+        if local_backend.backend != Backend::Container {
+            errors.push(ValidationError::new(format!(
+                "`execution.local_backends.{name}.backend` currently supports `container` only"
+            )));
+        }
+
+        if let Some(context_name) = local_backend.context.as_deref() {
+            if context_name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`execution.local_backends.{name}.context` must not be empty"
+                )));
+            } else if let Some(context) = execution.contexts.get(context_name) {
+                if context.backend != local_backend.backend {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.local_backends.{name}.context: {context_name}` resolves to `{}` but local backend requires `{}`",
+                        backend_mode_name(context.backend),
+                        backend_mode_name(local_backend.backend),
+                    )));
+                }
+                if let Some(context_lifecycle) = context.lifecycle
+                    && context_lifecycle != local_backend.lifecycle
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.local_backends.{name}.lifecycle` `{}` conflicts with `execution.contexts.{context_name}.lifecycle` `{}`",
+                        format_lifecycle(local_backend.lifecycle),
+                        format_lifecycle(context_lifecycle),
+                    )));
+                }
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "`execution.local_backends.{name}.context` references unknown context `{context_name}`"
+                )));
+            }
+        }
+    }
 }
 
 fn validate_container_memory_resources(
@@ -1022,6 +1066,7 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
         if let Some(runtime) = task.runtime.as_ref() {
             validate_task_runtime(
+                contract,
                 name,
                 runtime,
                 task_execution_backend(contract, task, Backend::Native),
@@ -1116,6 +1161,7 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
     }
 
+    validate_shared_local_backend_bindings(contract, errors);
     validate_container_runtime_publication_conflicts(contract, errors);
     detect_task_cycles(tasks, errors);
 }
@@ -1205,7 +1251,7 @@ fn validate_task_mode_execution(
 
         if let Some(runtime) = branch.runtime.as_ref() {
             let backend = task_execution_backend(contract, task, mode);
-            validate_task_runtime(task_name, runtime, backend, errors);
+            validate_task_runtime(contract, task_name, runtime, backend, errors);
         }
     }
 }
@@ -1309,6 +1355,7 @@ fn validate_task_default_mode_resolution(
 }
 
 fn validate_task_runtime(
+    contract: &Contract,
     task_name: &str,
     runtime: &TaskRuntimeSpec,
     backend: Backend,
@@ -1319,6 +1366,33 @@ fn validate_task_runtime(
             "task `{task_name}` runtime kind is not supported"
         )));
         return;
+    }
+
+    if let Some(binding) = runtime.backend_binding.as_deref() {
+        let binding = binding.trim();
+        if binding.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime `backend_binding` must not be empty"
+            )));
+        } else if let Some(execution) = contract.execution.as_ref() {
+            if let Some(local_backend) = execution.local_backends.get(binding) {
+                if local_backend.backend != backend {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` runtime `backend_binding: {binding}` requires `{}` execution, but task runtime resolves to `{}`",
+                        backend_mode_name(local_backend.backend),
+                        backend_mode_name(backend),
+                    )));
+                }
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime `backend_binding: {binding}` references unknown `execution.local_backends.{binding}`"
+                )));
+            }
+        } else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime `backend_binding: {binding}` requires `execution.local_backends.{binding}` to be declared"
+            )));
+        }
     }
 
     if runtime.listeners.is_empty() {
@@ -1466,6 +1540,169 @@ fn validate_task_runtime(
                 )));
         }
     }
+}
+
+fn validate_shared_local_backend_bindings(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(execution) = contract.execution.as_ref() else {
+        return;
+    };
+
+    for (binding_name, local_backend) in &execution.local_backends {
+        let mut bound_contexts = BTreeSet::new();
+        let mut shared_shape: Option<(String, SharedContainerBackendShape)> = None;
+        for (task_name, task) in &contract.tasks {
+            if task
+                .backend_binding_for_backend(local_backend.backend)
+                .is_none_or(|binding| binding != binding_name.as_str())
+            {
+                continue;
+            }
+
+            let resolved_context =
+                resolved_task_context_for_backend(contract, task, local_backend.backend).and_then(
+                    |context| {
+                        execution.contexts.iter().find_map(|(name, candidate)| {
+                            (std::ptr::eq(candidate, context)).then_some(name)
+                        })
+                    },
+                );
+            if let Some(context_name) = resolved_context {
+                bound_contexts.insert(context_name.clone());
+            }
+
+            if let Some(expected_context) = local_backend.context.as_deref()
+                && resolved_context.map(String::as_str) != Some(expected_context)
+            {
+                let actual = resolved_context.map_or("<none>", String::as_str);
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` binds to `execution.local_backends.{binding_name}` but resolves `context: {actual}`; expected `{expected_context}`"
+                )));
+            }
+
+            let runtime_lifecycle = task
+                .mode_execution_branch(local_backend.backend)
+                .and_then(|branch| branch.lifecycle)
+                .or_else(|| {
+                    resolved_task_context_for_backend(contract, task, local_backend.backend)
+                        .and_then(|context| context.lifecycle)
+                });
+            if let Some(runtime_lifecycle) = runtime_lifecycle
+                && runtime_lifecycle != local_backend.lifecycle
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` binds to `execution.local_backends.{binding_name}` lifecycle `{}`, but resolved task lifecycle is `{}`",
+                    format_lifecycle(local_backend.lifecycle),
+                    format_lifecycle(runtime_lifecycle),
+                )));
+            }
+
+            if local_backend.backend == Backend::Container
+                && let Some(task_shape) =
+                    task_shared_container_backend_shape(contract, execution, task, local_backend)
+            {
+                if let Some((existing_task_name, existing_shape)) = shared_shape.as_ref() {
+                    if existing_shape != &task_shape {
+                        errors.push(ValidationError::new(format!(
+                            "tasks `{existing_task_name}` and `{task_name}` bind to `execution.local_backends.{binding_name}` but resolve different container shapes (image/engines/publications/isolation/memory); shared local backends require one deterministic container shape"
+                        )));
+                    }
+                } else {
+                    shared_shape = Some((task_name.clone(), task_shape));
+                }
+            }
+        }
+
+        if local_backend.context.is_none() && bound_contexts.len() > 1 {
+            let contexts = bound_contexts.into_iter().collect::<Vec<_>>().join(", ");
+            errors.push(ValidationError::new(format!(
+                "`execution.local_backends.{binding_name}` is bound by tasks across multiple contexts ({contexts}); set `execution.local_backends.{binding_name}.context` explicitly to keep shared backend identity deterministic"
+            )));
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SharedContainerBackendShape {
+    image: String,
+    engines: Vec<String>,
+    publications: Vec<SharedContainerPublication>,
+    dependency_isolation_paths: Vec<String>,
+    memory_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SharedContainerPublication {
+    bind_port: u16,
+    host_address: String,
+    host_port_mode: TaskRuntimeHostPortMode,
+    host_port: Option<u16>,
+    protocol: TaskRuntimeProtocol,
+}
+
+fn task_shared_container_backend_shape(
+    contract: &Contract,
+    execution: &crate::schema::Execution,
+    task: &TaskSpec,
+    local_backend: &crate::schema::ExecutionLocalBackend,
+) -> Option<SharedContainerBackendShape> {
+    let context = resolved_task_context_for_backend(contract, task, local_backend.backend);
+    let container = context
+        .and_then(|context| context.container.as_ref())
+        .or_else(|| {
+            execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.container.as_ref())
+        })?;
+    let runtime = task.service_runtime_for_backend(local_backend.backend)?;
+
+    let publications = runtime
+        .listeners
+        .values()
+        .filter_map(|listener| {
+            let host = listener.project.host.as_ref()?;
+            Some(SharedContainerPublication {
+                bind_port: listener.bind.port.value?,
+                host_address: host.address.trim().to_string(),
+                host_port_mode: host.port.mode,
+                host_port: host.port.value,
+                protocol: listener.protocol,
+            })
+        })
+        .collect::<Vec<_>>();
+    let dependency_isolation_paths = context
+        .map(|context| {
+            context
+                .attachments
+                .isolated_paths
+                .iter()
+                .filter_map(|path| normalize_dependency_isolated_path(path))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let memory_bytes = container_memory_bytes_for_shape(container);
+
+    Some(SharedContainerBackendShape {
+        image: container.image.trim().to_string(),
+        engines: container.engines.clone(),
+        publications,
+        dependency_isolation_paths,
+        memory_bytes,
+    })
+}
+
+fn container_memory_bytes_for_shape(container: &ContainerBackend) -> Option<u64> {
+    let memory = container.resources.as_ref()?.memory.as_ref()?;
+    memory
+        .default
+        .as_deref()
+        .and_then(|value| parse_memory_size_bytes(value).ok())
+        .or_else(|| {
+            memory
+                .minimum
+                .as_deref()
+                .and_then(|value| parse_memory_size_bytes(value).ok())
+        })
 }
 
 fn validate_runtime_listener_env_suffix_collisions(
@@ -4048,6 +4285,294 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn allows_declared_shared_local_backend_binding_for_service_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn allows_shared_local_backend_lifecycle_to_override_global_execution_lifecycle() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+        image: node:24
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+tasks:
+  dev:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_runtime_backend_binding() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24
+tasks:
+  dev:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime `backend_binding: workbench` references unknown `execution.local_backends.workbench`")
+        }));
+    }
+
+    #[test]
+    fn rejects_shared_local_backend_when_bound_tasks_span_multiple_contexts_without_context_hint() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24
+    worker:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+tasks:
+  dev:
+    context: app
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    run: echo dev
+  sandbox:
+    context: worker
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.local_backends.workbench` is bound by tasks across multiple contexts",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_shared_local_backend_when_bound_tasks_resolve_different_container_shapes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: node:24
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+tasks:
+  dev:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    run: echo dev
+  sandbox:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("resolve different container shapes")
+        }));
     }
 
     #[test]

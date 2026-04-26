@@ -101,13 +101,14 @@ use crate::runner::{
     ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
-    StaleContainerOwnership, StreamLogTee, TaskExecutionRelation, TaskTargetResolutionEvidence,
-    clean_execution_report, clean_stale_execution, effective_execution, effective_task_execution,
-    env_resolution_source_label, ephemeral_container_name, load_declared_env_sources,
-    load_policy_env_overlay, named_execution_context, persistent_container_name,
-    reported_task_context_for_backend, resolve_declared_env_source_value,
-    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
-    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
+    SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
+    TaskTargetResolutionEvidence, clean_execution_report, clean_stale_execution,
+    effective_execution, effective_task_execution, env_resolution_source_label,
+    ephemeral_container_name, load_declared_env_sources, load_policy_env_overlay,
+    named_execution_context, persistent_container_name, reported_task_context_for_backend,
+    resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
+    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
+    run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
@@ -21893,8 +21894,8 @@ mod tests {
         render_detect_comparison_section, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_up_result,
         render_up_section_from_parts, render_windows_uninstall_pending, run_execution_receipt,
-        strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
-        workspace_refresh_command, write_detected_merge,
+        run_execution_receipt_with_shared, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
+        windows_uninstall_script, workspace_refresh_command, write_detected_merge,
     };
     use crate::detector::{
         Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
@@ -21912,8 +21913,9 @@ mod tests {
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
         CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, RunError, ServiceTermination,
-        ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
-        TaskTargetResolutionEvidence, TaskTargetResolutionSource, simulate_run_interrupt_for_test,
+        ServiceTerminationCause, ServiceTerminationKind, SharedLocalBackendEvidence,
+        TaskExecutionRelation, TaskTargetResolutionEvidence, TaskTargetResolutionSource,
+        simulate_run_interrupt_for_test,
     };
     use crate::schema::{Backend, Lifecycle, TaskTargetAddressView, parse_memory_size_bytes};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
@@ -26248,6 +26250,77 @@ tasks:
     }
 
     #[test]
+    fn run_execution_receipt_includes_shared_local_backend_evidence() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  sandbox:
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt_with_shared(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "sandbox",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("sandbox"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            &[Some(SharedLocalBackendEvidence {
+                name: String::from("workbench"),
+                backend: String::from("container"),
+                lifecycle: String::from("persistent"),
+                context: Some(String::from("app")),
+                effective_identity: String::from("ota-workbench-abc123"),
+                reuse: Some(crate::runner::SharedLocalBackendReuse::Reused),
+            })],
+            Some(SharedLocalBackendEvidence {
+                name: String::from("workbench"),
+                backend: String::from("container"),
+                lifecycle: String::from("persistent"),
+                context: Some(String::from("app")),
+                effective_identity: String::from("ota-workbench-abc123"),
+                reuse: Some(crate::runner::SharedLocalBackendReuse::Reused),
+            }),
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            receipt.steps[0]
+                .shared_local_backend
+                .as_ref()
+                .map(|value| value.name.as_str()),
+            Some("workbench")
+        );
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(
+            json["steps"][0]["shared_local_backend"]["effective_identity"],
+            "ota-workbench-abc123"
+        );
+        let rendered =
+            render_execution_receipt_summary_block(&receipt, Some("sandbox"), "RUN SUMMARY");
+        assert!(rendered.contains("Shared:"));
+        assert!(rendered.contains("workbench -> ota-workbench-abc123 (persistent), reused"));
+    }
+
+    #[test]
     fn run_execution_receipt_preserves_dependency_step_target_resolution_evidence_in_json() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -26464,6 +26537,75 @@ tasks:
         assert!(
             rendered.contains("requested `--lifecycle persistent` is advisory in native mode only")
         );
+    }
+
+    #[test]
+    fn run_execution_receipt_uses_shared_local_backend_lifecycle_metadata() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.backend.as_deref(), Some("container"));
+        assert_eq!(receipt.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(receipt.image.as_deref(), Some("ghcr.io/ota/dev:latest"));
     }
 
     #[test]
@@ -30687,7 +30829,7 @@ fn run_single_contract_target_streaming(
                     persist_logs,
                 )
             };
-            let mut receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -30696,6 +30838,8 @@ fn run_single_contract_target_streaming(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_shared_local_backends,
+                outcome.shared_local_backend.clone(),
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
@@ -30744,7 +30888,7 @@ fn run_single_contract_target_streaming(
                 )
             };
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
-            let mut receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -30753,6 +30897,8 @@ fn run_single_contract_target_streaming(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_shared_local_backends,
+                outcome.shared_local_backend.clone(),
                 outcome.exit_code,
                 false,
                 outcome.target.clone(),
@@ -30829,7 +30975,7 @@ fn run_single_contract_target_streaming(
                 }
                 _ => None,
             };
-            let mut receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -30838,6 +30984,8 @@ fn run_single_contract_target_streaming(
                 &[],
                 &[],
                 &[],
+                &[],
+                None,
                 1,
                 false,
                 error_target,
@@ -30898,7 +31046,7 @@ fn run_single_contract_target_captured(
                 &outcome.stderr,
                 persist_logs,
             );
-            let mut receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -30907,6 +31055,8 @@ fn run_single_contract_target_captured(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_shared_local_backends,
+                outcome.shared_local_backend.clone(),
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
@@ -30951,7 +31101,7 @@ fn run_single_contract_target_captured(
                 persist_logs,
             );
             let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
-            let mut receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -30960,6 +31110,8 @@ fn run_single_contract_target_captured(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_shared_local_backends,
+                outcome.shared_local_backend.clone(),
                 outcome.exit_code,
                 false,
                 outcome.target.clone(),
@@ -31033,7 +31185,7 @@ fn run_single_contract_target_captured(
                 }
                 _ => None,
             };
-            let mut receipt = run_execution_receipt(
+            let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
                 overrides,
@@ -31042,6 +31194,8 @@ fn run_single_contract_target_captured(
                 &[],
                 &[],
                 &[],
+                &[],
+                None,
                 1,
                 false,
                 error_target,
@@ -32900,7 +33054,42 @@ fn receipt_container_memory_bytes(
     default_bytes.or(minimum_bytes)
 }
 
+#[allow(dead_code)]
 fn run_execution_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    task_name: &str,
+    member: Option<&str>,
+    executed_steps: &[ExecutedTaskStep],
+    step_target_resolutions: &[Vec<TaskTargetResolutionEvidence>],
+    target_resolutions: &[TaskTargetResolutionEvidence],
+    exit_code: i32,
+    ok: bool,
+    target: Option<String>,
+    runtime: Option<crate::runner::ResolvedTaskRuntime>,
+    next: Option<String>,
+) -> ExecutionReceipt {
+    run_execution_receipt_with_shared(
+        contract,
+        contract_path,
+        overrides,
+        task_name,
+        member,
+        executed_steps,
+        step_target_resolutions,
+        target_resolutions,
+        &[],
+        None,
+        exit_code,
+        ok,
+        target,
+        runtime,
+        next,
+    )
+}
+
+fn run_execution_receipt_with_shared(
     contract: &Contract,
     contract_path: &Path,
     overrides: ExecutionOverrides,
@@ -32909,6 +33098,8 @@ fn run_execution_receipt(
     executed_steps: &[ExecutedTaskStep],
     step_target_resolutions: &[Vec<TaskTargetResolutionEvidence>],
     target_resolutions: &[TaskTargetResolutionEvidence],
+    step_shared_local_backends: &[Option<SharedLocalBackendEvidence>],
+    shared_local_backend: Option<SharedLocalBackendEvidence>,
     _exit_code: i32,
     ok: bool,
     target: Option<String>,
@@ -32916,18 +33107,42 @@ fn run_execution_receipt(
     next: Option<String>,
 ) -> ExecutionReceipt {
     let effective = effective_task_execution(contract, task_name, overrides);
-    let backend = effective.backend;
-    let lifecycle = match backend {
-        Backend::Native if overrides.lifecycle.is_none() => None,
-        _ => effective.lifecycle,
+    let resolved_backend = resolve_execution_backend(contract, task_name, overrides).ok();
+    let backend = resolved_backend
+        .as_ref()
+        .map(|backend| match backend {
+            ResolvedExecutionBackend::Native => Backend::Native,
+            ResolvedExecutionBackend::Container { .. } => Backend::Container,
+            ResolvedExecutionBackend::Remote { .. }
+            | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
+        })
+        .unwrap_or(effective.backend);
+    let lifecycle = match resolved_backend.as_ref() {
+        Some(ResolvedExecutionBackend::Container { lifecycle, .. }) => Some(*lifecycle),
+        _ => match backend {
+            Backend::Native if overrides.lifecycle.is_none() => None,
+            _ => effective.lifecycle,
+        },
     };
-    let image = match backend {
-        Backend::Container => effective.container.map(|container| container.image.clone()),
-        Backend::Native | Backend::Remote => None,
+    let image = match resolved_backend.as_ref() {
+        Some(ResolvedExecutionBackend::Container { image, .. }) => Some(image.clone()),
+        _ => match backend {
+            Backend::Container => effective.container.map(|container| container.image.clone()),
+            Backend::Native | Backend::Remote => None,
+        },
     };
-    let container_memory_bytes = match backend {
-        Backend::Container => receipt_container_memory_bytes(effective.container, overrides.memory),
-        Backend::Native | Backend::Remote => None,
+    let container_memory_bytes = match resolved_backend.as_ref() {
+        Some(ResolvedExecutionBackend::Container { memory_bytes, .. }) => *memory_bytes,
+        _ => match backend {
+            Backend::Container => {
+                receipt_container_memory_bytes(effective.container, overrides.memory)
+            }
+            Backend::Native | Backend::Remote => None,
+        },
+    };
+    let context = match resolved_backend.as_ref() {
+        Some(ResolvedExecutionBackend::Container { context_name, .. }) => context_name.clone(),
+        _ => effective.context_name.map(str::to_string),
     };
     let target = target.or_else(|| effective_task_execution_target(contract_path, effective));
     let task_env = contract.tasks.get(task_name).map(|task| &task.env);
@@ -32957,6 +33172,15 @@ fn run_execution_receipt(
             {
                 receipt_step.target_resolutions = target_resolutions.to_vec();
             }
+            if let Some(step_shared_backend) =
+                step_shared_local_backends.get(index).cloned().flatten()
+            {
+                receipt_step.shared_local_backend = Some(step_shared_backend);
+            } else if step.name == task_name
+                && matches!(step.relation, TaskExecutionRelation::Requested)
+            {
+                receipt_step.shared_local_backend = shared_local_backend.clone();
+            }
             receipt_step
         })
         .collect::<Vec<_>>();
@@ -32970,7 +33194,7 @@ fn run_execution_receipt(
         contract_identity: Some(repo_contract_identity(contract)),
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
-        context: effective.context_name.map(str::to_string),
+        context,
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image,
         container_memory_bytes,
@@ -35665,6 +35889,21 @@ fn render_execution_receipt_summary_block(
             ),
         ));
     }
+    if let Some(shared_backend) = requested_task_shared_local_backend(receipt, task) {
+        let mut shared_value = format!(
+            "{} -> {} ({})",
+            shared_backend.name, shared_backend.effective_identity, shared_backend.lifecycle
+        );
+        if let Some(reuse) = shared_backend.reuse {
+            let reuse_label = match reuse {
+                crate::runner::SharedLocalBackendReuse::Created => "created",
+                crate::runner::SharedLocalBackendReuse::Reused => "reused",
+                crate::runner::SharedLocalBackendReuse::Recreated => "recreated",
+            };
+            shared_value.push_str(format!(", {reuse_label}").as_str());
+        }
+        lines.push(summary_detail_line("Shared:", &shared_value));
+    }
     if let Some(logs) = receipt.logs.as_ref() {
         lines.push(summary_detail_line("Logs:", &logs.dir));
     }
@@ -35747,6 +35986,23 @@ fn requested_task_target_resolutions<'a>(
         })
         .map(|step| step.target_resolutions.as_slice())
         .unwrap_or(&[])
+}
+
+fn requested_task_shared_local_backend<'a>(
+    receipt: &'a ExecutionReceipt,
+    requested_task: &str,
+) -> Option<&'a SharedLocalBackendEvidence> {
+    receipt
+        .steps
+        .iter()
+        .find(|step| {
+            step.label == requested_task
+                && matches!(
+                    step.detail.as_deref(),
+                    Some(detail) if detail.starts_with("requested task")
+                )
+        })
+        .and_then(|step| step.shared_local_backend.as_ref())
 }
 
 fn target_resolution_source_label(resolution: &TaskTargetResolutionEvidence) -> &'static str {
@@ -37361,6 +37617,7 @@ fn execution_receipt_step(
         detail,
         exit_code,
         target_resolutions: Vec::new(),
+        shared_local_backend: None,
     }
 }
 

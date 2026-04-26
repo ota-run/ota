@@ -894,6 +894,7 @@ Fields:
 `runtime` fields:
 
 - `kind`: currently `service`
+- `backend_binding`: optional shared local backend binding name declared under `execution.local_backends`
 - `listeners`: named listener map
 - `listeners.<name>.protocol`: `http`, `https`, or `tcp`
 - `listeners.<name>.bind.address`: bind address inside the task execution context
@@ -971,8 +972,24 @@ Task input semantics:
 Task target binding semantics:
 
 - `tasks.<name>.targets.<target>` declares first-class local topology target identity
+- `<target>` is the consumer-local target name
+  - use a short stable name such as `api`, `admin`, or `billing`
+  - ota uses that name for evidence and, when `override_input` is omitted, for runtime export as `OTA_TARGET_<TARGET>`
 - each target binding declares `service.task`, `service.listener`, and optional `service.address_view` (`topology`, `host`, `internal`)
+- `service.task` is the producing task name
+  - use it when the target should follow a repo-managed service task instead of a guessed literal URL
+  - value must name an existing service task in the same contract
+- `service.listener` is the named listener exposed by the producing task runtime
+  - use it when the producer exposes more than one endpoint and the consumer must target one specific listener
+  - value must name an existing listener under `tasks.<producer>.runtime.listeners`
+- `service.address_view` tells ota which reachable address shape to resolve for the consumer
+  - `host`: use the producer's published host URL
+  - `topology`: use the current local topology address when ota can resolve it truthfully
+  - `internal`: reserved for direct internal-plane addressing; unresolved cases fail clearly today
+  - omit it only when the default resolution rules for that binding are already sufficient and explicit in the surrounding contract
 - optional `override_input` points at a declared task input used as an explicit operator override channel
+  - use it when an operator may intentionally point the consumer at another target such as staging, preview, or a separately started local app
+  - value must name an input declared on the same consuming task
 - resolution precedence is:
   - explicit `override_input` value supplied by the operator
   - resolved target binding URL
@@ -980,7 +997,35 @@ Task target binding semantics:
 - when `override_input` is omitted, resolved target bindings are exported to task execution as
   `OTA_TARGET_<TARGET>` (for example target `api` -> `OTA_TARGET_API`)
 - `ota run` records target-resolution evidence in run receipts JSON under `receipt.steps[*].target_resolutions`
-- current slice resolves host/topology bindings from declared fixed `project.host` endpoints only; unresolved views (for example `internal`, or topology that cannot be resolved truthfully in the selected backend) fail clearly at run time
+- topology resolution rules are:
+  - native caller: resolves from declared fixed `project.host` endpoint
+  - container caller: resolves only when caller and producer share one declared `runtime.backend_binding` local backend; ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - unresolved topology and all `internal` views fail clearly at run time without host/bridge guessing
+
+Shared local backend semantics:
+
+- `execution.local_backends.<name>` declares an explicit ota-owned local backend boundary for co-located long-running tasks
+- required fields:
+  - `backend` (current slice supports `container`)
+  - `lifecycle`
+- optional fields:
+  - `context` to pin the shared backend to one named execution context
+  - `fulfillment` (`none` or `run`; reserved for later fulfillment slices)
+- tasks opt in through `tasks.<name>.runtime.backend_binding: <name>`
+- shared local backend identity is deterministic and drives:
+  - persistent container family/shape reconciliation for create/reuse/recreate
+  - topology addressability for container caller `address_view: topology` target bindings
+  - receipt evidence in `receipt.steps[*].shared_local_backend` (`name`, `backend`, `lifecycle`, effective identity, and reuse state when known)
+- validation rules include:
+  - binding must reference declared `execution.local_backends.<name>`
+  - binding backend family must match task runtime backend
+  - when a local backend omits `context`, bound tasks must not span multiple resolved contexts
+- current slice constraints:
+  - shared local backend groups must resolve one deterministic container shape (same effective image, publication shape, dependency-isolation shape, and memory shape)
+  - `address_view: topology` for container callers resolves only when caller and producer share one declared local backend binding
+  - shared local backends are currently `container` only
+  - fulfillment is deferred to later slices; this slice models the boundary but does not yet prepare the effective backend automatically
+- later slices are expected to relax some of that strictness by extending the same model, not by replacing it with guessed addressing or implicit backend-sharing behavior
 
 Example:
 
