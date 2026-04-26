@@ -8182,10 +8182,15 @@ cleanup_listener_owners() {
   for port in $ports; do
     hex=$(printf '%04X' "$port")
     if port_listening "$hex"; then
-      return 1
+      final_owner_pids=$(find_listener_owner_pids "$hex" "$port")
+      if [ -n "$final_owner_pids" ]; then
+        lingering=1
+        break
+      fi
     fi
   done
 
+  [ "$lingering" = "1" ] && return 1
   return 0
 }
 

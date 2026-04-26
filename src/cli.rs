@@ -13122,6 +13122,8 @@ agent:
 
     #[test]
     fn receipt_json_preserves_repo_target_in_doctor_followups() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -20376,6 +20378,7 @@ tasks:
 
     #[test]
     fn run_executes_task_inputs_without_explicit_path() {
+        let _env_guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -31218,6 +31221,8 @@ checks:
 
     #[test]
     fn workspace_up_json_reports_required_repo_failure() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = WorkspaceFixture::new();
         fs::write(
             fixture.dir.path().join("ota.workspace.yaml"),
@@ -31366,6 +31371,8 @@ policies:
 
     #[test]
     fn workspace_up_ignores_optional_repo_failure_in_aggregate_status() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = WorkspaceFixture::new();
         fs::write(
             fixture.dir.path().join("ota.workspace.yaml"),
@@ -31426,6 +31433,8 @@ tasks:
 
     #[test]
     fn workspace_up_blocks_dependent_repo_when_dependency_fails() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
         fs::write(
             fixture
@@ -31520,6 +31529,8 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_up_acquires_missing_repo_from_git_source() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let origin = init_git_repo(
             r#"
@@ -31577,6 +31588,8 @@ repos:
     #[cfg(unix)]
     #[test]
     fn workspace_up_acquires_missing_repo_from_repo_source() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let origins = TempDir::new().unwrap();
         let origin = init_named_git_repo(
@@ -31639,6 +31652,8 @@ repos:
     #[cfg(unix)]
     #[test]
     fn workspace_up_jobs_runs_independent_repos_in_parallel() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = WorkspaceFixture::new_parallel_repos();
 
         let started = Instant::now();
