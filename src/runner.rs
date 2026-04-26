@@ -19734,7 +19734,7 @@ case "$command" in
       shift 2
       [ "${1:-}" = "--" ] && shift
       cd "$host_dir" || exit 1
-      exec /bin/sh -s -- "$@"
+      exec /bin/sh -s -- "$@" < /dev/stdin
     fi
     if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
       case "$3" in
