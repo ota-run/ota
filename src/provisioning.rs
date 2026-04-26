@@ -51,6 +51,7 @@ pub enum ProvisioningExecutionTarget {
         image: String,
         engine: String,
         lifecycle: Lifecycle,
+        container_name: Option<String>,
     },
     Remote {
         provider: String,
@@ -3537,6 +3538,7 @@ fn run_container_command(
     engine: &str,
     image: &str,
     lifecycle: Lifecycle,
+    container_name: Option<&str>,
     working_dir: &Path,
     command: &str,
     args: &[&str],
@@ -3568,7 +3570,9 @@ fn run_container_command(
             loader_label,
         ),
         Lifecycle::Persistent => {
-            let container_name = persistent_container_name(working_dir, image, engine);
+            let container_name = container_name
+                .map(str::to_string)
+                .unwrap_or_else(|| persistent_container_name(working_dir, image, engine));
             let inspect = container_command_output(
                 engine,
                 &["inspect", &container_name],
@@ -3645,10 +3649,12 @@ fn execute_provisioning_command(
             image,
             engine,
             lifecycle,
+            container_name,
         } => run_container_command(
             engine,
             image,
             *lifecycle,
+            container_name.as_deref(),
             working_dir,
             command,
             args,
@@ -3823,6 +3829,7 @@ mod tests {
                 image: String::from("maven:3.9.14-eclipse-temurin-21-noble"),
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Persistent,
+                container_name: None,
             }),
             "Preparing environment (container, persistent, maven:3.9.14-eclipse-temurin-21-noble)"
         );
@@ -3875,6 +3882,7 @@ mod tests {
             image: "ghcr.io/ota/test:latest".to_string(),
             engine: "docker".to_string(),
             lifecycle: Lifecycle::Ephemeral,
+            container_name: None,
         };
 
         let result = apply_provisioning_request_with_target(
@@ -4788,6 +4796,7 @@ mod tests {
                 image: "debian:bookworm-slim".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
             ProvisioningOutputMode::Capture,
         );
@@ -4850,6 +4859,7 @@ mod tests {
                 image: "premium/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
             ProvisioningOutputMode::Capture,
         );
@@ -4910,6 +4920,7 @@ mod tests {
                 image: "debian:bookworm-slim".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -4969,6 +4980,7 @@ mod tests {
                 image: "linuxbrew/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5028,6 +5040,7 @@ mod tests {
                 image: "fedora/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5087,6 +5100,7 @@ mod tests {
                 image: "archlinux/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5146,6 +5160,7 @@ mod tests {
                 image: "windows/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5202,6 +5217,7 @@ mod tests {
                 image: "windows/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5258,6 +5274,7 @@ mod tests {
                 image: "windows/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5314,6 +5331,7 @@ mod tests {
                 image: "premium/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5370,6 +5388,7 @@ mod tests {
                 image: "premium/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5426,6 +5445,7 @@ mod tests {
                 image: "premium/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 
@@ -5482,6 +5502,7 @@ mod tests {
                 image: "premium/test:latest".to_string(),
                 engine: "docker".to_string(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
 

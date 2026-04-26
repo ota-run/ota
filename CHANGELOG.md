@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added backend-scoped run-path fulfillment for shared local backends: ota now computes deterministic runtime/tool requirement unions for the resolved backend unit, honors `execution.local_backends.<name>.fulfillment` (`none`/`run`), attempts approved provisioning on the actual run path when enabled, and reports distinct missing-requirements vs fulfillment-failed outcomes with structured receipt evidence
+- made run receipts and summaries fully backend-resolution truthful for shared backends: backend/context/lifecycle/image/memory now derive from resolved execution backend bindings, step-level backend fulfillment evidence is preserved, and dependency/hook steps retain machine-readable `target_resolutions` provenance
+- tightened host-view target binding resolution to fail on conflicting root-vs-mode or mode-vs-mode host projections, while still allowing mixed-backend consumers when the producer host projection is unambiguous
 - added first-class task target bindings under `tasks.<name>.targets.<target>` with typed service identity (`service.task`, `service.listener`, `service.address_view`) and optional `override_input` operator channels
 - added strict target-binding validation for unknown service tasks/listeners, non-service targets, missing `override_input` declarations, and ambiguous duplicate override-input mappings across targets
 - added run-time target resolution precedence: explicit override input > resolved target binding > compatibility literal input default, plus explicit run-time failures when requested address views cannot be resolved truthfully in current topology support

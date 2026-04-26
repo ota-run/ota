@@ -843,6 +843,7 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
         image: String::from("rust:1.94-bookworm"),
         engine: String::from("docker"),
         lifecycle: ota::schema::Lifecycle::Persistent,
+        container_name: None,
     };
 
     let outcome = match apply_provisioning_request_with_target(

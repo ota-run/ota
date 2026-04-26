@@ -22354,6 +22354,7 @@ tasks:
                 stderr: String::from(".ota/state/logs/20260424-dev/stderr.log"),
             }),
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "READY", None, Some(0))],
@@ -23622,6 +23623,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -23736,6 +23738,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -23817,6 +23820,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -23920,6 +23924,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -25611,6 +25616,7 @@ execution:
                 image: String::from("ghcr.io/ota/dev:latest"),
                 engine: String::from("docker"),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
         );
         assert_eq!(provisioning_container.context.as_deref(), Some("app"));
@@ -25905,6 +25911,7 @@ execution:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -26279,6 +26286,8 @@ tasks:
             }],
             &[],
             &[],
+            &[],
+            None,
             &[Some(SharedLocalBackendEvidence {
                 name: String::from("workbench"),
                 backend: String::from("container"),
@@ -26864,6 +26873,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -26908,6 +26918,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -26952,6 +26963,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
@@ -27049,6 +27061,7 @@ tasks:
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(137),
             }),
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(137))],
@@ -27094,6 +27107,7 @@ tasks:
                 container: String::from("ota-persistent-deadbeef"),
                 exit_code: Some(1),
             }),
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -27764,6 +27778,7 @@ tasks:
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
             }),
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(130))],
@@ -27824,6 +27839,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -27877,6 +27893,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -27933,6 +27950,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -27983,6 +28001,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -28040,6 +28059,7 @@ tasks:
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(1),
             }),
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
@@ -28095,6 +28115,7 @@ tasks:
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(0),
             }),
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
@@ -28425,6 +28446,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads,
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -28554,6 +28576,7 @@ tasks:
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "READY", None, None)],
@@ -28643,6 +28666,7 @@ tasks:
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
+            backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
@@ -30838,6 +30862,8 @@ fn run_single_contract_target_streaming(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_backend_fulfillments,
+                outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
                 outcome.shared_local_backend.clone(),
                 outcome.exit_code,
@@ -30897,6 +30923,8 @@ fn run_single_contract_target_streaming(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_backend_fulfillments,
+                outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
                 outcome.shared_local_backend.clone(),
                 outcome.exit_code,
@@ -30975,6 +31003,11 @@ fn run_single_contract_target_streaming(
                 }
                 _ => None,
             };
+            let error_backend_fulfillment = match &error {
+                RunError::BackendRequirementsMissing { evidence, .. }
+                | RunError::BackendFulfillmentFailed { evidence, .. } => Some(evidence.clone()),
+                _ => None,
+            };
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
@@ -30984,6 +31017,8 @@ fn run_single_contract_target_streaming(
                 &[],
                 &[],
                 &[],
+                &[],
+                error_backend_fulfillment,
                 &[],
                 None,
                 1,
@@ -31055,6 +31090,8 @@ fn run_single_contract_target_captured(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_backend_fulfillments,
+                outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
                 outcome.shared_local_backend.clone(),
                 outcome.exit_code,
@@ -31110,6 +31147,8 @@ fn run_single_contract_target_captured(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.task_step_backend_fulfillments,
+                outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
                 outcome.shared_local_backend.clone(),
                 outcome.exit_code,
@@ -31185,6 +31224,11 @@ fn run_single_contract_target_captured(
                 }
                 _ => None,
             };
+            let error_backend_fulfillment = match &error {
+                RunError::BackendRequirementsMissing { evidence, .. }
+                | RunError::BackendFulfillmentFailed { evidence, .. } => Some(evidence.clone()),
+                _ => None,
+            };
             let mut receipt = run_execution_receipt_with_shared(
                 &target.contract,
                 &target.contract_path,
@@ -31194,6 +31238,8 @@ fn run_single_contract_target_captured(
                 &[],
                 &[],
                 &[],
+                &[],
+                error_backend_fulfillment,
                 &[],
                 None,
                 1,
@@ -32459,6 +32505,47 @@ fn render_run_structured_error_text(
             )],
             vec![task_use_details_step(Some(contract_path), member)],
         ),
+        RunError::BackendRequirementsMissing {
+            task,
+            backend_unit,
+            mode,
+            missing,
+            ..
+        } => (
+            String::from("Backend requirements are missing"),
+            vec![
+                format!("task `{task}` resolved backend unit `{backend_unit}`"),
+                format!(
+                    "fulfillment mode `{mode}` does not permit run-path provisioning for missing prerequisites"
+                ),
+                missing.clone(),
+            ],
+            vec![
+                format!(
+                    "set `execution.local_backends.<name>.fulfillment: run` for `{backend_unit}` if ota should provision this backend on the run path"
+                ),
+                String::from(
+                    "or satisfy the missing prerequisites in the backend environment manually",
+                ),
+                format!("rerun `{}`", repo_run_stream_command(task_name, member)),
+            ],
+        ),
+        RunError::BackendFulfillmentFailed {
+            task,
+            backend_unit,
+            details,
+            ..
+        } => (
+            String::from("Backend fulfillment failed"),
+            vec![
+                format!("task `{task}` resolved backend unit `{backend_unit}`"),
+                details.clone(),
+            ],
+            vec![
+                String::from("repair the backend provisioning source or policy mapping and retry"),
+                format!("rerun `{}`", repo_run_stream_command(task_name, member)),
+            ],
+        ),
         RunError::MissingContainerImage { .. } => (
             String::from("Container run is not configured"),
             run_execution_backend_why_lines(contract, overrides, task_name, Backend::Container),
@@ -33081,6 +33168,8 @@ fn run_execution_receipt(
         target_resolutions,
         &[],
         None,
+        &[],
+        None,
         exit_code,
         ok,
         target,
@@ -33098,6 +33187,8 @@ fn run_execution_receipt_with_shared(
     executed_steps: &[ExecutedTaskStep],
     step_target_resolutions: &[Vec<TaskTargetResolutionEvidence>],
     target_resolutions: &[TaskTargetResolutionEvidence],
+    step_backend_fulfillments: &[Option<crate::runner::BackendFulfillmentEvidence>],
+    backend_fulfillment: Option<crate::runner::BackendFulfillmentEvidence>,
     step_shared_local_backends: &[Option<SharedLocalBackendEvidence>],
     shared_local_backend: Option<SharedLocalBackendEvidence>,
     _exit_code: i32,
@@ -33172,6 +33263,14 @@ fn run_execution_receipt_with_shared(
             {
                 receipt_step.target_resolutions = target_resolutions.to_vec();
             }
+            if let Some(step_fulfillment) = step_backend_fulfillments.get(index).cloned().flatten()
+            {
+                receipt_step.backend_fulfillment = Some(step_fulfillment);
+            } else if step.name == task_name
+                && matches!(step.relation, TaskExecutionRelation::Requested)
+            {
+                receipt_step.backend_fulfillment = backend_fulfillment.clone();
+            }
             if let Some(step_shared_backend) =
                 step_shared_local_backends.get(index).cloned().flatten()
             {
@@ -33215,6 +33314,7 @@ fn run_execution_receipt_with_shared(
         runtime,
         logs: None,
         service_termination: None,
+        backend_fulfillment,
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, contract_path, backend),
         steps,
@@ -35904,6 +36004,29 @@ fn render_execution_receipt_summary_block(
         }
         lines.push(summary_detail_line("Shared:", &shared_value));
     }
+    if let Some(backend_fulfillment) = requested_task_backend_fulfillment(receipt, task) {
+        lines.push(summary_detail_line(
+            "Fulfillment:",
+            &format!(
+                "{} ({}) -> {}",
+                backend_fulfillment.backend_unit,
+                backend_fulfillment_mode_label(backend_fulfillment.mode),
+                backend_fulfillment_result_label(backend_fulfillment.result),
+            ),
+        ));
+        if !backend_fulfillment.missing.is_empty() {
+            lines.push(summary_detail_line(
+                "Missing:",
+                &backend_fulfillment.missing.join("; "),
+            ));
+        }
+        if !backend_fulfillment.actions.is_empty() {
+            lines.push(summary_detail_line(
+                "Actions:",
+                &backend_fulfillment.actions.join("; "),
+            ));
+        }
+    }
     if let Some(logs) = receipt.logs.as_ref() {
         lines.push(summary_detail_line("Logs:", &logs.dir));
     }
@@ -36003,6 +36126,42 @@ fn requested_task_shared_local_backend<'a>(
                 )
         })
         .and_then(|step| step.shared_local_backend.as_ref())
+}
+
+fn requested_task_backend_fulfillment<'a>(
+    receipt: &'a ExecutionReceipt,
+    requested_task: &str,
+) -> Option<&'a crate::runner::BackendFulfillmentEvidence> {
+    receipt
+        .steps
+        .iter()
+        .find(|step| {
+            step.label == requested_task
+                && matches!(
+                    step.detail.as_deref(),
+                    Some(detail) if detail.starts_with("requested task")
+                )
+        })
+        .and_then(|step| step.backend_fulfillment.as_ref())
+        .or(receipt.backend_fulfillment.as_ref())
+}
+
+fn backend_fulfillment_mode_label(mode: crate::runner::BackendFulfillmentMode) -> &'static str {
+    match mode {
+        crate::runner::BackendFulfillmentMode::None => "none",
+        crate::runner::BackendFulfillmentMode::Run => "run",
+    }
+}
+
+fn backend_fulfillment_result_label(
+    result: crate::runner::BackendFulfillmentResult,
+) -> &'static str {
+    match result {
+        crate::runner::BackendFulfillmentResult::RequirementsSatisfied => "requirements_satisfied",
+        crate::runner::BackendFulfillmentResult::MissingRequirements => "missing_requirements",
+        crate::runner::BackendFulfillmentResult::Fulfilled => "fulfilled",
+        crate::runner::BackendFulfillmentResult::Failed => "failed",
+    }
 }
 
 fn target_resolution_source_label(resolution: &TaskTargetResolutionEvidence) -> &'static str {
@@ -37617,6 +37776,7 @@ fn execution_receipt_step(
         detail,
         exit_code,
         target_resolutions: Vec::new(),
+        backend_fulfillment: None,
         shared_local_backend: None,
     }
 }
@@ -37798,6 +37958,7 @@ fn repo_execution_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, path, execution_backend),
         steps,
@@ -38441,6 +38602,7 @@ fn workspace_up_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
@@ -38509,6 +38671,7 @@ fn workspace_status_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
@@ -38586,6 +38749,7 @@ fn workspace_run_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
@@ -38739,6 +38903,7 @@ fn resolve_provisioning_execution_target(
             image,
             engine,
             lifecycle,
+            container_name: None,
         }),
         Ok(ResolvedExecutionBackend::Native) => Err(Finding {
             severity: FindingSeverity::Error,
