@@ -52,8 +52,8 @@ use crate::policy_pack::{
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
     ExtensionKind, Lifecycle, RemoteBackend, TaskModeBranchSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, format_memory_size_bytes,
-    parse_memory_size_bytes,
+    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetAddressView,
+    TaskTargetSpec, format_memory_size_bytes, parse_memory_size_bytes, task_target_env_name,
 };
 
 #[derive(Clone)]
@@ -803,6 +803,12 @@ pub enum RunError {
         input: String,
         flag: String,
     },
+    #[error("task `{task}` target `{target}` could not be resolved: {details}")]
+    TaskTargetResolutionFailed {
+        task: String,
+        target: String,
+        details: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -946,6 +952,8 @@ pub struct RunOutcome {
     pub target: Option<String>,
     pub runtime: Option<ResolvedTaskRuntime>,
     pub service_termination: Option<ServiceTermination>,
+    pub task_step_target_resolutions: Vec<Vec<TaskTargetResolutionEvidence>>,
+    pub target_resolutions: Vec<TaskTargetResolutionEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
 }
@@ -960,8 +968,35 @@ pub struct CapturedRunOutcome {
     pub target: Option<String>,
     pub runtime: Option<ResolvedTaskRuntime>,
     pub service_termination: Option<ServiceTermination>,
+    pub task_step_target_resolutions: Vec<Vec<TaskTargetResolutionEvidence>>,
+    pub target_resolutions: Vec<TaskTargetResolutionEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTargetResolutionSource {
+    ExplicitOverride,
+    TargetBinding,
+    CompatibilityLiteralDefault,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct TaskTargetResolutionServiceRef {
+    pub task: String,
+    pub listener: String,
+    pub address_view: TaskTargetAddressView,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct TaskTargetResolutionEvidence {
+    pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_input: Option<String>,
+    pub source: TaskTargetResolutionSource,
+    pub service_ref: TaskTargetResolutionServiceRef,
+    pub effective_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -1670,6 +1705,8 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
         target: outcome.target,
         runtime: outcome.runtime,
         service_termination: outcome.service_termination,
+        task_step_target_resolutions: outcome.task_step_target_resolutions,
+        target_resolutions: outcome.target_resolutions,
         execution_note: outcome.execution_note,
         interrupted: outcome.interrupted,
     })
@@ -2433,6 +2470,8 @@ struct TaskRunState {
     target: Option<String>,
     runtime: Option<ResolvedTaskRuntime>,
     service_termination: Option<ServiceTermination>,
+    task_step_target_resolutions: Vec<Vec<TaskTargetResolutionEvidence>>,
+    target_resolutions: Vec<TaskTargetResolutionEvidence>,
     execution_note: Option<String>,
     interrupted: bool,
 }
@@ -2648,6 +2687,8 @@ fn run_task_internal(
         target: state.target,
         runtime: state.runtime,
         service_termination: state.service_termination,
+        task_step_target_resolutions: state.task_step_target_resolutions,
+        target_resolutions: state.target_resolutions,
         execution_note: state.execution_note,
         interrupted: state.interrupted,
     })
@@ -2850,11 +2891,17 @@ fn execute_task_with_hooks(
         task_name,
         execution_overrides_for_resolved_backend(backend),
     )?;
-    let input_overrides = if matches!(relation, TaskExecutionRelation::Requested) {
-        resolve_task_inputs(task_name, task, input_args)?
-    } else {
-        BTreeMap::new()
-    };
+    let backend_kind = resolved_execution_backend_kind(&backend);
+    let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
+    let input_resolution = resolve_task_inputs(
+        contract,
+        task_name,
+        task,
+        input_args,
+        backend_kind,
+        requested_overrides,
+        requested_relation,
+    )?;
 
     if let Some(exit_code) = ensure_task_required_services(
         contract,
@@ -2897,7 +2944,6 @@ fn execute_task_with_hooks(
         }
     }
 
-    let backend_kind = resolved_execution_backend_kind(&backend);
     let execution =
         if let Some(execution) = task.resolved_execution_for_backend(backend_kind, current_os) {
             execution
@@ -2938,9 +2984,8 @@ fn execute_task_with_hooks(
         env_overrides.remove("PATH");
     }
     let mut combined_env = env_overrides;
-    combined_env.extend(input_overrides);
+    combined_env.extend(input_resolution.env_overrides.clone());
     let runtime = task.service_runtime_for_backend(backend_kind);
-    let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
     let command_output = execute_task_command(
         task_name,
         runtime,
@@ -2963,31 +3008,40 @@ fn execute_task_with_hooks(
     if state.target.is_none() {
         state.target = command_output.target.clone();
     }
-    let requested_execution_note = if requested_relation {
-        let mut notes = Vec::new();
-        if task.internal {
-            notes.push(format!("task `{task_name}` is marked internal"));
-        }
-        if let Some(note) = command_output.execution_note.clone() {
-            notes.push(note);
-        }
-        (!notes.is_empty()).then(|| notes.join("; "))
-    } else {
-        None
-    };
-    propagate_step_result_to_run_state(state, &relation, &command_output);
+    let mut notes = Vec::new();
+    if requested_relation && task.internal {
+        notes.push(format!("task `{task_name}` is marked internal"));
+    }
+    if !input_resolution.target_resolutions.is_empty() {
+        let target_notes = input_resolution
+            .target_resolutions
+            .iter()
+            .map(render_target_resolution_note)
+            .collect::<Vec<_>>()
+            .join("; ");
+        notes.push(target_notes);
+    }
+    if let Some(note) = command_output.execution_note.clone() {
+        notes.push(note);
+    }
+    let step_execution_note = (!notes.is_empty()).then(|| notes.join("; "));
     if requested_relation {
-        if let Some(note) = requested_execution_note.clone() {
-            state.execution_note = Some(note);
-        }
+        state.target_resolutions = input_resolution.target_resolutions.clone();
+    }
+    propagate_step_result_to_run_state(state, &relation, &command_output);
+    if requested_relation && let Some(note) = step_execution_note.clone() {
+        state.execution_note = Some(note);
     }
     state.task_steps.push(ExecutedTaskStep {
         name: task_name.to_string(),
         exit_code: command_output.exit_code,
         relation,
         generation,
-        execution_note: requested_execution_note,
+        execution_note: step_execution_note,
     });
+    state
+        .task_step_target_resolutions
+        .push(input_resolution.target_resolutions.clone());
 
     let hook_exit_code = execute_post_hooks(
         contract,
@@ -3341,12 +3395,23 @@ pub(crate) fn run_backend_command_captured(
     )
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct ResolvedTaskInputs {
+    env_overrides: BTreeMap<String, String>,
+    target_resolutions: Vec<TaskTargetResolutionEvidence>,
+}
+
 fn resolve_task_inputs(
+    contract: &Contract,
     task_name: &str,
     task: &TaskSpec,
     input_args: &[String],
-) -> Result<BTreeMap<String, String>, RunError> {
+    caller_backend: Backend,
+    execution_overrides: ExecutionOverrides,
+    enforce_required_inputs: bool,
+) -> Result<ResolvedTaskInputs, RunError> {
     let mut provided = BTreeMap::new();
+    let mut explicit_inputs = BTreeSet::new();
     if let Some(input_name) = single_task_input_name(task)
         && let Some(value) = single_task_input_shorthand_value(input_args)
     {
@@ -3357,6 +3422,7 @@ fn resolve_task_inputs(
             input_name.to_string(),
             value,
         )?;
+        explicit_inputs.insert(input_name.to_string());
     } else {
         let mut index = 0;
 
@@ -3412,10 +3478,21 @@ fn resolve_task_inputs(
             };
 
             insert_task_input_value(task_name, task, &mut provided, input_name, value)?;
+            explicit_inputs.insert(flag.replace('-', "_"));
 
             index += 1;
         }
     }
+
+    let target_resolutions = resolve_task_target_bindings(
+        contract,
+        task_name,
+        task,
+        &explicit_inputs,
+        &mut provided,
+        caller_backend,
+        execution_overrides,
+    )?;
 
     for (name, spec) in &task.inputs {
         if provided.contains_key(name) {
@@ -3431,7 +3508,7 @@ fn resolve_task_inputs(
                 });
             }
             provided.insert(name.clone(), default);
-        } else if spec.required {
+        } else if spec.required && enforce_required_inputs {
             return Err(RunError::MissingRequiredTaskInput {
                 task: task_name.to_string(),
                 input: name.clone(),
@@ -3439,10 +3516,24 @@ fn resolve_task_inputs(
         }
     }
 
-    Ok(provided
-        .into_iter()
-        .map(|(name, value)| (task_input_env_name(&name), value))
-        .collect())
+    Ok(ResolvedTaskInputs {
+        env_overrides: provided
+            .into_iter()
+            .map(|(name, value)| (task_input_env_name(&name), value))
+            .chain(
+                target_resolutions
+                    .iter()
+                    .filter(|resolution| resolution.override_input.is_none())
+                    .map(|resolution| {
+                        (
+                            task_target_env_name(resolution.target.as_str()),
+                            resolution.effective_url.clone(),
+                        )
+                    }),
+            )
+            .collect(),
+        target_resolutions,
+    })
 }
 
 fn single_task_input_name(task: &TaskSpec) -> Option<&str> {
@@ -3491,6 +3582,270 @@ fn insert_task_input_value(
     }
 
     Ok(())
+}
+
+fn resolve_task_target_bindings(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    explicit_inputs: &BTreeSet<String>,
+    provided_inputs: &mut BTreeMap<String, String>,
+    caller_backend: Backend,
+    execution_overrides: ExecutionOverrides,
+) -> Result<Vec<TaskTargetResolutionEvidence>, RunError> {
+    let mut resolutions = Vec::new();
+
+    for (target_name, target_spec) in &task.targets {
+        let override_input = target_spec
+            .override_input
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let service_ref = TaskTargetResolutionServiceRef {
+            task: target_spec.service.task.clone(),
+            listener: target_spec.service.listener.clone(),
+            address_view: target_spec.service.address_view,
+        };
+
+        if let Some(override_input_name) = override_input.as_deref()
+            && explicit_inputs.contains(override_input_name)
+            && let Some(explicit_value) = provided_inputs.get(override_input_name).cloned()
+        {
+            resolutions.push(TaskTargetResolutionEvidence {
+                target: target_name.clone(),
+                override_input: override_input.clone(),
+                source: TaskTargetResolutionSource::ExplicitOverride,
+                service_ref,
+                effective_url: explicit_value,
+            });
+            continue;
+        }
+
+        match resolve_task_target_binding_url(
+            contract,
+            task_name,
+            target_name,
+            target_spec,
+            caller_backend,
+            execution_overrides,
+        ) {
+            Ok(effective_url) => {
+                if let Some(override_input_name) = override_input.as_deref()
+                    && !provided_inputs.contains_key(override_input_name)
+                {
+                    insert_task_input_value(
+                        task_name,
+                        task,
+                        provided_inputs,
+                        override_input_name.to_string(),
+                        effective_url.clone(),
+                    )?;
+                }
+                resolutions.push(TaskTargetResolutionEvidence {
+                    target: target_name.clone(),
+                    override_input: override_input.clone(),
+                    source: TaskTargetResolutionSource::TargetBinding,
+                    service_ref,
+                    effective_url,
+                });
+            }
+            Err(error) => {
+                if let Some(override_input_name) = override_input.as_deref()
+                    && let Some(default) = task
+                        .inputs
+                        .get(override_input_name)
+                        .and_then(|input| input.default.clone())
+                {
+                    resolutions.push(TaskTargetResolutionEvidence {
+                        target: target_name.clone(),
+                        override_input: override_input.clone(),
+                        source: TaskTargetResolutionSource::CompatibilityLiteralDefault,
+                        service_ref,
+                        effective_url: default,
+                    });
+                    continue;
+                }
+
+                return Err(error);
+            }
+        }
+    }
+
+    Ok(resolutions)
+}
+
+fn resolve_task_target_binding_url(
+    contract: &Contract,
+    task_name: &str,
+    target_name: &str,
+    target_spec: &TaskTargetSpec,
+    caller_backend: Backend,
+    execution_overrides: ExecutionOverrides,
+) -> Result<String, RunError> {
+    let service_task_name = target_spec.service.task.trim();
+    let service_task = contract.tasks.get(service_task_name).ok_or_else(|| {
+        RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!("target references unknown `service.task: {service_task_name}`"),
+        }
+    })?;
+
+    let listener_name = target_spec.service.listener.trim();
+    let listener = match target_spec.service.address_view {
+        TaskTargetAddressView::Host => {
+            select_target_listener_for_host_view(
+                contract,
+                service_task_name,
+                service_task,
+                listener_name,
+                execution_overrides,
+            )
+                .map_err(|details| {
+                RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details,
+                }
+                })?
+        }
+        TaskTargetAddressView::Topology | TaskTargetAddressView::Internal => {
+            select_target_listener_for_backend(service_task, listener_name, caller_backend)
+        }
+    }
+    .ok_or_else(|| RunError::TaskTargetResolutionFailed {
+        task: task_name.to_string(),
+        target: target_name.to_string(),
+        details: format!(
+            "target references unknown listener `{listener_name}` on service task `{service_task_name}`"
+        ),
+    })?;
+
+    let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+        RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!(
+                "listener `{service_task_name}.{listener_name}` has no `project.host` endpoint to resolve"
+            ),
+        }
+    })?;
+
+    let host_port = host_projection.port.value.ok_or_else(|| {
+        RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!(
+                "listener `{service_task_name}.{listener_name}` does not declare a fixed `project.host.port.value`"
+            ),
+        }
+    })?;
+
+    match target_spec.service.address_view {
+        TaskTargetAddressView::Host => Ok(format_task_target_host_endpoint(
+            listener.protocol,
+            host_projection.address.as_str(),
+            host_port,
+            host_projection.path.as_deref(),
+        )),
+        TaskTargetAddressView::Topology => {
+            if caller_backend != Backend::Native {
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "`address_view: topology` is only resolvable for native caller execution in this slice; current caller backend is `{}`",
+                        match caller_backend {
+                            Backend::Native => "native",
+                            Backend::Container => "container",
+                            Backend::Remote => "remote",
+                        }
+                    ),
+                });
+            }
+            Ok(format_task_target_host_endpoint(
+                listener.protocol,
+                host_projection.address.as_str(),
+                host_port,
+                host_projection.path.as_deref(),
+            ))
+        }
+        TaskTargetAddressView::Internal => Err(RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: String::from(
+                "`address_view: internal` is not resolvable in the current local topology runtime yet",
+            ),
+        }),
+    }
+}
+
+fn select_target_listener_for_backend<'a>(
+    service_task: &'a TaskSpec,
+    listener_name: &str,
+    caller_backend: Backend,
+) -> Option<&'a crate::schema::TaskRuntimeListenerSpec> {
+    service_task
+        .service_runtime_for_backend(caller_backend)
+        .and_then(|runtime| runtime.listeners.get(listener_name))
+}
+
+fn select_target_listener_for_host_view<'a>(
+    contract: &Contract,
+    service_task_name: &str,
+    service_task: &'a TaskSpec,
+    listener_name: &str,
+    execution_overrides: ExecutionOverrides,
+) -> Result<Option<&'a crate::schema::TaskRuntimeListenerSpec>, String> {
+    let effective_backend =
+        effective_task_execution(contract, service_task_name, execution_overrides).backend;
+    Ok(select_target_listener_for_backend(
+        service_task,
+        listener_name,
+        effective_backend,
+    ))
+}
+
+fn format_task_target_host_endpoint(
+    protocol: TaskRuntimeProtocol,
+    address: &str,
+    port: u16,
+    path: Option<&str>,
+) -> String {
+    if let Some(scheme) = protocol.url_scheme() {
+        format!(
+            "{}://{}:{}{}",
+            scheme,
+            address.trim(),
+            port,
+            normalized_runtime_path(path)
+        )
+    } else {
+        format!("{}:{}", address.trim(), port)
+    }
+}
+
+fn render_target_resolution_note(resolution: &TaskTargetResolutionEvidence) -> String {
+    let source = match resolution.source {
+        TaskTargetResolutionSource::ExplicitOverride => "user override",
+        TaskTargetResolutionSource::TargetBinding => "target binding",
+        TaskTargetResolutionSource::CompatibilityLiteralDefault => "compatibility literal default",
+    };
+    let declared = format!(
+        "service({}.{})",
+        resolution.service_ref.task, resolution.service_ref.listener
+    );
+    match resolution.override_input.as_deref() {
+        Some(input) => format!(
+            "target `{}` declared `{declared}` via `{input}` -> `{}` ({source})",
+            resolution.target, resolution.effective_url
+        ),
+        None => format!(
+            "target `{}` declared `{declared}` -> `{}` ({source})",
+            resolution.target, resolution.effective_url
+        ),
+    }
 }
 
 fn task_input_env_name(name: &str) -> String {
@@ -9357,16 +9712,16 @@ mod tests {
         ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
         ResolvedTaskRuntimeHost, RunError, RuntimeListenerHostPublicationFailure,
         RuntimeListenerResolutionKind, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
-        TaskRunState, clean_execution, clean_execution_report, container_identity_seed,
-        contract_working_dir, current_os, effective_task_execution,
+        TaskRunState, TaskTargetResolutionSource, clean_execution, clean_execution_report,
+        container_identity_seed, contract_working_dir, current_os, effective_task_execution,
         ephemeral_container_stream_command, execute_task_with_hooks, persistent_cleanup_targets,
         persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, ready_runtime_public_endpoint_line, resolve_execution_backend,
-        resolve_task_env, resolve_task_env_details, run_task, run_task_captured,
-        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
-        run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend,
+        resolve_task_env, resolve_task_env_details, resolve_task_target_binding_url, run_task,
+        run_task_captured, run_task_captured_with_args_with_overrides, run_task_with_args,
+        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
+        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -10065,6 +10420,914 @@ tasks:
     }
 
     #[test]
+    fn task_target_binding_resolves_when_override_is_absent() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    inputs:
+      base_url:
+        default: http://legacy.example
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        override_input: base_url
+    script: |
+      printf '%s' "$OTA_INPUT_BASE_URL" > inputs.txt
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &[],
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("inputs.txt")).unwrap(),
+            "http://127.0.0.1:8080/"
+        );
+        assert_eq!(outcome.target_resolutions.len(), 1);
+        assert_eq!(outcome.target_resolutions[0].target, "api");
+        assert_eq!(
+            outcome.target_resolutions[0].source,
+            TaskTargetResolutionSource::TargetBinding
+        );
+        assert_eq!(
+            outcome.target_resolutions[0].effective_url,
+            "http://127.0.0.1:8080/"
+        );
+    }
+
+    #[test]
+    fn explicit_target_override_input_beats_binding_resolution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    inputs:
+      base_url:
+        default: http://legacy.example
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        override_input: base_url
+    script: |
+      printf '%s' "$OTA_INPUT_BASE_URL" > inputs.txt
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &[
+                String::from("--base-url"),
+                String::from("https://staging.example.com"),
+            ],
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("inputs.txt")).unwrap(),
+            "https://staging.example.com"
+        );
+        assert_eq!(outcome.target_resolutions.len(), 1);
+        assert_eq!(
+            outcome.target_resolutions[0].source,
+            TaskTargetResolutionSource::ExplicitOverride
+        );
+        assert_eq!(
+            outcome.target_resolutions[0].effective_url,
+            "https://staging.example.com"
+        );
+    }
+
+    #[test]
+    fn task_target_binding_falls_back_to_literal_default_when_resolution_is_unavailable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    inputs:
+      base_url:
+        default: http://legacy.example
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        override_input: base_url
+    script: |
+      printf '%s' "$OTA_INPUT_BASE_URL" > inputs.txt
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &[],
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("inputs.txt")).unwrap(),
+            "http://legacy.example"
+        );
+        assert_eq!(
+            outcome.target_resolutions[0].source,
+            TaskTargetResolutionSource::CompatibilityLiteralDefault
+        );
+    }
+
+    #[test]
+    fn task_target_binding_respects_input_allowed_values() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    inputs:
+      base_url:
+        allowed:
+          - https://allowed.example.com
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        override_input: base_url
+    script: |
+      printf '%s' "$OTA_INPUT_BASE_URL" > inputs.txt
+"#,
+        );
+
+        let error = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &[],
+            ExecutionOverrides::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, RunError::InvalidTaskInputValue { .. }));
+        assert!(error.to_string().contains(
+            "input `base_url` resolved to `http://127.0.0.1:8080/`, which is not allowed"
+        ));
+    }
+
+    #[test]
+    fn explicit_target_override_input_still_respects_allowed_values() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    inputs:
+      base_url:
+        allowed:
+          - https://allowed.example.com
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        override_input: base_url
+    script: |
+      printf '%s' "$OTA_INPUT_BASE_URL" > inputs.txt
+"#,
+        );
+
+        let error = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &[
+                String::from("--base-url"),
+                String::from("https://blocked.example.com"),
+            ],
+            ExecutionOverrides::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, RunError::InvalidTaskInputValue { .. }));
+        assert!(error.to_string().contains(
+            "input `base_url` resolved to `https://blocked.example.com`, which is not allowed"
+        ));
+    }
+
+    #[test]
+    fn task_target_binding_without_override_input_exports_target_env_var() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+    script: |
+      printf '%s' "$OTA_TARGET_API" > target.txt
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &[],
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("target.txt")).unwrap(),
+            "http://127.0.0.1:8080/"
+        );
+        assert_eq!(outcome.target_resolutions.len(), 1);
+        assert_eq!(outcome.target_resolutions[0].target, "api");
+    }
+
+    #[test]
+    fn host_view_listener_resolution_is_not_tied_to_caller_backend() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    execution:
+      modes:
+        native:
+          run: echo native
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 8080
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 8080
+        container:
+          run: echo container
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(resolved, "http://127.0.0.1:8080/");
+    }
+
+    #[test]
+    fn host_view_listener_resolution_prefers_effective_producer_backend() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    execution:
+      modes:
+        native:
+          run: echo native
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 8080
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 8080
+        container:
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 9090
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 9090
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(resolved, "http://127.0.0.1:8080/");
+    }
+
+    #[test]
+    fn host_view_listener_resolution_uses_effective_mode_branch_over_root_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    execution:
+      modes:
+        native:
+          run: echo native
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 9090
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 9090
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let error = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(error, "http://127.0.0.1:9090/");
+    }
+
+    #[test]
+    fn host_view_listener_resolution_fails_when_inactive_mode_is_only_listener_source() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          run: echo native
+        container:
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 9090
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 9090
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let error = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("references unknown listener `http` on service task `dev`")
+        );
+    }
+
+    #[test]
+    fn task_target_binding_does_not_resolve_listener_from_other_backend_mode() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          run: echo native
+          runtime:
+            kind: service
+            listeners:
+              native_http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 8081
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 8081
+        container:
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              container_http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 8080
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 8080
+  sandbox:
+    inputs:
+      base_url:
+        required: true
+    targets:
+      api:
+        service:
+          task: dev
+          listener: container_http
+          address_view: topology
+        override_input: base_url
+    script: |
+      printf '%s' "$OTA_INPUT_BASE_URL" > inputs.txt
+"#,
+        );
+
+        let error = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &[],
+            ExecutionOverrides::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("references unknown listener `container_http` on service task `dev`")
+        );
+    }
+
+    #[test]
+    fn host_view_listener_resolution_respects_backend_override() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    execution:
+      modes:
+        native:
+          run: echo native
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 8080
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 8080
+        container:
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 9090
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 9090
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(resolved, "http://127.0.0.1:9090/");
+    }
+
+    #[test]
+    fn dependency_task_resolves_target_bindings_without_explicit_inputs() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    inputs:
+      base_url:
+        required: true
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        override_input: base_url
+    script: |
+      printf '%s' "$OTA_INPUT_BASE_URL" > sandbox_url.txt
+  ci:
+    run: test -f sandbox_url.txt
+    depends_on:
+      - sandbox
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "ci",
+            &[],
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("sandbox_url.txt")).unwrap(),
+            "http://127.0.0.1:8080/"
+        );
+        let dependency_step = outcome
+            .task_steps
+            .iter()
+            .find(|step| step.name == "sandbox")
+            .expect("dependency step should be recorded");
+        assert!(
+            dependency_step
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.contains("target `api` declared `service(dev.http)`"))
+        );
+        let dependency_index = outcome
+            .task_steps
+            .iter()
+            .position(|step| step.name == "sandbox")
+            .expect("dependency step should have an index");
+        assert_eq!(
+            outcome.task_step_target_resolutions[dependency_index][0].target,
+            "api"
+        );
+    }
+
+    #[test]
     fn runs_dependencies_before_target_task() {
         let fixture = ContractFixture::new(
             r#"
@@ -10612,6 +11875,8 @@ tasks:
                 target: None,
                 runtime: None,
                 service_termination: None,
+                task_step_target_resolutions: vec![Vec::new()],
+                target_resolutions: Vec::new(),
                 execution_note: None,
                 interrupted: false,
             }

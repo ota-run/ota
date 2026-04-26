@@ -26,7 +26,14 @@
 
 ## Unreleased
 
-- No unreleased changes yet.
+- added first-class task target bindings under `tasks.<name>.targets.<target>` with typed service identity (`service.task`, `service.listener`, `service.address_view`) and optional `override_input` operator channels
+- added strict target-binding validation for unknown service tasks/listeners, non-service targets, missing `override_input` declarations, and ambiguous duplicate override-input mappings across targets
+- added run-time target resolution precedence: explicit override input > resolved target binding > compatibility literal input default, plus explicit run-time failures when requested address views cannot be resolved truthfully in current topology support
+- added declared-versus-effective target evidence in run receipts and JSON under `receipt.steps[*].target_resolutions`, and surfaced resolved target bindings in run summary output
+- resolved task target bindings for dependency/hook tasks as well as requested tasks, while preserving existing required-input enforcement behavior for non-requested relations
+- preserved per-step target-resolution evidence in receipts for dependency/hook steps so machine-readable provenance remains truthful beyond the requested task step
+- exported resolved target bindings without `override_input` as `OTA_TARGET_<TARGET>` so first-class targets remain operational without legacy input shims
+- allowed `address_view: host` to resolve service listeners independently of caller backend when the producer listener declaration is unambiguous
 
 
 ## 1.6.2

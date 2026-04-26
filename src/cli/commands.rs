@@ -101,8 +101,8 @@ use crate::runner::{
     ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
-    StaleContainerOwnership, StreamLogTee, TaskExecutionRelation, clean_execution_report,
-    clean_stale_execution, effective_execution, effective_task_execution,
+    StaleContainerOwnership, StreamLogTee, TaskExecutionRelation, TaskTargetResolutionEvidence,
+    clean_execution_report, clean_stale_execution, effective_execution, effective_task_execution,
     env_resolution_source_label, ephemeral_container_name, load_declared_env_sources,
     load_policy_env_overlay, named_execution_context, persistent_container_name,
     reported_task_context_for_backend, resolve_declared_env_source_value,
@@ -21889,12 +21889,12 @@ mod tests {
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         build_up_preview, compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
-        execution_receipt_step, render_clean_text, render_detect_comparison_section,
-        render_execution_receipt_summary_block, render_execution_receipt_text,
-        render_report_section, render_up_result, render_up_section_from_parts,
-        render_windows_uninstall_pending, run_execution_receipt, strip_ansi_codes,
-        stylize_text_failure, up_doctor_mode, windows_uninstall_script, workspace_refresh_command,
-        write_detected_merge,
+        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
+        render_detect_comparison_section, render_execution_receipt_summary_block,
+        render_execution_receipt_text, render_report_section, render_up_result,
+        render_up_section_from_parts, render_windows_uninstall_pending, run_execution_receipt,
+        strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
+        workspace_refresh_command, write_detected_merge,
     };
     use crate::detector::{
         Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
@@ -21913,9 +21913,9 @@ mod tests {
     use crate::runner::{
         CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, RunError, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, TaskExecutionRelation,
-        simulate_run_interrupt_for_test,
+        TaskTargetResolutionEvidence, TaskTargetResolutionSource, simulate_run_interrupt_for_test,
     };
-    use crate::schema::{Backend, Lifecycle, parse_memory_size_bytes};
+    use crate::schema::{Backend, Lifecycle, TaskTargetAddressView, parse_memory_size_bytes};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
 
@@ -23553,6 +23553,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             0,
             true,
             Some(String::from("container")),
@@ -25996,6 +25998,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             0,
             true,
             None,
@@ -26050,6 +26054,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             127,
             false,
             Some(String::from("container")),
@@ -26105,6 +26111,8 @@ tasks:
                     "persistent container recreated (execution shape changed)",
                 )),
             }],
+            &[],
+            &[],
             0,
             true,
             Some(String::from("container")),
@@ -26154,6 +26162,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             0,
             true,
             None,
@@ -26175,6 +26185,144 @@ tasks:
             render_execution_receipt_summary_block(&receipt, Some("test"), "RUN SUMMARY");
         assert!(rendered.contains("Context:"));
         assert!(rendered.contains("app"));
+    }
+
+    #[test]
+    fn run_execution_receipt_includes_target_resolution_evidence_in_json_and_summary() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  sandbox:
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "sandbox",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("sandbox"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[TaskTargetResolutionEvidence {
+                target: String::from("api"),
+                override_input: Some(String::from("base_url")),
+                source: TaskTargetResolutionSource::TargetBinding,
+                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                    task: String::from("dev"),
+                    listener: String::from("http"),
+                    address_view: TaskTargetAddressView::Topology,
+                },
+                effective_url: String::from("http://127.0.0.1:8080"),
+            }],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.steps[0].target_resolutions.len(), 1);
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(
+            json["steps"][0]["target_resolutions"][0]["source"],
+            "target_binding"
+        );
+
+        let rendered =
+            render_execution_receipt_summary_block(&receipt, Some("sandbox"), "RUN SUMMARY");
+        assert!(rendered.contains("Target api:"));
+        assert!(rendered.contains("service(dev.http) -> http://127.0.0.1:8080 (target binding)"));
+    }
+
+    #[test]
+    fn run_execution_receipt_preserves_dependency_step_target_resolution_evidence_in_json() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: echo ci
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "ci",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("sandbox"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::DependsOn {
+                    parent: String::from("ci"),
+                },
+                generation: 0,
+                execution_note: Some(String::from(
+                    "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080/` (target binding)",
+                )),
+            }],
+            &[vec![TaskTargetResolutionEvidence {
+                target: String::from("api"),
+                override_input: Some(String::from("base_url")),
+                source: TaskTargetResolutionSource::TargetBinding,
+                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                    task: String::from("dev"),
+                    listener: String::from("http"),
+                    address_view: TaskTargetAddressView::Topology,
+                },
+                effective_url: String::from("http://127.0.0.1:8080"),
+            }]],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.steps[0].target_resolutions.len(), 1);
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(
+            json["steps"][0]["target_resolutions"][0]["service_ref"]["task"],
+            "dev"
+        );
+    }
+
+    #[test]
+    fn execution_receipt_step_detail_keeps_dependency_relation_when_note_exists() {
+        let step = ExecutedTaskStep {
+            name: String::from("sandbox"),
+            exit_code: 0,
+            relation: TaskExecutionRelation::DependsOn {
+                parent: String::from("ci"),
+            },
+            generation: 0,
+            execution_note: Some(String::from(
+                "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080/` (target binding)",
+            )),
+        };
+
+        let detail = execution_receipt_step_detail(&step, "ci").unwrap();
+        assert!(detail.contains("depends_on for `ci`"));
+        assert!(detail.contains("target `api` declared `service(dev.http)`"));
     }
 
     #[test]
@@ -26221,6 +26369,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             0,
             true,
             None,
@@ -26249,6 +26399,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             0,
             true,
             None,
@@ -26288,6 +26440,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             0,
             true,
             None,
@@ -26354,6 +26508,8 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
+            &[],
             0,
             true,
             None,
@@ -26463,6 +26619,8 @@ tasks:
                     execution_note: None,
                 },
             ],
+            &[],
+            &[],
             0,
             true,
             None,
@@ -26482,6 +26640,65 @@ tasks:
         let rendered = render_execution_receipt_text(&receipt);
         assert!(rendered.contains("rerun via after_success for `version:bump`"));
         assert!(rendered.contains("dependency of rerun `build`"));
+    }
+
+    #[test]
+    fn run_execution_receipt_preserves_hook_step_target_resolution_evidence_in_json() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: echo ci
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "ci",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("sandbox"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::AfterSuccess {
+                    parent: String::from("ci"),
+                },
+                generation: 0,
+                execution_note: Some(String::from(
+                    "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080/` (target binding)",
+                )),
+            }],
+            &[vec![TaskTargetResolutionEvidence {
+                target: String::from("api"),
+                override_input: Some(String::from("base_url")),
+                source: TaskTargetResolutionSource::TargetBinding,
+                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                    task: String::from("dev"),
+                    listener: String::from("http"),
+                    address_view: TaskTargetAddressView::Topology,
+                },
+                effective_url: String::from("http://127.0.0.1:8080"),
+            }]],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.steps[0].target_resolutions.len(), 1);
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(
+            json["steps"][0]["target_resolutions"][0]["service_ref"]["listener"],
+            "http"
+        );
     }
 
     #[test]
@@ -27336,6 +27553,8 @@ tasks:
                     "task interrupted by user; ephemeral container cleanup failed for `ota-ephemeral-deadbeef`: engine unavailable",
                 )),
             }],
+            &[],
+            &[],
             130,
             false,
             Some(String::from("container")),
@@ -30475,6 +30694,8 @@ fn run_single_contract_target_streaming(
                 task_name.as_str(),
                 member,
                 &outcome.task_steps,
+                &outcome.task_step_target_resolutions,
+                &outcome.target_resolutions,
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
@@ -30530,6 +30751,8 @@ fn run_single_contract_target_streaming(
                 task_name.as_str(),
                 member,
                 &outcome.task_steps,
+                &outcome.task_step_target_resolutions,
+                &outcome.target_resolutions,
                 outcome.exit_code,
                 false,
                 outcome.target.clone(),
@@ -30613,6 +30836,8 @@ fn run_single_contract_target_streaming(
                 task_name.as_str(),
                 member,
                 &[],
+                &[],
+                &[],
                 1,
                 false,
                 error_target,
@@ -30680,6 +30905,8 @@ fn run_single_contract_target_captured(
                 task_name.as_str(),
                 member,
                 &outcome.task_steps,
+                &outcome.task_step_target_resolutions,
+                &outcome.target_resolutions,
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
@@ -30731,6 +30958,8 @@ fn run_single_contract_target_captured(
                 task_name.as_str(),
                 member,
                 &outcome.task_steps,
+                &outcome.task_step_target_resolutions,
+                &outcome.target_resolutions,
                 outcome.exit_code,
                 false,
                 outcome.target.clone(),
@@ -30810,6 +31039,8 @@ fn run_single_contract_target_captured(
                 overrides,
                 task_name.as_str(),
                 member,
+                &[],
+                &[],
                 &[],
                 1,
                 false,
@@ -32676,6 +32907,8 @@ fn run_execution_receipt(
     task_name: &str,
     _member: Option<&str>,
     executed_steps: &[ExecutedTaskStep],
+    step_target_resolutions: &[Vec<TaskTargetResolutionEvidence>],
+    target_resolutions: &[TaskTargetResolutionEvidence],
     _exit_code: i32,
     ok: bool,
     target: Option<String>,
@@ -32704,7 +32937,7 @@ fn run_execution_receipt(
         .iter()
         .enumerate()
         .map(|(index, step)| {
-            execution_receipt_step(
+            let mut receipt_step = execution_receipt_step(
                 index + 1,
                 step.name.clone(),
                 if step.exit_code == 0 {
@@ -32714,7 +32947,17 @@ fn run_execution_receipt(
                 },
                 execution_receipt_step_detail(step, task_name),
                 Some(step.exit_code),
-            )
+            );
+            if let Some(step_resolutions) = step_target_resolutions.get(index)
+                && !step_resolutions.is_empty()
+            {
+                receipt_step.target_resolutions = step_resolutions.clone();
+            } else if step.name == task_name
+                && matches!(step.relation, TaskExecutionRelation::Requested)
+            {
+                receipt_step.target_resolutions = target_resolutions.to_vec();
+            }
+            receipt_step
         })
         .collect::<Vec<_>>();
     let step_count = steps.len();
@@ -32766,16 +33009,7 @@ fn run_execution_receipt(
 }
 
 fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) -> Option<String> {
-    if let Some(note) = step.execution_note.as_deref() {
-        return match &step.relation {
-            TaskExecutionRelation::Requested if step.name == requested_task => {
-                Some(format!("requested task; {note}"))
-            }
-            _ => Some(note.to_string()),
-        };
-    }
-
-    match &step.relation {
+    let relation_detail = match &step.relation {
         TaskExecutionRelation::Requested => {
             if step.name == requested_task {
                 Some(String::from("requested task"))
@@ -32811,7 +33045,20 @@ fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) 
                 Some(format!("rerun via after_always for `{parent}`"))
             }
         }
+    };
+
+    if let Some(note) = step.execution_note.as_deref() {
+        return match &step.relation {
+            TaskExecutionRelation::Requested if step.name == requested_task => {
+                Some(format!("requested task; {note}"))
+            }
+            _ => relation_detail
+                .map(|detail| format!("{detail}; {note}"))
+                .or_else(|| Some(note.to_string())),
+        };
     }
+
+    relation_detail
 }
 
 struct RunCommandFailure {
@@ -35406,6 +35653,18 @@ fn render_execution_receipt_summary_block(
             ));
         }
     }
+    for resolution in requested_task_target_resolutions(receipt, task) {
+        lines.push(summary_detail_line(
+            &format!("Target {}:", resolution.target),
+            &format!(
+                "service({}.{}) -> {} ({})",
+                resolution.service_ref.task,
+                resolution.service_ref.listener,
+                resolution.effective_url,
+                target_resolution_source_label(resolution)
+            ),
+        ));
+    }
     if let Some(logs) = receipt.logs.as_ref() {
         lines.push(summary_detail_line("Logs:", &logs.dir));
     }
@@ -35470,6 +35729,34 @@ fn receipt_log_capture_warning(receipt: &ExecutionReceipt) -> Option<&str> {
 
 fn summary_detail_line(label: &str, value: &str) -> String {
     format!("{label:<10} {value}")
+}
+
+fn requested_task_target_resolutions<'a>(
+    receipt: &'a ExecutionReceipt,
+    requested_task: &str,
+) -> &'a [TaskTargetResolutionEvidence] {
+    receipt
+        .steps
+        .iter()
+        .find(|step| {
+            step.label == requested_task
+                && matches!(
+                    step.detail.as_deref(),
+                    Some(detail) if detail.starts_with("requested task")
+                )
+        })
+        .map(|step| step.target_resolutions.as_slice())
+        .unwrap_or(&[])
+}
+
+fn target_resolution_source_label(resolution: &TaskTargetResolutionEvidence) -> &'static str {
+    match resolution.source {
+        crate::runner::TaskTargetResolutionSource::ExplicitOverride => "user override",
+        crate::runner::TaskTargetResolutionSource::TargetBinding => "target binding",
+        crate::runner::TaskTargetResolutionSource::CompatibilityLiteralDefault => {
+            "compatibility literal default"
+        }
+    }
 }
 
 fn render_execution_receipt_status(status: &str) -> String {
@@ -37073,6 +37360,7 @@ fn execution_receipt_step(
         status: status.into(),
         detail,
         exit_code,
+        target_resolutions: Vec::new(),
     }
 }
 
