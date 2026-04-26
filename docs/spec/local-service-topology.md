@@ -325,20 +325,21 @@ Rules:
 
 ### Fulfillment mode
 
-`execution.local_backends.<name>.fulfillment` is proposed as:
+`execution.local_backends.<name>.fulfillment` is:
 
 - `none` = do not fulfill; fail if requirements are missing
 - `run` = fulfill on the run path before the backend is used
 
-Initial product recommendation:
+Current product recommendation:
 
 - default to `run` only when the backend binding explicitly asks for it
 - keep fulfillment explicit in early versions
 
 ### Effective backend requirement resolution
 
-For a shared local backend, Ota computes the effective requirements as the union of:
+For a shared local backend, Ota computes the effective requirements as the deterministic union of:
 
+- root contract requirements
 - bound task context requirements
 - bound task runtime/tool requirements if Ota later supports them explicitly
 - any backend-binding-specific requirements

@@ -1010,12 +1010,14 @@ Shared local backend semantics:
   - `lifecycle`
 - optional fields:
   - `context` to pin the shared backend to one named execution context
-  - `fulfillment` (`none` or `run`; reserved for later fulfillment slices)
+  - `fulfillment` (`none` or `run`) to control whether ota may prepare missing backend requirements on the actual `ota run` path
 - tasks opt in through `tasks.<name>.runtime.backend_binding: <name>`
 - shared local backend identity is deterministic and drives:
   - persistent container family/shape reconciliation for create/reuse/recreate
   - topology addressability for container caller `address_view: topology` target bindings
+  - backend-scoped run-path fulfillment when the group declares `fulfillment: run`
   - receipt evidence in `receipt.steps[*].shared_local_backend` (`name`, `backend`, `lifecycle`, effective identity, and reuse state when known)
+  - receipt evidence in `receipt.steps[*].backend_fulfillment` when ota probes or prepares the backend
 - validation rules include:
   - binding must reference declared `execution.local_backends.<name>`
   - binding backend family must match task runtime backend
@@ -1024,7 +1026,8 @@ Shared local backend semantics:
   - shared local backend groups must resolve one deterministic container shape (same effective image, publication shape, dependency-isolation shape, and memory shape)
   - `address_view: topology` for container callers resolves only when caller and producer share one declared local backend binding
   - shared local backends are currently `container` only
-  - fulfillment is deferred to later slices; this slice models the boundary but does not yet prepare the effective backend automatically
+  - fulfillment currently acts on the effective shared backend requirement union only; it does not yet cover native or remote shared backend families
+  - `fulfillment: none` fails clearly when required runtimes or tools are missing, while `fulfillment: run` attempts approved provisioning before any bound task body or dependency task uses that backend
 - later slices are expected to relax some of that strictness by extending the same model, not by replacing it with guessed addressing or implicit backend-sharing behavior
 
 Example:

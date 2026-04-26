@@ -3883,6 +3883,7 @@ fn diagnose_command_version(
                         .engine
                         .clone(),
                     lifecycle: Lifecycle::Ephemeral,
+                    container_name: None,
                 },
                 "ota doctor --mode container",
             ));
@@ -3991,6 +3992,7 @@ fn diagnose_command_version(
                     .engine
                     .clone(),
                 lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
             },
             "ota doctor --mode container",
         ));
@@ -4123,6 +4125,7 @@ fn container_installability_failure(
         image: container_probe.image.clone(),
         engine: container_probe.engine.clone(),
         lifecycle: Lifecycle::Ephemeral,
+        container_name: None,
     };
     match probe_provisioning_installability_with_target(
         action,

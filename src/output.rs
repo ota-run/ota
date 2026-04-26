@@ -28,10 +28,10 @@ use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::{
-    ExecutionOverrides, ResolvedTaskRuntime, SharedLocalBackendEvidence,
-    TaskTargetResolutionEvidence, blocking_declared_env_source_label, effective_task_execution,
-    env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
-    resolve_declared_env_source_value,
+    BackendFulfillmentEvidence, ExecutionOverrides, ResolvedTaskRuntime,
+    SharedLocalBackendEvidence, TaskTargetResolutionEvidence, blocking_declared_env_source_label,
+    effective_task_execution, env_resolution_source_label, load_declared_env_sources,
+    load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{
     AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
@@ -236,6 +236,8 @@ pub struct ExecutionReceiptStep {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub target_resolutions: Vec<TaskTargetResolutionEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_fulfillment: Option<BackendFulfillmentEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_local_backend: Option<SharedLocalBackendEvidence>,
 }
 
@@ -332,6 +334,8 @@ pub struct ExecutionReceipt {
     pub runtime: Option<ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_termination: Option<crate::runner::ServiceTermination>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_fulfillment: Option<BackendFulfillmentEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logs: Option<ExecutionReceiptLogs>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
