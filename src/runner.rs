@@ -43,7 +43,7 @@ use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
     container_engine_candidates_from_backend, context_dependency_isolation_paths, execution_image,
-    matching_execution_context_name, selected_container_engine,
+    format_lifecycle, matching_execution_context_name, selected_container_engine,
     selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
@@ -809,6 +809,12 @@ pub enum RunError {
         target: String,
         details: String,
     },
+    #[error("task `{task}` shared local backend `{binding}` could not be resolved: {details}")]
+    SharedLocalBackendResolutionFailed {
+        task: String,
+        binding: String,
+        details: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -954,6 +960,8 @@ pub struct RunOutcome {
     pub service_termination: Option<ServiceTermination>,
     pub task_step_target_resolutions: Vec<Vec<TaskTargetResolutionEvidence>>,
     pub target_resolutions: Vec<TaskTargetResolutionEvidence>,
+    pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
+    pub shared_local_backend: Option<SharedLocalBackendEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
 }
@@ -970,8 +978,30 @@ pub struct CapturedRunOutcome {
     pub service_termination: Option<ServiceTermination>,
     pub task_step_target_resolutions: Vec<Vec<TaskTargetResolutionEvidence>>,
     pub target_resolutions: Vec<TaskTargetResolutionEvidence>,
+    pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
+    pub shared_local_backend: Option<SharedLocalBackendEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedLocalBackendReuse {
+    Created,
+    Reused,
+    Recreated,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct SharedLocalBackendEvidence {
+    pub name: String,
+    pub backend: String,
+    pub lifecycle: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    pub effective_identity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse: Option<SharedLocalBackendReuse>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -1707,6 +1737,8 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
         service_termination: outcome.service_termination,
         task_step_target_resolutions: outcome.task_step_target_resolutions,
         target_resolutions: outcome.target_resolutions,
+        task_step_shared_local_backends: outcome.task_step_shared_local_backends,
+        shared_local_backend: outcome.shared_local_backend,
         execution_note: outcome.execution_note,
         interrupted: outcome.interrupted,
     })
@@ -1905,6 +1937,7 @@ pub fn clean_execution_report(
         BTreeMap::<String, BTreeSet<String>>::new();
     for (
         context_name,
+        shared_local_backend_name,
         image,
         engine,
         publications,
@@ -1917,6 +1950,7 @@ pub fn clean_execution_report(
         relevant_engines.insert(engine.clone());
         let identity_seed = container_identity_seed(
             context_name.as_deref(),
+            shared_local_backend_name.as_deref(),
             &publications,
             &dependency_isolation_paths,
             memory_bytes,
@@ -2099,6 +2133,7 @@ fn persistent_cleanup_targets(
 ) -> Result<
     Vec<(
         Option<String>,
+        Option<String>,
         String,
         String,
         Vec<ContainerPortPublication>,
@@ -2141,6 +2176,7 @@ fn persistent_cleanup_targets(
                     )?;
                     targets.push((
                         Some(name.clone()),
+                        None,
                         container.image.clone(),
                         engine.clone(),
                         publications,
@@ -2159,6 +2195,7 @@ fn persistent_cleanup_targets(
                 )?;
                 targets.push((
                     Some(name.clone()),
+                    None,
                     container.image.clone(),
                     engine.clone(),
                     Vec::new(),
@@ -2166,6 +2203,92 @@ fn persistent_cleanup_targets(
                     memory_bytes,
                     false,
                 ));
+            }
+        }
+
+        for (local_backend_name, local_backend) in &execution.local_backends {
+            if local_backend.backend != Backend::Container {
+                continue;
+            }
+
+            let context_name = local_backend.context.clone().or_else(|| {
+                contract.tasks.iter().find_map(|(task_name, task)| {
+                    (task.backend_binding_for_backend(Backend::Container)
+                        == Some(local_backend_name.as_str()))
+                    .then(|| {
+                        selected_task_context_for_backend(contract, task_name, Backend::Container)
+                            .map(|(name, _)| name.to_string())
+                    })
+                    .flatten()
+                })
+            });
+            let context = context_name.as_deref().and_then(|context_name| {
+                execution
+                    .contexts
+                    .get(context_name)
+                    .filter(|context| context.backend == Backend::Container)
+            });
+            let container = context
+                .and_then(|context| context.container.as_ref())
+                .or_else(|| {
+                    execution
+                        .backends
+                        .as_ref()
+                        .and_then(|backends| backends.container.as_ref())
+                })
+                .ok_or_else(|| RunError::MissingContainerImage {
+                    task: format!("local_backend:{local_backend_name}"),
+                })?;
+            let engine =
+                selected_container_engine_from_backend(Some(container)).ok_or_else(|| {
+                    RunError::MissingContainerBackendCli {
+                        task: format!("local_backend:{local_backend_name}"),
+                        engines: container_engine_candidates_from_backend(Some(container))
+                            .join(", "),
+                    }
+                })?;
+            let dependency_isolation_paths = context
+                .map(context_dependency_isolation_paths)
+                .unwrap_or_default();
+            let memory_field_prefix = context_name
+                .as_deref()
+                .map(|context_name| format!("execution.contexts.{context_name}.container"))
+                .unwrap_or_else(|| String::from("execution.backends.container"));
+            let memory_bytes = container_memory_override_or_default(
+                "clean",
+                container,
+                memory_field_prefix.as_str(),
+                None,
+            )?;
+
+            if local_backend.lifecycle == Lifecycle::Persistent {
+                let target = (
+                    context_name.clone(),
+                    Some(local_backend_name.clone()),
+                    container.image.clone(),
+                    engine.clone(),
+                    shared_local_backend_publications(contract, local_backend_name),
+                    dependency_isolation_paths.clone(),
+                    memory_bytes,
+                    true,
+                );
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            } else if !dependency_isolation_paths.is_empty() {
+                let target = (
+                    context_name.clone(),
+                    Some(local_backend_name.clone()),
+                    container.image.clone(),
+                    engine.clone(),
+                    Vec::new(),
+                    dependency_isolation_paths,
+                    memory_bytes,
+                    false,
+                );
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
             }
         }
     }
@@ -2201,6 +2324,7 @@ fn persistent_cleanup_targets(
                 .flatten();
             let target = (
                 Some(LEGACY_EXECUTION_CONTEXT_NAME.to_string()),
+                None,
                 image.clone(),
                 engine.clone(),
                 publications,
@@ -2472,6 +2596,8 @@ struct TaskRunState {
     service_termination: Option<ServiceTermination>,
     task_step_target_resolutions: Vec<Vec<TaskTargetResolutionEvidence>>,
     target_resolutions: Vec<TaskTargetResolutionEvidence>,
+    task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
+    shared_local_backend: Option<SharedLocalBackendEvidence>,
     execution_note: Option<String>,
     interrupted: bool,
 }
@@ -2520,6 +2646,7 @@ pub(crate) enum ResolvedExecutionBackend {
     Native,
     Container {
         context_name: Option<String>,
+        shared_local_backend: Option<ResolvedSharedLocalBackend>,
         image: String,
         engine: String,
         lifecycle: Lifecycle,
@@ -2539,6 +2666,14 @@ pub(crate) enum ResolvedExecutionBackend {
         target: String,
         cwd: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedSharedLocalBackend {
+    name: String,
+    backend: Backend,
+    lifecycle: Lifecycle,
+    context_name: Option<String>,
 }
 
 fn resolved_execution_backend_kind(backend: &ResolvedExecutionBackend) -> Backend {
@@ -2689,6 +2824,8 @@ fn run_task_internal(
         service_termination: state.service_termination,
         task_step_target_resolutions: state.task_step_target_resolutions,
         target_resolutions: state.target_resolutions,
+        task_step_shared_local_backends: state.task_step_shared_local_backends,
+        shared_local_backend: state.shared_local_backend,
         execution_note: state.execution_note,
         interrupted: state.interrupted,
     })
@@ -3024,9 +3161,12 @@ fn execute_task_with_hooks(
     if let Some(note) = command_output.execution_note.clone() {
         notes.push(note);
     }
+    let step_shared_local_backend =
+        shared_local_backend_evidence_from_step(&backend, &command_output);
     let step_execution_note = (!notes.is_empty()).then(|| notes.join("; "));
     if requested_relation {
         state.target_resolutions = input_resolution.target_resolutions.clone();
+        state.shared_local_backend = step_shared_local_backend.clone();
     }
     propagate_step_result_to_run_state(state, &relation, &command_output);
     if requested_relation && let Some(note) = step_execution_note.clone() {
@@ -3042,6 +3182,9 @@ fn execute_task_with_hooks(
     state
         .task_step_target_resolutions
         .push(input_resolution.target_resolutions.clone());
+    state
+        .task_step_shared_local_backends
+        .push(step_shared_local_backend);
 
     let hook_exit_code = execute_post_hooks(
         contract,
@@ -3317,6 +3460,7 @@ fn execute_task_command(
         ),
         ResolvedExecutionBackend::Container {
             context_name,
+            shared_local_backend,
             image,
             engine,
             lifecycle,
@@ -3328,6 +3472,9 @@ fn execute_task_command(
             task_name,
             runtime,
             context_name.as_deref(),
+            shared_local_backend
+                .as_ref()
+                .map(|shared| shared.name.as_str()),
             command,
             working_dir,
             env_overrides,
@@ -3681,7 +3828,7 @@ fn resolve_task_target_binding_url(
     target_name: &str,
     target_spec: &TaskTargetSpec,
     caller_backend: Backend,
-    execution_overrides: ExecutionOverrides,
+    _execution_overrides: ExecutionOverrides,
 ) -> Result<String, RunError> {
     let service_task_name = target_spec.service.task.trim();
     let service_task = contract.tasks.get(service_task_name).ok_or_else(|| {
@@ -3694,22 +3841,14 @@ fn resolve_task_target_binding_url(
 
     let listener_name = target_spec.service.listener.trim();
     let listener = match target_spec.service.address_view {
-        TaskTargetAddressView::Host => {
-            select_target_listener_for_host_view(
-                contract,
-                service_task_name,
-                service_task,
-                listener_name,
-                execution_overrides,
-            )
-                .map_err(|details| {
+        TaskTargetAddressView::Host => select_target_listener_for_host_view(service_task, listener_name)
+            .map_err(|details| {
                 RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
                     target: target_name.to_string(),
                     details,
                 }
-                })?
-        }
+            })?,
         TaskTargetAddressView::Topology | TaskTargetAddressView::Internal => {
             select_target_listener_for_backend(service_task, listener_name, caller_backend)
         }
@@ -3722,40 +3861,87 @@ fn resolve_task_target_binding_url(
         ),
     })?;
 
-    let host_projection = listener.project.host.as_ref().ok_or_else(|| {
-        RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: format!(
-                "listener `{service_task_name}.{listener_name}` has no `project.host` endpoint to resolve"
-            ),
-        }
-    })?;
-
-    let host_port = host_projection.port.value.ok_or_else(|| {
-        RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: format!(
-                "listener `{service_task_name}.{listener_name}` does not declare a fixed `project.host.port.value`"
-            ),
-        }
-    })?;
-
     match target_spec.service.address_view {
-        TaskTargetAddressView::Host => Ok(format_task_target_host_endpoint(
-            listener.protocol,
-            host_projection.address.as_str(),
-            host_port,
-            host_projection.path.as_deref(),
-        )),
+        TaskTargetAddressView::Host => {
+            let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+                RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "listener `{service_task_name}.{listener_name}` has no `project.host` endpoint to resolve"
+                    ),
+                }
+            })?;
+            let host_port = host_projection.port.value.ok_or_else(|| {
+                RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "listener `{service_task_name}.{listener_name}` does not declare a fixed `project.host.port.value`"
+                    ),
+                }
+            })?;
+            Ok(format_task_target_host_endpoint(
+                listener.protocol,
+                host_projection.address.as_str(),
+                host_port,
+                host_projection.path.as_deref(),
+            ))
+        }
         TaskTargetAddressView::Topology => {
+            if caller_backend == Backend::Native {
+                let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "listener `{service_task_name}.{listener_name}` has no `project.host` endpoint to resolve"
+                        ),
+                    }
+                })?;
+                let host_port = host_projection.port.value.ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "listener `{service_task_name}.{listener_name}` does not declare a fixed `project.host.port.value`"
+                        ),
+                    }
+                })?;
+                return Ok(format_task_target_host_endpoint(
+                    listener.protocol,
+                    host_projection.address.as_str(),
+                    host_port,
+                    host_projection.path.as_deref(),
+                ));
+            }
+
+            if caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, service_task_name)
+            {
+                let bind_port = listener.bind.port.value.ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "listener `{service_task_name}.{listener_name}` requires `bind.port.mode: fixed` to resolve `address_view: topology` for shared local backends"
+                        ),
+                    }
+                })?;
+                return Ok(format_task_target_host_endpoint(
+                    listener.protocol,
+                    colocated_topology_listener_address(listener.bind.address.as_str()).as_str(),
+                    bind_port,
+                    None,
+                ));
+            }
+
             if caller_backend != Backend::Native {
                 return Err(RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
                     target: target_name.to_string(),
                     details: format!(
-                        "`address_view: topology` is only resolvable for native caller execution in this slice; current caller backend is `{}`",
+                        "`address_view: topology` requires either native caller execution or a shared local backend binding between `{task_name}` and `{service_task_name}`; current caller backend is `{}`",
                         match caller_backend {
                             Backend::Native => "native",
                             Backend::Container => "container",
@@ -3764,12 +3950,7 @@ fn resolve_task_target_binding_url(
                     ),
                 });
             }
-            Ok(format_task_target_host_endpoint(
-                listener.protocol,
-                host_projection.address.as_str(),
-                host_port,
-                host_projection.path.as_deref(),
-            ))
+            unreachable!()
         }
         TaskTargetAddressView::Internal => Err(RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
@@ -3792,19 +3973,92 @@ fn select_target_listener_for_backend<'a>(
 }
 
 fn select_target_listener_for_host_view<'a>(
-    contract: &Contract,
-    service_task_name: &str,
     service_task: &'a TaskSpec,
     listener_name: &str,
-    execution_overrides: ExecutionOverrides,
 ) -> Result<Option<&'a crate::schema::TaskRuntimeListenerSpec>, String> {
-    let effective_backend =
-        effective_task_execution(contract, service_task_name, execution_overrides).backend;
-    Ok(select_target_listener_for_backend(
-        service_task,
-        listener_name,
-        effective_backend,
+    let mut matches = Vec::<(&'static str, &'a crate::schema::TaskRuntimeListenerSpec)>::new();
+    if let Some(listener) = service_task
+        .service_runtime()
+        .and_then(|runtime| runtime.listeners.get(listener_name))
+    {
+        matches.push(("runtime.listeners", listener));
+    }
+    if let Some(execution) = service_task.execution.as_ref() {
+        for (backend, branch) in execution.modes.iter() {
+            let Some(listener) = branch
+                .runtime
+                .as_ref()
+                .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+                .and_then(|runtime| runtime.listeners.get(listener_name))
+            else {
+                continue;
+            };
+            let origin = match backend {
+                Backend::Native => "execution.modes.native.runtime.listeners",
+                Backend::Container => "execution.modes.container.runtime.listeners",
+                Backend::Remote => "execution.modes.remote.runtime.listeners",
+            };
+            matches.push((origin, listener));
+        }
+    }
+
+    let Some((_, selected)) = matches.first().copied() else {
+        return Ok(None);
+    };
+    let selected_signature = host_view_listener_signature(selected);
+    if matches
+        .iter()
+        .all(|(_, listener)| host_view_listener_signature(listener) == selected_signature)
+    {
+        return Ok(Some(selected));
+    }
+
+    let origins = matches
+        .iter()
+        .map(|(origin, _)| format!("`{origin}.{listener_name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "listener `{listener_name}` has conflicting host-view declarations across {origins}; declare one canonical host projection for this listener"
     ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostViewListenerSignature {
+    protocol: TaskRuntimeProtocol,
+    host: Option<crate::schema::TaskRuntimeHostProjectionSpec>,
+}
+
+fn host_view_listener_signature(
+    listener: &crate::schema::TaskRuntimeListenerSpec,
+) -> HostViewListenerSignature {
+    HostViewListenerSignature {
+        protocol: listener.protocol,
+        host: listener.project.host.clone(),
+    }
+}
+
+fn tasks_share_container_local_backend(
+    contract: &Contract,
+    caller_task_name: &str,
+    service_task_name: &str,
+) -> bool {
+    let caller_binding = contract
+        .tasks
+        .get(caller_task_name)
+        .and_then(|task| task.backend_binding_for_backend(Backend::Container));
+    let service_binding = contract
+        .tasks
+        .get(service_task_name)
+        .and_then(|task| task.backend_binding_for_backend(Backend::Container));
+    matches!((caller_binding, service_binding), (Some(a), Some(b)) if a == b)
+}
+
+fn colocated_topology_listener_address(bind_address: &str) -> String {
+    match bind_address.trim() {
+        "0.0.0.0" | "::" | "[::]" => String::from("127.0.0.1"),
+        other => other.to_string(),
+    }
 }
 
 fn format_task_target_host_endpoint(
@@ -3845,6 +4099,58 @@ fn render_target_resolution_note(resolution: &TaskTargetResolutionEvidence) -> S
             "target `{}` declared `{declared}` -> `{}` ({source})",
             resolution.target, resolution.effective_url
         ),
+    }
+}
+
+fn shared_local_backend_evidence_from_step(
+    backend: &ResolvedExecutionBackend,
+    command_output: &TaskCommandOutput,
+) -> Option<SharedLocalBackendEvidence> {
+    let ResolvedExecutionBackend::Container {
+        shared_local_backend: Some(shared_local_backend),
+        ..
+    } = backend
+    else {
+        return None;
+    };
+
+    let effective_identity = command_output.target.clone().unwrap_or_else(|| {
+        format!(
+            "local-backend:{}:{}",
+            shared_local_backend.name,
+            shared_local_backend
+                .context_name
+                .as_deref()
+                .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
+        )
+    });
+
+    Some(SharedLocalBackendEvidence {
+        name: shared_local_backend.name.clone(),
+        backend: match shared_local_backend.backend {
+            Backend::Native => String::from("native"),
+            Backend::Container => String::from("container"),
+            Backend::Remote => String::from("remote"),
+        },
+        lifecycle: format_lifecycle(shared_local_backend.lifecycle).to_string(),
+        context: shared_local_backend.context_name.clone(),
+        effective_identity,
+        reuse: command_output
+            .execution_note
+            .as_deref()
+            .and_then(shared_local_backend_reuse_from_note),
+    })
+}
+
+fn shared_local_backend_reuse_from_note(note: &str) -> Option<SharedLocalBackendReuse> {
+    if note.contains("persistent container recreated") {
+        Some(SharedLocalBackendReuse::Recreated)
+    } else if note.contains("persistent container reused") {
+        Some(SharedLocalBackendReuse::Reused)
+    } else if note.contains("persistent container created") {
+        Some(SharedLocalBackendReuse::Created)
+    } else {
+        None
     }
 }
 
@@ -4841,12 +5147,17 @@ fn task_container_publication_sets_for_context(
 
 fn container_identity_seed(
     context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
     publications: &[ContainerPortPublication],
     isolated_paths: &[String],
     memory_bytes: Option<u64>,
 ) -> Option<String> {
-    let context_name = context_name?;
-    let mut seed = context_name.to_string();
+    let mut seed = match (shared_local_backend_name, context_name) {
+        (Some(shared), Some(context)) => format!("shared:{shared}|context:{context}"),
+        (Some(shared), None) => format!("shared:{shared}"),
+        (None, Some(context)) => context.to_string(),
+        (None, None) => return None,
+    };
     if !publications.is_empty() {
         seed.push('|');
         seed.push_str(
@@ -4886,9 +5197,17 @@ fn container_identity_seed(
     Some(seed)
 }
 
-fn persistent_container_family_token(task_name: &str, context_name: Option<&str>) -> String {
+fn persistent_container_family_token(
+    task_name: &str,
+    context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
+) -> String {
     let mut hasher = DefaultHasher::new();
-    task_name.hash(&mut hasher);
+    if let Some(shared_local_backend_name) = shared_local_backend_name {
+        shared_local_backend_name.hash(&mut hasher);
+    } else {
+        task_name.hash(&mut hasher);
+    }
     context_name
         .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
         .hash(&mut hasher);
@@ -4897,6 +5216,7 @@ fn persistent_container_family_token(task_name: &str, context_name: Option<&str>
 
 fn persistent_container_shape_token(
     context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
     image: &str,
     engine: &str,
     compose_networks: &[String],
@@ -4905,6 +5225,7 @@ fn persistent_container_shape_token(
     memory_bytes: Option<u64>,
 ) -> String {
     let mut hasher = DefaultHasher::new();
+    shared_local_backend_name.hash(&mut hasher);
     context_name
         .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
         .hash(&mut hasher);
@@ -4991,6 +5312,89 @@ pub(crate) fn effective_task_execution<'a>(
     }
 }
 
+fn resolve_task_shared_local_backend(
+    contract: &Contract,
+    task_name: &str,
+    backend: Backend,
+) -> Result<Option<ResolvedSharedLocalBackend>, RunError> {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Ok(None);
+    };
+    let Some(binding_name) = task.backend_binding_for_backend(backend) else {
+        return Ok(None);
+    };
+    let Some(execution) = contract.execution.as_ref() else {
+        return Err(RunError::SharedLocalBackendResolutionFailed {
+            task: task_name.to_string(),
+            binding: binding_name.to_string(),
+            details: String::from("execution block is missing"),
+        });
+    };
+    let Some(local_backend) = execution.local_backends.get(binding_name) else {
+        return Err(RunError::SharedLocalBackendResolutionFailed {
+            task: task_name.to_string(),
+            binding: binding_name.to_string(),
+            details: String::from("binding is not declared under `execution.local_backends`"),
+        });
+    };
+    if local_backend.backend != backend {
+        return Err(RunError::SharedLocalBackendResolutionFailed {
+            task: task_name.to_string(),
+            binding: binding_name.to_string(),
+            details: format!(
+                "binding backend `{}` does not match resolved task backend `{}`",
+                match local_backend.backend {
+                    Backend::Native => "native",
+                    Backend::Container => "container",
+                    Backend::Remote => "remote",
+                },
+                match backend {
+                    Backend::Native => "native",
+                    Backend::Container => "container",
+                    Backend::Remote => "remote",
+                },
+            ),
+        });
+    }
+    let context_name = local_backend
+        .context
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            selected_task_context_for_backend(contract, task_name, backend)
+                .map(|(name, _)| name.to_string())
+        });
+
+    Ok(Some(ResolvedSharedLocalBackend {
+        name: binding_name.to_string(),
+        backend: local_backend.backend,
+        lifecycle: local_backend.lifecycle,
+        context_name,
+    }))
+}
+
+fn shared_local_backend_publications(
+    contract: &Contract,
+    binding_name: &str,
+) -> Vec<ContainerPortPublication> {
+    let mut publications = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.backend_binding_for_backend(Backend::Container) != Some(binding_name) {
+            continue;
+        }
+        for (_, publication) in
+            task_container_publication_details(contract, task_name.as_str(), Backend::Container)
+        {
+            if !publications.contains(&publication) {
+                publications.push(publication);
+            }
+        }
+    }
+    publications
+}
+
 pub(crate) fn resolve_execution_backend(
     contract: &Contract,
     task_name: &str,
@@ -5025,7 +5429,24 @@ pub(crate) fn resolve_execution_backend(
             Ok(ResolvedExecutionBackend::Native)
         }
         Backend::Container => {
-            let Some(container) = effective.container else {
+            let shared_local_backend =
+                resolve_task_shared_local_backend(contract, task_name, preferred)?;
+            let local_backend_context_name = shared_local_backend
+                .as_ref()
+                .and_then(|shared| shared.context_name.clone());
+            let resolved_context = local_backend_context_name
+                .as_deref()
+                .and_then(|name| {
+                    contract
+                        .execution
+                        .as_ref()
+                        .and_then(|execution| execution.contexts.get(name))
+                })
+                .filter(|context| context.backend == Backend::Container);
+            let container = resolved_context
+                .and_then(|context| context.container.as_ref())
+                .or(effective.container);
+            let Some(container) = container else {
                 return Err(RunError::MissingContainerImage {
                     task: task_name.to_string(),
                 });
@@ -5040,21 +5461,44 @@ pub(crate) fn resolve_execution_backend(
                     }
                 })?;
 
-            let lifecycle = lifecycle.ok_or_else(|| RunError::MissingContainerLifecycle {
-                task: task_name.to_string(),
-            })?;
+            let lifecycle = if let Some(shared) = shared_local_backend.as_ref() {
+                if let Some(requested) = overrides.lifecycle
+                    && requested != shared.lifecycle
+                {
+                    return Err(RunError::SharedLocalBackendResolutionFailed {
+                        task: task_name.to_string(),
+                        binding: shared.name.clone(),
+                        details: format!(
+                            "requested lifecycle `{}` conflicts with declared shared backend lifecycle `{}`",
+                            format_lifecycle(requested),
+                            format_lifecycle(shared.lifecycle),
+                        ),
+                    });
+                }
+                shared.lifecycle
+            } else {
+                lifecycle.ok_or_else(|| RunError::MissingContainerLifecycle {
+                    task: task_name.to_string(),
+                })?
+            };
 
-            let context_name = effective.context_name.map(str::to_string);
-            let memory_field_prefix =
-                selected_task_context_for_backend(contract, task_name, preferred)
-                    .filter(|(_, context)| context.backend == Backend::Container)
-                    .and_then(|(context_name, context)| {
+            let context_name =
+                local_backend_context_name.or_else(|| effective.context_name.map(str::to_string));
+            let memory_field_prefix = if let Some(context_name) = context_name.as_deref() {
+                contract
+                    .execution
+                    .as_ref()
+                    .and_then(|execution| execution.contexts.get(context_name))
+                    .and_then(|context| {
                         context
                             .container
                             .as_ref()
                             .map(|_| format!("execution.contexts.{context_name}.container"))
                     })
-                    .unwrap_or_else(|| String::from("execution.backends.container"));
+                    .unwrap_or_else(|| String::from("execution.backends.container"))
+            } else {
+                String::from("execution.backends.container")
+            };
             let memory_bytes = container_memory_override_or_default(
                 task_name,
                 container,
@@ -5065,21 +5509,26 @@ pub(crate) fn resolve_execution_backend(
                 .into_iter()
                 .map(|(_, publication)| publication)
                 .collect::<Vec<_>>();
-            let dependency_isolation_paths =
-                selected_task_context_for_backend(contract, task_name, preferred)
-                    .filter(|(_, context)| context.backend == Backend::Container)
-                    .map(|(_, context)| context_dependency_isolation_paths(context))
-                    .unwrap_or_default();
+            let dependency_isolation_paths = context_name
+                .as_deref()
+                .and_then(|name| {
+                    contract
+                        .execution
+                        .as_ref()
+                        .and_then(|execution| execution.contexts.get(name))
+                })
+                .map(context_dependency_isolation_paths)
+                .unwrap_or_default();
 
             Ok(ResolvedExecutionBackend::Container {
                 context_name,
+                shared_local_backend,
                 image: container.image.clone(),
                 engine,
                 lifecycle,
                 memory_bytes,
-                compose_networks: selected_task_context_for_backend(contract, task_name, preferred)
-                    .filter(|(_, context)| context.backend == Backend::Container)
-                    .map(|(_, context)| compose_networks_for_context(context))
+                compose_networks: resolved_context
+                    .map(compose_networks_for_context)
                     .unwrap_or_default(),
                 publications,
                 dependency_isolation_paths,
@@ -5194,6 +5643,7 @@ pub(crate) fn resolve_context_execution_backend(
 
             Ok(ResolvedExecutionBackend::Container {
                 context_name: Some(context_name.to_string()),
+                shared_local_backend: None,
                 image: container.image.clone(),
                 engine,
                 lifecycle,
@@ -6350,6 +6800,7 @@ fn execute_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -6457,6 +6908,7 @@ fn execute_container_task_command(
                     task_name,
                     runtime,
                     context_name,
+                    shared_local_backend_name,
                     &repo_ownership_token,
                     command,
                     working_dir,
@@ -6580,6 +7032,7 @@ fn execute_container_task_command(
                 task_name,
                 runtime,
                 context_name,
+                shared_local_backend_name,
                 &repo_ownership_token,
                 command,
                 working_dir,
@@ -6878,6 +7331,7 @@ fn execute_ephemeral_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
     repo_ownership_token: &str,
     command: &str,
     working_dir: &Path,
@@ -6895,6 +7349,7 @@ fn execute_ephemeral_container_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let identity_seed = container_identity_seed(
         context_name,
+        shared_local_backend_name,
         publications,
         dependency_isolation_paths,
         memory_bytes,
@@ -7143,6 +7598,7 @@ fn execute_persistent_container_task_command(
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
     repo_ownership_token: &str,
     command: &str,
     working_dir: &Path,
@@ -7160,15 +7616,18 @@ fn execute_persistent_container_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let identity_seed = container_identity_seed(
         context_name,
+        shared_local_backend_name,
         publications,
         dependency_isolation_paths,
         memory_bytes,
     );
     let container_name =
         persistent_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
-    let family_token = persistent_container_family_token(task_name, context_name);
+    let family_token =
+        persistent_container_family_token(task_name, context_name, shared_local_backend_name);
     let shape_token = persistent_container_shape_token(
         context_name,
+        shared_local_backend_name,
         image,
         engine,
         compose_networks,
@@ -10858,7 +11317,7 @@ tasks:
     }
 
     #[test]
-    fn host_view_listener_resolution_prefers_effective_producer_backend() {
+    fn host_view_listener_resolution_fails_when_mode_declarations_conflict() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -10923,7 +11382,7 @@ tasks:
             .and_then(|task| task.targets.get("api"))
             .expect("target binding should be declared");
 
-        let resolved = resolve_task_target_binding_url(
+        let error = resolve_task_target_binding_url(
             &contract,
             "sandbox",
             "api",
@@ -10931,13 +11390,17 @@ tasks:
             Backend::Container,
             ExecutionOverrides::default(),
         )
-        .unwrap();
-
-        assert_eq!(resolved, "http://127.0.0.1:8080/");
+        .unwrap_err();
+        assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting host-view declarations")
+        );
     }
 
     #[test]
-    fn host_view_listener_resolution_uses_effective_mode_branch_over_root_runtime() {
+    fn host_view_listener_resolution_fails_when_root_and_mode_declarations_conflict() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -11008,13 +11471,94 @@ tasks:
             Backend::Native,
             ExecutionOverrides::default(),
         )
-        .unwrap();
-
-        assert_eq!(error, "http://127.0.0.1:9090/");
+        .unwrap_err();
+        assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting host-view declarations")
+        );
     }
 
     #[test]
-    fn host_view_listener_resolution_fails_when_inactive_mode_is_only_listener_source() {
+    fn host_view_listener_resolution_allows_bind_differences_with_same_host_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+    execution:
+      modes:
+        container:
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 9090
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 3000
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .expect("host-view resolution should prefer consistent host projection");
+
+        assert_eq!(resolved, "http://127.0.0.1:3000/");
+    }
+
+    #[test]
+    fn host_view_listener_resolution_accepts_listener_from_non_effective_mode_branch() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -11064,7 +11608,7 @@ tasks:
             .and_then(|task| task.targets.get("api"))
             .expect("target binding should be declared");
 
-        let error = resolve_task_target_binding_url(
+        let resolved = resolve_task_target_binding_url(
             &contract,
             "sandbox",
             "api",
@@ -11072,14 +11616,8 @@ tasks:
             Backend::Container,
             ExecutionOverrides::default(),
         )
-        .unwrap_err();
-
-        assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
-        assert!(
-            error
-                .to_string()
-                .contains("references unknown listener `http` on service task `dev`")
-        );
+        .unwrap();
+        assert_eq!(resolved, "http://127.0.0.1:9090/");
     }
 
     #[test]
@@ -11164,7 +11702,244 @@ tasks:
     }
 
     #[test]
-    fn host_view_listener_resolution_respects_backend_override() {
+    fn topology_target_binding_resolves_for_co_located_shared_local_backend_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .expect("shared-local-backend topology resolution should succeed");
+
+        assert_eq!(resolved, "http://127.0.0.1:8080/");
+    }
+
+    #[test]
+    fn topology_target_binding_fails_for_container_tasks_without_shared_local_backend() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    dev_stack:
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: dev_stack
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let error = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .expect_err("non-shared topology resolution should fail");
+
+        assert!(
+            error.to_string().contains(
+                "requires either native caller execution or a shared local backend binding"
+            )
+        );
+    }
+
+    #[test]
+    fn shared_local_backend_resolution_keeps_publications_task_scoped() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+"#,
+        )
+        .unwrap();
+
+        let dev_backend =
+            resolve_execution_backend(&contract, "dev", ExecutionOverrides::default()).unwrap();
+        let sandbox_backend =
+            resolve_execution_backend(&contract, "sandbox", ExecutionOverrides::default()).unwrap();
+
+        let ResolvedExecutionBackend::Container {
+            publications: dev_publications,
+            ..
+        } = dev_backend
+        else {
+            panic!("dev should resolve to container backend");
+        };
+        let ResolvedExecutionBackend::Container {
+            publications: sandbox_publications,
+            ..
+        } = sandbox_backend
+        else {
+            panic!("sandbox should resolve to container backend");
+        };
+
+        assert_eq!(dev_publications.len(), 1);
+        assert_eq!(dev_publications[0].bind_port, 8080);
+        assert_eq!(sandbox_publications.len(), 1);
+        assert_eq!(sandbox_publications[0].bind_port, 9090);
+    }
+
+    #[test]
+    fn host_view_listener_resolution_ignores_backend_override_when_conflicting() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -11229,7 +12004,7 @@ tasks:
             .and_then(|task| task.targets.get("api"))
             .expect("target binding should be declared");
 
-        let resolved = resolve_task_target_binding_url(
+        let error = resolve_task_target_binding_url(
             &contract,
             "sandbox",
             "api",
@@ -11240,9 +12015,13 @@ tasks:
                 ..ExecutionOverrides::default()
             },
         )
-        .unwrap();
-
-        assert_eq!(resolved, "http://127.0.0.1:9090/");
+        .unwrap_err();
+        assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting host-view declarations")
+        );
     }
 
     #[test]
@@ -11877,6 +12656,8 @@ tasks:
                 service_termination: None,
                 task_step_target_resolutions: vec![Vec::new()],
                 target_resolutions: Vec::new(),
+                task_step_shared_local_backends: vec![None],
+                shared_local_backend: None,
                 execution_note: None,
                 interrupted: false,
             }
@@ -14018,6 +14799,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                 "test",
                 &ResolvedExecutionBackend::Container {
                     context_name: None,
+                    shared_local_backend: None,
                     image: String::from("rust:1.94-bookworm"),
                     engine: String::from("docker"),
                     lifecycle: Lifecycle::Ephemeral,
@@ -15040,6 +15822,163 @@ tasks:
             "\nactual docker log:\n{log}\n"
         );
         assert_eq!(log.matches("rm").count(), 0, "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_local_backend_binding_reuses_one_persistent_container_across_tasks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: sleep 1
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+  sandbox:
+    run: sleep 1
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let dev_backend =
+            resolve_execution_backend(&fixture.contract, "dev", ExecutionOverrides::default())
+                .expect("dev backend should resolve");
+        let sandbox_backend =
+            resolve_execution_backend(&fixture.contract, "sandbox", ExecutionOverrides::default())
+                .expect("sandbox backend should resolve");
+        match (&dev_backend, &sandbox_backend) {
+            (
+                ResolvedExecutionBackend::Container {
+                    context_name: dev_context,
+                    shared_local_backend: Some(dev_shared),
+                    publications: dev_publications,
+                    dependency_isolation_paths: dev_isolated_paths,
+                    memory_bytes: dev_memory,
+                    ..
+                },
+                ResolvedExecutionBackend::Container {
+                    context_name: sandbox_context,
+                    shared_local_backend: Some(sandbox_shared),
+                    publications: sandbox_publications,
+                    dependency_isolation_paths: sandbox_isolated_paths,
+                    memory_bytes: sandbox_memory,
+                    ..
+                },
+            ) => {
+                assert_eq!(dev_shared.name, "workbench");
+                assert_eq!(sandbox_shared.name, "workbench");
+                assert_eq!(dev_context, sandbox_context);
+                let dev_seed = container_identity_seed(
+                    dev_context.as_deref(),
+                    Some(dev_shared.name.as_str()),
+                    dev_publications,
+                    dev_isolated_paths,
+                    *dev_memory,
+                );
+                let sandbox_seed = container_identity_seed(
+                    sandbox_context.as_deref(),
+                    Some(sandbox_shared.name.as_str()),
+                    sandbox_publications,
+                    sandbox_isolated_paths,
+                    *sandbox_memory,
+                );
+                assert_eq!(dev_seed, sandbox_seed);
+            }
+            other => panic!("expected container backends with shared local binding, got {other:?}"),
+        }
+
+        let first = run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+            .expect("first run should complete");
+        let second = run_task(&fixture.contract, fixture.file_path(), "sandbox").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(
+            first.execution_note.as_deref(),
+            Some("persistent container created")
+        );
+        assert!(matches!(
+            second.execution_note.as_deref(),
+            Some("persistent container reused")
+                | Some("persistent container recreated (execution shape changed)")
+        ));
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert!(
+            log.matches("run-persistent").count() <= 2,
+            "\nactual docker log:\n{log}\n"
+        );
     }
 
     #[cfg(all(unix, target_os = "linux"))]
@@ -20252,7 +21191,7 @@ tasks:
         assert_eq!(
             cleanup_targets
                 .iter()
-                .filter_map(|(context_name, _, _, _, _, _, _)| context_name.as_deref())
+                .filter_map(|(context_name, _, _, _, _, _, _, _)| context_name.as_deref())
                 .collect::<Vec<_>>(),
             vec!["web", LEGACY_EXECUTION_CONTEXT_NAME]
         );
@@ -20261,10 +21200,15 @@ tasks:
     #[test]
     fn persistent_container_identity_changes_when_dependency_isolation_paths_change() {
         let base_seed =
-            container_identity_seed(Some("app"), &[], &[], None).expect("seed should exist");
-        let isolated_seed =
-            container_identity_seed(Some("app"), &[], &[String::from("node_modules")], None)
-                .expect("seed should exist");
+            container_identity_seed(Some("app"), None, &[], &[], None).expect("seed should exist");
+        let isolated_seed = container_identity_seed(
+            Some("app"),
+            None,
+            &[],
+            &[String::from("node_modules")],
+            None,
+        )
+        .expect("seed should exist");
 
         assert_ne!(base_seed, isolated_seed);
         assert_ne!(
@@ -20287,6 +21231,7 @@ tasks:
     fn prepare_container_runtime_projection_reports_bind_reservation_failure_for_auto_host_port() {
         let runtime = TaskRuntimeSpec {
             kind: TaskRuntimeKind::Service,
+            backend_binding: None,
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -20357,6 +21302,7 @@ tasks:
     fn prepare_container_runtime_projection_keeps_auto_ports_unresolved_when_disabled() {
         let runtime = TaskRuntimeSpec {
             kind: TaskRuntimeKind::Service,
+            backend_binding: None,
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -20417,6 +21363,7 @@ tasks:
     fn prepare_container_runtime_projection_applies_fixed_host_port_override() {
         let runtime = TaskRuntimeSpec {
             kind: TaskRuntimeKind::Service,
+            backend_binding: None,
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -20492,6 +21439,7 @@ tasks:
     fn prepare_container_runtime_projection_rejects_host_port_override_for_auto_projection() {
         let runtime = TaskRuntimeSpec {
             kind: TaskRuntimeKind::Service,
+            backend_binding: None,
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -20547,6 +21495,7 @@ tasks:
     {
         let runtime = TaskRuntimeSpec {
             kind: TaskRuntimeKind::Service,
+            backend_binding: None,
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -20583,6 +21532,7 @@ tasks:
     fn prepare_container_runtime_projection_rejects_ambiguous_host_port_override_listener() {
         let runtime = TaskRuntimeSpec {
             kind: TaskRuntimeKind::Service,
+            backend_binding: None,
             listeners: BTreeMap::from([
                 (
                     String::from("http"),

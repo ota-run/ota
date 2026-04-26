@@ -413,6 +413,56 @@ For shared persistent local backends, Ota must define:
 
 The UX must stop feeling magical or accidental.
 
+## Current slice constraints
+
+The current shared-local-backend slice is intentionally stricter than the long-term model.
+
+Current constraints:
+
+1. Shared local backend groups must resolve one deterministic container shape
+- same effective image
+- same effective publication shape
+- same effective dependency-isolation shape
+- same effective memory shape
+
+2. `address_view: topology` is conservative
+- for container callers, Ota resolves topology only when caller and producer share one declared local backend binding
+
+3. Shared local backends are currently container-only
+- native and remote shared-local-backend semantics are deferred
+
+4. Fulfillment is not integrated yet
+- Ota can model the shared backend boundary, but later slices are responsible for preparing the effective backend automatically
+
+### Why these constraints exist now
+
+These constraints are implementation sequencing, not product truth.
+
+Ota is proving the model in dependency order:
+
+1. task target identity
+2. shared local backend identity
+3. backend-scoped run-path fulfillment
+4. policy-governed fulfillment profiles and environment resolution
+
+Strictness is intentional until later slices can relax it truthfully.
+
+### What should relax later
+
+Later slices may relax current strictness by extending the same model, not by replacing it.
+
+Expected future expansion areas:
+
+- richer shared backend realization than one strict container shape
+- broader truthful `address_view: topology` resolution
+- native and remote shared backend families
+- backend fulfillment integrated directly into shared backend realization
+
+The important rule is:
+
+- relax constraints only when Ota can do so truthfully and deterministically
+- do not replace the current model with guessed addressing or implicit backend-sharing behavior
+
 ## Output and evidence contract
 
 When Ota resolves a task target binding, the human output should be able to say:

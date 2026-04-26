@@ -34,6 +34,11 @@
 - preserved per-step target-resolution evidence in receipts for dependency/hook steps so machine-readable provenance remains truthful beyond the requested task step
 - exported resolved target bindings without `override_input` as `OTA_TARGET_<TARGET>` so first-class targets remain operational without legacy input shims
 - allowed `address_view: host` to resolve service listeners independently of caller backend when the producer listener declaration is unambiguous
+- added first-class shared local backend declarations under `execution.local_backends.<name>` and task opt-in bindings via `tasks.<name>.runtime.backend_binding` so multiple long-running tasks can intentionally share one ota-managed local backend boundary
+- added strict shared-backend validation for unknown bindings, backend-family mismatches, context/lifecycle conflicts, and multi-context bound groups without explicit `execution.local_backends.<name>.context`
+- wired container backend resolution to honor shared local backend identity for lifecycle/context/publication shape reconciliation, deterministic persistent create/reuse/recreate semantics, and `ota clean` discovery/removal of shared-backend persistent containers
+- expanded `address_view: topology` truthfulness for container callers: topology resolution now succeeds only when caller and producer share the same declared local backend binding, and still fails clearly for unresolved/non-shared/internal cases without host bridge guessing
+- added declared-versus-effective shared-backend receipt evidence per executed step under `receipt.steps[*].shared_local_backend`, and surfaced requested-task shared-backend identity/reuse state in run summary output
 
 
 ## 1.6.2
