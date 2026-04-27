@@ -70,10 +70,9 @@ pub fn load_contract(path: &Path) -> Result<Contract, LoadContractError> {
     }
 
     let contract = parse_contract_str(path, &contents)?;
-    contract_cache()
-        .lock()
-        .unwrap()
-        .insert(key, contract.clone());
+    let mut cache = contract_cache().lock().unwrap();
+    cache.retain(|existing_key, _| existing_key.path != key.path);
+    cache.insert(key, contract.clone());
     Ok(contract)
 }
 
@@ -149,6 +148,17 @@ fn read_contract_contents(path: &Path) -> Result<String, LoadContractError> {
 
 fn contract_cache() -> &'static Mutex<HashMap<ContractCacheKey, Contract>> {
     CONTRACT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+fn contract_cache_entries_for_path(path: &Path) -> usize {
+    let normalized_path = normalized_path_identity(path);
+    contract_cache()
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|key| key.path == normalized_path)
+        .count()
 }
 
 pub(crate) fn content_fingerprint(contents: &str) -> u64 {
@@ -599,6 +609,83 @@ project:
 
         let second = super::load_contract(&contract_path).unwrap();
         assert_eq!(second.project.name, "bravo");
+    }
+
+    #[test]
+    fn load_contract_returns_parse_error_after_cached_valid_version() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: alpha
+"#,
+        )
+        .unwrap();
+
+        let cached = super::load_contract(&contract_path).unwrap();
+        assert_eq!(cached.project.name, "alpha");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: [1
+project:
+  name: alpha
+"#,
+        )
+        .unwrap();
+
+        let error = super::load_contract(&contract_path).unwrap_err();
+        assert!(
+            matches!(error, super::LoadContractError::Parse { .. }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn load_contract_cache_keeps_latest_entry_per_path() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: alpha
+"#,
+        )
+        .unwrap();
+        super::load_contract(&contract_path).unwrap();
+        assert_eq!(super::contract_cache_entries_for_path(&contract_path), 1);
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: bravo
+"#,
+        )
+        .unwrap();
+        super::load_contract(&contract_path).unwrap();
+        assert_eq!(super::contract_cache_entries_for_path(&contract_path), 1);
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: charlie
+"#,
+        )
+        .unwrap();
+        super::load_contract(&contract_path).unwrap();
+        assert_eq!(super::contract_cache_entries_for_path(&contract_path), 1);
     }
 
     #[test]
