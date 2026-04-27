@@ -312,6 +312,8 @@ Current `ensure_ready` constraints:
 - the first shipped slice only auto-starts producer services that resolve to persistent container
   backends on the host-view path
 - unsupported producer shapes fail clearly instead of guessing orchestration
+- stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
+- on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
 
 Current `runtime.readiness` support for service tasks:
 

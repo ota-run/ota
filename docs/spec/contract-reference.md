@@ -1016,6 +1016,8 @@ Task target binding semantics:
   - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract instead of treating an open listener socket as sufficient
   - the first shipped slice supports actual producer auto-start only for producer tasks that resolve to persistent container service backends on the host-view path
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
+  - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
+  - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
 
 Current `runtime.readiness` support for service tasks:
 
