@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added first target-activation support under `tasks.<name>.targets.<target>.activation.mode` with `manual` and `ensure_ready`, including explicit override skip semantics, validation for self/cyclic activation graphs, activation evidence in run receipts/summaries, and a first honest auto-start slice for persistent container producer services on the host-view path
 - fixed persistent container service workloads to run under a managed detached in-container wrapper with pid/status/log tracking, so long-running dev servers like Next.js `next dev` stay alive across route compilation and request handling instead of spuriously exiting after readiness when launched through the old attached `docker exec` service path
 
 ## 1.6.3
