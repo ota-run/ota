@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- fixed `address_view: host` target binding resolution for container callers so loopback-only producer host projections (`127.0.0.1` / `localhost`) are translated into caller-reachable host aliases (`host.docker.internal` / `host.containers.internal`) based on the caller container backend, instead of leaking container-local loopback addresses that break cross-backend reachability
 - added policy-governed shared-backend environment resolution for `execution.local_backends.<name>.environment` (`profile` / `image_alias` / `image`), including policy-backed profile and alias approval, allowed/denied source and registry enforcement, deterministic effective image selection on the run path, and declared-vs-effective environment evidence surfaced in run summaries and `receipt.steps[*].shared_local_backend.environment`
 - added backend-scoped run-path fulfillment for shared local backends: ota now computes deterministic runtime/tool requirement unions for the resolved backend unit, honors `execution.local_backends.<name>.fulfillment` (`none`/`run`), attempts approved provisioning on the actual run path when enabled, and reports distinct missing-requirements vs fulfillment-failed outcomes with structured receipt evidence
 - made run receipts and summaries fully backend-resolution truthful for shared backends: backend/context/lifecycle/image/memory now derive from resolved execution backend bindings, step-level backend fulfillment evidence is preserved, and dependency/hook steps retain machine-readable `target_resolutions` provenance

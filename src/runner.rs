@@ -4614,7 +4614,7 @@ fn resolve_task_target_binding_url(
     target_name: &str,
     target_spec: &TaskTargetSpec,
     caller_backend: Backend,
-    _execution_overrides: ExecutionOverrides,
+    execution_overrides: ExecutionOverrides,
 ) -> Result<String, RunError> {
     let service_task_name = target_spec.service.task.trim();
     let service_task = contract.tasks.get(service_task_name).ok_or_else(|| {
@@ -4667,9 +4667,17 @@ fn resolve_task_target_binding_url(
                     ),
                 }
             })?;
+            let host_address = resolve_host_view_address_for_caller(
+                contract,
+                task_name,
+                target_name,
+                caller_backend,
+                host_projection.address.as_str(),
+                execution_overrides,
+            )?;
             Ok(format_task_target_host_endpoint(
                 listener.protocol,
-                host_projection.address.as_str(),
+                host_address.as_str(),
                 host_port,
                 host_projection.path.as_deref(),
             ))
@@ -4748,6 +4756,74 @@ fn resolve_task_target_binding_url(
     }
 }
 
+fn resolve_host_view_address_for_caller(
+    contract: &Contract,
+    task_name: &str,
+    target_name: &str,
+    caller_backend: Backend,
+    declared_address: &str,
+    execution_overrides: ExecutionOverrides,
+) -> Result<String, RunError> {
+    let normalized = declared_address.trim();
+    if caller_backend != Backend::Container || !is_loopback_only_host_address(normalized) {
+        return Ok(normalized.to_string());
+    }
+
+    let engine = effective_task_container_backend_for_target_resolution(
+        contract,
+        task_name,
+        execution_overrides,
+    )
+    .and_then(|container| {
+        container_engine_candidates_from_backend(Some(container))
+            .into_iter()
+            .next()
+    })
+    .ok_or_else(|| RunError::TaskTargetResolutionFailed {
+        task: task_name.to_string(),
+        target: target_name.to_string(),
+        details: String::from(
+            "container caller host-view resolution requires a declared container backend so ota can choose a caller-reachable host projection",
+        ),
+    })?;
+
+    match engine.as_str() {
+        "docker" => Ok(String::from("host.docker.internal")),
+        "podman" => Ok(String::from("host.containers.internal")),
+        _ => Err(RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!(
+                "container caller host-view resolution does not yet support container engine `{engine}`"
+            ),
+        }),
+    }
+}
+
+fn effective_task_container_backend_for_target_resolution<'a>(
+    contract: &'a Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<&'a ContainerBackend> {
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let local_backend_context_name =
+        resolve_task_shared_local_backend(contract, task_name, Backend::Container)
+            .ok()
+            .flatten()
+            .and_then(|shared| shared.context_name);
+    local_backend_context_name
+        .as_deref()
+        .and_then(|name| {
+            contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get(name))
+        })
+        .filter(|context| context.backend == Backend::Container)
+        .and_then(|context| context.container.as_ref())
+        .or(effective.container)
+}
+
 fn select_target_listener_for_backend<'a>(
     service_task: &'a TaskSpec,
     listener_name: &str,
@@ -4822,6 +4898,14 @@ fn host_view_listener_signature(
         protocol: listener.protocol,
         host: listener.project.host.clone(),
     }
+}
+
+fn is_loopback_only_host_address(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized == "localhost"
+        || normalized == "::1"
+        || normalized == "127.0.0.1"
+        || normalized.starts_with("127.")
 }
 
 fn tasks_share_container_local_backend(
@@ -12340,6 +12424,16 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - docker
 tasks:
   dev:
     execution:
@@ -12392,7 +12486,7 @@ tasks:
         )
         .unwrap();
 
-        assert_eq!(resolved, "http://127.0.0.1:8080/");
+        assert_eq!(resolved, "http://host.docker.internal:8080/");
     }
 
     #[test]
@@ -12486,6 +12580,16 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - docker
 tasks:
   dev:
     runtime:
@@ -12567,6 +12671,16 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - docker
 tasks:
   dev:
     runtime:
@@ -12633,7 +12747,7 @@ tasks:
         )
         .expect("host-view resolution should prefer consistent host projection");
 
-        assert_eq!(resolved, "http://127.0.0.1:3000/");
+        assert_eq!(resolved, "http://host.docker.internal:3000/");
     }
 
     #[test]
@@ -12644,6 +12758,16 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - docker
 tasks:
   dev:
     execution:
@@ -12696,7 +12820,74 @@ tasks:
             ExecutionOverrides::default(),
         )
         .unwrap();
-        assert_eq!(resolved, "http://127.0.0.1:9090/");
+        assert_eq!(resolved, "http://host.docker.internal:9090/");
+    }
+
+    #[test]
+    fn host_view_listener_resolution_uses_podman_host_alias_for_container_callers() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+tasks:
+  dev:
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .unwrap();
+
+        assert_eq!(resolved, "http://host.containers.internal:8080/");
     }
 
     #[test]
