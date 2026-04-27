@@ -56,10 +56,11 @@ use crate::provisioning::{
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
-    ExecutionLocalBackendFulfillment, ExtensionKind, Lifecycle, RemoteBackend, RequirementSurface,
-    RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind,
-    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, format_memory_size_bytes, parse_memory_size_bytes, task_target_env_name,
+    ExecutionLocalBackendEnvironment, ExecutionLocalBackendFulfillment, ExtensionKind, Lifecycle,
+    RemoteBackend, RequirementSurface, RuntimeRequirement, TaskModeBranchSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    TaskTargetAddressView, TaskTargetSpec, ToolRequirement, format_memory_size_bytes,
+    parse_memory_size_bytes, task_target_env_name,
 };
 
 #[derive(Clone)]
@@ -1026,9 +1027,34 @@ pub struct SharedLocalBackendEvidence {
     pub lifecycle: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<BackendEnvironmentEvidence>,
     pub effective_identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reuse: Option<SharedLocalBackendReuse>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct BackendEnvironmentEvidence {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_image_alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_image_alias: Option<String>,
+    pub effective_image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_registry: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -2741,6 +2767,7 @@ pub(crate) struct ResolvedSharedLocalBackend {
     lifecycle: Lifecycle,
     context_name: Option<String>,
     fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    environment: Option<BackendEnvironmentEvidence>,
 }
 
 fn resolved_execution_backend_kind(backend: &ResolvedExecutionBackend) -> Backend {
@@ -2801,7 +2828,12 @@ fn run_task_internal(
         | TaskExecutionMode::Capture => None,
     };
     let working_dir = contract_working_dir(contract_path);
-    let backend = match resolve_execution_backend(contract, task_name, overrides) {
+    let backend = match resolve_execution_backend_with_contract_path(
+        contract,
+        task_name,
+        overrides,
+        Some(contract_path),
+    ) {
         Ok(backend) => backend,
         Err(error) => {
             if let Some(loader) = preflight_loader.take() {
@@ -3092,10 +3124,11 @@ fn execute_task_with_hooks(
         .tasks
         .get(task_name)
         .expect("validated task execution should only reference known tasks");
-    let backend = resolve_execution_backend(
+    let backend = resolve_execution_backend_with_contract_path(
         contract,
         task_name,
         execution_overrides_for_resolved_backend(backend),
+        Some(contract_path),
     )?;
     let backend_kind = resolved_execution_backend_kind(&backend);
     let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
@@ -3135,8 +3168,12 @@ fn execute_task_with_hooks(
     )?;
 
     for dependency in &task.depends_on {
-        let dependency_backend =
-            resolve_execution_backend(contract, dependency, requested_overrides)?;
+        let dependency_backend = resolve_execution_backend_with_contract_path(
+            contract,
+            dependency,
+            requested_overrides,
+            Some(contract_path),
+        )?;
         let dependency_exit = execute_task_with_hooks(
             contract,
             contract_path,
@@ -3482,8 +3519,12 @@ fn run_hook_tasks(
 ) -> Result<(), RunError> {
     for hook in hooks {
         let hook_generation = hook_generation_for_task(hook, generation, state);
-        let hook_backend =
-            resolve_execution_backend(contract, hook, ExecutionOverrides::default())?;
+        let hook_backend = resolve_execution_backend_with_contract_path(
+            contract,
+            hook,
+            ExecutionOverrides::default(),
+            Some(contract_path),
+        )?;
         let exit_code = execute_task_with_hooks(
             contract,
             contract_path,
@@ -4879,6 +4920,7 @@ fn shared_local_backend_evidence_from_step(
         },
         lifecycle: format_lifecycle(shared_local_backend.lifecycle).to_string(),
         context: shared_local_backend.context_name.clone(),
+        environment: shared_local_backend.environment.clone(),
         effective_identity,
         reuse: command_output
             .execution_note
@@ -4979,7 +5021,7 @@ fn selected_task_declared_context<'a>(
         .map(|(name, context)| (name.as_str(), context))
 }
 
-fn selected_task_context_for_backend<'a>(
+pub(crate) fn selected_task_context_for_backend<'a>(
     contract: &'a Contract,
     task_name: &str,
     backend: Backend,
@@ -6118,6 +6160,7 @@ fn resolve_task_shared_local_backend(
         lifecycle: local_backend.lifecycle,
         context_name,
         fulfillment: local_backend.fulfillment,
+        environment: None,
     }))
 }
 
@@ -6141,10 +6184,308 @@ fn shared_local_backend_publications(
     publications
 }
 
+pub(crate) fn resolve_shared_local_backend_environment(
+    contract_path: Option<&Path>,
+    task_name: &str,
+    binding_name: &str,
+    environment: Option<&ExecutionLocalBackendEnvironment>,
+    fallback_image: &str,
+) -> Result<(String, Option<BackendEnvironmentEvidence>), RunError> {
+    let Some(environment) = environment else {
+        return Ok((fallback_image.to_string(), None));
+    };
+
+    let declared_profile = environment
+        .profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let declared_image_alias = environment
+        .image_alias
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let declared_image = environment
+        .image
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let declared_source = environment
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let loaded_policy = if let Some(path) = contract_path {
+        load_org_policy_pack_auto_details(path).map_err(|error| RunError::InvalidPolicyPack {
+            details: error.to_string(),
+        })?
+    } else {
+        None
+    };
+    let policy_label = loaded_policy
+        .as_ref()
+        .map(|loaded| format!("{} ({})", loaded.path.display(), loaded.source.as_str()));
+    let policy_rules = loaded_policy
+        .as_ref()
+        .map(|loaded| &loaded.pack.policies.backend_environment);
+
+    let mut effective_profile = None;
+    let mut effective_alias = None;
+    let (effective_image, effective_source) = if let Some(profile_name) =
+        declared_profile.as_deref()
+    {
+        let Some(rules) = policy_rules else {
+            return Err(RunError::SharedLocalBackendResolutionFailed {
+                task: task_name.to_string(),
+                binding: binding_name.to_string(),
+                details: format!(
+                    "declared environment profile `{profile_name}` requires an active org policy pack with `policies.backend_environment.profiles`"
+                ),
+            });
+        };
+        let Some(profile) = rules.profiles.get(profile_name) else {
+            return Err(RunError::SharedLocalBackendResolutionFailed {
+                task: task_name.to_string(),
+                binding: binding_name.to_string(),
+                details: format!(
+                    "declared environment profile `{profile_name}` is not approved by policy"
+                ),
+            });
+        };
+        effective_profile = Some(profile_name.to_string());
+        (
+            profile.image.trim().to_string(),
+            profile.source.as_deref().map(str::to_string),
+        )
+    } else if let Some(alias_name) = declared_image_alias.as_deref() {
+        let Some(rules) = policy_rules else {
+            return Err(RunError::SharedLocalBackendResolutionFailed {
+                task: task_name.to_string(),
+                binding: binding_name.to_string(),
+                details: format!(
+                    "declared image alias `{alias_name}` requires an active org policy pack with `policies.backend_environment.image_aliases`"
+                ),
+            });
+        };
+        let Some(alias) = rules.image_aliases.get(alias_name) else {
+            return Err(RunError::SharedLocalBackendResolutionFailed {
+                task: task_name.to_string(),
+                binding: binding_name.to_string(),
+                details: format!("declared image alias `{alias_name}` is not approved by policy"),
+            });
+        };
+        effective_alias = Some(alias_name.to_string());
+        (
+            alias.image.trim().to_string(),
+            alias.source.as_deref().map(str::to_string),
+        )
+    } else if let Some(image) = declared_image.as_deref() {
+        (
+            image.to_string(),
+            declared_source
+                .clone()
+                .or_else(|| Some(String::from("repo_literal"))),
+        )
+    } else if let Some(rules) = policy_rules
+        && let Some(default_profile) = rules
+            .default_profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        && let Some(profile) = rules.profiles.get(default_profile)
+    {
+        effective_profile = Some(default_profile.to_string());
+        (
+            profile.image.trim().to_string(),
+            profile.source.as_deref().map(str::to_string),
+        )
+    } else {
+        (fallback_image.to_string(), None)
+    };
+
+    let effective_registry = container_image_registry(effective_image.as_str());
+    if let Some(rules) = policy_rules {
+        if (!rules.allowed_sources.is_empty() || !rules.denied_sources.is_empty())
+            && effective_source.is_none()
+        {
+            return Err(RunError::SharedLocalBackendResolutionFailed {
+                task: task_name.to_string(),
+                binding: binding_name.to_string(),
+                details: String::from(
+                    "effective backend environment source is required by policy, but the resolved environment does not declare one",
+                ),
+            });
+        }
+
+        if let Some(source) = effective_source.as_deref() {
+            if !rules.allowed_sources.is_empty()
+                && !rules
+                    .allowed_sources
+                    .iter()
+                    .any(|allowed| allowed.trim() == source)
+            {
+                return Err(RunError::SharedLocalBackendResolutionFailed {
+                    task: task_name.to_string(),
+                    binding: binding_name.to_string(),
+                    details: format!(
+                        "effective backend environment source `{source}` is not allowed by policy; expected one of: {}",
+                        rules.allowed_sources.join(", ")
+                    ),
+                });
+            }
+            if rules
+                .denied_sources
+                .iter()
+                .any(|denied| denied.trim() == source)
+            {
+                return Err(RunError::SharedLocalBackendResolutionFailed {
+                    task: task_name.to_string(),
+                    binding: binding_name.to_string(),
+                    details: format!(
+                        "effective backend environment source `{source}` is denied by policy"
+                    ),
+                });
+            }
+        }
+
+        if let Some(registry) = effective_registry.as_deref() {
+            if !rules.allowed_registries.is_empty()
+                && !rules
+                    .allowed_registries
+                    .iter()
+                    .any(|allowed| allowed.trim() == registry)
+            {
+                return Err(RunError::SharedLocalBackendResolutionFailed {
+                    task: task_name.to_string(),
+                    binding: binding_name.to_string(),
+                    details: format!(
+                        "effective backend environment registry `{registry}` is not allowed by policy; expected one of: {}",
+                        rules.allowed_registries.join(", ")
+                    ),
+                });
+            }
+            if rules
+                .denied_registries
+                .iter()
+                .any(|denied| denied.trim() == registry)
+            {
+                return Err(RunError::SharedLocalBackendResolutionFailed {
+                    task: task_name.to_string(),
+                    binding: binding_name.to_string(),
+                    details: format!(
+                        "effective backend environment registry `{registry}` is denied by policy"
+                    ),
+                });
+            }
+        }
+    }
+
+    let evidence = BackendEnvironmentEvidence {
+        declared_profile,
+        declared_image_alias,
+        declared_image,
+        declared_source,
+        effective_profile,
+        effective_image_alias: effective_alias,
+        effective_image: effective_image.clone(),
+        effective_source,
+        effective_registry,
+        policy: policy_label,
+    };
+
+    Ok((effective_image, Some(evidence)))
+}
+
+pub(crate) fn resolve_effective_task_container_backend(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    contract_path: Option<&Path>,
+) -> Result<
+    (
+        ContainerBackend,
+        String,
+        Option<ResolvedSharedLocalBackend>,
+    ),
+    RunError,
+> {
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let mut shared_local_backend =
+        resolve_task_shared_local_backend(contract, task_name, Backend::Container)?;
+    let local_backend_context_name = shared_local_backend
+        .as_ref()
+        .and_then(|shared| shared.context_name.clone());
+    let resolved_context = local_backend_context_name
+        .as_deref()
+        .and_then(|name| {
+            contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get(name))
+        })
+        .filter(|context| context.backend == Backend::Container);
+    let container = resolved_context
+        .and_then(|context| context.container.as_ref())
+        .or(effective.container)
+        .cloned()
+        .ok_or_else(|| RunError::MissingContainerImage {
+            task: task_name.to_string(),
+        })?;
+    let (image, shared_environment) = if let Some(shared) = shared_local_backend.as_ref() {
+        let local_backend_environment = contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.local_backends.get(shared.name.as_str()))
+            .and_then(|local_backend| local_backend.environment.as_ref());
+        resolve_shared_local_backend_environment(
+            contract_path,
+            task_name,
+            shared.name.as_str(),
+            local_backend_environment,
+            container.image.as_str(),
+        )?
+    } else {
+        (container.image.clone(), None)
+    };
+    if let Some(shared) = shared_local_backend.as_mut() {
+        shared.environment = shared_environment;
+    }
+
+    Ok((container, image, shared_local_backend))
+}
+
+fn container_image_registry(image: &str) -> Option<String> {
+    let trimmed = image.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let prefix = trimmed.split('/').next().unwrap_or(trimmed);
+    if prefix.contains('.') || prefix.contains(':') || prefix.eq_ignore_ascii_case("localhost") {
+        Some(prefix.to_string())
+    } else {
+        Some(String::from("docker.io"))
+    }
+}
+
 pub(crate) fn resolve_execution_backend(
     contract: &Contract,
     task_name: &str,
     overrides: ExecutionOverrides,
+) -> Result<ResolvedExecutionBackend, RunError> {
+    resolve_execution_backend_with_contract_path(contract, task_name, overrides, None)
+}
+
+pub(crate) fn resolve_execution_backend_with_contract_path(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    contract_path: Option<&Path>,
 ) -> Result<ResolvedExecutionBackend, RunError> {
     let effective = effective_task_execution(contract, task_name, overrides);
     let preferred = effective.backend;
@@ -6175,34 +6516,22 @@ pub(crate) fn resolve_execution_backend(
             Ok(ResolvedExecutionBackend::Native)
         }
         Backend::Container => {
-            let shared_local_backend =
-                resolve_task_shared_local_backend(contract, task_name, preferred)?;
+            let (container, image, shared_local_backend) =
+                resolve_effective_task_container_backend(
+                    contract,
+                    task_name,
+                    overrides,
+                    contract_path,
+                )?;
             let local_backend_context_name = shared_local_backend
                 .as_ref()
                 .and_then(|shared| shared.context_name.clone());
-            let resolved_context = local_backend_context_name
-                .as_deref()
-                .and_then(|name| {
-                    contract
-                        .execution
-                        .as_ref()
-                        .and_then(|execution| execution.contexts.get(name))
-                })
-                .filter(|context| context.backend == Backend::Container);
-            let container = resolved_context
-                .and_then(|context| context.container.as_ref())
-                .or(effective.container);
-            let Some(container) = container else {
-                return Err(RunError::MissingContainerImage {
-                    task: task_name.to_string(),
-                });
-            };
 
             let engine =
-                selected_container_engine_from_backend(Some(container)).ok_or_else(|| {
+                selected_container_engine_from_backend(Some(&container)).ok_or_else(|| {
                     RunError::MissingContainerBackendCli {
                         task: task_name.to_string(),
-                        engines: container_engine_candidates_from_backend(Some(container))
+                        engines: container_engine_candidates_from_backend(Some(&container))
                             .join(", "),
                     }
                 })?;
@@ -6247,7 +6576,7 @@ pub(crate) fn resolve_execution_backend(
             };
             let memory_bytes = container_memory_override_or_default(
                 task_name,
-                container,
+                &container,
                 memory_field_prefix.as_str(),
                 overrides.memory,
             )?;
@@ -6265,17 +6594,25 @@ pub(crate) fn resolve_execution_backend(
                 })
                 .map(context_dependency_isolation_paths)
                 .unwrap_or_default();
+            let compose_networks = context_name
+                .as_deref()
+                .and_then(|name| {
+                    contract
+                        .execution
+                        .as_ref()
+                        .and_then(|execution| execution.contexts.get(name))
+                })
+                .map(compose_networks_for_context)
+                .unwrap_or_default();
 
             Ok(ResolvedExecutionBackend::Container {
                 context_name,
                 shared_local_backend,
-                image: container.image.clone(),
+                image,
                 engine,
                 lifecycle,
                 memory_bytes,
-                compose_networks: resolved_context
-                    .map(compose_networks_for_context)
-                    .unwrap_or_default(),
+                compose_networks,
                 publications,
                 dependency_isolation_paths,
             })
@@ -10923,8 +11260,9 @@ mod tests {
         persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
         plan_task_execution, preflight_container_host_publications,
         prepare_container_runtime_projection, preparing_loader_label,
-        ready_runtime_public_endpoint_line, resolve_execution_backend, resolve_task_env,
-        resolve_task_env_details, resolve_task_target_binding_url, run_task, run_task_captured,
+        ready_runtime_public_endpoint_line, resolve_execution_backend,
+        resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
+        resolve_task_target_binding_url, run_task, run_task_captured,
         run_task_captured_with_args_with_overrides, run_task_with_args,
         run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
         run_task_with_progress, running_loader_label, running_loader_label_for_backend,
@@ -12692,6 +13030,430 @@ tasks:
         assert_eq!(dev_publications[0].bind_port, 8080);
         assert_eq!(sandbox_publications.len(), 1);
         assert_eq!(sandbox_publications[0].bind_port, 9090);
+    }
+
+    #[test]
+    fn shared_local_backend_environment_profile_resolves_policy_image() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+      environment:
+        profile: java-node-workbench
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  backend_environment:
+    profiles:
+      java-node-workbench:
+        image: ghcr.io/ota/workbench:2026.04
+        source: curated
+"#,
+        );
+
+        let backend = resolve_execution_backend_with_contract_path(
+            &fixture.contract,
+            "dev",
+            ExecutionOverrides::default(),
+            Some(fixture.file_path()),
+        )
+        .expect("backend should resolve with policy-backed profile");
+
+        let ResolvedExecutionBackend::Container {
+            image,
+            shared_local_backend: Some(shared),
+            ..
+        } = backend
+        else {
+            panic!("expected shared container backend");
+        };
+        assert_eq!(image, "ghcr.io/ota/workbench:2026.04");
+        let environment = shared
+            .environment
+            .as_ref()
+            .expect("shared backend should carry environment evidence");
+        assert_eq!(
+            environment.effective_profile.as_deref(),
+            Some("java-node-workbench")
+        );
+        assert_eq!(environment.effective_source.as_deref(), Some("curated"));
+    }
+
+    #[test]
+    fn shared_local_backend_environment_profile_requires_policy_pack() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+      environment:
+        profile: java-node-workbench
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        );
+
+        let error = resolve_execution_backend_with_contract_path(
+            &fixture.contract,
+            "dev",
+            ExecutionOverrides::default(),
+            Some(fixture.file_path()),
+        )
+        .expect_err("missing policy should fail profile resolution");
+
+        assert!(matches!(
+            error,
+            RunError::SharedLocalBackendResolutionFailed { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("requires an active org policy pack")
+        );
+    }
+
+    #[test]
+    fn shared_local_backend_environment_policy_denied_source_fails_resolution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+      environment:
+        profile: java-node-workbench
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  backend_environment:
+    profiles:
+      java-node-workbench:
+        image: ghcr.io/ota/workbench:2026.04
+        source: curated
+    denied_sources:
+      - curated
+"#,
+        );
+
+        let error = resolve_execution_backend_with_contract_path(
+            &fixture.contract,
+            "dev",
+            ExecutionOverrides::default(),
+            Some(fixture.file_path()),
+        )
+        .expect_err("denied source should fail backend environment resolution");
+
+        assert!(matches!(
+            error,
+            RunError::SharedLocalBackendResolutionFailed { .. }
+        ));
+        assert!(error.to_string().contains("is denied by policy"));
+    }
+
+    #[test]
+    fn shared_local_backend_environment_policy_requires_source_when_governed() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+      environment:
+        profile: java-node-workbench
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  backend_environment:
+    profiles:
+      java-node-workbench:
+        image: ghcr.io/ota/workbench:2026.04
+    allowed_sources:
+      - curated
+"#,
+        );
+
+        let error = resolve_execution_backend_with_contract_path(
+            &fixture.contract,
+            "dev",
+            ExecutionOverrides::default(),
+            Some(fixture.file_path()),
+        )
+        .expect_err("source-governed environments must declare a source");
+
+        assert!(matches!(
+            error,
+            RunError::SharedLocalBackendResolutionFailed { .. }
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains("effective backend environment source is required by policy")
+        );
+    }
+
+    #[test]
+    fn shared_local_backend_environment_literal_image_keeps_compatibility() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+      environment:
+        image: ghcr.io/custom/runtime:1
+        source: repo-curated
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        )
+        .unwrap();
+
+        let backend = resolve_execution_backend_with_contract_path(
+            &contract,
+            "dev",
+            ExecutionOverrides::default(),
+            Some(Path::new("ota.yaml")),
+        )
+        .expect("literal image intent should resolve without policy");
+
+        let ResolvedExecutionBackend::Container {
+            image,
+            shared_local_backend: Some(shared),
+            ..
+        } = backend
+        else {
+            panic!("expected shared container backend");
+        };
+        assert_eq!(image, "ghcr.io/custom/runtime:1");
+        let environment = shared
+            .environment
+            .as_ref()
+            .expect("shared backend should expose environment evidence");
+        assert_eq!(
+            environment.declared_image.as_deref(),
+            Some("ghcr.io/custom/runtime:1")
+        );
+        assert_eq!(
+            environment.effective_source.as_deref(),
+            Some("repo-curated")
+        );
+    }
+
+    #[test]
+    fn shared_local_backend_environment_uses_policy_default_profile_when_declared_empty() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+      environment: {}
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  backend_environment:
+    default_profile: java-node-workbench
+    profiles:
+      java-node-workbench:
+        image: ghcr.io/ota/workbench:2026.04
+        source: curated
+"#,
+        );
+
+        let backend = resolve_execution_backend_with_contract_path(
+            &fixture.contract,
+            "dev",
+            ExecutionOverrides::default(),
+            Some(fixture.file_path()),
+        )
+        .expect("policy default profile should resolve from empty environment intent");
+
+        let ResolvedExecutionBackend::Container {
+            image,
+            shared_local_backend: Some(shared),
+            ..
+        } = backend
+        else {
+            panic!("expected shared container backend");
+        };
+        assert_eq!(image, "ghcr.io/ota/workbench:2026.04");
+        let environment = shared
+            .environment
+            .as_ref()
+            .expect("shared backend should expose environment evidence");
+        assert_eq!(
+            environment.effective_profile.as_deref(),
+            Some("java-node-workbench")
+        );
+        assert!(environment.declared_profile.is_none());
     }
 
     #[test]

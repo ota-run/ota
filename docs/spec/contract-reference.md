@@ -1011,13 +1011,21 @@ Shared local backend semantics:
 - optional fields:
   - `context` to pin the shared backend to one named execution context
   - `fulfillment` (`none` or `run`) to control whether ota may prepare missing backend requirements on the actual `ota run` path
+  - `environment` to declare backend environment intent for policy-governed image/profile resolution:
+    - `profile` (policy-backed fulfillment profile name)
+    - `image_alias` (policy-backed image alias name)
+    - `image` (literal image intent for compatibility)
+    - `source` (optional source class, valid only with literal `image`)
+    - an empty `environment: {}` is allowed when the repo wants policy `default_profile` resolution to choose the effective backend image
+    - if no policy `default_profile` resolves, ota falls back to the task/container image and shared-backend shape validation follows that same fallback instead of assuming one synthetic shared image
 - tasks opt in through `tasks.<name>.runtime.backend_binding: <name>`
 - shared local backend identity is deterministic and drives:
   - persistent container family/shape reconciliation for create/reuse/recreate
   - topology addressability for container caller `address_view: topology` target bindings
   - backend-scoped run-path fulfillment when the group declares `fulfillment: run`
-  - receipt evidence in `receipt.steps[*].shared_local_backend` (`name`, `backend`, `lifecycle`, effective identity, and reuse state when known)
+  - receipt evidence in `receipt.steps[*].shared_local_backend` (`name`, `backend`, `lifecycle`, declared environment intent, effective profile/image/source/registry, effective identity, and reuse state when known)
   - receipt evidence in `receipt.steps[*].backend_fulfillment` when ota probes or prepares the backend
+  - `ota execution plan`, `ota run`, and run receipts all resolve the same effective backend image for explicit-context and inferred-context shared backend groups
 - validation rules include:
   - binding must reference declared `execution.local_backends.<name>`
   - binding backend family must match task runtime backend
@@ -1027,6 +1035,8 @@ Shared local backend semantics:
   - `address_view: topology` for container callers resolves only when caller and producer share one declared local backend binding
   - shared local backends are currently `container` only
   - fulfillment currently acts on the effective shared backend requirement union only; it does not yet cover native or remote shared backend families
+  - profile/alias environment intent requires an active org policy pack under `.ota/org-policy.yaml` (`policies.backend_environment`)
+  - policy may govern allowed/denied `source` classes and registries for the effective backend image
   - `fulfillment: none` fails clearly when required runtimes or tools are missing, while `fulfillment: run` attempts approved provisioning before any bound task body or dependency task uses that backend
 - later slices are expected to relax some of that strictness by extending the same model, not by replacing it with guessed addressing or implicit backend-sharing behavior
 

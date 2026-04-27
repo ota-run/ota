@@ -106,14 +106,17 @@ use crate::runner::{
     effective_execution, effective_task_execution, env_resolution_source_label,
     ephemeral_container_name, load_declared_env_sources, load_policy_env_overlay,
     named_execution_context, persistent_container_name, reported_task_context_for_backend,
-    resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
+    resolve_effective_task_container_backend,
+    resolve_declared_env_source_value, resolve_execution_backend,
+    resolve_execution_backend_with_contract_path, resolve_task_env_details,
     resolve_task_env_details_with_policy, run_streaming_command_with_loader,
     run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy,
+    selected_task_context_for_backend,
 };
 use crate::schema::{
-    Backend, ContainerBackend, Contract, EnvRequirement, ExtensionSpec, Lifecycle,
+    Backend, ContainerBackend, Contract, EnvRequirement, ExecutionLocalBackend, ExtensionSpec, Lifecycle,
     RequirementSurface, TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes,
     parse_memory_size_bytes,
 };
@@ -1422,14 +1425,32 @@ fn resolve_execution_plan(
     } else {
         String::from("implicit")
     };
-    let resolved_backend = match resolve_execution_backend(contract, task_name, overrides) {
+    let planned_container_image = if backend == Backend::Container {
+        resolve_execution_plan_container_image(
+            contract,
+            contract_path,
+            task_name,
+            effective.context_name,
+            effective.lifecycle,
+            effective.container.map(|container| container.image.as_str()),
+        )?
+    } else {
+        None
+    };
+    let resolved_backend = match resolve_execution_backend_with_contract_path(
+        contract,
+        task_name,
+        overrides,
+        Some(contract_path),
+    ) {
         Ok(resolved_backend) => Ok(resolved_backend),
         Err(RunError::MissingContainerBackendCli { .. }) if backend == Backend::Container => {
-            let Some(container) = effective.container else {
-                return Err(RunError::MissingContainerImage {
-                    task: task_name.to_string(),
-                });
-            };
+            let (container, image, _) = resolve_effective_task_container_backend(
+                contract,
+                task_name,
+                overrides,
+                Some(contract_path),
+            )?;
             let lifecycle =
                 effective
                     .lifecycle
@@ -1451,9 +1472,9 @@ fn resolve_execution_plan(
                 backend_source: String::from(backend_source),
                 lifecycle: Some(format_lifecycle(lifecycle).to_string()),
                 lifecycle_source: Some(lifecycle_source),
-                image: Some(container.image.clone()),
-                engine: selected_container_engine_from_backend(Some(container)),
-                engine_candidates: container_engine_candidates_from_backend(Some(container)),
+                image: Some(planned_container_image.unwrap_or(image)),
+                engine: selected_container_engine_from_backend(Some(&container)),
+                engine_candidates: container_engine_candidates_from_backend(Some(&container)),
                 provider: None,
                 target,
                 target_strategy,
@@ -1508,7 +1529,7 @@ fn resolve_execution_plan(
                     Lifecycle::Ephemeral => String::from("ephemeral per-run container"),
                 };
                 (
-                    Some(image),
+                    Some(planned_container_image.unwrap_or(image)),
                     Some(engine),
                     effective
                         .container
@@ -1562,6 +1583,76 @@ fn resolve_execution_plan(
         target_strategy,
         cwd,
     })
+}
+
+fn resolve_execution_plan_container_image(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    context_name: Option<&str>,
+    lifecycle: Option<Lifecycle>,
+    fallback_image: Option<&str>,
+) -> Result<Option<String>, RunError> {
+    let Some(fallback_image) = fallback_image else {
+        return Ok(None);
+    };
+    let Some(context_name) = context_name else {
+        return Ok(Some(fallback_image.to_string()));
+    };
+    let Some(execution) = contract.execution.as_ref() else {
+        return Ok(Some(fallback_image.to_string()));
+    };
+
+    let matching_backends = execution
+        .local_backends
+        .iter()
+        .filter(|(binding_name, local_backend)| {
+            if local_backend.backend != Backend::Container
+                || !lifecycle.is_none_or(|selected| local_backend.lifecycle == selected)
+            {
+                return false;
+            }
+
+            let backend_context_name = local_backend.context.as_deref().or_else(|| {
+                contract.tasks.iter().find_map(|(bound_task_name, task)| {
+                    (task.backend_binding_for_backend(Backend::Container)
+                        == Some(binding_name.as_str()))
+                    .then(|| {
+                        selected_task_context_for_backend(
+                            contract,
+                            bound_task_name,
+                            Backend::Container,
+                        )
+                        .map(|(name, _)| name)
+                    })
+                    .flatten()
+                })
+            });
+
+            backend_context_name == Some(context_name)
+        })
+        .collect::<Vec<(&String, &ExecutionLocalBackend)>>();
+
+    match matching_backends.as_slice() {
+        [] => Ok(Some(fallback_image.to_string())),
+        [(binding_name, local_backend)] => {
+            let (image, _) = crate::runner::resolve_shared_local_backend_environment(
+                Some(contract_path),
+                task_name,
+                binding_name.as_str(),
+                local_backend.environment.as_ref(),
+                fallback_image,
+            )?;
+            Ok(Some(image))
+        }
+        _ => Err(RunError::SharedLocalBackendResolutionFailed {
+            task: task_name.to_string(),
+            binding: String::from("<execution-plan>"),
+            details: format!(
+                "multiple shared local backends match container context `{context_name}`; add a single deterministic `execution.local_backends.<name>.context` binding for execution planning"
+            ),
+        }),
+    }
 }
 
 struct EnvReport {
@@ -24499,6 +24590,185 @@ tasks:
     }
 
     #[test]
+    fn execution_plan_uses_policy_resolved_backend_environment_image() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: execution-plan
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/raw:latest
+        engines:
+          - docker
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      context: app
+      environment:
+        profile: java-node-workbench
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  backend_environment:
+    profiles:
+      java-node-workbench:
+        image: ghcr.io/ota/workbench:2026.04
+        source: curated
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "");
+        }
+
+        let resolved = super::resolve_execution_plan(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+        )
+        .expect("execution plan should resolve policy-backed backend environment");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(
+            resolved.image.as_deref(),
+            Some("ghcr.io/ota/workbench:2026.04")
+        );
+    }
+
+    #[test]
+    fn execution_plan_uses_policy_resolved_image_for_inferred_shared_backend_context() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: execution-plan
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/raw:latest
+        engines:
+          - docker
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      environment:
+        profile: java-node-workbench
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  backend_environment:
+    profiles:
+      java-node-workbench:
+        image: ghcr.io/ota/workbench:2026.04
+        source: curated
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "");
+        }
+
+        let resolved = super::resolve_execution_plan(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+        )
+        .expect("execution plan should resolve inferred shared-backend environment intent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(
+            resolved.image.as_deref(),
+            Some("ghcr.io/ota/workbench:2026.04")
+        );
+    }
+
+    #[test]
     fn doctor_container_phase_uses_selected_context_image_and_target() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -26293,6 +26563,18 @@ tasks:
                 backend: String::from("container"),
                 lifecycle: String::from("persistent"),
                 context: Some(String::from("app")),
+                environment: Some(crate::runner::BackendEnvironmentEvidence {
+                    declared_profile: Some(String::from("java-node-workbench")),
+                    declared_image_alias: None,
+                    declared_image: None,
+                    declared_source: None,
+                    effective_profile: Some(String::from("java-node-workbench")),
+                    effective_image_alias: None,
+                    effective_image: String::from("ghcr.io/ota/workbench:2026.04"),
+                    effective_source: Some(String::from("curated")),
+                    effective_registry: Some(String::from("ghcr.io")),
+                    policy: Some(String::from(".ota/org-policy.yaml (repo policy)")),
+                }),
                 effective_identity: String::from("ota-workbench-abc123"),
                 reuse: Some(crate::runner::SharedLocalBackendReuse::Reused),
             })],
@@ -26301,6 +26583,18 @@ tasks:
                 backend: String::from("container"),
                 lifecycle: String::from("persistent"),
                 context: Some(String::from("app")),
+                environment: Some(crate::runner::BackendEnvironmentEvidence {
+                    declared_profile: Some(String::from("java-node-workbench")),
+                    declared_image_alias: None,
+                    declared_image: None,
+                    declared_source: None,
+                    effective_profile: Some(String::from("java-node-workbench")),
+                    effective_image_alias: None,
+                    effective_image: String::from("ghcr.io/ota/workbench:2026.04"),
+                    effective_source: Some(String::from("curated")),
+                    effective_registry: Some(String::from("ghcr.io")),
+                    policy: Some(String::from(".ota/org-policy.yaml (repo policy)")),
+                }),
                 effective_identity: String::from("ota-workbench-abc123"),
                 reuse: Some(crate::runner::SharedLocalBackendReuse::Reused),
             }),
@@ -26323,10 +26617,16 @@ tasks:
             json["steps"][0]["shared_local_backend"]["effective_identity"],
             "ota-workbench-abc123"
         );
+        assert_eq!(
+            json["steps"][0]["shared_local_backend"]["environment"]["effective_image"],
+            "ghcr.io/ota/workbench:2026.04"
+        );
         let rendered =
             render_execution_receipt_summary_block(&receipt, Some("sandbox"), "RUN SUMMARY");
         assert!(rendered.contains("Shared:"));
         assert!(rendered.contains("workbench -> ota-workbench-abc123 (persistent), reused"));
+        assert!(rendered.contains("Env intent:"));
+        assert!(rendered.contains("Env effective:"));
     }
 
     #[test]
@@ -33198,7 +33498,13 @@ fn run_execution_receipt_with_shared(
     next: Option<String>,
 ) -> ExecutionReceipt {
     let effective = effective_task_execution(contract, task_name, overrides);
-    let resolved_backend = resolve_execution_backend(contract, task_name, overrides).ok();
+    let resolved_backend = resolve_execution_backend_with_contract_path(
+        contract,
+        task_name,
+        overrides,
+        Some(contract_path),
+    )
+    .ok();
     let backend = resolved_backend
         .as_ref()
         .map(|backend| match backend {
@@ -36003,6 +36309,45 @@ fn render_execution_receipt_summary_block(
             shared_value.push_str(format!(", {reuse_label}").as_str());
         }
         lines.push(summary_detail_line("Shared:", &shared_value));
+        if let Some(environment) = shared_backend.environment.as_ref() {
+            let mut declared = Vec::new();
+            if let Some(profile) = environment.declared_profile.as_deref() {
+                declared.push(format!("profile={profile}"));
+            }
+            if let Some(alias) = environment.declared_image_alias.as_deref() {
+                declared.push(format!("alias={alias}"));
+            }
+            if let Some(image) = environment.declared_image.as_deref() {
+                declared.push(format!("image={image}"));
+            }
+            if let Some(source) = environment.declared_source.as_deref() {
+                declared.push(format!("source={source}"));
+            }
+            let declared_value = if declared.is_empty() {
+                String::from("implicit")
+            } else {
+                declared.join(", ")
+            };
+            lines.push(summary_detail_line("Env intent:", &declared_value));
+
+            let mut effective = vec![format!("image={}", environment.effective_image)];
+            if let Some(profile) = environment.effective_profile.as_deref() {
+                effective.push(format!("profile={profile}"));
+            }
+            if let Some(alias) = environment.effective_image_alias.as_deref() {
+                effective.push(format!("alias={alias}"));
+            }
+            if let Some(source) = environment.effective_source.as_deref() {
+                effective.push(format!("source={source}"));
+            }
+            if let Some(registry) = environment.effective_registry.as_deref() {
+                effective.push(format!("registry={registry}"));
+            }
+            if let Some(policy) = environment.policy.as_deref() {
+                effective.push(format!("policy={policy}"));
+            }
+            lines.push(summary_detail_line("Env effective:", &effective.join(", ")));
+        }
     }
     if let Some(backend_fulfillment) = requested_task_backend_fulfillment(receipt, task) {
         lines.push(summary_detail_line(
