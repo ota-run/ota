@@ -4680,10 +4680,9 @@ fn ensure_target_producer_ready(
     )?;
 
     if target_probe_endpoint_reachable(probe_host.as_str(), probe_port) {
-        state.ensured_target_producers.insert(
-            producer_key,
-            TaskTargetActivationStatus::ReusedReady,
-        );
+        state
+            .ensured_target_producers
+            .insert(producer_key, TaskTargetActivationStatus::ReusedReady);
         return Ok(TaskTargetActivationStatus::ReusedReady);
     }
 
@@ -4774,10 +4773,9 @@ fn ensure_target_producer_ready(
 
     loop {
         if target_probe_endpoint_reachable(probe_host.as_str(), probe_port) {
-            state.ensured_target_producers.insert(
-                producer_key,
-                TaskTargetActivationStatus::StartedReady,
-            );
+            state
+                .ensured_target_producers
+                .insert(producer_key, TaskTargetActivationStatus::StartedReady);
             return Ok(TaskTargetActivationStatus::StartedReady);
         }
 
@@ -5425,7 +5423,9 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
         return source.to_string();
     };
     let activation_label = match (activation.mode, activation.status) {
-        (TaskTargetActivationMode::Manual, TaskTargetActivationStatus::Manual) => "activation manual",
+        (TaskTargetActivationMode::Manual, TaskTargetActivationStatus::Manual) => {
+            "activation manual"
+        }
         (
             TaskTargetActivationMode::EnsureReady,
             TaskTargetActivationStatus::SkippedExplicitOverride,

@@ -29,8 +29,7 @@ use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExtensionKind,
     RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
     TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, parse_memory_size_bytes,
-    task_target_env_name,
+    TaskTargetActivationMode, TaskTargetAddressView, parse_memory_size_bytes, task_target_env_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2540,14 +2539,7 @@ fn visit_task_target_activation(
 
     for dependency in task_edges(task) {
         if tasks.contains_key(dependency) {
-            visit_task_target_activation(
-                dependency,
-                tasks,
-                visited,
-                active,
-                cycle_roots,
-                errors,
-            );
+            visit_task_target_activation(dependency, tasks, visited, active, cycle_roots, errors);
         }
     }
 
@@ -2556,14 +2548,7 @@ fn visit_task_target_activation(
             .then_some(target.service.task.as_str())
     }) {
         if tasks.contains_key(dependency) {
-            visit_task_target_activation(
-                dependency,
-                tasks,
-                visited,
-                active,
-                cycle_roots,
-                errors,
-            );
+            visit_task_target_activation(dependency, tasks, visited, active, cycle_roots, errors);
         }
     }
 
@@ -4532,9 +4517,9 @@ tasks:
 
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
-            error.to_string().contains(
-                "cannot declare `activation.mode: ensure_ready` for `service.task: dev`",
-            )
+            error
+                .to_string()
+                .contains("cannot declare `activation.mode: ensure_ready` for `service.task: dev`")
         }));
     }
 
