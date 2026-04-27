@@ -688,6 +688,8 @@ pub struct ExecutionLocalBackend {
     pub context: Option<String>,
     #[serde(default)]
     pub fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    #[serde(default)]
+    pub environment: Option<ExecutionLocalBackendEnvironment>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -695,6 +697,19 @@ pub struct ExecutionLocalBackend {
 pub enum ExecutionLocalBackendFulfillment {
     None,
     Run,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionLocalBackendEnvironment {
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub image_alias: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

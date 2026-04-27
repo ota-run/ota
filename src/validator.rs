@@ -580,6 +580,79 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
             }
         }
+
+        validate_execution_local_backend_environment(name, local_backend, errors);
+    }
+}
+
+fn validate_execution_local_backend_environment(
+    name: &str,
+    local_backend: &crate::schema::ExecutionLocalBackend,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(environment) = local_backend.environment.as_ref() else {
+        return;
+    };
+
+    let selector_count = usize::from(
+        environment
+            .profile
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+    ) + usize::from(
+        environment
+            .image_alias
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+    ) + usize::from(
+        environment
+            .image
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
+    );
+
+    if selector_count > 1 {
+        errors.push(ValidationError::new(format!(
+            "`execution.local_backends.{name}.environment` must not combine `profile`, `image_alias`, and `image`; declare one intent only"
+        )));
+    }
+
+    if let Some(profile) = environment.profile.as_deref()
+        && profile.trim().is_empty()
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.local_backends.{name}.environment.profile` must not be empty"
+        )));
+    }
+
+    if let Some(alias) = environment.image_alias.as_deref()
+        && alias.trim().is_empty()
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.local_backends.{name}.environment.image_alias` must not be empty"
+        )));
+    }
+
+    if let Some(image) = environment.image.as_deref()
+        && image.trim().is_empty()
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.local_backends.{name}.environment.image` must not be empty"
+        )));
+    }
+
+    if let Some(source) = environment.source.as_deref()
+        && source.trim().is_empty()
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.local_backends.{name}.environment.source` must not be empty"
+        )));
+    }
+
+    if environment.source.is_some() && environment.image.is_none() {
+        errors.push(ValidationError::new(format!(
+            "`execution.local_backends.{name}.environment.source` is only valid with a literal `image` intent"
+        )));
     }
 }
 
@@ -1681,14 +1754,44 @@ fn task_shared_container_backend_shape(
         })
         .unwrap_or_default();
     let memory_bytes = container_memory_bytes_for_shape(container);
+    let image = shared_local_backend_shape_image(local_backend, container.image.as_str());
 
     Some(SharedContainerBackendShape {
-        image: container.image.trim().to_string(),
+        image,
         engines: container.engines.clone(),
         publications,
         dependency_isolation_paths,
         memory_bytes,
     })
+}
+
+fn shared_local_backend_shape_image(
+    local_backend: &crate::schema::ExecutionLocalBackend,
+    fallback_image: &str,
+) -> String {
+    let Some(environment) = local_backend.environment.as_ref() else {
+        return fallback_image.trim().to_string();
+    };
+
+    if let Some(profile) = environment.profile.as_deref().map(str::trim)
+        && !profile.is_empty()
+    {
+        return format!("profile:{profile}");
+    }
+
+    if let Some(alias) = environment.image_alias.as_deref().map(str::trim)
+        && !alias.is_empty()
+    {
+        return format!("image_alias:{alias}");
+    }
+
+    if let Some(image) = environment.image.as_deref().map(str::trim)
+        && !image.is_empty()
+    {
+        return image.to_string();
+    }
+
+    fallback_image.trim().to_string()
 }
 
 fn container_memory_bytes_for_shape(container: &ContainerBackend) -> Option<u64> {
@@ -2553,7 +2656,7 @@ mod tests {
 
     use crate::parser::parse_contract_str;
 
-    use super::validate_contract;
+    use super::{task_shared_container_backend_shape, validate_contract};
 
     #[test]
     fn validates_a_minimal_contract() {
@@ -4573,6 +4676,266 @@ tasks:
                 .to_string()
                 .contains("resolve different container shapes")
         }));
+    }
+
+    #[test]
+    fn rejects_local_backend_environment_source_without_literal_image() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      environment:
+        source: repo-curated
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.local_backends.workbench.environment.source` is only valid with a literal `image` intent",
+            )
+        }));
+    }
+
+    #[test]
+    fn allows_local_backend_environment_without_declared_selector_for_policy_default() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      environment: {}
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("empty environment intent should be allowed for policy default resolution");
+    }
+
+    #[test]
+    fn rejects_local_backend_environment_with_multiple_selectors() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      environment:
+        profile: workbench
+        image_alias: alias
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.local_backends.workbench.environment` must not combine `profile`, `image_alias`, and `image`",
+            )
+        }));
+    }
+
+    #[test]
+    fn shared_local_backend_environment_intent_unifies_shape_validation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/context:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      environment:
+        profile: java-node-workbench
+tasks:
+  dev:
+    context: app
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  dev:debug:
+    context: app
+    run: echo debug
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#,
+        )
+        .unwrap();
+
+        let execution = contract.execution.as_ref().expect("execution should exist");
+        let local_backend = execution
+            .local_backends
+            .get("workbench")
+            .expect("shared backend should exist");
+        let dev_shape = task_shared_container_backend_shape(
+            &contract,
+            execution,
+            contract.tasks.get("dev").expect("dev should exist"),
+            local_backend,
+        )
+        .expect("dev shape should resolve");
+        let debug_shape = task_shared_container_backend_shape(
+            &contract,
+            execution,
+            contract.tasks.get("dev:debug").expect("dev:debug should exist"),
+            local_backend,
+        )
+        .expect("debug shape should resolve");
+
+        assert_eq!(dev_shape, debug_shape);
+        assert_eq!(dev_shape.image, "profile:java-node-workbench");
+    }
+
+    #[test]
+    fn empty_local_backend_environment_keeps_task_shape_image_fallback() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/app:latest
+    debug:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/debug:latest
+  local_backends:
+    workbench:
+      backend: container
+      lifecycle: persistent
+      environment: {}
+tasks:
+  dev:
+    context: app
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  dev:debug:
+    context: debug
+    run: echo debug
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8081
+"#,
+        )
+        .unwrap();
+
+        let execution = contract.execution.as_ref().expect("execution should exist");
+        let local_backend = execution
+            .local_backends
+            .get("workbench")
+            .expect("shared backend should exist");
+        let dev_shape = task_shared_container_backend_shape(
+            &contract,
+            execution,
+            contract.tasks.get("dev").expect("dev should exist"),
+            local_backend,
+        )
+        .expect("dev shape should resolve");
+        let debug_shape = task_shared_container_backend_shape(
+            &contract,
+            execution,
+            contract.tasks.get("dev:debug").expect("dev:debug should exist"),
+            local_backend,
+        )
+        .expect("debug shape should resolve");
+
+        assert_eq!(dev_shape.image, "ghcr.io/ota/app:latest");
+        assert_eq!(debug_shape.image, "ghcr.io/ota/debug:latest");
+        assert_ne!(dev_shape.image, debug_shape.image);
     }
 
     #[test]

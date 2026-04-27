@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::ErrorKind;
@@ -90,6 +90,8 @@ pub struct PolicyRules {
     pub provisioning: BTreeMap<String, PolicyProvisioningRule>,
     #[serde(default)]
     pub adapter_bootstrap: BTreeMap<String, PolicyAdapterBootstrapRule>,
+    #[serde(default)]
+    pub backend_environment: PolicyBackendEnvironmentRules,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -147,6 +149,41 @@ pub struct PolicyAdapterBootstrapRule {
     pub source: String,
     #[serde(default)]
     pub approved_versions: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyBackendEnvironmentRules {
+    #[serde(default)]
+    pub profiles: BTreeMap<String, PolicyBackendEnvironmentProfile>,
+    #[serde(default)]
+    pub image_aliases: BTreeMap<String, PolicyBackendEnvironmentImageAlias>,
+    #[serde(default)]
+    pub default_profile: Option<String>,
+    #[serde(default)]
+    pub allowed_sources: Vec<String>,
+    #[serde(default)]
+    pub denied_sources: Vec<String>,
+    #[serde(default)]
+    pub allowed_registries: Vec<String>,
+    #[serde(default)]
+    pub denied_registries: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyBackendEnvironmentProfile {
+    pub image: String,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyBackendEnvironmentImageAlias {
+    pub image: String,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -407,6 +444,7 @@ impl OrgPolicyPack {
             "runtime version policy",
         )?;
         validate_version_policy_rules(&self.policies.version_policy.tools, "tool version policy")?;
+        validate_backend_environment_rules(&self.policies.backend_environment)?;
 
         Ok(())
     }
@@ -1286,6 +1324,94 @@ fn validate_version_policy_rules(
     }
 
     Ok(())
+}
+
+fn validate_backend_environment_rules(rules: &PolicyBackendEnvironmentRules) -> Result<(), String> {
+    for (name, profile) in &rules.profiles {
+        if name.trim().is_empty() {
+            return Err(String::from(
+                "policy-backed backend environment profile names must not be empty",
+            ));
+        }
+        if profile.image.trim().is_empty() {
+            return Err(format!(
+                "policy-backed backend environment profile `{name}` must declare a non-empty `image`"
+            ));
+        }
+        if profile
+            .source
+            .as_deref()
+            .is_some_and(|source| source.trim().is_empty())
+        {
+            return Err(format!(
+                "policy-backed backend environment profile `{name}` must not declare an empty `source`"
+            ));
+        }
+    }
+
+    for (name, alias) in &rules.image_aliases {
+        if name.trim().is_empty() {
+            return Err(String::from(
+                "policy-backed backend environment image alias names must not be empty",
+            ));
+        }
+        if alias.image.trim().is_empty() {
+            return Err(format!(
+                "policy-backed backend environment image alias `{name}` must declare a non-empty `image`"
+            ));
+        }
+        if alias
+            .source
+            .as_deref()
+            .is_some_and(|source| source.trim().is_empty())
+        {
+            return Err(format!(
+                "policy-backed backend environment image alias `{name}` must not declare an empty `source`"
+            ));
+        }
+    }
+
+    if let Some(default_profile) = rules.default_profile.as_deref() {
+        if default_profile.trim().is_empty() {
+            return Err(String::from(
+                "policy-backed backend environment `default_profile` must not be empty",
+            ));
+        }
+        if !rules.profiles.contains_key(default_profile) {
+            return Err(format!(
+                "policy-backed backend environment `default_profile: {default_profile}` is not declared under `profiles`"
+            ));
+        }
+    }
+
+    if let Some(duplicate) = duplicate_trimmed_entry(&rules.allowed_sources, &rules.denied_sources)
+    {
+        return Err(format!(
+            "policy-backed backend environment source `{duplicate}` cannot be both allowed and denied"
+        ));
+    }
+
+    if let Some(duplicate) =
+        duplicate_trimmed_entry(&rules.allowed_registries, &rules.denied_registries)
+    {
+        return Err(format!(
+            "policy-backed backend environment registry `{duplicate}` cannot be both allowed and denied"
+        ));
+    }
+
+    Ok(())
+}
+
+fn duplicate_trimmed_entry(left: &[String], right: &[String]) -> Option<String> {
+    let right_set = right
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>();
+    left.iter()
+        .map(|value| value.trim())
+        .find(|value| !value.is_empty() && right_set.contains(value))
+        .map(str::to_string)
 }
 
 fn effective_provisioning_rule<'a>(
@@ -2813,5 +2939,43 @@ tools:
         let windows_violations = policy.version_policy_violations_for_os("windows", &contract);
         assert_eq!(windows_violations.len(), 1);
         assert!(windows_violations[0].contains("runtime `node` version `24`"));
+    }
+
+    #[test]
+    fn validates_backend_environment_default_profile_reference() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  backend_environment:
+    default_profile: missing
+    profiles:
+      workbench:
+        image: ghcr.io/ota/workbench:latest
+"#,
+        )
+        .unwrap();
+
+        let error = policy
+            .validate()
+            .expect_err("invalid default profile should fail");
+        assert!(error.contains("default_profile: missing"));
+    }
+
+    #[test]
+    fn validates_backend_environment_allowed_denied_overlap() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  backend_environment:
+    allowed_sources:
+      - curated
+    denied_sources:
+      - curated
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().expect_err("source overlap should fail");
+        assert!(error.contains("cannot be both allowed and denied"));
     }
 }

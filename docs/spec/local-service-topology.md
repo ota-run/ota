@@ -314,6 +314,7 @@ Optional fields:
 - `attachments`
 - `fulfillment`
 - `publish`
+- `environment` (`profile` | `image_alias` | `image`, plus optional `source` for literal images; `environment: {}` may opt into policy `default_profile`)
 
 Rules:
 
@@ -322,6 +323,12 @@ Rules:
 - multiple tasks may bind to the same local backend
 - service identity remains task-scoped even when the backend is shared
 - backend bindings must not replace service managers; they describe workload colocation
+- `environment` intent is resolved to one effective backend image deterministically:
+  - `profile` / `image_alias` require policy-backed approval
+  - literal `image` remains supported for compatibility
+  - an empty `environment: {}` may opt into policy `default_profile`, but falls back to the task/container image when no default profile applies
+  - policy may enforce allowed/denied source classes and registries
+  - `ota execution plan` and `ota run` must surface the same effective image for both explicit and inferred shared-backend contexts
 
 ### Fulfillment mode
 
