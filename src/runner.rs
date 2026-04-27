@@ -68,10 +68,14 @@ pub(crate) struct StreamPhaseNotifier {
     saw_output: Arc<AtomicBool>,
     shown: Arc<AtomicBool>,
     output_lock: Arc<Mutex<()>>,
+    last_output_at: Arc<Mutex<Instant>>,
 }
 
 impl StreamPhaseNotifier {
     fn begin_output(&self) -> MutexGuard<'_, ()> {
+        if let Ok(mut last_output_at) = self.last_output_at.lock() {
+            *last_output_at = Instant::now();
+        }
         let guard = self
             .output_lock
             .lock()
@@ -89,6 +93,27 @@ impl StreamPhaseNotifier {
             .lock()
             .expect("stream phase output lock should not be poisoned")
     }
+
+    fn wait_for_quiet_output(&self, quiet_period: Duration, stop: &AtomicBool) {
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+            let elapsed = self
+                .last_output_at
+                .lock()
+                .map(|last_output_at| last_output_at.elapsed())
+                .unwrap_or(quiet_period);
+            if elapsed >= quiet_period {
+                return;
+            }
+            thread::sleep(
+                quiet_period
+                    .saturating_sub(elapsed)
+                    .min(Duration::from_millis(50)),
+            );
+        }
+    }
 }
 
 pub(crate) struct StreamPhaseLoader {
@@ -96,6 +121,7 @@ pub(crate) struct StreamPhaseLoader {
     shown: Arc<AtomicBool>,
     saw_output: Arc<AtomicBool>,
     output_lock: Arc<Mutex<()>>,
+    last_output_at: Arc<Mutex<Instant>>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
@@ -117,6 +143,7 @@ impl StreamPhaseLoader {
         let shown = Arc::new(AtomicBool::new(false));
         let saw_output = Arc::new(AtomicBool::new(false));
         let output_lock = Arc::new(Mutex::new(()));
+        let last_output_at = Arc::new(Mutex::new(Instant::now()));
         let label = Arc::new(label.to_string());
         let thread_stop = Arc::clone(&stop);
         let thread_shown = Arc::clone(&shown);
@@ -159,6 +186,7 @@ impl StreamPhaseLoader {
             shown,
             saw_output,
             output_lock,
+            last_output_at,
             handle: Some(handle),
         })
     }
@@ -168,6 +196,7 @@ impl StreamPhaseLoader {
             saw_output: Arc::clone(&self.saw_output),
             shown: Arc::clone(&self.shown),
             output_lock: Arc::clone(&self.output_lock),
+            last_output_at: Arc::clone(&self.last_output_at),
         }
     }
 
@@ -8281,6 +8310,10 @@ fn start_runtime_readiness_probe(
                 thread_observed.store(true, Ordering::Relaxed);
                 if let Some(line) = ready_line.as_deref() {
                     if let Some(notifier) = probe_notifier.as_ref() {
+                        notifier.wait_for_quiet_output(
+                            Duration::from_millis(300),
+                            thread_stop.as_ref(),
+                        );
                         let _guard = notifier.begin_output();
                         eprintln!("{line}");
                     } else {
