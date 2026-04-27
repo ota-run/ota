@@ -36,6 +36,9 @@ This spec defines the long-term Ota feature program for container-first local de
 
 This spec extends [execution-topology.md](execution-topology.md). It does not replace it.
 
+The follow-on proposed extension for one shared backend hosting multiple distinct workloads lives in
+[multi-workload-shared-local-backends.md](multi-workload-shared-local-backends.md).
+
 ## Core truth
 
 Ota already models:

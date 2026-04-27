@@ -27,7 +27,9 @@
 Status: evolving. The execution-topology foundation is shipped: `execution.default_context`, `execution.contexts`, `tasks.<name>.context`, `tasks.<name>.requires_services`, task-scoped workload listeners via `tasks.<name>.runtime.kind: service`, typed Compose service managers, context-scoped `services.<name>.endpoints`, `services.<name>.readiness.from`, and Compose-network attachment for container contexts. Broader manager coverage and deeper topology validation are still in progress.
 
 Follow-on proposed work for topology-aware service-target defaults, shared local backends, and
-run-path fulfillment lives in [local-service-topology.md](local-service-topology.md).
+run-path fulfillment lives in [local-service-topology.md](local-service-topology.md). Follow-on
+proposed work for one shared backend hosting multiple distinct workloads lives in
+[multi-workload-shared-local-backends.md](multi-workload-shared-local-backends.md).
 
 ## Core truth
 
