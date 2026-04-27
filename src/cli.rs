@@ -4429,7 +4429,13 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
         }
-        Commands::Run { .. } => "run `ota tasks --use` to inspect runnable task usage",
+        Commands::Run { .. } => {
+            if stderr_reports_missing_repo_contract(&stderr) {
+                "run this command from a repo directory that contains `ota.yaml`, or run `ota init` to create a starter contract"
+            } else {
+                "run `ota tasks --use` to inspect runnable task usage"
+            }
+        }
         Commands::Doctor { .. } => "run `ota init` to create a starter contract",
         Commands::Explain { .. } => {
             "run `ota doctor` to inspect readiness findings before `ota explain`"
@@ -4545,6 +4551,12 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     tighten_guidance_spacing(commands::stylize_inline_text(&format!(
         "{stderr}{next_section}"
     )))
+}
+
+fn stderr_reports_missing_repo_contract(stderr: &str) -> bool {
+    stderr.contains("no `ota.yaml` found") && stderr.contains(" upward")
+        || stderr.contains("explicit repo path does not contain `ota.yaml`")
+        || stderr.contains("contract path does not exist:")
 }
 
 fn trailing_summary_title(stderr: &str) -> Option<&'static str> {
@@ -12622,6 +12634,39 @@ tasks:
             !rendered
                 .contains("Why: task `install-from-source` returned a non-zero exit code\n\nNext:")
         );
+    }
+
+    #[test]
+    fn append_try_footer_run_missing_contract_points_to_contract_recovery() {
+        let stderr =
+            "◉ ERROR  Operation failed\nWhere: .\nWhy: no `ota.yaml` found from `.` upward";
+        let rendered = strip_ansi(&append_try_footer(
+            stderr.to_string(),
+            &Commands::Run {
+                task: String::from("ci"),
+                backend: None,
+                native: false,
+                container: false,
+                lifecycle: None,
+                persistent: false,
+                host_port: None,
+                memory: None,
+                ephemeral: false,
+                receipt: false,
+                stream: false,
+                log: false,
+                member: Vec::new(),
+                path: None,
+                inputs: Vec::new(),
+            },
+        ));
+
+        assert!(rendered.contains("Why: no `ota.yaml` found from `.` upward"));
+        assert!(
+            rendered.contains("run this command from a repo directory that contains `ota.yaml`")
+        );
+        assert!(rendered.contains("run `ota init` to create a starter contract"));
+        assert!(!rendered.contains("ota tasks --use"), "{rendered}");
     }
 
     #[test]
