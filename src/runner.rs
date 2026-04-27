@@ -264,20 +264,17 @@ fn running_loader_label(task_name: &str, backend: &ResolvedExecutionBackend) -> 
 }
 
 fn activation_loader_label(
-    target_name: &str,
     producer_task_name: &str,
-    producer_listener_name: &str,
     readiness_target: &RuntimeReadinessTarget,
 ) -> String {
-    let readiness_label = match readiness_target {
+    match readiness_target {
         RuntimeReadinessTarget::Http { path, .. } => {
-            format!("waiting for readiness at {path}")
+            format!("Waiting for {producer_task_name} to become ready at {path}")
         }
-        RuntimeReadinessTarget::Tcp { .. } => String::from("waiting for tcp readiness"),
-    };
-    format!(
-        "Ensuring target {target_name} via {producer_task_name}.{producer_listener_name} ({readiness_label})"
-    )
+        RuntimeReadinessTarget::Tcp { .. } => {
+            format!("Waiting for {producer_task_name} to become tcp-ready")
+        }
+    }
 }
 
 pub(crate) fn stream_reader_to_sink<R, W>(
@@ -4791,9 +4788,7 @@ fn ensure_target_producer_ready(
             emit_progress: true,
             ..
         } => StreamPhaseLoader::start(&activation_loader_label(
-            target_name,
             producer_task_name,
-            producer_listener_name,
             &readiness_target,
         )),
         _ => None,
@@ -17958,16 +17953,14 @@ exec "$(dirname "$0")/docker-real" "$@"
         );
         assert_eq!(
             activation_loader_label(
-                "api",
                 "dev",
-                "http",
                 &RuntimeReadinessTarget::Http {
                     address: String::from("127.0.0.1"),
                     port: 8080,
                     path: String::from("/actuator/health"),
                 }
             ),
-            "Ensuring target api via dev.http (waiting for readiness at /actuator/health)"
+            "Waiting for dev to become ready at /actuator/health"
         );
     }
 
