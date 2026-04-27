@@ -10132,8 +10132,8 @@ tasks:
         assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
         assert!(stdout.contains("provider `ssh` targeting `sandbox-dev`"));
-        assert!(stdout.contains("Mode:      remote"));
-        assert!(stdout.contains("Target:    sandbox-dev"));
+        assert!(stdout.contains("Mode:        remote"));
+        assert!(stdout.contains("Target:      sandbox-dev"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
         assert!(!log_path.exists());
     }
@@ -10217,8 +10217,8 @@ tasks:
         assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
         assert!(stdout.contains("provider `tsh` targeting `sandbox-dev`"));
-        assert!(stdout.contains("Mode:      remote"));
-        assert!(stdout.contains("Target:    sandbox-dev"));
+        assert!(stdout.contains("Mode:        remote"));
+        assert!(stdout.contains("Target:      sandbox-dev"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
         assert!(!log_path.exists());
     }
@@ -10302,8 +10302,8 @@ tasks:
         assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
         assert!(stdout.contains("provider `kubectl` targeting `pod/ota-dev`"));
-        assert!(stdout.contains("Mode:      remote"));
-        assert!(stdout.contains("Target:    pod/ota-dev"));
+        assert!(stdout.contains("Mode:        remote"));
+        assert!(stdout.contains("Target:      pod/ota-dev"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
         assert!(!log_path.exists());
     }
@@ -21489,7 +21489,7 @@ tasks:
         assert!(stdout.contains("Phase: provisioning"));
         assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Task: setup"));
-        assert!(stdout.contains("Status:    blocked"));
+        assert!(stdout.contains("Status:      blocked"));
         assert!(!stdout.contains("Command: printf setup > prepared.txt"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
@@ -21675,7 +21675,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Phase: services"));
-        assert!(stdout.contains("Status:    failed"));
+        assert!(stdout.contains("Status:      failed"));
         assert!(stdout.contains("ERROR  Service healthcheck failed: postgres"));
         assert!(fixture.dir.path().join("service.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());
