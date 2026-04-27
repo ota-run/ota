@@ -2966,6 +2966,7 @@ fn run_task_internal(
             return Err(error);
         }
     };
+    let mut preflight_execution_note = None;
     if let ResolvedExecutionBackend::Container { lifecycle, .. } = &backend
         && matches!(lifecycle, Lifecycle::Ephemeral)
     {
@@ -2990,10 +2991,37 @@ fn run_task_internal(
                     true,
                     overrides.host_port,
                 )?;
-                preflight_container_host_publications(
+                if let Err(error) = preflight_container_host_publications(
                     task_name,
                     &projection.listener_publications,
-                )?;
+                ) {
+                    if !matches!(error, RunError::HostPublicationConflict { .. }) {
+                        return Err(error);
+                    }
+                    let repo_ownership_token = repo_ownership_token(task_name, contract_path)?;
+                    let preferred_engine = match &backend {
+                        ResolvedExecutionBackend::Container { engine, .. } => Some(engine.as_str()),
+                        _ => None,
+                    };
+                    let reclaimed = reclaim_repo_owned_conflicting_persistent_containers(
+                        task_name,
+                        working_dir,
+                        repo_ownership_token.as_str(),
+                        &projection.listener_publications,
+                        preferred_engine,
+                    )?;
+                    if reclaimed == 0 {
+                        return Err(error);
+                    }
+                    preflight_container_host_publications(
+                        task_name,
+                        &projection.listener_publications,
+                    )?;
+                    preflight_execution_note = merge_execution_note(
+                        preflight_execution_note,
+                        reclaimed_conflicting_persistent_backends_note(reclaimed),
+                    );
+                }
             }
         }
     }
@@ -3012,6 +3040,7 @@ fn run_task_internal(
     }
     let current_os = current_os();
     let mut state = TaskRunState::default();
+    state.execution_note = preflight_execution_note;
     if let Some(loader) = preflight_loader.take() {
         loader.stop();
     }
@@ -6542,6 +6571,18 @@ fn preflight_container_host_publications(
     }
 
     Ok(())
+}
+
+fn reclaimed_conflicting_persistent_backends_note(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some(String::from(
+            "reclaimed 1 conflicting persistent backend before starting task",
+        )),
+        _ => Some(format!(
+            "reclaimed {count} conflicting persistent backends before starting task"
+        )),
+    }
 }
 
 fn preflight_reused_persistent_container_listener_binds(
@@ -11163,6 +11204,64 @@ fn persistent_container_target_for_backend(
     ))
 }
 
+fn reclaim_repo_owned_conflicting_persistent_containers(
+    task_name: &str,
+    working_dir: &Path,
+    repo_ownership_token: &str,
+    listener_publications: &[(String, ContainerPortPublication)],
+    preferred_engine: Option<&str>,
+) -> Result<usize, RunError> {
+    let conflict_ports = listener_publications
+        .iter()
+        .filter(|(_, publication)| publication.host_port_mode == TaskRuntimeHostPortMode::Fixed)
+        .filter_map(|(_, publication)| publication.host_port)
+        .collect::<BTreeSet<_>>();
+    if conflict_ports.is_empty() {
+        return Ok(0);
+    }
+
+    let mut engines = repo_managed_engines(task_name, working_dir)?;
+    if let Some(engine) = preferred_engine {
+        engines.insert(engine.to_string());
+    }
+
+    let mut reclaimed = 0usize;
+    let mut visited = BTreeSet::new();
+    for engine in engines {
+        for container_name in
+            persistent_container_names_for_repo(task_name, engine.as_str(), repo_ownership_token)?
+        {
+            if !visited.insert((engine.clone(), container_name.clone())) {
+                continue;
+            }
+            let mut conflicts = false;
+            for conflict_port in &conflict_ports {
+                if container_published_host_port_exists(
+                    task_name,
+                    engine.as_str(),
+                    container_name.as_str(),
+                    *conflict_port,
+                )? {
+                    conflicts = true;
+                    break;
+                }
+            }
+            if !conflicts {
+                continue;
+            }
+            if remove_persistent_container_if_present(
+                task_name,
+                engine.as_str(),
+                container_name.as_str(),
+            )? {
+                reclaimed += 1;
+            }
+        }
+    }
+
+    Ok(reclaimed)
+}
+
 fn reclaimed_orphaned_ephemeral_containers_note(count: usize) -> Option<String> {
     match count {
         0 => None,
@@ -12296,7 +12395,7 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::env;
     use std::fs::{self, File};
     use std::io::{Read, Write};
@@ -25314,6 +25413,209 @@ tasks:
             }
             other => panic!("expected bind reservation failure, got {other}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reclaims_repo_owned_persistent_backend_conflicting_with_ephemeral_host_port() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "ota-persistent-conflict";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        File::create(state_dir.join(format!("{container_name}.running"))).unwrap();
+
+        let repo_token =
+            super::repo_ownership_token_for_working_dir("test", fixture.dir.path()).unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.labels")),
+            format!(
+                "{}\n{}\n{}={}\n",
+                super::OTA_MANAGED_CONTAINER_LABEL,
+                super::OTA_PERSISTENT_CONTAINER_LABEL,
+                super::OTA_REPO_CONTAINER_LABEL_KEY,
+                repo_token,
+            ),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.publish")),
+            "127.0.0.1:30010:3000/tcp\n",
+        )
+        .unwrap();
+        super::write_repo_managed_engines(
+            "test",
+            fixture.dir.path(),
+            &BTreeSet::from([docker_path.display().to_string()]),
+        )
+        .unwrap();
+
+        let reclaimed = super::reclaim_repo_owned_conflicting_persistent_containers(
+            "test",
+            fixture.dir.path(),
+            &repo_token,
+            &[(
+                String::from("http"),
+                ContainerPortPublication {
+                    bind_port: 3000,
+                    host_address: String::from("127.0.0.1"),
+                    host_port_mode: TaskRuntimeHostPortMode::Fixed,
+                    host_port: Some(30010),
+                    protocol: TaskRuntimeProtocol::Http,
+                },
+            )],
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(reclaimed, 1);
+        assert!(
+            !state_dir.join(format!("{container_name}.path")).exists(),
+            "conflicting persistent backend should be removed"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bind_reservation_failure_does_not_reclaim_repo_owned_persistent_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 192.0.2.1
+              port:
+                mode: fixed
+                value: 30010
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "ota-persistent-conflict";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        File::create(state_dir.join(format!("{container_name}.running"))).unwrap();
+
+        let repo_token =
+            super::repo_ownership_token_for_working_dir("dev", fixture.dir.path()).unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.labels")),
+            format!(
+                "{}\n{}\n{}={}\n",
+                super::OTA_MANAGED_CONTAINER_LABEL,
+                super::OTA_PERSISTENT_CONTAINER_LABEL,
+                super::OTA_REPO_CONTAINER_LABEL_KEY,
+                repo_token,
+            ),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.publish")),
+            "127.0.0.1:30010:3000/tcp\n",
+        )
+        .unwrap();
+        super::write_repo_managed_engines(
+            "dev",
+            fixture.dir.path(),
+            &BTreeSet::from([docker_path.display().to_string()]),
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(matches!(
+            error,
+            RunError::RuntimeListenerResolutionFailed {
+                kind: RuntimeListenerResolutionKind::HostPublication(
+                    RuntimeListenerHostPublicationFailure::BindReservationFailed { .. }
+                ),
+                ..
+            }
+        ));
+        assert!(
+            state_dir.join(format!("{container_name}.path")).exists(),
+            "bind reservation failures should not reclaim same-repo persistent backends"
+        );
     }
 
     #[cfg(unix)]
