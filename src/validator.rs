@@ -4846,7 +4846,10 @@ tasks:
         let debug_shape = task_shared_container_backend_shape(
             &contract,
             execution,
-            contract.tasks.get("dev:debug").expect("dev:debug should exist"),
+            contract
+                .tasks
+                .get("dev:debug")
+                .expect("dev:debug should exist"),
             local_backend,
         )
         .expect("debug shape should resolve");
@@ -4928,7 +4931,10 @@ tasks:
         let debug_shape = task_shared_container_backend_shape(
             &contract,
             execution,
-            contract.tasks.get("dev:debug").expect("dev:debug should exist"),
+            contract
+                .tasks
+                .get("dev:debug")
+                .expect("dev:debug should exist"),
             local_backend,
         )
         .expect("debug shape should resolve");

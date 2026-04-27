@@ -106,18 +106,16 @@ use crate::runner::{
     effective_execution, effective_task_execution, env_resolution_source_label,
     ephemeral_container_name, load_declared_env_sources, load_policy_env_overlay,
     named_execution_context, persistent_container_name, reported_task_context_for_backend,
-    resolve_effective_task_container_backend,
-    resolve_declared_env_source_value, resolve_execution_backend,
-    resolve_execution_backend_with_contract_path, resolve_task_env_details,
-    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
-    run_task_captured_with_args_with_overrides_with_policy,
+    resolve_declared_env_source_value, resolve_effective_task_container_backend,
+    resolve_execution_backend, resolve_execution_backend_with_contract_path,
+    resolve_task_env_details, resolve_task_env_details_with_policy,
+    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
-    run_task_with_progress_and_args_and_overrides_with_policy,
-    selected_task_context_for_backend,
+    run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
 };
 use crate::schema::{
-    Backend, ContainerBackend, Contract, EnvRequirement, ExecutionLocalBackend, ExtensionSpec, Lifecycle,
-    RequirementSurface, TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes,
+    Backend, ContainerBackend, Contract, EnvRequirement, ExecutionLocalBackend, ExtensionSpec,
+    Lifecycle, RequirementSurface, TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes,
     parse_memory_size_bytes,
 };
 use crate::update;
@@ -1432,7 +1430,9 @@ fn resolve_execution_plan(
             task_name,
             effective.context_name,
             effective.lifecycle,
-            effective.container.map(|container| container.image.as_str()),
+            effective
+                .container
+                .map(|container| container.image.as_str()),
         )?
     } else {
         None
@@ -24657,12 +24657,9 @@ policies:
             env::set_var("PATH", "");
         }
 
-        let resolved = super::resolve_execution_plan(
-            &contract,
-            &contract_path,
-            ExecutionOverrides::default(),
-        )
-        .expect("execution plan should resolve policy-backed backend environment");
+        let resolved =
+            super::resolve_execution_plan(&contract, &contract_path, ExecutionOverrides::default())
+                .expect("execution plan should resolve policy-backed backend environment");
 
         match original_path {
             Some(path) => unsafe {
@@ -24746,12 +24743,9 @@ policies:
             env::set_var("PATH", "");
         }
 
-        let resolved = super::resolve_execution_plan(
-            &contract,
-            &contract_path,
-            ExecutionOverrides::default(),
-        )
-        .expect("execution plan should resolve inferred shared-backend environment intent");
+        let resolved =
+            super::resolve_execution_plan(&contract, &contract_path, ExecutionOverrides::default())
+                .expect("execution plan should resolve inferred shared-backend environment intent");
 
         match original_path {
             Some(path) => unsafe {
@@ -36435,7 +36429,8 @@ fn receipt_log_capture_warning(receipt: &ExecutionReceipt) -> Option<&str> {
 }
 
 fn summary_detail_line(label: &str, value: &str) -> String {
-    format!("{label:<10} {value}")
+    const SUMMARY_LABEL_WIDTH: usize = 14;
+    format!("{label:<width$} {value}", width = SUMMARY_LABEL_WIDTH)
 }
 
 fn requested_task_target_resolutions<'a>(
