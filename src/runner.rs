@@ -5720,10 +5720,16 @@ fn ready_runtime_public_endpoint_line(runtime: &ResolvedTaskRuntime) -> Option<S
         .as_ref()
         .or_else(|| runtime.exposed_endpoints.first())
         .map(|endpoint| {
-            format!(
-                "\n\n🦦 Endpoint: {}\n\n",
-                resolved_runtime_host_endpoint_text(&endpoint.host)
-            )
+            let external = resolved_runtime_host_endpoint_text(&endpoint.host);
+            let internal = resolved_runtime_internal_endpoint_text(endpoint);
+            if external == internal {
+                format!("\n\n🦦 External: {}\n\n", external)
+            } else {
+                format!(
+                    "\n\n🦦 External: {}\n🦦 Internal: {}\n\n",
+                    external, internal
+                )
+            }
         })
 }
 
@@ -5731,6 +5737,21 @@ fn resolved_runtime_host_endpoint_text(host: &ResolvedTaskRuntimeHost) -> String
     host.url
         .clone()
         .unwrap_or_else(|| format!("{}:{}", host.address, host.port))
+}
+
+pub(crate) fn resolved_runtime_internal_endpoint_text(
+    endpoint: &ResolvedTaskRuntimeEndpoint,
+) -> String {
+    endpoint
+        .protocol
+        .url_scheme()
+        .map(|scheme| {
+            format!(
+                "{scheme}://{}:{}/",
+                endpoint.bind.address, endpoint.bind.port
+            )
+        })
+        .unwrap_or_else(|| format!("{}:{}", endpoint.bind.address, endpoint.bind.port))
 }
 
 fn resolved_primary_listener_name(
@@ -14574,7 +14595,7 @@ tasks:
 
         assert_eq!(
             ready_runtime_public_endpoint_line(&runtime).as_deref(),
-            Some("\n\n🦦 Endpoint: http://127.0.0.1:49153/\n\n")
+            Some("\n\n🦦 External: http://127.0.0.1:49153/\n🦦 Internal: http://0.0.0.0:3000/\n\n")
         );
     }
 

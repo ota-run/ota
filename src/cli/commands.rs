@@ -28764,7 +28764,8 @@ tasks:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Endpoint:    http://127.0.0.1:49153/"));
+        assert!(rendered.contains("External:    http://127.0.0.1:49153/"));
+        assert!(rendered.contains("Internal:    http://0.0.0.0:3000/"));
     }
 
     #[test]
@@ -28888,7 +28889,8 @@ tasks:
             "RUN SUMMARY",
         ));
 
-        assert!(rendered.contains("Endpoint:    http://127.0.0.1:49153/"));
+        assert!(rendered.contains("External:    http://127.0.0.1:49153/"));
+        assert!(rendered.contains("Internal:    http://0.0.0.0:3000/"));
         assert!(rendered.contains("Secondary:   1 additional endpoint(s)"));
     }
 
@@ -28992,7 +28994,8 @@ tasks:
             "RUN SUMMARY",
         ));
 
-        assert!(!rendered.contains("Endpoint:"), "{rendered}");
+        assert!(!rendered.contains("External:"), "{rendered}");
+        assert!(!rendered.contains("Internal:"), "{rendered}");
     }
 
     #[test]
@@ -29090,12 +29093,14 @@ tasks:
             rendered.contains("http (primary) 0.0.0.0:3000"),
             "rendered: {rendered}"
         );
-        assert!(rendered.contains("Endpoint: http://127.0.0.1:49153/"));
+        assert!(rendered.contains("External: http://127.0.0.1:49153/"));
+        assert!(rendered.contains("Internal: http://0.0.0.0:3000/"));
         assert!(
             rendered.contains("metrics (secondary) 0.0.0.0:9090"),
             "rendered: {rendered}"
         );
-        assert!(rendered.contains("Endpoint: http://127.0.0.1:49154/metrics"));
+        assert!(rendered.contains("External: http://127.0.0.1:49154/metrics"));
+        assert!(rendered.contains("Internal: http://0.0.0.0:9090/"));
     }
 
     #[test]
@@ -36271,7 +36276,12 @@ fn render_execution_receipt_summary_block(
         }
     }
     if let Some(endpoint) = primary_receipt_endpoint(receipt) {
-        lines.push(summary_detail_line("Endpoint:", &endpoint));
+        lines.push(summary_detail_line("External:", &endpoint));
+        if let Some(internal) = primary_receipt_internal_endpoint(receipt)
+            && internal != endpoint
+        {
+            lines.push(summary_detail_line("Internal:", &internal));
+        }
         let secondary_count = secondary_receipt_endpoint_count(receipt);
         if secondary_count > 0 {
             lines.push(summary_detail_line(
@@ -36564,9 +36574,18 @@ fn append_runtime_listener_lines(
         if let Some(endpoint) = endpoint_index.get(listener_name.as_str()) {
             stdout.push_str(&format!(
                 "\n{indent}  {} {}",
-                paint_key("Endpoint:"),
+                paint_key("External:"),
                 runtime_host_endpoint_text(&endpoint.host)
             ));
+            let internal = runtime_internal_endpoint_text(endpoint);
+            let external = runtime_host_endpoint_text(&endpoint.host);
+            if internal != external {
+                stdout.push_str(&format!(
+                    "\n{indent}  {} {}",
+                    paint_key("Internal:"),
+                    internal
+                ));
+            }
             continue;
         }
         if let Some(host) = listener
@@ -36576,7 +36595,7 @@ fn append_runtime_listener_lines(
         {
             stdout.push_str(&format!(
                 "\n{indent}  {} {}",
-                paint_key("Endpoint:"),
+                paint_key("External:"),
                 runtime_host_endpoint_text(host)
             ));
         }
@@ -36602,8 +36621,27 @@ fn primary_runtime_endpoint(runtime: &crate::runner::ResolvedTaskRuntime) -> Opt
         })
 }
 
+fn runtime_internal_endpoint_text(endpoint: &crate::runner::ResolvedTaskRuntimeEndpoint) -> String {
+    crate::runner::resolved_runtime_internal_endpoint_text(endpoint)
+}
+
 fn secondary_runtime_endpoint_count(runtime: &crate::runner::ResolvedTaskRuntime) -> usize {
     runtime.exposed_endpoints.len().saturating_sub(1)
+}
+
+fn primary_runtime_internal_endpoint(
+    runtime: &crate::runner::ResolvedTaskRuntime,
+) -> Option<String> {
+    runtime
+        .primary_endpoint
+        .as_ref()
+        .map(runtime_internal_endpoint_text)
+        .or_else(|| {
+            runtime
+                .exposed_endpoints
+                .first()
+                .map(runtime_internal_endpoint_text)
+        })
 }
 
 fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
@@ -36625,6 +36663,28 @@ fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
                 .workloads
                 .values()
                 .find_map(primary_runtime_endpoint)
+        })
+}
+
+fn primary_receipt_internal_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
+    if !receipt.ok
+        && !receipt
+            .service_termination
+            .as_ref()
+            .is_some_and(|termination| termination.after_readiness)
+    {
+        return None;
+    }
+
+    receipt
+        .runtime
+        .as_ref()
+        .and_then(primary_runtime_internal_endpoint)
+        .or_else(|| {
+            receipt
+                .workloads
+                .values()
+                .find_map(primary_runtime_internal_endpoint)
         })
 }
 
