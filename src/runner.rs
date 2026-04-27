@@ -6406,14 +6406,7 @@ pub(crate) fn resolve_effective_task_container_backend(
     task_name: &str,
     overrides: ExecutionOverrides,
     contract_path: Option<&Path>,
-) -> Result<
-    (
-        ContainerBackend,
-        String,
-        Option<ResolvedSharedLocalBackend>,
-    ),
-    RunError,
-> {
+) -> Result<(ContainerBackend, String, Option<ResolvedSharedLocalBackend>), RunError> {
     let effective = effective_task_execution(contract, task_name, overrides);
     let mut shared_local_backend =
         resolve_task_shared_local_backend(contract, task_name, Backend::Container)?;
