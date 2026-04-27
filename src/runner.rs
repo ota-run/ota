@@ -8388,7 +8388,10 @@ fn classify_container_service_termination(
     let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
         ServiceTerminationCause::OomKilled
     } else if let Some(inspected_exit_code) = inspected_exit_code {
-        if is_interrupt_exit_code(inspected_exit_code) {
+        if interrupted && (is_interrupt_exit_code(inspected_exit_code) || inspected_exit_code == 0)
+        {
+            ServiceTerminationCause::Interrupted
+        } else if is_interrupt_exit_code(inspected_exit_code) {
             ServiceTerminationCause::Interrupted
         } else if inspected_exit_code > 0 {
             ServiceTerminationCause::ExitedNonZero
@@ -18579,6 +18582,83 @@ tasks:
             service_termination.cause,
             super::ServiceTerminationCause::Interrupted
         );
+    }
+
+    #[test]
+    fn container_service_classification_prefers_observed_interrupt_over_clean_inspect_exit() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref());
+        let resolved_runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let service_termination = super::classify_container_service_termination(
+            runtime,
+            Some(&resolved_runtime),
+            true,
+            Some(&super::ContainerTerminationState {
+                exit_code: Some(0),
+                oom_killed: Some(false),
+            }),
+            0,
+            true,
+            "ota-ephemeral-test",
+        )
+        .expect("service termination should classify");
+
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::Interrupted
+        );
+        assert!(service_termination.after_readiness);
     }
 
     #[test]
