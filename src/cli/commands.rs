@@ -26844,6 +26844,9 @@ tasks:
 
     #[test]
     fn run_execution_receipt_uses_shared_local_backend_lifecycle_metadata() {
+        if crate::execution::available_container_engines().is_empty() {
+            return;
+        }
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"

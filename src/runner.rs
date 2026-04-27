@@ -13161,6 +13161,9 @@ tasks:
 
     #[test]
     fn shared_local_backend_resolution_keeps_publications_task_scoped() {
+        if crate::execution::available_container_engines().is_empty() {
+            return;
+        }
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -13251,6 +13254,9 @@ tasks:
 
     #[test]
     fn shared_local_backend_environment_profile_resolves_policy_image() {
+        if crate::execution::available_container_engines().is_empty() {
+            return;
+        }
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13524,6 +13530,9 @@ policies:
 
     #[test]
     fn shared_local_backend_environment_literal_image_keeps_compatibility() {
+        if crate::execution::available_container_engines().is_empty() {
+            return;
+        }
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -13597,6 +13606,9 @@ tasks:
 
     #[test]
     fn shared_local_backend_environment_uses_policy_default_profile_when_declared_empty() {
+        if crate::execution::available_container_engines().is_empty() {
+            return;
+        }
         let fixture = ContractFixture::new(
             r#"
 version: 1

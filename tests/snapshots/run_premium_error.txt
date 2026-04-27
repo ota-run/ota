@@ -12,10 +12,10 @@ Next:
 
 🦦 RUN SUMMARY
 
-Scope:     repo
-Path:      <TMP>
-Contract:  <TMP>/ota.yaml
-Mode:      native
-Task:      install:from:source
-Status:    failed
-Note:      running on the host environment; requested task
+Scope:       repo
+Path:        <TMP>
+Contract:    <TMP>/ota.yaml
+Mode:        native
+Task:        install:from:source
+Status:      failed
+Note:        running on the host environment; requested task

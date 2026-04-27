@@ -10,10 +10,10 @@ Next: use `ota run <task>` for isolated execution; use `ota up` for readiness on
 
 🦦 UP SUMMARY
 
-Scope:     repo
-Path:      .
-Contract:  ./ota.yaml
-Mode:      native
-Task:      post-setup diagnosis
-Status:    success
-Note:      running on the host environment
+Scope:       repo
+Path:        .
+Contract:    ./ota.yaml
+Mode:        native
+Task:        post-setup diagnosis
+Status:      success
+Note:        running on the host environment
