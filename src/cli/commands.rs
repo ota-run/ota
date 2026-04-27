@@ -22567,7 +22567,7 @@ tasks:
         assert_eq!(output.exit_code, 130);
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("INFO  Task interrupted"), "{stderr}");
-        assert!(stderr.contains("Status:    interrupted"), "{stderr}");
+        assert!(stderr.contains("Status:      interrupted"), "{stderr}");
         assert!(stderr.contains(".ota/state/logs/"), "{stderr}");
 
         let logs_root = repo.path().join(".ota").join("state").join("logs");
@@ -23887,7 +23887,7 @@ tasks:
             text.contains("this contract does not declare `execution.backends.container.image`")
         );
         assert!(text.contains("set `execution.backends.container.image` in the repo contract"));
-        assert!(text.contains("rerun `ota up`"));
+        assert!(text.contains("rerun `ota up"), "{text}");
     }
 
     #[test]
@@ -26230,7 +26230,7 @@ docker: Error response from daemon: failed to set up container networking: netwo
         assert!(text.contains("Phase: setup"));
         assert!(text.contains("Cause:"));
         assert!(text.contains("backend startup"));
-        assert!(!text.contains("Cause:     repo setup"));
+        assert!(!text.contains("Cause:       repo setup"));
         assert!(!text.contains("6c0d799bfdb2428e953d80057ba36bacbd14282aca68f5dc5ea3951bdc5053a7"));
         assert!(text.contains(
             "docker: Error response from daemon: failed to set up container networking: network local_default not found"
@@ -26343,7 +26343,7 @@ tasks:
         assert!(rendered.contains("Task Failed"));
         assert!(rendered.contains("`fail` exited with code 127"));
         assert!(rendered.contains("RUN SUMMARY"));
-        assert!(rendered.contains("Status:    failed"));
+        assert!(rendered.contains("Status:      failed"));
         assert!(rendered.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(!rendered.contains("Why: 🦦 RUN SUMMARY"));
         assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nScope:"));
@@ -27188,7 +27188,7 @@ tasks:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Status:    blocked"));
+        assert!(rendered.contains("Status:      blocked"));
     }
 
     #[test]
@@ -27233,7 +27233,7 @@ tasks:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Status:    failed"));
+        assert!(rendered.contains("Status:      failed"));
     }
 
     #[test]
@@ -27369,7 +27369,7 @@ tasks:
             Some("dev"),
             "RUN SUMMARY",
         ));
-        assert!(rendered.contains("Status:    failed"));
+        assert!(rendered.contains("Status:      failed"));
         assert!(rendered.contains("service stopped after readiness; container was OOM-killed"));
     }
 
@@ -27423,7 +27423,7 @@ tasks:
             Some("dev"),
             "RUN SUMMARY",
         ));
-        assert!(rendered.contains("Status:    failed"), "{rendered}");
+        assert!(rendered.contains("Status:      failed"), "{rendered}");
         assert!(
             rendered.contains("persistent container recreated (execution shape changed); service stopped after readiness; container exited with status 1"),
             "{rendered}"
@@ -27515,13 +27515,13 @@ tasks:
             }),
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
         assert!(rendered.contains("became ready at `http://127.0.0.1:3000/` and then stopped"));
         assert!(rendered.contains("was OOM-killed by the container engine"));
-        assert!(rendered.contains("Status:    failed"));
+        assert!(rendered.contains("Status:      failed"));
         assert!(rendered.contains("service stopped after readiness; container was OOM-killed"));
     }
 
@@ -27561,7 +27561,7 @@ tasks:
             }),
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
@@ -27575,8 +27575,8 @@ tasks:
             ),
             "{rendered}"
         );
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
-        assert!(!rendered.contains("Status:    failed"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+        assert!(!rendered.contains("Status:      failed"), "{rendered}");
         assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
     }
 
@@ -27616,7 +27616,7 @@ tasks:
             }),
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(
@@ -27627,8 +27627,8 @@ tasks:
             rendered.contains("service task `dev` was interrupted by user before it became ready"),
             "{rendered}"
         );
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
-        assert!(!rendered.contains("Status:    failed"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+        assert!(!rendered.contains("Status:      failed"), "{rendered}");
     }
 
     #[test]
@@ -27696,7 +27696,7 @@ tasks:
             None,
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
@@ -27742,7 +27742,7 @@ tasks:
             }),
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(
@@ -27788,7 +27788,7 @@ tasks:
             }),
             true,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
@@ -27796,9 +27796,9 @@ tasks:
             !rendered.contains("INFO  Service interrupted"),
             "{rendered}"
         );
-        assert!(rendered.contains("Status:    failed"), "{rendered}");
+        assert!(rendered.contains("Status:      failed"), "{rendered}");
         assert!(
-            rendered.contains("Note:      service stopped after readiness; container exited"),
+            rendered.contains("Note:        service stopped after readiness; container exited"),
             "{rendered}"
         );
     }
@@ -27843,14 +27843,14 @@ tasks:
             }),
             true,
             None,
-            "RUN SUMMARY\nTask:      dev:clean\nStatus:    interrupted\nNote:      service interrupted by user",
+            "RUN SUMMARY\nTask:        dev:clean\nStatus:      interrupted\nNote:        service interrupted by user",
         ));
 
         assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
         assert!(!rendered.contains("ERROR  Task Failed"), "{rendered}");
         assert!(rendered.contains("Task: dev"), "{rendered}");
-        assert!(rendered.contains("Task:      dev:clean"), "{rendered}");
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(rendered.contains("Task:        dev:clean"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
     }
 
     #[test]
@@ -27889,7 +27889,7 @@ tasks:
             }),
             false,
             None,
-            "RUN SUMMARY\nContainer: stale-summary-id\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nContainer: stale-summary-id\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(
@@ -27905,7 +27905,7 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("Container: ota-ephemeral-deadbeef"),
+            rendered.contains("Container:   ota-ephemeral-deadbeef"),
             "{rendered}"
         );
         assert!(
@@ -27958,14 +27958,14 @@ tasks:
                 port: 8080,
                 container: String::from("ota-persistent-deadbeef"),
             },
-            "RUN SUMMARY\nContainer: stale-summary-id\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nContainer: stale-summary-id\nStatus:      failed\nNote:        placeholder",
             None,
         ));
 
         assert!(rendered.contains("Listener bind conflict"), "{rendered}");
         assert!(rendered.contains("Field: tasks.dev.runtime.listeners.http.bind.port"));
         assert!(
-            rendered.contains("Container: ota-persistent-deadbeef"),
+            rendered.contains("Container:   ota-persistent-deadbeef"),
             "{rendered}"
         );
         assert!(
@@ -28037,7 +28037,7 @@ tasks:
             rendered.contains("task `dev` was interrupted by user"),
             "{rendered}"
         );
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
         assert!(
             rendered.contains("task interrupted by user; ephemeral container cleanup failed"),
             "{rendered}"
@@ -28104,12 +28104,12 @@ tasks:
             Some("dev"),
             "RUN SUMMARY",
         ));
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
         assert!(
             rendered.contains("service interrupted by user"),
             "{rendered}"
         );
-        assert!(!rendered.contains("Status:    failed"), "{rendered}");
+        assert!(!rendered.contains("Status:      failed"), "{rendered}");
     }
 
     #[test]
@@ -28163,7 +28163,7 @@ tasks:
             Some("dev"),
             "RUN SUMMARY",
         ));
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
     }
 
     #[test]
@@ -28219,8 +28219,8 @@ tasks:
             Some("dev"),
             "RUN SUMMARY",
         ));
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
-        assert!(!rendered.contains("Status:    success"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+        assert!(!rendered.contains("Status:      success"), "{rendered}");
     }
 
     #[test]
@@ -28466,7 +28466,7 @@ tasks:
             None,
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
@@ -28502,11 +28502,11 @@ tasks:
             None,
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("INFO  Task interrupted"), "{rendered}");
-        assert!(rendered.contains("Status:    interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
         assert!(!rendered.contains("ERROR  Task Failed"), "{rendered}");
     }
 
@@ -28539,7 +28539,7 @@ tasks:
             None,
             true,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
@@ -28557,7 +28557,7 @@ tasks:
             &[String::from(
                 "run `ota tasks --use` to inspect runnable task usage",
             )],
-            Some("RUN SUMMARY\nStatus:    failed"),
+            Some("RUN SUMMARY\nStatus:      failed"),
             None,
         ));
 
@@ -28584,7 +28584,7 @@ tasks:
             1,
             None,
             &[],
-            Some("RUN SUMMARY\nTask:      dev:clean\nStatus:    failed"),
+            Some("RUN SUMMARY\nTask:        dev:clean\nStatus:      failed"),
             None,
         ));
 
@@ -28607,7 +28607,7 @@ tasks:
             1,
             None,
             &[],
-            Some("RUN SUMMARY\nTask:      dev\nStatus:    failed"),
+            Some("RUN SUMMARY\nTask:        dev\nStatus:      failed"),
             None,
         ));
 
@@ -28648,7 +28648,7 @@ tasks:
             None,
             false,
             None,
-            "RUN SUMMARY\nStatus:    failed\nNote:      placeholder",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
         assert!(rendered.contains("Output:"), "{rendered}");
@@ -28761,7 +28761,7 @@ tasks:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Endpoint:  http://127.0.0.1:49153/"));
+        assert!(rendered.contains("Endpoint:    http://127.0.0.1:49153/"));
     }
 
     #[test]
@@ -28885,8 +28885,8 @@ tasks:
             "RUN SUMMARY",
         ));
 
-        assert!(rendered.contains("Endpoint:  http://127.0.0.1:49153/"));
-        assert!(rendered.contains("Secondary: 1 additional endpoint(s)"));
+        assert!(rendered.contains("Endpoint:    http://127.0.0.1:49153/"));
+        assert!(rendered.contains("Secondary:   1 additional endpoint(s)"));
     }
 
     #[test]
@@ -29148,8 +29148,8 @@ execution:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Mode:      container"));
-        assert!(rendered.contains("Image:     ghcr.io/ota/dev:latest"));
+        assert!(rendered.contains("Mode:        container"));
+        assert!(rendered.contains("Image:       ghcr.io/ota/dev:latest"));
         assert!(rendered.contains("Container:"));
     }
 
@@ -29190,7 +29190,7 @@ execution:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Mode:      native"));
+        assert!(rendered.contains("Mode:        native"));
         assert!(!rendered.contains("Image:"));
         assert!(!rendered.contains("Target:"));
     }
@@ -31806,7 +31806,7 @@ fn run_failure_reports_user_interruption(
     receipt_text: Option<&str>,
 ) -> bool {
     let summary_plain = strip_ansi_codes(summary_block);
-    let marker_indicates_interruption = summary_plain.contains("Status:    interrupted")
+    let marker_indicates_interruption = summary_has_status(summary_plain.as_str(), "interrupted")
         || summary_plain.contains("interrupted by user")
         || receipt_text.map(strip_ansi_codes).is_some_and(|text| {
             text.contains("interrupted by user") || text.contains("INTERRUPTED")
@@ -36429,8 +36429,15 @@ fn receipt_log_capture_warning(receipt: &ExecutionReceipt) -> Option<&str> {
 }
 
 fn summary_detail_line(label: &str, value: &str) -> String {
-    const SUMMARY_LABEL_WIDTH: usize = 14;
+    const SUMMARY_LABEL_WIDTH: usize = 12;
     format!("{label:<width$} {value}", width = SUMMARY_LABEL_WIDTH)
+}
+
+fn summary_has_status(summary_block: &str, expected_status: &str) -> bool {
+    summary_block.lines().any(|line| {
+        line.strip_prefix("Status:")
+            .is_some_and(|status| status.trim().eq_ignore_ascii_case(expected_status.trim()))
+    })
 }
 
 fn requested_task_target_resolutions<'a>(
