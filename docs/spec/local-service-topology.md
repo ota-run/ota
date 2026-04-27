@@ -302,14 +302,25 @@ different environment explicitly.
 - `manual` = resolve the target only
 - `ensure_ready` = if no explicit override input wins, ota may ensure the local producer service is
   already reachable before the consumer runs
+- service runtimes may declare `runtime.readiness` when “ready” must mean more than “the listener socket is open”
 
 Current `ensure_ready` constraints:
 
 - explicit operator override inputs skip producer auto-start
 - compatibility literal defaults do not satisfy `ensure_ready`
+- when the producer service task declares `runtime.readiness`, ota waits for that readiness contract before starting the consumer
 - the first shipped slice only auto-starts producer services that resolve to persistent container
   backends on the host-view path
 - unsupported producer shapes fail clearly instead of guessing orchestration
+
+Current `runtime.readiness` support for service tasks:
+
+- `kind: http`
+  - probe one declared listener through its projected host endpoint and wait for a `2xx` or `3xx`
+    response on the declared `path`
+- `kind: tcp`
+  - probe one declared listener through its projected host endpoint and wait until it accepts
+    connections
 
 Override precedence:
 
@@ -635,6 +646,10 @@ tasks:
     runtime:
       kind: service
       backend_binding: dev-stack
+      readiness:
+        kind: http
+        listener: http
+        path: /health
       listeners:
         http:
           protocol: http

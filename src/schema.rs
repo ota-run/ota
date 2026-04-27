@@ -1491,6 +1491,8 @@ pub struct TaskRuntimeSpec {
     #[serde(default)]
     pub backend_binding: Option<String>,
     #[serde(default)]
+    pub readiness: Option<TaskRuntimeReadinessSpec>,
+    #[serde(default)]
     pub listeners: BTreeMap<String, TaskRuntimeListenerSpec>,
 }
 
@@ -1498,6 +1500,23 @@ pub struct TaskRuntimeSpec {
 #[serde(rename_all = "snake_case")]
 pub enum TaskRuntimeKind {
     Service,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeReadinessSpec {
+    pub kind: TaskRuntimeReadinessKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRuntimeReadinessKind {
+    Http,
+    Tcp,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
