@@ -1611,6 +1611,7 @@ fn persistent_service_command_with_path_export(
     let pidfile = persistent_service_workload_pidfile_path(task_name);
     let statusfile = persistent_service_workload_statusfile_path(task_name);
     let logfile = persistent_service_workload_logfile_path(task_name);
+    let interruptfile = format!("{pidfile}.interrupted");
     let command = command_with_optional_path_export(command, path_export)
         .trim()
         .to_owned();
@@ -1623,12 +1624,23 @@ fn persistent_service_command_with_path_export(
         "pidfile={pidfile}; \
 statusfile={statusfile}; \
 logfile={logfile}; \
-cleanup() {{ rm -f \"$pidfile\" \"$statusfile\" \"$logfile\"; }}; \
+interruptfile={interruptfile}; \
+cleanup() {{ rm -f \"$pidfile\" \"$statusfile\" \"$logfile\" \"$interruptfile\"; }}; \
 read_pidfile() {{ [ -s \"$pidfile\" ] || return 1; read pid started < \"$pidfile\" || return 1; current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); [ -n \"$current\" ] && [ \"$current\" = \"$started\" ]; }}; \
-kill_workload() {{ read_pidfile || return 0; kill \"$pid\" 2>/dev/null || true; }}; \
+kill_workload() {{ \
+  read_pidfile || return 0; \
+  kill \"$pid\" 2>/dev/null || true; \
+  i=0; \
+  while read_pidfile && [ \"$i\" -lt 30 ]; do i=$((i + 1)); sleep 0.1; done; \
+  read_pidfile || return 0; \
+  kill -KILL \"$pid\" 2>/dev/null || true; \
+  i=0; \
+  while read_pidfile && [ \"$i\" -lt 20 ]; do i=$((i + 1)); sleep 0.1; done; \
+  return 0; \
+}}; \
 cleanup; : > \"$logfile\"; \
-interrupted=0; \
-trap 'interrupted=1; kill_workload' INT TERM; \
+tailpid=; \
+trap ': > \"$interruptfile\"; kill_workload; [ -n \"$tailpid\" ] && kill \"$tailpid\" 2>/dev/null || true; cleanup; exit 130' INT TERM; \
 nohup sh -c {wrapped_command} </dev/null >> \"$logfile\" 2>&1 & child=$!; \
 started=$(cut -d' ' -f22 \"/proc/$child/stat\" 2>/dev/null || true); \
 printf '%s %s\\n' \"$child\" \"$started\" > \"$pidfile\"; \
@@ -1636,12 +1648,14 @@ tail -n +1 -F \"$logfile\" & tailpid=$!; \
 while read_pidfile; do sleep 0.2; done; \
 kill \"$tailpid\" 2>/dev/null || true; \
 wait \"$tailpid\" 2>/dev/null || true; \
-if [ \"$interrupted\" -eq 1 ]; then cleanup; exit 130; fi; \
-status=$(cat \"$statusfile\" 2>/dev/null || printf '0'); \
+[ -f \"$interruptfile\" ] && {{ cleanup; exit 130; }}; \
+[ -f \"$statusfile\" ] || {{ cleanup; exit 1; }}; \
+status=$(cat \"$statusfile\" 2>/dev/null || printf '1'); \
 cleanup; exit \"$status\"",
         pidfile = shell_quote(&pidfile),
         statusfile = shell_quote(&statusfile),
         logfile = shell_quote(&logfile),
+        interruptfile = shell_quote(&interruptfile),
         wrapped_command = shell_quote(&format!(
             "trap 'kill 0' INT TERM; {command}; status=$?; printf '%s\\n' \"$status\" > {statusfile}; exit \"$status\"",
             statusfile = shell_quote(&statusfile),
@@ -10699,14 +10713,19 @@ fn exec_persistent_container_task_command(
                     source,
                 })?;
                 let interrupted = interruption_observed_since(interrupt_epoch);
+                let exit_code = normalize_persistent_service_interrupt_exit_code(
+                    runtime,
+                    interrupted,
+                    output.exit_code,
+                );
                 Ok(TaskCommandOutput {
-                    exit_code: output.exit_code,
+                    exit_code,
                     stdout: output.stdout,
                     stderr: output.stderr,
                     target: Some(container_name.to_string()),
                     runtime: None,
                     service_termination: None,
-                    execution_note: interruption_execution_note(interrupted, output.exit_code),
+                    execution_note: interruption_execution_note(interrupted, exit_code),
                     interrupted,
                 })
             } else {
@@ -10720,6 +10739,11 @@ fn exec_persistent_container_task_command(
                     source,
                 })?;
                 let interrupted = interruption_observed_since(interrupt_epoch);
+                let exit_code = normalize_persistent_service_interrupt_exit_code(
+                    runtime,
+                    interrupted,
+                    exit_code,
+                );
 
                 Ok(TaskCommandOutput {
                     exit_code,
@@ -10745,8 +10769,12 @@ fn exec_persistent_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-            let exit_code = output.status.code().unwrap_or(1);
             let interrupted = interruption_observed_since(interrupt_epoch);
+            let exit_code = normalize_persistent_service_interrupt_exit_code(
+                runtime,
+                interrupted,
+                output.status.code().unwrap_or(1),
+            );
             Ok(TaskCommandOutput {
                 exit_code,
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -10758,6 +10786,21 @@ fn exec_persistent_container_task_command(
                 interrupted,
             })
         }
+    }
+}
+
+fn normalize_persistent_service_interrupt_exit_code(
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    interrupted: bool,
+    exit_code: i32,
+) -> i32 {
+    if interrupted
+        && runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+        && !is_interrupt_exit_code(exit_code)
+    {
+        130
+    } else {
+        exit_code
     }
 }
 
@@ -18409,6 +18452,94 @@ tasks:
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
         assert_eq!(log.matches("exec").count(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_service_wrapper_fails_when_statusfile_is_never_written() {
+        let _guard = env_mutex_lock();
+        let task_name = "dev:statusfile-missing";
+        let pidfile = super::persistent_service_workload_pidfile_path(task_name);
+        let statusfile = super::persistent_service_workload_statusfile_path(task_name);
+        let logfile = super::persistent_service_workload_logfile_path(task_name);
+        let _ = fs::remove_file(&pidfile);
+        let _ = fs::remove_file(&statusfile);
+        let _ = fs::remove_file(&logfile);
+
+        let script =
+            super::persistent_service_command_with_path_export(task_name, "kill -KILL $$", None);
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .expect("wrapper should run");
+
+        assert_ne!(output.status.code().unwrap_or(1), 0);
+        assert!(
+            !Path::new(&pidfile).exists(),
+            "wrapper should clean pidfile after failure"
+        );
+        assert!(
+            !Path::new(&statusfile).exists(),
+            "wrapper should not leave a status file behind"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persistent_service_wrapper_interrupt_escalates_when_workload_ignores_term() {
+        let _guard = env_mutex_lock();
+        let task_name = "dev:ignore-term";
+        let pidfile = super::persistent_service_workload_pidfile_path(task_name);
+        let statusfile = super::persistent_service_workload_statusfile_path(task_name);
+        let logfile = super::persistent_service_workload_logfile_path(task_name);
+        let _ = fs::remove_file(&pidfile);
+        let _ = fs::remove_file(&statusfile);
+        let _ = fs::remove_file(&logfile);
+
+        let script = super::persistent_service_command_with_path_export(
+            task_name,
+            "trap '' TERM; while :; do sleep 1; done",
+            None,
+        );
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .spawn()
+            .expect("wrapper should start");
+
+        let pid = child.id();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let interrupt_status = std::process::Command::new("kill")
+            .args(["-INT", &pid.to_string()])
+            .status()
+            .expect("INT should send");
+        assert!(interrupt_status.success());
+
+        let mut exit_status: Option<std::process::ExitStatus> = None;
+        for _ in 0..80 {
+            if let Some(status) = child.try_wait().expect("wrapper wait should succeed") {
+                exit_status = Some(status);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if exit_status.is_none() {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .status();
+        }
+
+        let status = exit_status.expect("wrapper should exit after interrupt escalation");
+        assert_ne!(status.code(), Some(0));
+        assert!(
+            !Path::new(&pidfile).exists(),
+            "wrapper should remove pidfile after interrupt"
+        );
+        assert!(
+            !Path::new(&statusfile).exists(),
+            "wrapper should clean statusfile after interrupt"
+        );
     }
 
     #[test]
