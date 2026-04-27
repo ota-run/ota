@@ -29,7 +29,8 @@ use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExtensionKind,
     RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
     TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
-    TaskTargetAddressView, parse_memory_size_bytes, task_target_env_name,
+    TaskTargetActivationMode, TaskTargetAddressView, parse_memory_size_bytes,
+    task_target_env_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1101,6 +1102,14 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 | TaskTargetAddressView::Host
                 | TaskTargetAddressView::Internal => {}
             }
+
+            if target.activation.mode == TaskTargetActivationMode::EnsureReady
+                && target.service.task.trim() == name
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` target `{target_name}` cannot declare `activation.mode: ensure_ready` for `service.task: {name}`"
+                )));
+            }
         }
 
         let has_base_fields = task.run.is_some() || task.script.is_some();
@@ -1236,6 +1245,7 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
 
     validate_shared_local_backend_bindings(contract, errors);
     validate_container_runtime_publication_conflicts(contract, errors);
+    detect_task_target_activation_cycles(tasks, errors);
     detect_task_cycles(tasks, errors);
 }
 
@@ -2402,6 +2412,34 @@ fn detect_task_cycles(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Valid
     }
 }
 
+fn detect_task_target_activation_cycles(
+    tasks: &BTreeMap<String, TaskSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut visited = BTreeSet::new();
+    let mut cycle_roots = BTreeSet::new();
+
+    for (name, task) in tasks {
+        for dependency in task.targets.values().filter_map(|target| {
+            (target.activation.mode == TaskTargetActivationMode::EnsureReady)
+                .then_some(target.service.task.as_str())
+        }) {
+            if !tasks.contains_key(dependency) {
+                continue;
+            }
+            let mut active = vec![name.clone()];
+            visit_task_target_activation(
+                dependency,
+                tasks,
+                &mut visited,
+                &mut active,
+                &mut cycle_roots,
+                errors,
+            );
+        }
+    }
+}
+
 fn detect_service_cycles(
     services: &BTreeMap<String, ServiceSpec>,
     errors: &mut Vec<ValidationError>,
@@ -2468,6 +2506,69 @@ fn task_edges(task: &TaskSpec) -> impl Iterator<Item = &String> {
         .chain(task.after_success.iter())
         .chain(task.after_failure.iter())
         .chain(task.after_always.iter())
+}
+
+fn visit_task_target_activation(
+    name: &str,
+    tasks: &BTreeMap<String, TaskSpec>,
+    visited: &mut BTreeSet<String>,
+    active: &mut Vec<String>,
+    cycle_roots: &mut BTreeSet<String>,
+    errors: &mut Vec<ValidationError>,
+) {
+    if visited.contains(name) {
+        return;
+    }
+
+    if let Some(index) = active.iter().position(|task| task == name) {
+        let cycle = active[index..].to_vec();
+        if cycle_roots.insert(cycle[0].clone()) {
+            errors.push(ValidationError::new(format!(
+                "task target activation cycle detected: {} -> {}",
+                cycle.join(" -> "),
+                name
+            )));
+        }
+        return;
+    }
+
+    let Some(task) = tasks.get(name) else {
+        return;
+    };
+
+    active.push(name.to_string());
+
+    for dependency in task_edges(task) {
+        if tasks.contains_key(dependency) {
+            visit_task_target_activation(
+                dependency,
+                tasks,
+                visited,
+                active,
+                cycle_roots,
+                errors,
+            );
+        }
+    }
+
+    for dependency in task.targets.values().filter_map(|target| {
+        (target.activation.mode == TaskTargetActivationMode::EnsureReady)
+            .then_some(target.service.task.as_str())
+    }) {
+        if tasks.contains_key(dependency) {
+            visit_task_target_activation(
+                dependency,
+                tasks,
+                visited,
+                active,
+                cycle_roots,
+                errors,
+            );
+        }
+    }
+
+    active.pop();
+    visited.insert(name.to_string());
 }
 
 fn visit_service(
@@ -4388,6 +4489,193 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_task_target_activation_ensure_ready_for_self_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    targets:
+      self_api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "cannot declare `activation.mode: ensure_ready` for `service.task: dev`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_task_target_activation_cycles() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    targets:
+      sandbox_api:
+        service:
+          task: sandbox
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+    targets:
+      dev_api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("task target activation cycle detected")
+        }));
+    }
+
+    #[test]
+    fn rejects_mixed_task_dependency_and_activation_cycles() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    depends_on:
+      - sandbox
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+    targets:
+      dev_api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("task target activation cycle detected")
+        }));
     }
 
     #[test]

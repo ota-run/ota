@@ -26499,6 +26499,10 @@ tasks:
                 target: String::from("api"),
                 override_input: Some(String::from("base_url")),
                 source: TaskTargetResolutionSource::TargetBinding,
+                activation: Some(crate::runner::TaskTargetActivationEvidence {
+                    mode: crate::schema::TaskTargetActivationMode::EnsureReady,
+                    status: crate::runner::TaskTargetActivationStatus::StartedReady,
+                }),
                 service_ref: crate::runner::TaskTargetResolutionServiceRef {
                     task: String::from("dev"),
                     listener: String::from("http"),
@@ -26519,11 +26523,17 @@ tasks:
             json["steps"][0]["target_resolutions"][0]["source"],
             "target_binding"
         );
+        assert_eq!(
+            json["steps"][0]["target_resolutions"][0]["activation"]["status"],
+            "started_ready"
+        );
 
         let rendered =
             render_execution_receipt_summary_block(&receipt, Some("sandbox"), "RUN SUMMARY");
         assert!(rendered.contains("Target api:"));
-        assert!(rendered.contains("service(dev.http) -> http://127.0.0.1:8080 (target binding)"));
+        assert!(rendered.contains(
+            "service(dev.http) -> http://127.0.0.1:8080 (target binding; activation ensure_ready started_ready)"
+        ));
     }
 
     #[test]
@@ -26665,6 +26675,7 @@ tasks:
                 target: String::from("api"),
                 override_input: Some(String::from("base_url")),
                 source: TaskTargetResolutionSource::TargetBinding,
+                activation: None,
                 service_ref: crate::runner::TaskTargetResolutionServiceRef {
                     task: String::from("dev"),
                     listener: String::from("http"),
@@ -27132,6 +27143,7 @@ tasks:
                 target: String::from("api"),
                 override_input: Some(String::from("base_url")),
                 source: TaskTargetResolutionSource::TargetBinding,
+                activation: None,
                 service_ref: crate::runner::TaskTargetResolutionServiceRef {
                     task: String::from("dev"),
                     listener: String::from("http"),

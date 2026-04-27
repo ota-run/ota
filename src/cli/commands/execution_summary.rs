@@ -140,7 +140,7 @@ pub(super) fn render_execution_receipt_summary_block(
                 resolution.service_ref.task,
                 resolution.service_ref.listener,
                 resolution.effective_url,
-                target_resolution_source_label(resolution)
+                crate::runner::render_target_resolution_source_and_activation_label(resolution)
             ),
         ));
     }
@@ -363,16 +363,6 @@ fn backend_fulfillment_result_label(
         crate::runner::BackendFulfillmentResult::MissingRequirements => "missing_requirements",
         crate::runner::BackendFulfillmentResult::Fulfilled => "fulfilled",
         crate::runner::BackendFulfillmentResult::Failed => "failed",
-    }
-}
-
-fn target_resolution_source_label(resolution: &TaskTargetResolutionEvidence) -> &'static str {
-    match resolution.source {
-        crate::runner::TaskTargetResolutionSource::ExplicitOverride => "user override",
-        crate::runner::TaskTargetResolutionSource::TargetBinding => "target binding",
-        crate::runner::TaskTargetResolutionSource::CompatibilityLiteralDefault => {
-            "compatibility literal default"
-        }
     }
 }
 

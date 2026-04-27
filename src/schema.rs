@@ -1606,6 +1606,8 @@ pub struct TaskTargetSpec {
     pub service: TaskTargetServiceRefSpec,
     #[serde(default)]
     pub override_input: Option<String>,
+    #[serde(default)]
+    pub activation: TaskTargetActivationSpec,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -1615,6 +1617,21 @@ pub struct TaskTargetServiceRefSpec {
     pub listener: String,
     #[serde(default)]
     pub address_view: TaskTargetAddressView,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTargetActivationSpec {
+    #[serde(default)]
+    pub mode: TaskTargetActivationMode,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTargetActivationMode {
+    #[default]
+    Manual,
+    EnsureReady,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

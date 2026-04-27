@@ -990,6 +990,9 @@ Task target binding semantics:
 - optional `override_input` points at a declared task input used as an explicit operator override channel
   - use it when an operator may intentionally point the consumer at another target such as staging, preview, or a separately started local app
   - value must name an input declared on the same consuming task
+- optional `activation.mode` controls whether ota should ensure the local producer service is ready before the consumer task runs
+  - `manual` = resolve target only; never auto-start the producer
+  - `ensure_ready` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if already reachable or start it and wait until ready
 - resolution precedence is:
   - explicit `override_input` value supplied by the operator
   - resolved target binding URL
@@ -997,10 +1000,16 @@ Task target binding semantics:
 - when `override_input` is omitted, resolved target bindings are exported to task execution as
   `OTA_TARGET_<TARGET>` (for example target `api` -> `OTA_TARGET_API`)
 - `ota run` records target-resolution evidence in run receipts JSON under `receipt.steps[*].target_resolutions`
+- target-activation evidence is recorded alongside target resolution under `receipt.steps[*].target_resolutions[*].activation`
 - topology resolution rules are:
   - native caller: resolves from declared fixed `project.host` endpoint
   - container caller: resolves only when caller and producer share one declared `runtime.backend_binding` local backend; ota resolves to the producer fixed bind endpoint inside that shared boundary
   - unresolved topology and all `internal` views fail clearly at run time without host/bridge guessing
+- current `activation.mode: ensure_ready` constraints:
+  - explicit operator override inputs skip producer auto-start and preserve the override value
+  - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_ready` was requested
+  - the first shipped slice supports actual producer auto-start only for producer tasks that resolve to persistent container service backends on the host-view path
+  - unsupported producer backend shapes fail clearly instead of guessing orchestration
 
 Shared local backend semantics:
 

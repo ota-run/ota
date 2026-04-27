@@ -283,6 +283,7 @@ Optional fields:
 
 - `address_view`
 - `override_input`
+- `activation`
 
 Allowed `address_view` values:
 
@@ -295,6 +296,20 @@ execution shape.
 
 `override_input` is optional but recommended when operators may need to point the task at a
 different environment explicitly.
+
+`activation.mode` is optional:
+
+- `manual` = resolve the target only
+- `ensure_ready` = if no explicit override input wins, ota may ensure the local producer service is
+  already reachable before the consumer runs
+
+Current `ensure_ready` constraints:
+
+- explicit operator override inputs skip producer auto-start
+- compatibility literal defaults do not satisfy `ensure_ready`
+- the first shipped slice only auto-starts producer services that resolve to persistent container
+  backends on the host-view path
+- unsupported producer shapes fail clearly instead of guessing orchestration
 
 Override precedence:
 
