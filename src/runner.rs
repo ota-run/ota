@@ -1591,12 +1591,26 @@ fn persistent_service_workload_pidfile_path(task_name: &str) -> String {
     format!("/tmp/ota-service-{:x}.pid", hasher.finish())
 }
 
+fn persistent_service_workload_statusfile_path(task_name: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    task_name.hash(&mut hasher);
+    format!("/tmp/ota-service-{:x}.status", hasher.finish())
+}
+
+fn persistent_service_workload_logfile_path(task_name: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    task_name.hash(&mut hasher);
+    format!("/tmp/ota-service-{:x}.log", hasher.finish())
+}
+
 fn persistent_service_command_with_path_export(
     task_name: &str,
     command: &str,
     path_export: Option<&str>,
 ) -> String {
     let pidfile = persistent_service_workload_pidfile_path(task_name);
+    let statusfile = persistent_service_workload_statusfile_path(task_name);
+    let logfile = persistent_service_workload_logfile_path(task_name);
     let command = command_with_optional_path_export(command, path_export)
         .trim()
         .to_owned();
@@ -1607,15 +1621,32 @@ fn persistent_service_command_with_path_export(
     };
     format!(
         "pidfile={pidfile}; \
-cleanup() {{ rm -f \"$pidfile\"; }}; \
+statusfile={statusfile}; \
+logfile={logfile}; \
+cleanup() {{ rm -f \"$pidfile\" \"$statusfile\" \"$logfile\"; }}; \
 read_pidfile() {{ [ -s \"$pidfile\" ] || return 1; read pid started < \"$pidfile\" || return 1; current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); [ -n \"$current\" ] && [ \"$current\" = \"$started\" ]; }}; \
-trap 'kill 0' INT TERM; \
-{command} & child=$!; \
+kill_workload() {{ read_pidfile || return 0; kill \"$pid\" 2>/dev/null || true; }}; \
+cleanup; : > \"$logfile\"; \
+interrupted=0; \
+trap 'interrupted=1; kill_workload' INT TERM; \
+nohup sh -c {wrapped_command} </dev/null >> \"$logfile\" 2>&1 & child=$!; \
 started=$(cut -d' ' -f22 \"/proc/$child/stat\" 2>/dev/null || true); \
 printf '%s %s\\n' \"$child\" \"$started\" > \"$pidfile\"; \
-wait \"$child\"; status=$?; cleanup; exit $status",
+tail -n +1 -F \"$logfile\" & tailpid=$!; \
+while read_pidfile; do sleep 0.2; done; \
+kill \"$tailpid\" 2>/dev/null || true; \
+wait \"$tailpid\" 2>/dev/null || true; \
+if [ \"$interrupted\" -eq 1 ]; then cleanup; exit 130; fi; \
+status=$(cat \"$statusfile\" 2>/dev/null || printf '0'); \
+cleanup; exit \"$status\"",
         pidfile = shell_quote(&pidfile),
-        command = command,
+        statusfile = shell_quote(&statusfile),
+        logfile = shell_quote(&logfile),
+        wrapped_command = shell_quote(&format!(
+            "trap 'kill 0' INT TERM; {command}; status=$?; printf '%s\\n' \"$status\" > {statusfile}; exit \"$status\"",
+            statusfile = shell_quote(&statusfile),
+            command = command,
+        )),
     )
 }
 
