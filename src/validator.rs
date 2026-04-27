@@ -29,7 +29,8 @@ use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExtensionKind,
     RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
     TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, parse_memory_size_bytes, task_target_env_name,
+    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, parse_memory_size_bytes,
+    task_target_env_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1061,6 +1062,16 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "task `{name}` target `{target_name}` references unknown listener `{}` on service task `{service_task_name}`",
                         target.service.listener
                     )));
+                } else {
+                    validate_task_target_activation_shape(
+                        contract,
+                        name,
+                        target_name,
+                        target,
+                        service_task_name,
+                        service_task,
+                        errors,
+                    );
                 }
             } else {
                 errors.push(ValidationError::new(format!(
@@ -1374,6 +1385,45 @@ fn task_declares_listener(task: &TaskSpec, listener_name: &str) -> bool {
     })
 }
 
+fn validate_task_target_activation_shape(
+    contract: &Contract,
+    task_name: &str,
+    target_name: &str,
+    target: &TaskTargetSpec,
+    service_task_name: &str,
+    service_task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if target.activation.mode != TaskTargetActivationMode::EnsureReady {
+        return;
+    }
+
+    let backend = task_execution_backend(contract, service_task, Backend::Native);
+    let Some(runtime) = service_task.service_runtime_for_backend(backend) else {
+        return;
+    };
+    let Some(readiness) = runtime.readiness.as_ref() else {
+        return;
+    };
+    let readiness_listener_name = readiness
+        .listener
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(target.service.listener.as_str());
+    let Some(listener) = runtime.listeners.get(readiness_listener_name) else {
+        return;
+    };
+    let Some(host) = listener.project.host.as_ref() else {
+        return;
+    };
+    if host.port.mode != TaskRuntimeHostPortMode::Fixed || host.port.value.is_none() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready`, but producer task `{service_task_name}` runtime readiness listener `{readiness_listener_name}` does not declare a fixed `project.host.port.value`"
+        )));
+    }
+}
+
 fn validate_task_default_mode_resolution(
     contract: &Contract,
     task_name: &str,
@@ -1540,6 +1590,7 @@ fn validate_task_runtime(
     }
 
     validate_runtime_listener_env_suffix_collisions(task_name, runtime, errors);
+    validate_task_runtime_readiness(task_name, runtime, errors);
 
     for (listener_name, listener) in &runtime.listeners {
         if listener_name.trim().is_empty() {
@@ -1620,6 +1671,89 @@ fn validate_task_runtime(
             errors.push(ValidationError::new(format!(
                     "task `{task_name}` runtime service listeners are not supported on remote execution contexts yet"
                 )));
+        }
+    }
+}
+
+fn validate_task_runtime_readiness(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(readiness) = runtime.readiness.as_ref() else {
+        return;
+    };
+
+    let listener_name = readiness.listener.as_deref().map(str::trim);
+    let referenced_listener = listener_name.and_then(|name| runtime.listeners.get(name));
+
+    match readiness.kind {
+        crate::schema::TaskRuntimeReadinessKind::Http => {
+            let Some(listener_name) = listener_name.filter(|name| !name.is_empty()) else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: http` must declare `readiness.listener`"
+                )));
+                return;
+            };
+            let Some(listener) = referenced_listener else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness references unknown listener `{listener_name}`"
+                )));
+                return;
+            };
+            if !matches!(listener.protocol, crate::schema::TaskRuntimeProtocol::Http) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: http` requires listener `{listener_name}` to use `protocol: http`"
+                )));
+            }
+            let Some(path) = readiness.path.as_deref().map(str::trim) else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: http` must declare `readiness.path`"
+                )));
+                return;
+            };
+            if path.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: http` must not use an empty `readiness.path`"
+                )));
+            } else if !path.starts_with('/') {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `path` must start with `/`"
+                )));
+            }
+            if listener.project.host.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness listener `{listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
+                )));
+            }
+        }
+        crate::schema::TaskRuntimeReadinessKind::Tcp => {
+            let Some(listener_name) = listener_name.filter(|name| !name.is_empty()) else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: tcp` must declare `readiness.listener`"
+                )));
+                return;
+            };
+            let Some(listener) = referenced_listener else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness references unknown listener `{listener_name}`"
+                )));
+                return;
+            };
+            if readiness
+                .path
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.path`"
+                )));
+            }
+            if listener.project.host.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness listener `{listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
+                )));
+            }
         }
     }
 }
@@ -3174,6 +3308,52 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
                 "declares multiple listeners with `project.host.primary: true` (`http`, `metrics`)",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_http_runtime_readiness_without_matching_listener_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "runtime readiness listener `http` must declare `project.host`; runtime readiness currently probes projected host endpoints",
             )
         }));
     }
@@ -5288,6 +5468,58 @@ tasks:
             error
                 .to_string()
                 .contains("references unknown listener `admin` on service task `dev`")
+        }));
+    }
+
+    #[test]
+    fn rejects_ensure_ready_when_producer_readiness_listener_uses_auto_host_port() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "uses `activation.mode: ensure_ready`, but producer task `dev` runtime readiness listener `http` does not declare a fixed `project.host.port.value`",
+            )
         }));
     }
 

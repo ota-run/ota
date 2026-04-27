@@ -820,6 +820,10 @@ tasks:
     run: pnpm dev
     runtime:
       kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
       listeners:
         http:
           protocol: http
@@ -993,6 +997,7 @@ Task target binding semantics:
 - optional `activation.mode` controls whether ota should ensure the local producer service is ready before the consumer task runs
   - `manual` = resolve target only; never auto-start the producer
   - `ensure_ready` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if already reachable or start it and wait until ready
+- service runtimes may declare `runtime.readiness` when “ready” must mean more than “the socket is accepting connections”
 - resolution precedence is:
   - explicit `override_input` value supplied by the operator
   - resolved target binding URL
@@ -1008,8 +1013,21 @@ Task target binding semantics:
 - current `activation.mode: ensure_ready` constraints:
   - explicit operator override inputs skip producer auto-start and preserve the override value
   - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_ready` was requested
+  - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract instead of treating an open listener socket as sufficient
   - the first shipped slice supports actual producer auto-start only for producer tasks that resolve to persistent container service backends on the host-view path
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
+
+Current `runtime.readiness` support for service tasks:
+
+- `kind: http`
+  - requires `listener`
+  - requires `path`
+  - requires the referenced listener to declare `project.host`
+  - ota waits for a `2xx` or `3xx` response from that projected host endpoint
+- `kind: tcp`
+  - requires `listener`
+  - requires the referenced listener to declare `project.host`
+  - ota waits until the projected host endpoint accepts TCP connections
 
 Shared local backend semantics:
 
