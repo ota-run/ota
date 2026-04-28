@@ -12152,7 +12152,7 @@ tasks:
         );
         assert!(
             stderr.contains(
-                "Note:        depends_on task `typecheck` failed for requested task `build`"
+                "running on the host environment; depends_on task `typecheck` failed for requested task `build`"
             ),
             "{stderr}"
         );
