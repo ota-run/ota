@@ -1,0 +1,114 @@
+#
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+version: 1
+project:
+  name: shared-local-topology
+  description: Minimal shared local backend example showing truthful internal target binding for a co-located helper app
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: pnpm dev:api
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 8080
+              path: /
+  sandbox:
+    inputs:
+      base_url:
+        description: Override the API target when the helper should point somewhere else explicitly
+    run: pnpm dev:sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        override_input: base_url
+agent:
+  entrypoint: dev
+  default_task: sandbox
+  safe_tasks:
+    - dev
+    - sandbox
+  verify_after_changes:
+    - sandbox
+  writable_paths:
+    - src
+    - docs
+  protected_paths:
+    - ota.yaml
+  notes: |
+    Use `address_view: internal` only when the helper truly shares the producer backend boundary.
+    Use `address_view: topology` when ota should choose the best reachable local address for the current caller shape.
