@@ -26613,7 +26613,8 @@ tasks:
         assert!(rendered.contains("Status:      failed"));
         assert!(rendered.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(!rendered.contains("Why: 🦦 RUN SUMMARY"));
-        assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nTask:"));
+        assert!(rendered.contains("🦦 RUN SUMMARY"));
+        assert!(rendered.contains("Scope:"));
     }
 
     #[test]
@@ -32123,6 +32124,15 @@ fn task_cli_alias(task_name: &str) -> String {
 }
 
 fn failed_task_name(executed_steps: &[ExecutedTaskStep], requested_task: &str) -> String {
+    failed_execution_step(executed_steps, requested_task)
+        .map(|step| step.name.clone())
+        .unwrap_or_else(|| requested_task.to_string())
+}
+
+fn failed_execution_step<'a>(
+    executed_steps: &'a [ExecutedTaskStep],
+    requested_task: &str,
+) -> Option<&'a ExecutedTaskStep> {
     let requested_step_index = executed_steps.iter().position(|step| {
         step.name == requested_task && matches!(step.relation, TaskExecutionRelation::Requested)
     });
@@ -32130,22 +32140,49 @@ fn failed_task_name(executed_steps: &[ExecutedTaskStep], requested_task: &str) -
     if let Some(index) = requested_step_index {
         let requested_step = &executed_steps[index];
         if requested_step.exit_code != 0 {
-            return requested_step.name.clone();
+            return Some(requested_step);
         }
 
         return executed_steps
             .iter()
             .skip(index + 1)
-            .find(|step| step.exit_code != 0)
-            .map(|step| step.name.clone())
-            .unwrap_or_else(|| requested_task.to_string());
+            .find(|step| step.exit_code != 0);
     }
 
-    executed_steps
-        .iter()
-        .find(|step| step.exit_code != 0)
-        .map(|step| step.name.clone())
-        .unwrap_or_else(|| requested_task.to_string())
+    executed_steps.iter().find(|step| step.exit_code != 0)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExecutionReceiptFailureContext {
+    failed_task: String,
+    failed_dependency: Option<String>,
+    failure_origin: String,
+}
+
+fn execution_receipt_failure_context(
+    executed_steps: &[ExecutedTaskStep],
+    requested_task: &str,
+    ok: bool,
+) -> Option<ExecutionReceiptFailureContext> {
+    if ok {
+        return None;
+    }
+
+    let failed_step = failed_execution_step(executed_steps, requested_task)?;
+    match &failed_step.relation {
+        TaskExecutionRelation::DependsOn { .. } if failed_step.name != requested_task => {
+            Some(ExecutionReceiptFailureContext {
+                failed_task: requested_task.to_string(),
+                failed_dependency: Some(failed_step.name.clone()),
+                failure_origin: String::from("dependency"),
+            })
+        }
+        _ => Some(ExecutionReceiptFailureContext {
+            failed_task: failed_step.name.clone(),
+            failed_dependency: None,
+            failure_origin: String::from("task"),
+        }),
+    }
 }
 
 fn render_run_captured_failure_text(
@@ -34014,6 +34051,8 @@ fn run_execution_receipt_with_shared(
         })
         .collect::<Vec<_>>();
     let step_count = steps.len();
+    let status = aggregate_execution_summary_status(ok, &steps, &[]);
+    let failure_context = execution_receipt_failure_context(executed_steps, task_name, ok);
 
     ExecutionReceipt {
         ok,
@@ -34048,6 +34087,14 @@ fn run_execution_receipt_with_shared(
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, contract_path, backend),
         steps,
+        status: Some(status),
+        failed_task: failure_context.as_ref().map(|context| context.failed_task.clone()),
+        failed_dependency: failure_context
+            .as_ref()
+            .and_then(|context| context.failed_dependency.clone()),
+        failure_origin: failure_context
+            .as_ref()
+            .map(|context| context.failure_origin.clone()),
         blocked: Vec::new(),
         summary: ExecutionReceiptSummary {
             error_count: if ok { 0 } else { 1 },
@@ -38222,9 +38269,11 @@ fn repo_execution_receipt(
         detail,
         exit_code,
     ));
+    let ok = status == "READY" && exit_code.unwrap_or(0) == 0;
+    let receipt_status = aggregate_execution_summary_status(ok, &steps, &[]);
 
     ExecutionReceipt {
-        ok: status == "READY" && exit_code.unwrap_or(0) == 0,
+        ok,
         path: path.display().to_string(),
         scope: String::from("repo"),
         contract: path.display().to_string(),
@@ -38256,6 +38305,10 @@ fn repo_execution_receipt(
         workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, path, execution_backend),
         steps,
+        status: Some(receipt_status),
+        failed_task: None,
+        failed_dependency: None,
+        failure_origin: None,
         blocked: Vec::new(),
         summary: execution_receipt_summary(findings, 1, None, None, None),
         next,
@@ -38873,9 +38926,11 @@ fn workspace_up_receipt(
         .flat_map(|repo| repo.findings.iter())
         .map(|finding| finding.next.clone())
         .find(|next| !next.trim().is_empty());
+    let ok = repos.iter().all(|repo| repo.ok || !repo.required);
+    let receipt_status = aggregate_execution_summary_status(ok, &steps, &blocked);
 
     ExecutionReceipt {
-        ok: repos.iter().all(|repo| repo.ok || !repo.required),
+        ok,
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
@@ -38900,6 +38955,10 @@ fn workspace_up_receipt(
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
+        status: Some(receipt_status),
+        failed_task: None,
+        failed_dependency: None,
+        failure_origin: None,
         blocked,
         summary: execution_receipt_summary(
             &findings,
@@ -38945,9 +39004,11 @@ fn workspace_status_receipt(
         .flat_map(|repo| repo.findings.iter())
         .map(|finding| finding.next.clone())
         .find(|next| !next.trim().is_empty());
+    let ok = report.repos.iter().all(|repo| !repo.required || repo.ready);
+    let receipt_status = aggregate_execution_summary_status(ok, &steps, &[]);
 
     ExecutionReceipt {
-        ok: report.repos.iter().all(|repo| !repo.required || repo.ready),
+        ok,
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
@@ -38969,6 +39030,10 @@ fn workspace_status_receipt(
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
+        status: Some(receipt_status),
+        failed_task: None,
+        failed_dependency: None,
+        failure_origin: None,
         blocked: Vec::new(),
         summary: execution_receipt_summary(
             &findings,
@@ -39020,9 +39085,11 @@ fn workspace_run_receipt(
         .flat_map(|repo| repo.findings.iter())
         .map(|finding| finding.next.clone())
         .find(|next| !next.trim().is_empty());
+    let ok = repos.iter().all(|repo| repo.ok || !repo.required);
+    let receipt_status = aggregate_execution_summary_status(ok, &steps, &blocked);
 
     ExecutionReceipt {
-        ok: repos.iter().all(|repo| repo.ok || !repo.required),
+        ok,
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
@@ -39047,6 +39114,10 @@ fn workspace_run_receipt(
         workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
+        status: Some(receipt_status),
+        failed_task: None,
+        failed_dependency: None,
+        failure_origin: None,
         blocked,
         summary: execution_receipt_summary(
             &findings,

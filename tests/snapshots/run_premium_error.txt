@@ -18,4 +18,5 @@ Contract:    <TMP>/ota.yaml
 Mode:        native
 Task:        install:from:source
 Status:      failed
-Note:        running on the host environment; requested task
+Note:        running on the host environment
+Next:        inspect the task output excerpt and rerun `ota run install:from:source --stream`

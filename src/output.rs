@@ -344,6 +344,14 @@ pub struct ExecutionReceipt {
     pub policy: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<ExecutionReceiptStep>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_dependency: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_origin: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub blocked: Vec<String>,
     pub summary: ExecutionReceiptSummary,
