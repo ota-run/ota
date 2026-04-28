@@ -265,6 +265,7 @@ execution:
     app:
       backend: container
       lifecycle: persistent
+      fulfillment: run
       container:
         image: ghcr.io/ota/dev:latest
       requirements:
@@ -1068,6 +1069,21 @@ Shared local backend semantics:
   - policy may govern allowed/denied `source` classes and registries for the effective backend image
   - `fulfillment: none` fails clearly when required runtimes or tools are missing, while `fulfillment: run` attempts approved provisioning before any bound task body or dependency task uses that backend
 - later slices are expected to relax some of that strictness by extending the same model, not by replacing it with guessed addressing or implicit backend-sharing behavior
+
+Direct container-context fulfillment semantics:
+
+- `execution.contexts.<name>.fulfillment` is valid only for `backend: container`
+- valid values are:
+  - `none`
+  - `run`
+- `fulfillment: run` tells ota to satisfy declared context requirements on the actual `ota run` path when policy-approved provisioning is available
+- current slice behavior:
+  - persistent container contexts are fulfilled immediately against the resolved persistent execution container
+  - ephemeral container contexts are fulfilled inside the same named ephemeral execution container before the task body runs
+  - this first direct-ephemeral slice currently supports non-service task execution only; ota does not yet claim service-task run-path fulfillment for direct ephemeral container contexts
+- validation rules:
+  - `backend: native` contexts must not declare `fulfillment`
+  - `backend: remote` contexts must not declare `fulfillment`
 
 Example:
 

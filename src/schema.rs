@@ -231,6 +231,8 @@ struct ExecutionContextWire {
     #[serde(default)]
     lifecycle: Option<Lifecycle>,
     #[serde(default)]
+    fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    #[serde(default)]
     container: Option<ContainerBackendWire>,
     #[serde(default)]
     remote: Option<RemoteBackendWire>,
@@ -300,6 +302,7 @@ struct RemoteBackendWire {
 struct ExecutionContextMerged {
     backend: Option<Backend>,
     lifecycle: Option<Lifecycle>,
+    fulfillment: Option<ExecutionLocalBackendFulfillment>,
     container: Option<ContainerBackendMerged>,
     remote: Option<RemoteBackendMerged>,
     requirements: ExecutionContextRequirements,
@@ -481,6 +484,9 @@ fn merge_execution_context(target: &mut ExecutionContextMerged, source: &Executi
     if let Some(lifecycle) = source.lifecycle {
         target.lifecycle = Some(lifecycle);
     }
+    if let Some(fulfillment) = source.fulfillment {
+        target.fulfillment = Some(fulfillment);
+    }
     if let Some(container) = source.container.as_ref() {
         let merged = target
             .container
@@ -583,6 +589,7 @@ fn finalize_execution_context(
     Ok(ExecutionContext {
         backend,
         lifecycle: merged.lifecycle,
+        fulfillment: merged.fulfillment,
         container,
         remote,
         requirements: merged.requirements,
@@ -669,6 +676,8 @@ pub struct ExecutionContext {
     pub backend: Backend,
     #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
+    #[serde(default)]
+    pub fulfillment: Option<ExecutionLocalBackendFulfillment>,
     #[serde(default)]
     pub container: Option<ContainerBackend>,
     #[serde(default)]

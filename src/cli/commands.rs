@@ -26668,7 +26668,7 @@ tasks:
                 },
                 generation: 0,
                 execution_note: Some(String::from(
-                    "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080/` (target binding)",
+                    "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080` (target binding)",
                 )),
             }],
             &[vec![TaskTargetResolutionEvidence {
@@ -26709,7 +26709,7 @@ tasks:
             },
             generation: 0,
             execution_note: Some(String::from(
-                "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080/` (target binding)",
+                "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080` (target binding)",
             )),
         };
 
@@ -27136,7 +27136,7 @@ tasks:
                 },
                 generation: 0,
                 execution_note: Some(String::from(
-                    "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080/` (target binding)",
+                    "target `api` declared `service(dev.http)` -> `http://127.0.0.1:8080` (target binding)",
                 )),
             }],
             &[vec![TaskTargetResolutionEvidence {

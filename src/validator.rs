@@ -26,9 +26,10 @@ use crate::execution::{
     format_lifecycle, matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
 use crate::schema::{
-    AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExtensionKind,
-    RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
-    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext,
+    ExecutionLocalBackendFulfillment, ExtensionKind, Lifecycle, RuntimeRequirement, ServiceSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
     TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, parse_memory_size_bytes,
     task_target_env_name,
 };
@@ -383,6 +384,11 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "`execution.contexts.{name}.backend: native` must not declare `lifecycle`"
                     )));
                 }
+                if context.fulfillment.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: native` must not declare `fulfillment`"
+                    )));
+                }
                 if context.container.is_some() {
                     errors.push(ValidationError::new(format!(
                         "`execution.contexts.{name}.backend: native` must not declare `container` settings"
@@ -430,6 +436,11 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     )));
                     continue;
                 };
+                if context.fulfillment.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: remote` must not declare `fulfillment`"
+                    )));
+                }
 
                 let provider = remote.provider.trim();
                 if provider.is_empty() {
@@ -1165,6 +1176,7 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 errors,
             );
         }
+        validate_task_direct_container_context_fulfillment(contract, name, task, errors);
 
         let mut seen_variant_os = BTreeSet::new();
         for (index, variant) in task.variants.iter().enumerate() {
@@ -1422,6 +1434,30 @@ fn validate_task_target_activation_shape(
             "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready`, but producer task `{service_task_name}` runtime readiness listener `{readiness_listener_name}` does not declare a fixed `project.host.port.value`"
         )));
     }
+}
+
+fn validate_task_direct_container_context_fulfillment(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if task.service_runtime_for_backend(Backend::Container).is_none() {
+        return;
+    }
+
+    let Some(context) = resolved_task_context_for_backend(contract, task, Backend::Container) else {
+        return;
+    };
+    if context.fulfillment != Some(ExecutionLocalBackendFulfillment::Run)
+        || context.lifecycle != Some(Lifecycle::Ephemeral)
+    {
+        return;
+    }
+
+    errors.push(ValidationError::new(format!(
+        "task `{task_name}` cannot use `execution.contexts.<name>.fulfillment: run` with an ephemeral container service runtime; use a persistent container context or remove run-path fulfillment"
+    )));
 }
 
 fn validate_task_default_mode_resolution(
@@ -2975,6 +3011,79 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
                 "`execution.contexts.app.backend: container` requires `execution.contexts.app.container.image`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_native_named_context_with_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      fulfillment: run
+tasks:
+  dev:
+    context: host
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("`execution.contexts.host.backend: native` must not declare `fulfillment`")
+        }));
+    }
+
+    #[test]
+    fn rejects_ephemeral_container_service_context_with_run_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: dev
+  contexts:
+    dev:
+      backend: container
+      lifecycle: ephemeral
+      fulfillment: run
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: dev
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "task `dev` cannot use `execution.contexts.<name>.fulfillment: run` with an ephemeral container service runtime",
             )
         }));
     }
