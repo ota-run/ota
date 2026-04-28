@@ -268,11 +268,8 @@ fn activation_loader_label(
     readiness_target: &RuntimeReadinessTarget,
 ) -> String {
     match readiness_target {
-        RuntimeReadinessTarget::Http { path, .. } => {
-            format!("Waiting for {producer_task_name} to become ready at {path}")
-        }
-        RuntimeReadinessTarget::Tcp { .. } => {
-            format!("Waiting for {producer_task_name} to become tcp-ready")
+        RuntimeReadinessTarget::Http { .. } | RuntimeReadinessTarget::Tcp { .. } => {
+            format!("Waiting for {producer_task_name} to be ready")
         }
     }
 }
@@ -3956,7 +3953,9 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     };
 
     if plan.strategy == BackendFulfillmentStrategy::Immediate
-        && let Some(existing) = state.fulfilled_backend_units.get(plan.backend_unit.as_str())
+        && let Some(existing) = state
+            .fulfilled_backend_units
+            .get(plan.backend_unit.as_str())
     {
         return Ok(BackendFulfillmentPreparation {
             evidence: Some(existing.clone()),
@@ -4209,7 +4208,8 @@ fn backend_fulfillment_plan(
     let Some(context_name) = context_name.as_deref() else {
         return Ok(None);
     };
-    let Some((_, context)) = selected_task_context_for_backend(contract, task_name, Backend::Container)
+    let Some((_, context)) =
+        selected_task_context_for_backend(contract, task_name, Backend::Container)
     else {
         return Ok(None);
     };
@@ -4220,34 +4220,36 @@ fn backend_fulfillment_plan(
         ExecutionLocalBackendFulfillment::None => BackendFulfillmentMode::None,
         ExecutionLocalBackendFulfillment::Run => BackendFulfillmentMode::Run,
     };
-    let (declared_runtimes, declared_tools) = direct_context_requirement_versions(
-        contract,
-        context_name,
-        target_os.as_str(),
-    )
-    .map_err(|details| RunError::BackendFulfillmentFailed {
-        task: task_name.to_string(),
-        backend_unit: format!("context:{context_name}"),
-        details,
-        evidence: BackendFulfillmentEvidence {
-            backend_unit: format!("context:{context_name}"),
-            backend: String::from("container"),
-            mode,
-            declared_runtimes: BTreeMap::new(),
-            declared_tools: BTreeMap::new(),
-            missing: Vec::new(),
-            actions: Vec::new(),
-            result: BackendFulfillmentResult::Failed,
-            task_executed: false,
-        },
-    })?;
-    let requirement_surface = requirement_surface_from_versions(&declared_runtimes, &declared_tools);
+    let (declared_runtimes, declared_tools) =
+        direct_context_requirement_versions(contract, context_name, target_os.as_str()).map_err(
+            |details| RunError::BackendFulfillmentFailed {
+                task: task_name.to_string(),
+                backend_unit: format!("context:{context_name}"),
+                details,
+                evidence: BackendFulfillmentEvidence {
+                    backend_unit: format!("context:{context_name}"),
+                    backend: String::from("container"),
+                    mode,
+                    declared_runtimes: BTreeMap::new(),
+                    declared_tools: BTreeMap::new(),
+                    missing: Vec::new(),
+                    actions: Vec::new(),
+                    result: BackendFulfillmentResult::Failed,
+                    task_executed: false,
+                },
+            },
+        )?;
+    let requirement_surface =
+        requirement_surface_from_versions(&declared_runtimes, &declared_tools);
     let strategy = match lifecycle {
         Lifecycle::Persistent => BackendFulfillmentStrategy::Immediate,
         Lifecycle::Ephemeral => BackendFulfillmentStrategy::DeferredEphemeralContainer,
     };
     let provisioning_target = if strategy == BackendFulfillmentStrategy::Immediate {
-        Some(provisioning_target_for_resolved_backend(contract_path, backend)?)
+        Some(provisioning_target_for_resolved_backend(
+            contract_path,
+            backend,
+        )?)
     } else {
         None
     };
@@ -4516,7 +4518,12 @@ fn detect_missing_named_container_requirements(
     let mut missing = Vec::new();
 
     for (name, required_version) in runtimes {
-        match probe_named_container_command_version(engine, container_name, task_name, name.as_str()) {
+        match probe_named_container_command_version(
+            engine,
+            container_name,
+            task_name,
+            name.as_str(),
+        ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Runtime,
                 name: name.clone(),
@@ -4632,7 +4639,14 @@ fn probe_named_container_command_version(
     );
     let output = container_command_output(
         engine,
-        &["exec", "-i", container_name, "sh", "-lc", probe_command.as_str()],
+        &[
+            "exec",
+            "-i",
+            container_name,
+            "sh",
+            "-lc",
+            probe_command.as_str(),
+        ],
         None,
         task_name,
     )
@@ -4830,7 +4844,10 @@ fn source_managed_remaining_gap_covered(
             && matches!(
                 (&gap.kind, action.target_kind),
                 (ProvisioningTargetKind::Tool, ProvisioningTargetKind::Tool)
-                    | (ProvisioningTargetKind::Runtime, ProvisioningTargetKind::Runtime)
+                    | (
+                        ProvisioningTargetKind::Runtime,
+                        ProvisioningTargetKind::Runtime
+                    )
             )
     })
 }
@@ -4843,11 +4860,20 @@ fn provisioning_action_effective_version(action: &ProvisioningAction) -> &str {
         .unwrap_or(action.requested_version.as_str())
 }
 
-fn wrap_command_for_source_managed_actions(command: &str, actions: &[ProvisioningAction]) -> String {
+fn wrap_command_for_source_managed_actions(
+    command: &str,
+    actions: &[ProvisioningAction],
+) -> String {
     let mise_targets = actions
         .iter()
         .filter(|action| action.source == "mise")
-        .map(|action| format!("{}@{}", action.install_name(), provisioning_action_effective_version(action)))
+        .map(|action| {
+            format!(
+                "{}@{}",
+                action.install_name(),
+                provisioning_action_effective_version(action)
+            )
+        })
         .collect::<Vec<_>>();
     if mise_targets.is_empty() {
         return command.to_string();
@@ -4893,9 +4919,7 @@ fn install_source_managed_tool_wrappers(
             return Err(RunError::BackendFulfillmentFailed {
                 task: task_name.to_string(),
                 backend_unit: format!("context-wrapper:{container_name}"),
-                details: format!(
-                    "failed to materialize source-managed tool wrapper for `{tool}`"
-                ),
+                details: format!("failed to materialize source-managed tool wrapper for `{tool}`"),
                 evidence: BackendFulfillmentEvidence {
                     backend_unit: format!("context-wrapper:{container_name}"),
                     backend: String::from("container"),
@@ -4903,7 +4927,10 @@ fn install_source_managed_tool_wrappers(
                     declared_runtimes: BTreeMap::new(),
                     declared_tools: BTreeMap::new(),
                     missing: vec![format!("tool `{tool}` wrapper installation failed")],
-                    actions: vec![format!("tool {tool} {} via {}", action.requested_version, action.source)],
+                    actions: vec![format!(
+                        "tool {tool} {} via {}",
+                        action.requested_version, action.source
+                    )],
                     result: BackendFulfillmentResult::Failed,
                     task_executed: false,
                 },
@@ -6067,13 +6094,7 @@ fn format_task_target_host_endpoint(
         } else {
             normalized_path.as_str()
         };
-        format!(
-            "{}://{}:{}{}",
-            scheme,
-            address.trim(),
-            port,
-            path_suffix
-        )
+        format!("{}://{}:{}{}", scheme, address.trim(), port, path_suffix)
     } else {
         format!("{}:{}", address.trim(), port)
     }
@@ -10178,7 +10199,9 @@ fn execute_fulfilled_ephemeral_container_task_command(
         });
     }
 
-    if let Some(failure) = ensure_container_networks(engine, &container_name, compose_networks, task_name)? {
+    if let Some(failure) =
+        ensure_container_networks(engine, &container_name, compose_networks, task_name)?
+    {
         let _ = remove_persistent_container(engine, &container_name, task_name);
         return Ok(container_command_failure(failure, container_name));
     }
@@ -10258,10 +10281,9 @@ fn execute_fulfilled_ephemeral_container_task_command(
         });
     }
 
-    let deferred_path_export = source_managed_tool_wrappers_required(
-        &deferred_backend_fulfillment.actions,
-    )
-    .then(|| source_managed_tool_wrapper_path_export(path_export));
+    let deferred_path_export =
+        source_managed_tool_wrappers_required(&deferred_backend_fulfillment.actions)
+            .then(|| source_managed_tool_wrapper_path_export(path_export));
     let wrapped_command =
         wrap_command_for_source_managed_actions(command, &deferred_backend_fulfillment.actions);
     let output_result = exec_persistent_container_task_command(
@@ -10344,7 +10366,9 @@ fn create_idle_ephemeral_container(
         repo_ownership_token,
         dependency_isolation_paths,
     )? {
-        create.arg("-v").arg(format!("{volume_name}:{container_path}"));
+        create
+            .arg("-v")
+            .arg(format!("{volume_name}:{container_path}"));
     }
     append_container_publication_args(&mut create, publications);
     append_container_memory_arg(&mut create, memory_bytes);
@@ -18730,7 +18754,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                     path: String::from("/actuator/health"),
                 }
             ),
-            "Waiting for dev to become ready at /actuator/health"
+            "Waiting for dev to be ready"
         );
     }
 
@@ -26522,7 +26546,10 @@ exit 0
             "'/tmp/ota-managed-tools/bin:'\"$PATH\""
         );
         assert_eq!(
-            super::command_with_optional_path_export("echo hi", Some("/tmp/ota-managed-tools/bin:$PATH")),
+            super::command_with_optional_path_export(
+                "echo hi",
+                Some("/tmp/ota-managed-tools/bin:$PATH")
+            ),
             "export PATH='/tmp/ota-managed-tools/bin:'\"$PATH\"; echo hi"
         );
     }

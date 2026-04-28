@@ -1007,6 +1007,9 @@ Task target binding semantics:
   `OTA_TARGET_<TARGET>` (for example target `api` -> `OTA_TARGET_API`)
 - `ota run` records target-resolution evidence in run receipts JSON under `receipt.steps[*].target_resolutions`
 - target-activation evidence is recorded alongside target resolution under `receipt.steps[*].target_resolutions[*].activation`
+  - human meaning:
+    - `started_ready` = ota started the producer and waited for readiness
+    - `reused_ready` = ota found the producer already ready and reused it
 - topology resolution rules are:
   - native caller: resolves from declared fixed `project.host` endpoint
   - container caller: resolves only when caller and producer share one declared `runtime.backend_binding` local backend; ota resolves to the producer fixed bind endpoint inside that shared boundary
@@ -1059,6 +1062,11 @@ Shared local backend semantics:
   - backend-scoped run-path fulfillment when the group declares `fulfillment: run`
   - receipt evidence in `receipt.steps[*].shared_local_backend` (`name`, `backend`, `lifecycle`, declared environment intent, effective profile/image/source/registry, effective identity, and reuse state when known)
   - receipt evidence in `receipt.steps[*].backend_fulfillment` when ota probes or prepares the backend
+    - human meaning:
+      - `requirements_satisfied` = the backend already had what the contract required
+      - `fulfilled` = ota had to provision something and finished successfully
+      - `missing_requirements` = requirements were missing and the contract/policy did not allow run-path fulfillment
+      - `failed` = ota attempted fulfillment or setup, but it did not complete successfully
   - `ota execution plan`, `ota run`, and run receipts all resolve the same effective backend image for explicit-context and inferred-context shared backend groups
 - validation rules include:
   - binding must reference declared `execution.local_backends.<name>`
