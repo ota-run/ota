@@ -12593,7 +12593,7 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("`setup` exited with code 127"));
         assert!(stderr.contains(
-            "Why: requested task `ci` failed because dependency step `setup` returned a non-zero exit code"
+            "Why: requested task `ci` failed because depends_on task `setup` returned a non-zero exit code"
         ));
         assert!(!stderr.contains("`ci` exited with code 127"));
         assert!(!stderr.contains("Why: task `ci` returned a non-zero exit code"));
