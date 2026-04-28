@@ -27702,7 +27702,7 @@ tasks:
         ));
         assert!(
             rendered.contains(
-                "Note:        depends_on task `typecheck` failed for requested task `build`"
+                "Note:        running on the host environment; depends_on task `typecheck` failed for requested task `build`"
             ),
             "{rendered}"
         );
