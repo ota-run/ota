@@ -4245,7 +4245,9 @@ fn remote_provisioning_target(
             cwd: cwd.clone(),
             context_name: remote_context_name.map(str::to_string),
         }),
-        ResolvedExecutionBackend::Native | ResolvedExecutionBackend::Container { .. } => None,
+        ResolvedExecutionBackend::Native { .. } | ResolvedExecutionBackend::Container { .. } => {
+            None
+        }
     }
 }
 

@@ -238,7 +238,7 @@ fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
 
 fn backend_loader_suffix(backend: &ResolvedExecutionBackend) -> &'static str {
     match backend {
-        ResolvedExecutionBackend::Native => "",
+        ResolvedExecutionBackend::Native { .. } => "",
         ResolvedExecutionBackend::Container { .. } => " (container)",
         ResolvedExecutionBackend::Remote { .. }
         | ResolvedExecutionBackend::BackendProvider { .. } => " (remote)",
@@ -2741,6 +2741,7 @@ enum TaskExecutionMode {
         live_log: Option<StreamLogTee>,
     },
     Capture,
+    CaptureActivation,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -2886,7 +2887,9 @@ struct PreparedContainerRuntimeProjection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResolvedExecutionBackend {
-    Native,
+    Native {
+        shared_local_backend: Option<ResolvedSharedLocalBackend>,
+    },
     Container {
         context_name: Option<String>,
         shared_local_backend: Option<ResolvedSharedLocalBackend>,
@@ -2924,7 +2927,7 @@ pub(crate) struct ResolvedSharedLocalBackend {
 
 fn resolved_execution_backend_kind(backend: &ResolvedExecutionBackend) -> Backend {
     match backend {
-        ResolvedExecutionBackend::Native => Backend::Native,
+        ResolvedExecutionBackend::Native { .. } => Backend::Native,
         ResolvedExecutionBackend::Container { .. } => Backend::Container,
         ResolvedExecutionBackend::Remote { .. }
         | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
@@ -2937,6 +2940,9 @@ fn execution_overrides_for_resolved_backend(
     ExecutionOverrides {
         backend: Some(resolved_execution_backend_kind(backend)),
         lifecycle: match backend {
+            ResolvedExecutionBackend::Native {
+                shared_local_backend: Some(shared_local_backend),
+            } => Some(shared_local_backend.lifecycle),
             ResolvedExecutionBackend::Container { lifecycle, .. } => Some(*lifecycle),
             _ => None,
         },
@@ -2977,7 +2983,8 @@ fn run_task_internal(
             emit_progress: false,
             ..
         }
-        | TaskExecutionMode::Capture => None,
+        | TaskExecutionMode::Capture
+        | TaskExecutionMode::CaptureActivation => None,
     };
     let working_dir = contract_working_dir(contract_path);
     let backend = match resolve_execution_backend_with_contract_path(
@@ -3242,7 +3249,7 @@ fn run_host_shell_command(
                     .map_err(|error| format!("failed to execute `{command}`: {error}"))
             }
         }
-        TaskExecutionMode::Capture => shell_command(command)
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => shell_command(command)
             .current_dir(working_dir)
             .stdin(Stdio::inherit())
             .stdout(Stdio::piped())
@@ -3820,7 +3827,7 @@ fn execute_task_command(
     preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
 
     match backend {
-        ResolvedExecutionBackend::Native => execute_native_task_command(
+        ResolvedExecutionBackend::Native { .. } => execute_native_task_command(
             task_name,
             runtime,
             command,
@@ -4223,6 +4230,62 @@ fn backend_fulfillment_plan(
     backend: &ResolvedExecutionBackend,
     host_port_override: Option<u16>,
 ) -> Result<Option<BackendFulfillmentPlan>, RunError> {
+    if let ResolvedExecutionBackend::Native {
+        shared_local_backend: Some(shared_local_backend),
+    } = backend
+    {
+        let Some(fulfillment) = shared_local_backend.fulfillment else {
+            return Ok(None);
+        };
+        let mode = match fulfillment {
+            ExecutionSharedBackendFulfillment::None => BackendFulfillmentMode::None,
+            ExecutionSharedBackendFulfillment::Run => BackendFulfillmentMode::Run,
+        };
+        let target_os = current_os().to_string();
+        let (declared_runtimes, declared_tools) = shared_local_backend_requirement_versions(
+            contract,
+            shared_local_backend.name.as_str(),
+            Backend::Native,
+            target_os.as_str(),
+        )
+        .map_err(|details| RunError::BackendFulfillmentFailed {
+            task: task_name.to_string(),
+            backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+            details,
+            evidence: BackendFulfillmentEvidence {
+                backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+                backend: String::from("native"),
+                mode,
+                declared_runtimes: BTreeMap::new(),
+                declared_tools: BTreeMap::new(),
+                missing: Vec::new(),
+                actions: Vec::new(),
+                result: BackendFulfillmentResult::Failed,
+                task_executed: false,
+            },
+        })?;
+        let backend_unit = format!("shared_local_backend:{}", shared_local_backend.name);
+        let provisioning_target = Some(provisioning_target_for_resolved_backend(
+            contract_path,
+            backend,
+        )?);
+        return Ok(Some(BackendFulfillmentPlan {
+            cache_key: backend_fulfillment_cache_key(
+                backend_unit.clone(),
+                provisioning_target.as_ref(),
+            ),
+            backend_unit,
+            backend_label: String::from("native"),
+            mode,
+            strategy: BackendFulfillmentStrategy::Immediate,
+            target_os,
+            declared_runtimes,
+            declared_tools,
+            probe_backend: backend.clone(),
+            provisioning_target,
+        }));
+    }
+
     let ResolvedExecutionBackend::Container {
         context_name,
         shared_local_backend,
@@ -4976,7 +5039,7 @@ fn provisioning_target_for_resolved_backend(
     backend: &ResolvedExecutionBackend,
 ) -> Result<ProvisioningExecutionTarget, RunError> {
     match backend {
-        ResolvedExecutionBackend::Native => Ok(ProvisioningExecutionTarget::Native),
+        ResolvedExecutionBackend::Native { .. } => Ok(ProvisioningExecutionTarget::Native),
         ResolvedExecutionBackend::Container {
             context_name,
             shared_local_backend,
@@ -5041,7 +5104,9 @@ fn provisioning_target_for_resolved_backend(
 
 fn backend_fulfillment_output_mode(mode: TaskExecutionMode) -> ProvisioningOutputMode {
     match mode {
-        TaskExecutionMode::Capture => ProvisioningOutputMode::Capture,
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
+            ProvisioningOutputMode::Capture
+        }
         TaskExecutionMode::Stream { .. } => ProvisioningOutputMode::StreamAndCapture,
     }
 }
@@ -5585,26 +5650,70 @@ fn ensure_target_producer_ready(
         return Ok(TaskTargetActivationStatus::ReusedReady);
     }
 
-    if !matches!(
-        producer_backend,
-        ResolvedExecutionBackend::Container {
-            lifecycle: Lifecycle::Persistent,
-            ..
+    let producer_backend_kind = resolved_execution_backend_kind(&producer_backend);
+    let producer_activation_mode = match producer_backend_kind {
+        Backend::Native => {
+            #[cfg(not(unix))]
+            {
+                if let Some(loader) = loader.take() {
+                    loader.stop();
+                }
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `ensure_ready` currently supports native producer services only on unix-like hosts; `{producer_task_name}` resolves to `native`"
+                    ),
+                });
+            }
+            TaskExecutionMode::CaptureActivation
         }
-    ) {
+        Backend::Container
+            if matches!(
+                producer_backend,
+                ResolvedExecutionBackend::Container {
+                    lifecycle: Lifecycle::Persistent,
+                    ..
+                }
+            ) =>
+        {
+            TaskExecutionMode::Capture
+        }
+        Backend::Container | Backend::Remote => {
+            if let Some(loader) = loader.take() {
+                loader.stop();
+            }
+            let backend_label = match producer_backend_kind {
+                Backend::Native => "native",
+                Backend::Container => "container",
+                Backend::Remote => "remote",
+            };
+            return Err(RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details: format!(
+                    "target activation `ensure_ready` currently supports only persistent container or unix native producer services; `{producer_task_name}` resolves to `{backend_label}`"
+                ),
+            });
+        }
+    };
+    if producer_backend_kind == Backend::Container
+        && !matches!(
+            producer_backend,
+            ResolvedExecutionBackend::Container {
+                lifecycle: Lifecycle::Persistent,
+                ..
+            }
+        )
+    {
         if let Some(loader) = loader.take() {
             loader.stop();
         }
-        let backend_label = match resolved_execution_backend_kind(&producer_backend) {
-            Backend::Native => "native",
-            Backend::Container => "container",
-            Backend::Remote => "remote",
-        };
         return Err(RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
             target: target_name.to_string(),
             details: format!(
-                "target activation `ensure_ready` currently supports only persistent container producer services; `{producer_task_name}` resolves to `{backend_label}`"
+                "target activation `ensure_ready` currently supports only persistent container producer services; `{producer_task_name}` resolves to `container`"
             ),
         });
     }
@@ -5634,7 +5743,7 @@ fn ensure_target_producer_ready(
             ExecutionOverrides::default(),
             producer_policy_env.as_ref(),
             &producer_backend_clone,
-            TaskExecutionMode::Capture,
+            producer_activation_mode,
             producer_working_dir.as_path(),
             producer_current_os.as_str(),
             TaskExecutionRelation::Requested,
@@ -6582,24 +6691,40 @@ fn shared_local_backend_evidence_from_step(
     backend: &ResolvedExecutionBackend,
     command_output: &TaskCommandOutput,
 ) -> Option<SharedLocalBackendEvidence> {
-    let ResolvedExecutionBackend::Container {
-        shared_local_backend: Some(shared_local_backend),
-        ..
-    } = backend
-    else {
-        return None;
+    let shared_local_backend = match backend {
+        ResolvedExecutionBackend::Native {
+            shared_local_backend: Some(shared_local_backend),
+        }
+        | ResolvedExecutionBackend::Container {
+            shared_local_backend: Some(shared_local_backend),
+            ..
+        } => shared_local_backend,
+        _ => return None,
     };
 
-    let effective_identity = command_output.target.clone().unwrap_or_else(|| {
-        format!(
-            "local-backend:{}:{}",
+    let effective_identity = match backend {
+        ResolvedExecutionBackend::Native { .. } => format!(
+            "shared-backend:{}:{}:native",
             shared_local_backend.name,
             shared_local_backend
                 .context_name
                 .as_deref()
                 .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
-        )
-    });
+        ),
+        ResolvedExecutionBackend::Container { .. } => {
+            command_output.target.clone().unwrap_or_else(|| {
+                format!(
+                    "local-backend:{}:{}",
+                    shared_local_backend.name,
+                    shared_local_backend
+                        .context_name
+                        .as_deref()
+                        .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
+                )
+            })
+        }
+        _ => unreachable!(),
+    };
 
     Some(SharedLocalBackendEvidence {
         name: shared_local_backend.name.clone(),
@@ -6612,10 +6737,13 @@ fn shared_local_backend_evidence_from_step(
         context: shared_local_backend.context_name.clone(),
         environment: shared_local_backend.environment.clone(),
         effective_identity,
-        reuse: command_output
-            .execution_note
-            .as_deref()
-            .and_then(shared_local_backend_reuse_from_note),
+        reuse: match backend {
+            ResolvedExecutionBackend::Container { .. } => command_output
+                .execution_note
+                .as_deref()
+                .and_then(shared_local_backend_reuse_from_note),
+            _ => None,
+        },
     })
 }
 
@@ -6985,7 +7113,7 @@ fn preflight_host_port_override(
 
     if !matches!(backend, ResolvedExecutionBackend::Container { .. }) {
         let backend = match backend {
-            ResolvedExecutionBackend::Native => "native",
+            ResolvedExecutionBackend::Native { .. } => "native",
             ResolvedExecutionBackend::Container { .. } => "container",
             ResolvedExecutionBackend::Remote { .. } => "remote",
             ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
@@ -7904,7 +8032,11 @@ fn resolve_task_shared_local_backend(
         backend: shared_backend.backend,
         lifecycle: shared_backend.lifecycle,
         context_name,
-        publications: shared_local_backend_publications(contract, binding_name),
+        publications: if backend == Backend::Container {
+            shared_local_backend_publications(contract, binding_name)
+        } else {
+            Vec::new()
+        },
         fulfillment: shared_backend.fulfillment,
         environment: None,
     }))
@@ -8273,7 +8405,26 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
                     backend: "native",
                 });
             }
-            Ok(ResolvedExecutionBackend::Native)
+            let shared_local_backend =
+                resolve_task_shared_local_backend(contract, task_name, Backend::Native)?;
+            if let Some(shared_local_backend) = shared_local_backend.as_ref() {
+                if let Some(requested) = overrides.lifecycle
+                    && requested != shared_local_backend.lifecycle
+                {
+                    return Err(RunError::SharedLocalBackendResolutionFailed {
+                        task: task_name.to_string(),
+                        binding: shared_local_backend.name.clone(),
+                        details: format!(
+                            "requested lifecycle `{}` conflicts with declared shared backend lifecycle `{}`",
+                            format_lifecycle(requested),
+                            format_lifecycle(shared_local_backend.lifecycle),
+                        ),
+                    });
+                }
+            }
+            Ok(ResolvedExecutionBackend::Native {
+                shared_local_backend,
+            })
         }
         Backend::Container => {
             let (container, image, shared_local_backend) =
@@ -8452,7 +8603,9 @@ pub(crate) fn resolve_context_execution_backend(
     };
 
     match context.backend {
-        Backend::Native => Ok(ResolvedExecutionBackend::Native),
+        Backend::Native => Ok(ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        }),
         Backend::Container => {
             let Some(container) = context.container.as_ref() else {
                 return Err(RunError::MissingContainerImage {
@@ -8724,7 +8877,7 @@ fn execute_remote_task_command(
                 })
             }
         }
-        TaskExecutionMode::Capture => {
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let output = remote_command
                 .stdin(Stdio::inherit())
@@ -8904,7 +9057,7 @@ fn execute_backend_provider_task_command(
             let response = parse_backend_provider_response(task_name, provider, &stdout)?;
             backend_provider_output(task_name, provider, target, response)
         }
-        TaskExecutionMode::Capture => {
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             provider_env.insert(
                 String::from("OTA_BACKEND_PROVIDER_MODE"),
                 String::from("capture"),
@@ -9020,7 +9173,7 @@ fn backend_provider_request<'a>(
             command: task_command,
             mode: match mode {
                 TaskExecutionMode::Stream { .. } => "stream",
-                TaskExecutionMode::Capture => "capture",
+                TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => "capture",
             },
             target,
             cwd,
@@ -9190,6 +9343,9 @@ fn execute_native_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let mut process = shell_command(command);
     process.current_dir(working_dir).envs(env_overrides.iter());
+    let activation_service_pidfile = matches!(mode, TaskExecutionMode::CaptureActivation)
+        .then(|| persistent_service_workload_pidfile_path(task_name))
+        .filter(|_| runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service));
 
     match mode {
         TaskExecutionMode::Stream {
@@ -9238,7 +9394,7 @@ fn execute_native_task_command(
                     })
                 });
 
-                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
+                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
                 let status = child.wait().map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
@@ -9308,7 +9464,7 @@ fn execute_native_task_command(
                 } else {
                     None
                 };
-                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
+                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
                 let status = child.wait().map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
@@ -9338,8 +9494,22 @@ fn execute_native_task_command(
                 })
             }
         }
-        TaskExecutionMode::Capture => {
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
+            if matches!(mode, TaskExecutionMode::CaptureActivation)
+                && runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+            {
+                #[cfg(not(unix))]
+                {
+                    return Err(RunError::InvalidTaskExecution {
+                        task: task_name.to_string(),
+                    });
+                }
+                process = shell_command(&persistent_service_command_with_path_export(
+                    task_name, command, None,
+                ));
+                process.current_dir(working_dir).envs(env_overrides.iter());
+            }
             let mut child = process
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
@@ -9357,7 +9527,12 @@ fn execute_native_task_command(
                 thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true, None))
             });
 
-            let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
+            let runtime = resolve_native_task_runtime(
+                runtime,
+                task_name,
+                &mut child,
+                activation_service_pidfile.as_deref(),
+            )?;
             let status = child.wait().map_err(|source| RunError::SpawnFailed {
                 task: task_name.to_string(),
                 source,
@@ -9393,6 +9568,7 @@ fn resolve_native_task_runtime(
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     task_name: &str,
     child: &mut Child,
+    activation_service_pidfile: Option<&str>,
 ) -> Result<Option<ResolvedTaskRuntime>, RunError> {
     let Some(runtime) = runtime else {
         return Ok(None);
@@ -9409,7 +9585,17 @@ fn resolve_native_task_runtime(
                 .value
                 .expect("validated fixed native listener should include a bind port"),
             crate::schema::TaskRuntimePortMode::Discover => {
-                discover_native_listener_port(child, pid, task_name, listener_name)?
+                let discovery_pid = if let Some(pidfile) = activation_service_pidfile {
+                    wait_for_activation_service_workload_pid(
+                        child,
+                        pidfile,
+                        task_name,
+                        listener_name,
+                    )?
+                } else {
+                    pid
+                };
+                discover_native_listener_port(child, discovery_pid, task_name, listener_name)?
             }
             crate::schema::TaskRuntimePortMode::Auto => {
                 return Err(RunError::InvalidTaskExecution {
@@ -9450,6 +9636,62 @@ fn resolve_native_task_runtime(
     }
 
     Ok(Some(build_resolved_runtime(runtime, listeners)))
+}
+
+fn wait_for_activation_service_workload_pid(
+    child: &mut Child,
+    pidfile: &str,
+    task_name: &str,
+    listener_name: &str,
+) -> Result<u32, RunError> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(runtime_listener_bind_discovery_failed(
+                    task_name,
+                    listener_name,
+                    RuntimeListenerBindDiscoveryFailure::ProcessExited {
+                        exit_code: status.code().unwrap_or(1),
+                    },
+                ));
+            }
+            Ok(None) => {}
+            Err(source) => {
+                return Err(runtime_listener_bind_discovery_failed(
+                    task_name,
+                    listener_name,
+                    RuntimeListenerBindDiscoveryFailure::ProcessInspectionFailed {
+                        details: source.to_string(),
+                    },
+                ));
+            }
+        }
+
+        if let Ok(contents) = fs::read_to_string(pidfile)
+            && let Some(pid) = contents
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|pid| *pid > 0)
+        {
+            return Ok(pid);
+        }
+
+        if Instant::now() >= deadline {
+            return Err(runtime_listener_bind_discovery_failed(
+                task_name,
+                listener_name,
+                RuntimeListenerBindDiscoveryFailure::ProcessInspectionFailed {
+                    details: format!(
+                        "activation-owned native service did not record a workload pid in `{pidfile}` before readiness discovery timed out"
+                    ),
+                },
+            ));
+        }
+
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn discover_native_listener_port(
@@ -10512,7 +10754,7 @@ fn execute_ephemeral_container_task_command(
                 interrupted: interrupted_by_user,
             })
         }
-        TaskExecutionMode::Capture => {
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = Command::new(engine);
             container.arg("start").arg("-ai").arg(&container_name);
@@ -12354,6 +12596,177 @@ exit 1
     }
 }
 
+fn cleanup_interrupted_native_service_workload_and_note(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+) -> Option<String> {
+    #[cfg(not(unix))]
+    {
+        let _ = (task_name, runtime);
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        let pidfile = persistent_service_workload_pidfile_path(task_name);
+        let fixed_bind_ports = runtime
+            .into_iter()
+            .flat_map(|runtime| runtime.listeners.values())
+            .filter_map(|listener| {
+                (listener.bind.port.mode == crate::schema::TaskRuntimePortMode::Fixed)
+                    .then_some(listener.bind.port.value)
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        let fixed_bind_ports_arg = fixed_bind_ports
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cleanup_script = r#"
+pidfile=$1
+ports=$2
+cleaned=0
+port_listening() {
+  target="$1"
+  awk -v port="$target" '
+    BEGIN { found = 0 }
+    NR > 1 {
+      split($2, a, ":");
+      if (($4 == "0A" || $4 == "0a") && (toupper(a[2]) == toupper(port) || a[2] == port)) {
+        found = 1
+        exit
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+terminate_pid_tree() {
+  pid="$1"
+  [ -n "$pid" ] || return 0
+  [ "$pid" = "$$" ] && return 0
+  [ "$pid" = "1" ] && return 0
+  [ -d "/proc/$pid" ] || kill -0 "$pid" 2>/dev/null || return 0
+  children=$(cat "/proc/$pid/task/$pid/children" 2>/dev/null || pgrep -P "$pid" 2>/dev/null || true)
+  for child in $children; do terminate_pid_tree "$child"; done
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 0.2
+  i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do i=$((i + 1)); sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    sleep 0.5
+  fi
+}
+find_listener_owner_pids() {
+  target_hex="$1"
+  target_port="$2"
+  owners=""
+  if command -v ss >/dev/null 2>&1; then
+    ss_pids=$(ss -Htnlp "sport = :$target_port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u || true)
+    for pid in $ss_pids; do
+      [ "$pid" = "$$" ] && continue
+      [ "$pid" = "1" ] && continue
+      case " $owners " in *" $pid "*) ;; *) owners="$owners $pid" ;; esac
+    done
+  fi
+  if [ -z "$owners" ] && command -v lsof >/dev/null 2>&1; then
+    lsof_pids=$(lsof -nP -iTCP:"$target_port" -sTCP:LISTEN -t 2>/dev/null || true)
+    for pid in $lsof_pids; do
+      [ "$pid" = "$$" ] && continue
+      [ "$pid" = "1" ] && continue
+      case " $owners " in *" $pid "*) ;; *) owners="$owners $pid" ;; esac
+    done
+  fi
+  printf '%s\n' "$owners"
+}
+cleanup_pidfile_owner() {
+  [ -s "$pidfile" ] || return 0
+  read pid started < "$pidfile" || { rm -f "$pidfile"; return 0; }
+  [ -n "$pid" ] || { rm -f "$pidfile"; return 0; }
+  if [ -n "$started" ]; then
+    current=$(cut -d' ' -f22 "/proc/$pid/stat" 2>/dev/null || true)
+    [ -n "$current" ] && [ "$current" = "$started" ] && terminate_pid_tree "$pid" && cleaned=1
+  elif kill -0 "$pid" 2>/dev/null; then
+    terminate_pid_tree "$pid"
+    cleaned=1
+  fi
+  rm -f "$pidfile"
+}
+cleanup_listener_owners() {
+  [ -n "$ports" ] || return 0
+  for port in $ports; do
+    hex=$(printf '%04X' "$port")
+    owners=$(find_listener_owner_pids "$hex" "$port")
+    for pid in $owners; do
+      terminate_pid_tree "$pid"
+      cleaned=1
+    done
+  done
+  for port in $ports; do
+    hex=$(printf '%04X' "$port")
+    port_listening "$hex" && return 1
+  done
+  return 0
+}
+cleanup_pidfile_owner
+cleanup_listener_owners
+status=$?
+if [ "$cleaned" = "1" ] || [ "$status" -eq 0 ]; then
+  [ "$cleaned" = "1" ] && printf cleaned
+  exit 0
+fi
+exit 1
+"#;
+        let mut child = match Command::new("sh")
+            .arg("-s")
+            .arg("--")
+            .arg(&pidfile)
+            .arg(&fixed_bind_ports_arg)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                return Some(format!(
+                    "activation-started native service cleanup failed: {error}"
+                ));
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take()
+            && let Err(error) = stdin.write_all(cleanup_script.as_bytes())
+        {
+            return Some(format!(
+                "activation-started native service cleanup failed: {error}"
+            ));
+        }
+        match child.wait_with_output() {
+            Ok(output)
+                if output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("cleaned") =>
+            {
+                Some(String::from(
+                    "activation-started native service workload cleaned up after interrupt",
+                ))
+            }
+            Ok(output) if output.status.success() => None,
+            Ok(output) if String::from_utf8_lossy(&output.stdout).contains("cleaned") => {
+                Some(String::from(
+                    "activation-started native service workload cleaned up after interrupt",
+                ))
+            }
+            Ok(_) => Some(String::from(
+                "activation-started native service cleanup could not verify listener release after interrupt",
+            )),
+            Err(error) => Some(format!(
+                "activation-started native service cleanup failed: {error}"
+            )),
+        }
+    }
+}
+
 fn cleanup_activation_started_producer_and_note(
     producer_task_name: &str,
     backend: &ResolvedExecutionBackend,
@@ -12361,6 +12774,10 @@ fn cleanup_activation_started_producer_and_note(
     working_dir: &Path,
     remove_backend_on_interrupt: bool,
 ) -> Option<String> {
+    if resolved_execution_backend_kind(backend) == Backend::Native {
+        return cleanup_interrupted_native_service_workload_and_note(producer_task_name, runtime)
+            .map(|note| format!("activation-started producer `{producer_task_name}`: {note}"));
+    }
     let Some((engine, container_name)) =
         persistent_container_target_for_backend(backend, working_dir)
     else {
@@ -12960,7 +13377,7 @@ fn exec_persistent_container_task_command(
                 })
             }
         }
-        TaskExecutionMode::Capture => {
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let output = container
                 .stdin(Stdio::inherit())
@@ -13663,13 +14080,14 @@ mod tests {
     use crate::test_support::env_mutex_lock;
 
     use super::{
-        CapturedRunOutcome, ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep,
-        ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME, ResolvedExecutionBackend,
-        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
-        ResolvedTaskRuntimeHost, RunError, RuntimeListenerHostPublicationFailure,
-        RuntimeListenerResolutionKind, RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode,
-        TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
-        TaskTargetActivationStatus, TaskTargetResolutionSource, activation_loader_label,
+        BackendFulfillmentStrategy, CapturedRunOutcome, ContainerPortPublication,
+        EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME,
+        ProvisioningExecutionTarget, ResolvedExecutionBackend, ResolvedTaskRuntime,
+        ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost, RunError,
+        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
+        RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
+        TaskRunState, TaskTargetActivationEvidence, TaskTargetActivationStatus,
+        TaskTargetResolutionSource, activation_loader_label, backend_fulfillment_plan,
         clean_execution, clean_execution_report, container_identity_seed, contract_working_dir,
         current_os, effective_task_execution, ephemeral_container_stream_command,
         execute_task_with_hooks, extract_probe_version_token, persistent_cleanup_targets,
@@ -14648,6 +15066,108 @@ tasks:
                 status: TaskTargetActivationStatus::ReusedReady,
             })
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_ready_activation_starts_and_cleans_up_native_producer() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: python3 -c "import socket,time; sock=socket.socket(); sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); sock.bind(('127.0.0.1', {port})); sock.listen(1); time.sleep(30)"
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("native ensure_ready activation should succeed");
+
+        assert_eq!(status, TaskTargetActivationStatus::StartedReady);
+
+        let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
+        assert!(
+            cleanup_note
+                .as_deref()
+                .is_some_and(|note| note.contains("native service workload cleaned up")),
+            "{cleanup_note:?}"
+        );
+
+        for _ in 0..30 {
+            if !super::target_probe_endpoint_reachable("127.0.0.1", port) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        panic!("native activation cleanup should free the producer port");
     }
 
     #[test]
@@ -19775,7 +20295,7 @@ tasks:
                 ExecutionOverrides::default()
             )
             .unwrap(),
-            ResolvedExecutionBackend::Native
+            ResolvedExecutionBackend::Native { .. }
         ));
 
         let build_backend =
@@ -20842,6 +21362,123 @@ tasks:
             log.matches("run-persistent").count() == 1,
             "\nactual docker log:\n{log}\n"
         );
+    }
+
+    #[test]
+    fn shared_local_backend_binding_resolves_native_backend_identity() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        );
+
+        let backend =
+            resolve_execution_backend(&fixture.contract, "dev", ExecutionOverrides::default())
+                .expect("native shared backend should resolve");
+        match backend {
+            ResolvedExecutionBackend::Native {
+                shared_local_backend: Some(shared),
+            } => {
+                assert_eq!(shared.name, "workbench");
+                assert_eq!(shared.backend, Backend::Native);
+                assert_eq!(shared.lifecycle, Lifecycle::Persistent);
+                assert!(shared.publications.is_empty());
+            }
+            other => panic!("expected native backend with shared binding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shared_local_backend_native_fulfillment_uses_host_execution_target() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+      fulfillment: run
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        );
+
+        let backend = resolve_execution_backend_with_contract_path(
+            &fixture.contract,
+            "dev",
+            ExecutionOverrides::default(),
+            Some(fixture.file_path()),
+        )
+        .expect("native backend should resolve");
+        let plan = backend_fulfillment_plan(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            &backend,
+            None,
+        )
+        .expect("native shared fulfillment should plan")
+        .expect("native shared fulfillment should exist");
+
+        assert_eq!(plan.backend_label, "native");
+        assert_eq!(plan.strategy, BackendFulfillmentStrategy::Immediate);
+        assert!(matches!(
+            plan.provisioning_target,
+            Some(ProvisioningExecutionTarget::Native)
+        ));
+        assert_eq!(plan.backend_unit, "shared_local_backend:workbench");
     }
 
     #[cfg(unix)]
