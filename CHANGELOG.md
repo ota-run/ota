@@ -26,11 +26,12 @@
 
 ## Unreleased
 
-- breaking contract change: `execution.local_backends` has been renamed to `execution.shared_backends`; legacy `local_backends` is no longer accepted, and `scope: local` is the shipped shared-backend slice while `scope: remote` remains later work
+- breaking contract change: `execution.local_backends` has been renamed to `execution.shared_backends`; legacy `local_backends` is no longer accepted, and the shipped shared-backend families are now local `container`, local `native`, and remote `remote`
 - extended policy-governed run-path fulfillment to direct container execution contexts: `execution.contexts.<name>.fulfillment: run` now provisions declared runtimes/tools inside the actual resolved execution container, including deferred fulfillment for ephemeral container tasks before the task body runs, while rejecting unsupported native/remote context declarations and leaving direct ephemeral service-task fulfillment unclaimed for now
 - added first target-activation support under `tasks.<name>.targets.<target>.activation.mode` with `manual` and `ensure_ready`, including explicit override skip semantics, validation for self/cyclic activation graphs, activation evidence in run receipts/summaries, and a first honest auto-start slice for persistent container producer services when the target binding itself already resolved truthfully (for example `host`, shared-backend `topology`, or shared-backend `internal`)
 - added first-class service-task `runtime.readiness` support for `http` and `tcp` probes on projected host endpoints, and taught `activation.mode: ensure_ready` to wait for declared producer runtime readiness instead of treating an open listener socket as sufficient
 - broadened `activation.mode: ensure_ready` to include unix native producer services via an activation-owned native startup path, while keeping interrupt cleanup semantics that stop activation-started producer services and leave reused producers running
+- broadened shared-backend target resolution so `address_view: topology` and `address_view: internal` now resolve truthfully across shared `container`, shared `native`, and shared `remote` backend boundaries; remote service runtimes are now allowed when they declare fixed contract endpoints, while remote producer auto-start remains an explicit later slice
 - fixed persistent container service workloads to run under a managed detached in-container wrapper with pid/status/log tracking, so long-running dev servers like Next.js `next dev` stay alive across route compilation and request handling instead of spuriously exiting after readiness when launched through the old attached `docker exec` service path
 
 ## 1.6.3

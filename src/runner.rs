@@ -2902,11 +2902,13 @@ pub(crate) enum ResolvedExecutionBackend {
         dependency_isolation_paths: Vec<String>,
     },
     Remote {
+        shared_local_backend: Option<ResolvedSharedLocalBackend>,
         provider: String,
         target: String,
         cwd: Option<String>,
     },
     BackendProvider {
+        shared_local_backend: Option<ResolvedSharedLocalBackend>,
         provider: String,
         command: String,
         target: String,
@@ -3874,6 +3876,7 @@ fn execute_task_command(
             mode,
         ),
         ResolvedExecutionBackend::Remote {
+            shared_local_backend: _,
             provider,
             target,
             cwd,
@@ -3887,6 +3890,7 @@ fn execute_task_command(
             mode,
         ),
         ResolvedExecutionBackend::BackendProvider {
+            shared_local_backend: _,
             provider,
             command: provider_command,
             target,
@@ -4276,6 +4280,67 @@ fn backend_fulfillment_plan(
             ),
             backend_unit,
             backend_label: String::from("native"),
+            mode,
+            strategy: BackendFulfillmentStrategy::Immediate,
+            target_os,
+            declared_runtimes,
+            declared_tools,
+            probe_backend: backend.clone(),
+            provisioning_target,
+        }));
+    }
+
+    if let ResolvedExecutionBackend::Remote {
+        shared_local_backend: Some(shared_local_backend),
+        ..
+    }
+    | ResolvedExecutionBackend::BackendProvider {
+        shared_local_backend: Some(shared_local_backend),
+        ..
+    } = backend
+    {
+        let Some(fulfillment) = shared_local_backend.fulfillment else {
+            return Ok(None);
+        };
+        let mode = match fulfillment {
+            ExecutionSharedBackendFulfillment::None => BackendFulfillmentMode::None,
+            ExecutionSharedBackendFulfillment::Run => BackendFulfillmentMode::Run,
+        };
+        let target_os = current_os().to_string();
+        let (declared_runtimes, declared_tools) = shared_local_backend_requirement_versions(
+            contract,
+            shared_local_backend.name.as_str(),
+            Backend::Remote,
+            target_os.as_str(),
+        )
+        .map_err(|details| RunError::BackendFulfillmentFailed {
+            task: task_name.to_string(),
+            backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+            details,
+            evidence: BackendFulfillmentEvidence {
+                backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+                backend: String::from("remote"),
+                mode,
+                declared_runtimes: BTreeMap::new(),
+                declared_tools: BTreeMap::new(),
+                missing: Vec::new(),
+                actions: Vec::new(),
+                result: BackendFulfillmentResult::Failed,
+                task_executed: false,
+            },
+        })?;
+        let backend_unit = format!("shared_local_backend:{}", shared_local_backend.name);
+        let provisioning_target = Some(provisioning_target_for_resolved_backend(
+            contract_path,
+            backend,
+        )?);
+        return Ok(Some(BackendFulfillmentPlan {
+            cache_key: backend_fulfillment_cache_key(
+                backend_unit.clone(),
+                provisioning_target.as_ref(),
+            ),
+            backend_unit,
+            backend_label: String::from("remote"),
             mode,
             strategy: BackendFulfillmentStrategy::Immediate,
             target_os,
@@ -5077,6 +5142,7 @@ fn provisioning_target_for_resolved_backend(
             })
         }
         ResolvedExecutionBackend::Remote {
+            shared_local_backend: _,
             provider,
             target,
             cwd,
@@ -5088,6 +5154,7 @@ fn provisioning_target_for_resolved_backend(
             context_name: None,
         }),
         ResolvedExecutionBackend::BackendProvider {
+            shared_local_backend: _,
             provider,
             command,
             target,
@@ -5920,8 +5987,15 @@ fn declared_target_readiness_target(
             details,
         })?,
         TaskTargetAddressView::Topology => {
-            if caller_backend == Backend::Container
-                && tasks_share_container_local_backend(contract, task_name, producer_task_name)
+            if (caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, producer_task_name))
+                || (caller_backend == Backend::Native
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Native,
+                    ))
             {
                 select_target_listener_for_backend(service_task, probe_listener_name, caller_backend)
             } else {
@@ -5934,7 +6008,20 @@ fn declared_target_readiness_target(
             }
         }
         TaskTargetAddressView::Internal => {
-            select_target_listener_for_backend(service_task, probe_listener_name, caller_backend)
+            if caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, producer_task_name)
+                || caller_backend == Backend::Native
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Native,
+                    )
+            {
+                select_target_listener_for_backend(service_task, probe_listener_name, caller_backend)
+            } else {
+                None
+            }
         }
     }
     .ok_or_else(|| RunError::TaskTargetResolutionFailed {
@@ -5967,8 +6054,15 @@ fn declared_target_readiness_target(
             (host_projection.address.clone(), host_port)
         }
         TaskTargetAddressView::Topology => {
-            if caller_backend == Backend::Container
-                && tasks_share_container_local_backend(contract, task_name, producer_task_name)
+            if (caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, producer_task_name))
+                || (caller_backend == Backend::Native
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Native,
+                    ))
             {
                 let bind_port = listener.bind.port.value.ok_or_else(|| {
                     RunError::TaskTargetResolutionFailed {
@@ -6006,14 +6100,21 @@ fn declared_target_readiness_target(
             }
         }
         TaskTargetAddressView::Internal => {
-            if caller_backend != Backend::Container
-                || !tasks_share_container_local_backend(contract, task_name, producer_task_name)
+            if !((caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, producer_task_name))
+                || (caller_backend == Backend::Native
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Native,
+                    )))
             {
                 return Err(RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
                     target: target_name.to_string(),
                     details: format!(
-                        "target activation `ensure_ready` cannot probe `address_view: internal` for `{task_name}` -> `{producer_task_name}` without a shared container local backend binding"
+                        "target activation `ensure_ready` cannot probe `address_view: internal` for `{task_name}` -> `{producer_task_name}` without a shared backend binding on the active execution plane"
                     ),
                 });
             }
@@ -6317,6 +6418,17 @@ fn resolve_task_target_binding_url(
         }
         TaskTargetAddressView::Topology => {
             if caller_backend == Backend::Native {
+                if tasks_share_backend_binding(contract, task_name, service_task_name, Backend::Native)
+                {
+                    return resolve_colocated_shared_backend_listener_endpoint(
+                        task_name,
+                        target_name,
+                        service_task_name,
+                        listener_name,
+                        listener,
+                        TaskTargetAddressView::Topology,
+                    );
+                }
                 let host_projection = listener.project.host.as_ref().ok_or_else(|| {
                     RunError::TaskTargetResolutionFailed {
                         task: task_name.to_string(),
@@ -6356,12 +6468,25 @@ fn resolve_task_target_binding_url(
                 );
             }
 
+            if caller_backend == Backend::Remote
+                && tasks_share_backend_binding(contract, task_name, service_task_name, Backend::Remote)
+            {
+                return resolve_colocated_shared_backend_listener_endpoint(
+                    task_name,
+                    target_name,
+                    service_task_name,
+                    listener_name,
+                    listener,
+                    TaskTargetAddressView::Topology,
+                );
+            }
+
             if caller_backend != Backend::Native {
                 return Err(RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
                     target: target_name.to_string(),
                     details: format!(
-                        "`address_view: topology` requires either native caller execution or a shared local backend binding between `{task_name}` and `{service_task_name}`; current caller backend is `{}`",
+                        "`address_view: topology` requires either native caller execution or a shared backend binding between `{task_name}` and `{service_task_name}`; current caller backend is `{}`",
                         match caller_backend {
                             Backend::Native => "native",
                             Backend::Container => "container",
@@ -6373,8 +6498,22 @@ fn resolve_task_target_binding_url(
             unreachable!()
         }
         TaskTargetAddressView::Internal => {
-            if caller_backend == Backend::Container
-                && tasks_share_container_local_backend(contract, task_name, service_task_name)
+            if (caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, service_task_name))
+                || (caller_backend == Backend::Native
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        service_task_name,
+                        Backend::Native,
+                    ))
+                || (caller_backend == Backend::Remote
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        service_task_name,
+                        Backend::Remote,
+                    ))
             {
                 return resolve_colocated_shared_backend_listener_endpoint(
                     task_name,
@@ -6390,7 +6529,7 @@ fn resolve_task_target_binding_url(
                 task: task_name.to_string(),
                 target: target_name.to_string(),
                 details: format!(
-                    "`address_view: internal` requires a shared local backend binding between `{task_name}` and `{service_task_name}`; current caller backend is `{}`",
+                    "`address_view: internal` requires a shared backend binding between `{task_name}` and `{service_task_name}`; current caller backend is `{}`",
                     match caller_backend {
                         Backend::Native => "native",
                         Backend::Container => "container",
@@ -6415,7 +6554,7 @@ fn resolve_colocated_shared_backend_listener_endpoint(
             task: task_name.to_string(),
             target: target_name.to_string(),
             details: format!(
-                "listener `{service_task_name}.{listener_name}` requires `bind.port.mode: fixed` to resolve `address_view: {}` for shared local backends",
+                "listener `{service_task_name}.{listener_name}` requires `bind.port.mode: fixed` to resolve `address_view: {}` for shared backends",
                 match address_view {
                     TaskTargetAddressView::Topology => "topology",
                     TaskTargetAddressView::Host => "host",
@@ -6589,14 +6728,28 @@ fn tasks_share_container_local_backend(
     caller_task_name: &str,
     service_task_name: &str,
 ) -> bool {
+    tasks_share_backend_binding(
+        contract,
+        caller_task_name,
+        service_task_name,
+        Backend::Container,
+    )
+}
+
+fn tasks_share_backend_binding(
+    contract: &Contract,
+    caller_task_name: &str,
+    service_task_name: &str,
+    backend: Backend,
+) -> bool {
     let caller_binding = contract
         .tasks
         .get(caller_task_name)
-        .and_then(|task| task.backend_binding_for_backend(Backend::Container));
+        .and_then(|task| task.backend_binding_for_backend(backend));
     let service_binding = contract
         .tasks
         .get(service_task_name)
-        .and_then(|task| task.backend_binding_for_backend(Backend::Container));
+        .and_then(|task| task.backend_binding_for_backend(backend));
     matches!((caller_binding, service_binding), (Some(a), Some(b)) if a == b)
 }
 
@@ -8535,6 +8688,23 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
                     backend: "remote",
                 });
             }
+            let shared_local_backend =
+                resolve_task_shared_local_backend(contract, task_name, Backend::Remote)?;
+            if let Some(shared_local_backend) = shared_local_backend.as_ref() {
+                if let Some(requested) = overrides.lifecycle
+                    && requested != shared_local_backend.lifecycle
+                {
+                    return Err(RunError::SharedLocalBackendResolutionFailed {
+                        task: task_name.to_string(),
+                        binding: shared_local_backend.name.clone(),
+                        details: format!(
+                            "requested lifecycle `{}` conflicts with declared shared backend lifecycle `{}`",
+                            format_lifecycle(requested),
+                            format_lifecycle(shared_local_backend.lifecycle),
+                        ),
+                    });
+                }
+            }
             effective
                 .remote
                 .ok_or_else(|| RunError::MissingRemoteProvider {
@@ -8558,6 +8728,7 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
 
                     if is_builtin_remote_provider(&remote.provider) {
                         Ok(ResolvedExecutionBackend::Remote {
+                            shared_local_backend,
                             provider: remote.provider.clone(),
                             target,
                             cwd: remote.cwd.clone(),
@@ -8581,6 +8752,7 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
                         }
 
                         Ok(ResolvedExecutionBackend::BackendProvider {
+                            shared_local_backend,
                             provider: remote.provider.clone(),
                             command: extension.command.clone(),
                             target,
@@ -8673,6 +8845,7 @@ pub(crate) fn resolve_context_execution_backend(
 
             if is_builtin_remote_provider(&remote.provider) {
                 Ok(ResolvedExecutionBackend::Remote {
+                    shared_local_backend: None,
                     provider: remote.provider.clone(),
                     target,
                     cwd: remote.cwd.clone(),
@@ -8694,6 +8867,7 @@ pub(crate) fn resolve_context_execution_backend(
                 }
 
                 Ok(ResolvedExecutionBackend::BackendProvider {
+                    shared_local_backend: None,
                     provider: remote.provider.clone(),
                     command: extension.command.clone(),
                     target,
@@ -15272,6 +15446,94 @@ tasks:
     }
 
     #[test]
+    fn ensure_ready_activation_reuses_reachable_shared_native_internal_target() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut TaskRunState::default(),
+        )
+        .expect("shared native internal activation should succeed");
+
+        assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
+    }
+
+    #[test]
     fn ensure_ready_activation_reuses_reachable_shared_backend_topology_target() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener
@@ -16621,6 +16883,312 @@ tasks:
             ExecutionOverrides::default(),
         )
         .expect("shared-local-backend internal resolution should succeed");
+
+        assert_eq!(resolved, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn topology_target_binding_resolves_for_shared_native_backend_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            ExecutionOverrides::default(),
+        )
+        .expect("shared native topology resolution should succeed");
+
+        assert_eq!(resolved, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn internal_target_binding_resolves_for_shared_native_backend_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            ExecutionOverrides::default(),
+        )
+        .expect("shared native internal resolution should succeed");
+
+        assert_eq!(resolved, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn topology_target_binding_resolves_for_shared_remote_backend_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      lifecycle: persistent
+      remote:
+        provider: ssh
+        target: user@devbox
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            ExecutionOverrides::default(),
+        )
+        .expect("shared remote topology resolution should succeed");
+
+        assert_eq!(resolved, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn internal_target_binding_resolves_for_shared_remote_backend_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      lifecycle: persistent
+      remote:
+        provider: ssh
+        target: user@devbox
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            ExecutionOverrides::default(),
+        )
+        .expect("shared remote internal resolution should succeed");
 
         assert_eq!(resolved, "http://127.0.0.1:8080");
     }
@@ -20179,6 +20747,7 @@ exec "$(dirname "$0")/docker-real" "$@"
             running_loader_label(
                 "test",
                 &ResolvedExecutionBackend::Remote {
+                    shared_local_backend: None,
                     provider: String::from("ssh"),
                     target: String::from("user@host"),
                     cwd: None,

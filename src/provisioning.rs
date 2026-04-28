@@ -3677,6 +3677,7 @@ fn execute_provisioning_command(
         } => {
             let backend = if let Some(command) = provider_command {
                 ResolvedExecutionBackend::BackendProvider {
+                    shared_local_backend: None,
                     provider: provider.clone(),
                     command: command.clone(),
                     target: target.clone(),
@@ -3684,6 +3685,7 @@ fn execute_provisioning_command(
                 }
             } else {
                 ResolvedExecutionBackend::Remote {
+                    shared_local_backend: None,
                     provider: provider.clone(),
                     target: target.clone(),
                     cwd: cwd.clone(),

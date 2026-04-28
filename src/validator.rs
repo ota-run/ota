@@ -558,15 +558,19 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             continue;
         }
 
-        if shared_backend.scope != ExecutionSharedBackendScope::Local {
+        if shared_backend.scope == ExecutionSharedBackendScope::Remote
+            && shared_backend.backend != Backend::Remote
+        {
             errors.push(ValidationError::new(format!(
-                "`execution.shared_backends.{name}.scope: remote` is not supported yet; only `scope: local` is currently shipped"
+                "`execution.shared_backends.{name}.scope: remote` currently requires `backend: remote`"
             )));
         }
 
-        if shared_backend.backend == Backend::Remote {
+        if shared_backend.backend == Backend::Remote
+            && shared_backend.scope != ExecutionSharedBackendScope::Remote
+        {
             errors.push(ValidationError::new(format!(
-                "`execution.shared_backends.{name}.backend` does not support `remote` yet; only `container` and `native` are currently shipped"
+                "`execution.shared_backends.{name}.backend: remote` currently requires `scope: remote`"
             )));
         }
 
@@ -575,6 +579,14 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         {
             errors.push(ValidationError::new(format!(
                 "`execution.shared_backends.{name}.backend: native` currently supports `lifecycle: persistent` only"
+            )));
+        }
+
+        if shared_backend.backend == Backend::Remote
+            && shared_backend.lifecycle != Lifecycle::Persistent
+        {
+            errors.push(ValidationError::new(format!(
+                "`execution.shared_backends.{name}.backend: remote` currently supports `lifecycle: persistent` only"
             )));
         }
 
@@ -1438,8 +1450,16 @@ fn validate_task_target_activation_shape(
     };
     let shared_container_backend =
         tasks_share_container_local_backend(contract, caller_task, service_task);
+    let shared_native_backend =
+        tasks_share_backend(contract, caller_task, service_task, Backend::Native);
+    let shared_remote_backend =
+        tasks_share_backend(contract, caller_task, service_task, Backend::Remote);
     let backend = if shared_container_backend {
         Backend::Container
+    } else if shared_native_backend {
+        Backend::Native
+    } else if shared_remote_backend {
+        Backend::Remote
     } else {
         task_execution_backend(contract, service_task, Backend::Native)
     };
@@ -1479,6 +1499,21 @@ fn validate_task_target_activation_shape(
                     "shared-backend `address_view: topology`",
                     errors,
                 );
+            } else if shared_native_backend {
+                validate_ensure_ready_bind_port(
+                    task_name,
+                    target_name,
+                    service_task_name,
+                    readiness_listener_name,
+                    listener.bind.port.mode,
+                    listener.bind.port.value,
+                    "shared-backend `address_view: topology`",
+                    errors,
+                );
+            } else if shared_remote_backend {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with shared-backend `address_view: topology`, but remote producer activation is not supported yet"
+                )));
             } else {
                 validate_ensure_ready_host_projection(
                     task_name,
@@ -1491,9 +1526,15 @@ fn validate_task_target_activation_shape(
             }
         }
         TaskTargetAddressView::Internal => {
-            if !shared_container_backend {
+            if shared_remote_backend {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but `{task_name}` and `{service_task_name}` do not share one declared container local backend binding"
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation is not supported yet"
+                )));
+                return;
+            }
+            if !shared_container_backend && !shared_native_backend {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but `{task_name}` and `{service_task_name}` do not share one declared backend binding on a supported execution plane"
                 )));
                 return;
             }
@@ -1554,12 +1595,19 @@ fn tasks_share_container_local_backend(
     caller_task: &TaskSpec,
     service_task: &TaskSpec,
 ) -> bool {
-    let Some(caller_binding) = caller_task.backend_binding_for_backend(Backend::Container) else {
+    tasks_share_backend(contract, caller_task, service_task, Backend::Container)
+}
+
+fn tasks_share_backend(
+    _contract: &Contract,
+    caller_task: &TaskSpec,
+    service_task: &TaskSpec,
+    backend: Backend,
+) -> bool {
+    let Some(caller_binding) = caller_task.backend_binding_for_backend(backend) else {
         return false;
     };
-    Some(caller_binding) == service_task.backend_binding_for_backend(Backend::Container)
-        && task_execution_backend(contract, caller_task, Backend::Container) == Backend::Container
-        && task_execution_backend(contract, service_task, Backend::Container) == Backend::Container
+    Some(caller_binding) == service_task.backend_binding_for_backend(backend)
 }
 
 fn validate_task_direct_container_context_fulfillment(
@@ -1834,9 +1882,16 @@ fn validate_task_runtime(
                 }
             }
         } else if backend == Backend::Remote {
-            errors.push(ValidationError::new(format!(
-                    "task `{task_name}` runtime service listeners are not supported on remote execution contexts yet"
+            if listener.bind.port.mode != TaskRuntimePortMode::Fixed {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` listener `{listener_name}` on a remote execution context currently requires `bind.port.mode: fixed`"
                 )));
+            }
+            if listener.bind.port.value.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` listener `{listener_name}` on a remote execution context currently requires `bind.port.value`"
+                )));
+            }
         }
     }
 }
@@ -2305,9 +2360,9 @@ fn validate_task_runtime_host_projection(
         )));
     }
 
-    if backend == Backend::Remote {
+    if backend == Backend::Remote && host.port.mode != TaskRuntimeHostPortMode::Fixed {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` runtime host projection is not supported on remote execution contexts yet"
+            "task `{task_name}` listener `{listener_name}` on a remote execution context currently requires `project.host.port.mode: fixed`"
         )));
     }
 }
@@ -5278,6 +5333,50 @@ tasks:
     }
 
     #[test]
+    fn allows_declared_shared_remote_backend_binding_for_service_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      lifecycle: persistent
+      remote:
+        provider: ssh
+        target: user@devbox
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
     fn allows_shared_local_backend_lifecycle_to_override_global_execution_lifecycle() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -5324,7 +5423,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_remote_shared_backend_scope_for_now() {
+    fn rejects_remote_shared_backend_scope_backend_mismatch() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -5347,7 +5446,7 @@ tasks:
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
-                "`execution.shared_backends.workbench.scope: remote` is not supported yet; only `scope: local` is currently shipped",
+                "`execution.shared_backends.workbench.scope: remote` currently requires `backend: remote`",
             )
         }));
     }
@@ -6335,6 +6434,64 @@ tasks:
 
         validate_contract(&contract)
             .expect("shared-backend internal ensure_ready should validate without host projection");
+    }
+
+    #[test]
+    fn allows_ensure_ready_internal_shared_native_backend_without_activation_host_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("shared native internal ensure_ready should validate without host projection");
     }
 
     #[test]
