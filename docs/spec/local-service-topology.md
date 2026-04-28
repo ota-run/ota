@@ -309,6 +309,9 @@ Current `ensure_ready` constraints:
 - explicit operator override inputs skip producer auto-start
 - compatibility literal defaults do not satisfy `ensure_ready`
 - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract before starting the consumer
+- run receipts summarize producer activation plainly as:
+  - `started_ready` = ota started the producer and waited for readiness
+  - `reused_ready` = ota found the producer already ready and reused it
 - the first shipped slice only auto-starts producer services that resolve to persistent container
   backends on the host-view path
 - unsupported producer shapes fail clearly instead of guessing orchestration
@@ -367,6 +370,11 @@ Rules:
 
 - `none` = do not fulfill; fail if requirements are missing
 - `run` = fulfill on the run path before the backend is used
+- receipt/result vocabulary:
+  - `requirements_satisfied` = the backend already had what the contract required
+  - `fulfilled` = ota had to provision something and finished successfully
+  - `missing_requirements` = requirements were missing and run-path fulfillment was not allowed or not selected
+  - `failed` = ota attempted fulfillment or setup, but it did not complete successfully
 
 Current product recommendation:
 
