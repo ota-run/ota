@@ -27660,6 +27660,53 @@ tasks:
     }
 
     #[test]
+    fn execution_summary_note_reports_failed_depends_on_task() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "typecheck",
+                "FAILED",
+                Some(String::from("depends_on for `build`")),
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("build"),
+            "RUN SUMMARY",
+        ));
+        assert!(
+            rendered.contains("Note:        depends_on task `typecheck` failed for requested task `build`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn execution_summary_note_reports_service_termination_cause() {
         let runtime = crate::runner::ResolvedTaskRuntime {
             kind: crate::schema::TaskRuntimeKind::Service,
@@ -28974,7 +29021,7 @@ tasks:
         assert!(rendered.contains("Failed Step: dev"), "{rendered}");
         assert!(
             rendered.contains(
-                "requested task `dev:clean` failed because dependency step `dev` returned a non-zero exit code"
+                "requested task `dev:clean` failed because depends_on task `dev` returned a non-zero exit code"
             ),
             "{rendered}"
         );
@@ -31551,7 +31598,7 @@ fn run_single_contract_target_streaming(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                None,
+                Some(String::from("run `ota tasks --use` to inspect runnable task usage")),
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
@@ -31775,7 +31822,7 @@ fn run_single_contract_target_captured(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                None,
+                Some(String::from("run `ota tasks --use` to inspect runnable task usage")),
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
@@ -32482,7 +32529,7 @@ fn task_exit_failure_why_lines(
         .filter(|requested| *requested != failed_step_name)
         .map(|requested| {
             format!(
-                "requested task `{requested}` failed because dependency step `{failed_step_name}` returned a non-zero exit code"
+                "requested task `{requested}` failed because depends_on task `{failed_step_name}` returned a non-zero exit code"
             )
         });
 

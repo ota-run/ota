@@ -208,6 +208,9 @@ pub(super) fn render_execution_receipt_summary_block(
     if let Some(note_value) = note.as_deref() {
         lines.push(summary_detail_line("Note:", note_value));
     }
+    if let Some(next_value) = receipt.next.as_deref() {
+        lines.push(summary_detail_line("Next:", next_value));
+    }
     if let Some(log_warning) = log_capture_warning.as_deref() {
         lines.push(summary_detail_line("Warning:", log_warning));
     }
@@ -233,10 +236,30 @@ fn backend_summary_from_receipt(
 fn build_execution_summary_note(
     receipt: &ExecutionReceipt,
     task: &str,
-    _backend_summary: Option<&str>,
-    _mode: &str,
+    backend_summary: Option<&str>,
+    mode: &str,
 ) -> Option<String> {
     let mut parts = Vec::new();
+    
+    // Add base backend context note based on mode and lifecycle
+    let base_note = match (mode, receipt.lifecycle.as_deref()) {
+        ("container", Some("persistent")) => {
+            Some(
+                persistent_container_note_from_receipt(receipt, task)
+                    .unwrap_or_else(|| String::from("reusing persistent container backend")),
+            )
+        }
+        ("container", Some("ephemeral")) => Some(String::from("using a fresh container image for this run")),
+        ("native", Some(lifecycle)) => Some(format!(
+            "running on the host environment; requested `--lifecycle {lifecycle}` is advisory in native mode only"
+        )),
+        ("native", _) => Some(String::from("running on the host environment")),
+        (other, _) => Some(format!("executing through the `{other}` backend")),
+    };
+    
+    if let Some(note) = base_note {
+        parts.push(note);
+    }
     
     if let Some(internal_note) = internal_task_note_from_receipt(receipt, task) {
         push_unique_summary_note_part(&mut parts, internal_note);
@@ -246,6 +269,7 @@ fn build_execution_summary_note(
             let trimmed = part.trim();
             if trimmed.is_empty()
                 || trimmed == "requested task"
+                || backend_summary.is_some_and(|backend| trimmed == backend)
                 || trimmed.starts_with("target `")
                 || trimmed.starts_with("backend `")
                 || trimmed.starts_with("activation ")
@@ -254,6 +278,9 @@ fn build_execution_summary_note(
             }
             push_unique_summary_note_part(&mut parts, trimmed.to_string());
         }
+    }
+    if let Some(failed_dependency_note) = failed_dependency_note_from_receipt(receipt, task) {
+        push_unique_summary_note_part(&mut parts, failed_dependency_note);
     }
     if let Some(service_termination) = receipt.service_termination.as_ref() {
         push_unique_summary_note_part(
@@ -300,6 +327,27 @@ fn requested_task_note_from_receipt(receipt: &ExecutionReceipt, task: &str) -> O
         let detail = step.detail.as_deref()?;
         let note = detail.strip_prefix("requested task; ").unwrap_or(detail);
         (!note.is_empty()).then(|| note.to_string())
+    })
+}
+
+fn failed_dependency_note_from_receipt(receipt: &ExecutionReceipt, task: &str) -> Option<String> {
+    if receipt.ok {
+        return None;
+    }
+
+    receipt.steps.iter().find_map(|step| {
+        if step.exit_code == Some(0) {
+            return None;
+        }
+        match step.detail.as_deref() {
+            Some(detail) if detail.starts_with(&format!("depends_on for `{task}`")) => {
+                Some(format!(
+                    "depends_on task `{}` failed for requested task `{task}`",
+                    step.label
+                ))
+            }
+            _ => None,
+        }
     })
 }
 
