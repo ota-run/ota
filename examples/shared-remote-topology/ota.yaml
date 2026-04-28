@@ -1,0 +1,142 @@
+#
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+version: 1
+project:
+  name: shared-remote-topology
+  description: Real SSH dogfood example showing truthful shared-remote target binding and remote ensure_ready activation on a built-in ssh provider
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      lifecycle: persistent
+      remote:
+        provider: ssh
+        target: ota-remote-devbox
+        cwd: /workspace/app/workspace
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: python3 dev_api.py
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: api.ota-remote-devbox.internal
+              primary: true
+              port:
+                mode: fixed
+                value: 8080
+              path: /
+  sandbox:
+    inputs:
+      base_url:
+        description: Override the API target when the helper should point somewhere else explicitly
+    run: python3 sandbox.py
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        override_input: base_url
+        activation:
+          mode: ensure_ready
+  smoke:
+    inputs:
+      base_url:
+        description: Override the API target when the one-shot smoke check should point somewhere else explicitly
+    run: python3 smoke.py
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        smoke:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3001
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        override_input: base_url
+        activation:
+          mode: ensure_ready
+agent:
+  entrypoint: dev
+  default_task: smoke
+  safe_tasks:
+    - dev
+    - sandbox
+    - smoke
+  verify_after_changes:
+    - smoke
+  writable_paths:
+    - workspace
+    - .runtime
+  protected_paths:
+    - ota.yaml
+  notes: |
+    This example is intentionally narrow and real:
+    - shared backend scope is remote
+    - backend family is remote
+    - provider is built-in ssh
+    - target activation uses address_view: internal
+    - producer readiness uses tcp on a fixed bind.port.value
+    - `prepare-dogfood.sh` creates one explicit SSH host alias and reuses one existing local SSH public key
+    - `smoke` is the recommended one-shot proof path; `sandbox` remains the long-running helper variant
+    Remote host-view activation and remote HTTP readiness are not part of this shipped slice.
