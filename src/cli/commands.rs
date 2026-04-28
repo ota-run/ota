@@ -17520,13 +17520,8 @@ fn render_tasks_text(
             command_preview
         ));
         if !task.inputs.is_empty() {
-            let inputs = task
-                .inputs
-                .iter()
-                .map(|(name, spec)| render_task_input_summary(name, spec))
-                .collect::<Vec<_>>()
-                .join(", ");
-            output.push_str(&format!("\n  {} {}", paint_key("Inputs:"), inputs));
+            output.push_str(&format!("\n  {}", paint_key("Inputs")));
+            output.push_str(&render_task_inputs_compact(task.inputs));
         }
         if !task.env.is_empty() {
             let env = task
@@ -17677,6 +17672,10 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
+        if !task.inputs.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Inputs")));
+            output.push_str(&render_task_inputs_compact(task.inputs));
+        }
         if let Some(notes) = task.notes {
             output.push_str(&format!(
                 "\n  {} {}",
@@ -17724,20 +17723,53 @@ fn render_multiline_field(value: &str) -> String {
     output
 }
 
-fn render_task_input_summary(name: &str, spec: &crate::schema::TaskInputSpec) -> String {
-    let mut parts = vec![format!("--{}", name.replace('_', "-"))];
-    if spec.required {
-        parts.push(String::from("required"));
-    } else {
-        parts.push(String::from("optional"));
+fn render_task_inputs_compact(inputs: &BTreeMap<String, crate::schema::TaskInputSpec>) -> String {
+    let labels = inputs
+        .keys()
+        .map(|name| format!("--{}", name.replace('_', "-")))
+        .collect::<Vec<_>>();
+    let label_width = labels.iter().map(|label| label.len()).max().unwrap_or(0);
+    let detail_indent = format!("{}{}", "    ", " ".repeat(label_width + 13));
+    let mut output = String::new();
+
+    for ((_, spec), label) in inputs.iter().zip(labels.iter()) {
+        let requirement = if spec.required { "required" } else { "optional" };
+        let has_metadata = spec.default.is_some() || !spec.allowed.is_empty();
+        let mut first_line_parts = Vec::new();
+        if let Some(default) = spec.default.as_deref() {
+            first_line_parts.push(format!("default=`{default}`"));
+        }
+        if !spec.allowed.is_empty() {
+            first_line_parts.push(format!("allowed=`{}`", spec.allowed.join("|")));
+        }
+        if !has_metadata {
+            if let Some(description) = spec.description.as_deref() {
+                first_line_parts.push(description.to_string());
+            }
+        }
+
+        output.push_str(&format!(
+            "\n    {:<label_width$}  {}",
+            label,
+            requirement,
+            label_width = label_width
+        ));
+        if !first_line_parts.is_empty() {
+            output.push_str("   ");
+            output.push_str(&first_line_parts.join(" "));
+        }
+
+        if has_metadata
+            && let Some(description) = spec.description.as_deref()
+            && !description.is_empty()
+        {
+            output.push('\n');
+            output.push_str(&detail_indent);
+            output.push_str(description);
+        }
     }
-    if let Some(default) = spec.default.as_deref() {
-        parts.push(format!("default={default}"));
-    }
-    if !spec.allowed.is_empty() {
-        parts.push(format!("allowed={}", spec.allowed.join("|")));
-    }
-    parts.join(" ")
+
+    output
 }
 
 fn render_task_use_command(task: &TaskSummary<'_>) -> String {
@@ -21989,10 +22021,12 @@ mod tests {
         compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
         execution_receipt_step, execution_receipt_step_detail, render_clean_text,
         render_detect_comparison_section, render_execution_receipt_summary_block,
-        render_execution_receipt_text, render_report_section, render_up_result,
-        render_up_section_from_parts, render_windows_uninstall_pending, run_execution_receipt,
-        run_execution_receipt_with_shared, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
-        windows_uninstall_script, workspace_refresh_command, write_detected_merge,
+        render_execution_receipt_text, render_report_section, render_tasks_text,
+        render_tasks_use_text, render_up_result, render_up_section_from_parts,
+        render_windows_uninstall_pending,
+        run_execution_receipt, run_execution_receipt_with_shared, strip_ansi_codes,
+        stylize_text_failure, up_doctor_mode, windows_uninstall_script,
+        workspace_refresh_command, write_detected_merge,
     };
     use crate::detector::{
         Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
@@ -22014,7 +22048,9 @@ mod tests {
         TaskExecutionRelation, TaskTargetResolutionEvidence, TaskTargetResolutionSource,
         simulate_run_interrupt_for_test,
     };
-    use crate::schema::{Backend, Lifecycle, TaskTargetAddressView, parse_memory_size_bytes};
+    use crate::schema::{
+        Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, parse_memory_size_bytes,
+    };
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
 
@@ -22068,6 +22104,131 @@ mod tests {
             brew_path.display(),
         );
         write_executable_script(&dir.join("sh"), &bootstrap_script);
+    }
+
+    #[test]
+    fn render_tasks_text_formats_inputs_as_compact_block() {
+        let env = BTreeMap::new();
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            String::from("base_url"),
+            TaskInputSpec {
+                description: Some(String::from("API base URL for the live suite")),
+                required: false,
+                default: None,
+                allowed: Vec::new(),
+            },
+        );
+        inputs.insert(
+            String::from("mode"),
+            TaskInputSpec {
+                description: Some(String::from("Run mode for the API suite")),
+                required: false,
+                default: Some(String::from("standard")),
+                allowed: vec![String::from("standard"), String::from("chaos")],
+            },
+        );
+
+        let task = TaskSummary {
+            name: "api:automation:tests",
+            context: Some("tooling"),
+            default_mode: None,
+            description: Some("Run the live API automation suite"),
+            notes: None,
+            category: None,
+            env: &env,
+            inputs: &inputs,
+            kind: "script",
+            run: None,
+            script: Some("./scripts/api/run-api-tests.sh"),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: vec![String::from("postgres")],
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: true,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, &[task]));
+
+        assert!(rendered.contains("\n  Inputs\n"), "{rendered}");
+        assert!(
+            rendered.contains("--base-url  optional   API base URL for the live suite"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("--mode      optional   default=`standard` allowed=`standard|chaos`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Run mode for the API suite"), "{rendered}");
+    }
+
+    #[test]
+    fn render_tasks_use_text_includes_compact_input_block() {
+        let env = BTreeMap::new();
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            String::from("base_url"),
+            TaskInputSpec {
+                description: Some(String::from("API base URL for the live suite")),
+                required: false,
+                default: None,
+                allowed: Vec::new(),
+            },
+        );
+        inputs.insert(
+            String::from("mode"),
+            TaskInputSpec {
+                description: Some(String::from("Run mode for the API suite")),
+                required: false,
+                default: Some(String::from("standard")),
+                allowed: vec![String::from("standard"), String::from("chaos")],
+            },
+        );
+
+        let task = TaskSummary {
+            name: "api:automation:tests",
+            context: Some("tooling"),
+            default_mode: None,
+            description: Some("Run the live API automation suite"),
+            notes: None,
+            category: None,
+            env: &env,
+            inputs: &inputs,
+            kind: "script",
+            run: None,
+            script: Some("./scripts/api/run-api-tests.sh"),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: vec![String::from("postgres")],
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: true,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
+
+        assert!(rendered.contains("\n  Inputs\n"), "{rendered}");
+        assert!(
+            rendered.contains("--base-url  optional   API base URL for the live suite"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("--mode      optional   default=`standard` allowed=`standard|chaos`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("                         Run mode for the API suite"),
+            "{rendered}"
+        );
     }
 
     #[test]
