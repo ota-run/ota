@@ -23,3 +23,6 @@ target
 
 /.ota/state/*
 /core
+
+# Ota local runtime state
+.ota/state/
