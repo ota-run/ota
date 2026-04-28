@@ -16,29 +16,15 @@ Generated from `./ota.yaml` by `ota agents`.
 
 ## Repo
 
-- `project`: `premium-agents`
-- `description`: `Premium AGENTS preview`
+- `project`: `existing`
 
 ## Agent Contract
 
-- `entrypoint`: `setup` (`ota run setup`)
-- `default_task`: `ci` (`ota run ci`)
-- `safe_tasks`:
-  - `setup` (`ota run setup`)
-  - `ci` (`ota run ci`)
-- `verify_after_changes`:
-  - `ci` (`ota run ci`)
-- `writable_paths`: `src`, `docs`
-- `protected_paths`: `ota.yaml`, `Cargo.lock`
+No explicit `agent` block is declared in `ota.yaml` yet.
 
-## Bootstrap
+Suggested next commands:
 
-Only install ota if it is missing and installation is approved.
-
-- `sh`: `curl -fsSL https://dist.ota.run/install.sh | sh`
-- `powershell`: `irm https://dist.ota.run/install.ps1 | iex`
-
-## Notes
-
-Use ota doctor first.
-Keep output calm and exact.
+- `ota tasks`
+- `ota doctor`
+- `ota detect --dry-run`
+- `ota init --bootstrap`
