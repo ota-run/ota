@@ -142,6 +142,10 @@
                 }
               }
             },
+            "status": { "type": "string" },
+            "failed_task": { "type": "string" },
+            "failed_dependency": { "type": "string" },
+            "failure_origin": { "type": "string" },
             "blocked": {
               "type": "array",
               "items": { "type": "string" }

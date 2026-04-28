@@ -273,6 +273,10 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success.get("receipt").is_some());
     assert!(success_receipt.get("contract_identity").is_some());
     assert!(success_receipt.get("service_termination").is_some());
+    assert!(success_receipt.get("status").is_some());
+    assert!(success_receipt.get("failed_task").is_some());
+    assert!(success_receipt.get("failed_dependency").is_some());
+    assert!(success_receipt.get("failure_origin").is_some());
     assert!(success.get("findings").is_some());
     assert!(success.get("promoted_baseline").is_some());
     assert!(success_summary.get("error_count").is_some());
