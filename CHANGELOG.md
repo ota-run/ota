@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- No unreleased entries yet.
+
+## 1.6.4
+
 - breaking contract change: `execution.local_backends` has been renamed to `execution.shared_backends`; legacy `local_backends` is no longer accepted, and the shipped shared-backend families are now local `container`, local `native`, and remote `remote`
 - extended policy-governed run-path fulfillment to direct container execution contexts: `execution.contexts.<name>.fulfillment: run` now provisions declared runtimes/tools inside the actual resolved execution container, including deferred fulfillment for ephemeral container tasks before the task body runs, while rejecting unsupported native/remote context declarations and leaving direct ephemeral service-task fulfillment unclaimed for now
 - added first target-activation support under `tasks.<name>.targets.<target>.activation.mode` with `manual` and `ensure_ready`, including explicit override skip semantics, validation for self/cyclic activation graphs, activation evidence in run receipts/summaries, and a first honest auto-start slice for persistent container producer services when the target binding itself already resolved truthfully (for example `host`, shared-backend `topology`, or shared-backend `internal`)
