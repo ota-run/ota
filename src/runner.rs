@@ -131,6 +131,10 @@ impl StreamPhaseLoader {
         Self::start_with_delay(label, Duration::from_millis(120))
     }
 
+    pub(crate) fn start_immediate(label: &str) -> Option<Self> {
+        Self::start_with_delay(label, Duration::ZERO)
+    }
+
     pub(crate) fn start_for_preflight(label: &str) -> Option<Self> {
         Self::start_with_delay(label, Duration::from_millis(80))
     }
@@ -268,7 +272,9 @@ fn activation_loader_label(
     readiness_target: &RuntimeReadinessTarget,
 ) -> String {
     match readiness_target {
-        RuntimeReadinessTarget::Http { .. } | RuntimeReadinessTarget::Tcp { .. } => {
+        RuntimeReadinessTarget::Http { .. }
+        | RuntimeReadinessTarget::Tcp { .. }
+        | RuntimeReadinessTarget::RemoteTcp { .. } => {
             format!("Waiting for {producer_task_name} to be ready")
         }
     }
@@ -418,11 +424,8 @@ pub(crate) fn run_streaming_command_with_capture_with_loader_hook_options<F>(
 where
     F: FnOnce(Option<StreamPhaseNotifier>),
 {
-    // In capture-and-stream mode the task body will usually produce user-facing output
-    // that should own the transcript. Keep loaders for quiet phases, but do not inject
-    // a transient "Running ..." line into long captured streams.
     let loader = if capture_output {
-        None
+        StreamPhaseLoader::start_immediate(label)
     } else {
         StreamPhaseLoader::start(label)
     };
@@ -1725,6 +1728,84 @@ cleanup; exit \"$status\"",
     )
 }
 
+fn remote_activation_service_command_with_path_export(
+    task_name: &str,
+    command: &str,
+    path_export: Option<&str>,
+    ready_port: u16,
+) -> String {
+    let pidfile = persistent_service_workload_pidfile_path(task_name);
+    let statusfile = persistent_service_workload_statusfile_path(task_name);
+    let logfile = persistent_service_workload_logfile_path(task_name);
+    let interruptfile = format!("{pidfile}.interrupted");
+    let command = command_with_optional_path_export(command, path_export)
+        .trim()
+        .to_owned();
+    let command = if command.is_empty() {
+        String::from(":")
+    } else {
+        command
+    };
+    format!(
+        "pidfile={pidfile}; \
+statusfile={statusfile}; \
+logfile={logfile}; \
+interruptfile={interruptfile}; \
+port={port}; \
+cleanup_failed_start() {{ rm -f \"$pidfile\" \"$statusfile\" \"$logfile\" \"$interruptfile\"; }}; \
+read_pidfile() {{ [ -s \"$pidfile\" ] || return 1; read pid started < \"$pidfile\" || return 1; [ -n \"$pid\" ] || return 1; if [ -z \"$started\" ]; then kill -0 \"$pid\" 2>/dev/null; return $?; fi; current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); [ -n \"$current\" ] && [ \"$current\" = \"$started\" ]; }}; \
+kill_workload() {{ \
+  read_pidfile || return 0; \
+  kill \"$pid\" 2>/dev/null || true; \
+  i=0; \
+  while read_pidfile && [ \"$i\" -lt 30 ]; do i=$((i + 1)); sleep 0.1; done; \
+  read_pidfile || return 0; \
+  kill -KILL \"$pid\" 2>/dev/null || true; \
+  i=0; \
+  while read_pidfile && [ \"$i\" -lt 20 ]; do i=$((i + 1)); sleep 0.1; done; \
+  return 0; \
+}}; \
+port_listening() {{ target=\"$1\"; awk -v port=\"$target\" 'BEGIN {{ found = 0 }} NR > 1 {{ split($2, a, \":\"); if (($4 == \"0A\" || $4 == \"0a\") && (toupper(a[2]) == toupper(port) || a[2] == port)) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; }}; \
+cleanup_failed_start; : > \"$logfile\"; \
+trap ': > \"$interruptfile\"; kill_workload; cleanup_failed_start; exit 130' INT TERM; \
+nohup sh -c {wrapped_command} </dev/null >> \"$logfile\" 2>&1 & child=$!; \
+started=$(cut -d' ' -f22 \"/proc/$child/stat\" 2>/dev/null || true); \
+printf '%s %s\\n' \"$child\" \"$started\" > \"$pidfile\"; \
+while read_pidfile; do \
+  hex=$(printf '%04X' \"$port\"); \
+  if port_listening \"$hex\"; then exit 0; fi; \
+  sleep 0.1; \
+done; \
+[ -f \"$interruptfile\" ] && {{ cleanup_failed_start; exit 130; }}; \
+[ -f \"$statusfile\" ] || {{ cleanup_failed_start; exit 1; }}; \
+status=$(cat \"$statusfile\" 2>/dev/null || printf '1'); \
+cleanup_failed_start; exit \"$status\"",
+        pidfile = shell_quote(&pidfile),
+        statusfile = shell_quote(&statusfile),
+        logfile = shell_quote(&logfile),
+        interruptfile = shell_quote(&interruptfile),
+        port = ready_port,
+        wrapped_command = shell_quote(&format!(
+            "trap 'kill 0' INT TERM; {command}; status=$?; printf '%s\\n' \"$status\" > {statusfile}; exit \"$status\"",
+            statusfile = shell_quote(&statusfile),
+            command = command,
+        )),
+    )
+}
+
+fn remote_activation_readiness_port(runtime: &crate::schema::TaskRuntimeSpec) -> Option<u16> {
+    let readiness = runtime.readiness.as_ref()?;
+    let listener_name = readiness.listener.as_deref()?.trim();
+    if listener_name.is_empty() {
+        return None;
+    }
+    let listener = runtime.listeners.get(listener_name)?;
+    if listener.bind.port.mode != crate::schema::TaskRuntimePortMode::Fixed {
+        return None;
+    }
+    listener.bind.port.value
+}
+
 #[cfg(unix)]
 fn signal_forwarding_shell_script(command: String) -> String {
     format!("trap 'kill 0' INT TERM; {command}")
@@ -2850,6 +2931,18 @@ enum RuntimeReadinessTarget {
         port: u16,
         path: String,
     },
+    RemoteTcp {
+        probe: RemoteReadinessProbeTarget,
+        port: u16,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RemoteReadinessProbeTarget {
+    provider: String,
+    target: String,
+    cwd: Option<String>,
+    ssh: Option<crate::schema::RemoteSshOptions>,
 }
 
 struct RuntimeReadinessProbe {
@@ -2906,6 +2999,7 @@ pub(crate) enum ResolvedExecutionBackend {
         provider: String,
         target: String,
         cwd: Option<String>,
+        ssh: Option<crate::schema::RemoteSshOptions>,
     },
     BackendProvider {
         shared_local_backend: Option<ResolvedSharedLocalBackend>,
@@ -3880,13 +3974,16 @@ fn execute_task_command(
             provider,
             target,
             cwd,
+            ssh,
         } => execute_remote_task_command(
             task_name,
+            runtime,
             command,
             env_overrides,
             provider,
             target,
             cwd.as_deref(),
+            ssh.as_ref(),
             mode,
         ),
         ResolvedExecutionBackend::BackendProvider {
@@ -5146,11 +5243,13 @@ fn provisioning_target_for_resolved_backend(
             provider,
             target,
             cwd,
+            ssh,
         } => Ok(ProvisioningExecutionTarget::Remote {
             provider: provider.clone(),
             provider_command: None,
             target: target.clone(),
             cwd: cwd.clone(),
+            ssh: ssh.clone(),
             context_name: None,
         }),
         ResolvedExecutionBackend::BackendProvider {
@@ -5164,6 +5263,7 @@ fn provisioning_target_for_resolved_backend(
             provider_command: Some(command.clone()),
             target: target.clone(),
             cwd: cwd.clone(),
+            ssh: None,
             context_name: None,
         }),
     }
@@ -5692,6 +5792,8 @@ fn ensure_target_producer_ready(
         target_name,
         target_spec,
         caller_backend,
+        working_dir,
+        &producer_backend,
         producer_task_name,
         producer_listener_name,
         producer_runtime_spec,
@@ -5718,8 +5820,8 @@ fn ensure_target_producer_ready(
     }
 
     let producer_backend_kind = resolved_execution_backend_kind(&producer_backend);
-    let producer_activation_mode = match producer_backend_kind {
-        Backend::Native => {
+    let producer_activation_mode = match &producer_backend {
+        ResolvedExecutionBackend::Native { .. } => {
             #[cfg(not(unix))]
             {
                 if let Some(loader) = loader.take() {
@@ -5735,31 +5837,32 @@ fn ensure_target_producer_ready(
             }
             TaskExecutionMode::CaptureActivation
         }
-        Backend::Container
-            if matches!(
-                producer_backend,
-                ResolvedExecutionBackend::Container {
-                    lifecycle: Lifecycle::Persistent,
-                    ..
-                }
-            ) =>
-        {
-            TaskExecutionMode::Capture
-        }
-        Backend::Container | Backend::Remote => {
+        ResolvedExecutionBackend::Container {
+            lifecycle: Lifecycle::Persistent,
+            ..
+        } => TaskExecutionMode::Capture,
+        ResolvedExecutionBackend::Remote { .. } => TaskExecutionMode::CaptureActivation,
+        ResolvedExecutionBackend::BackendProvider { provider, .. } => {
             if let Some(loader) = loader.take() {
                 loader.stop();
             }
-            let backend_label = match producer_backend_kind {
-                Backend::Native => "native",
-                Backend::Container => "container",
-                Backend::Remote => "remote",
-            };
             return Err(RunError::TaskTargetResolutionFailed {
                 task: task_name.to_string(),
                 target: target_name.to_string(),
                 details: format!(
-                    "target activation `ensure_ready` currently supports only persistent container or unix native producer services; `{producer_task_name}` resolves to `{backend_label}`"
+                    "target activation `ensure_ready` currently supports built-in remote providers only; `{producer_task_name}` resolves through backend provider `{provider}`"
+                ),
+            });
+        }
+        ResolvedExecutionBackend::Container { .. } => {
+            if let Some(loader) = loader.take() {
+                loader.stop();
+            }
+            return Err(RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details: format!(
+                    "target activation `ensure_ready` currently supports only persistent container producer services; `{producer_task_name}` resolves to `container`"
                 ),
             });
         }
@@ -5959,6 +6062,8 @@ fn declared_target_readiness_target(
     target_name: &str,
     target_spec: &TaskTargetSpec,
     caller_backend: Backend,
+    working_dir: &Path,
+    producer_backend: &ResolvedExecutionBackend,
     producer_task_name: &str,
     producer_listener_name: &str,
     producer_runtime_spec: &TaskRuntimeSpec,
@@ -5996,6 +6101,13 @@ fn declared_target_readiness_target(
                         producer_task_name,
                         Backend::Native,
                     ))
+                || (caller_backend == Backend::Remote
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Remote,
+                    ))
             {
                 select_target_listener_for_backend(service_task, probe_listener_name, caller_backend)
             } else {
@@ -6017,6 +6129,13 @@ fn declared_target_readiness_target(
                         producer_task_name,
                         Backend::Native,
                     )
+                || caller_backend == Backend::Remote
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Remote,
+                    )
             {
                 select_target_listener_for_backend(service_task, probe_listener_name, caller_backend)
             } else {
@@ -6033,6 +6152,15 @@ fn declared_target_readiness_target(
     })?;
     let (address, port) = match target_spec.service.address_view {
         TaskTargetAddressView::Host => {
+            if resolved_execution_backend_kind(producer_backend) == Backend::Remote {
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `ensure_ready` currently supports remote producer auto-start only for shared-backend `address_view: topology` and `address_view: internal`; `{producer_task_name}` target view is `host`"
+                    ),
+                });
+            }
             let host_projection = listener.project.host.as_ref().ok_or_else(|| {
                 RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
@@ -6077,6 +6205,49 @@ fn declared_target_readiness_target(
                     colocated_topology_listener_address(listener.bind.address.as_str()),
                     bind_port,
                 )
+            } else if caller_backend == Backend::Remote
+                && tasks_share_backend_binding(
+                    contract,
+                    task_name,
+                    producer_task_name,
+                    Backend::Remote,
+                )
+            {
+                if matches!(
+                    readiness.map(|probe| probe.kind),
+                    Some(TaskRuntimeReadinessKind::Http)
+                ) {
+                    return Err(RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` currently supports remote producer TCP readiness only for shared-backend `address_view: topology`; `{producer_task_name}` declares HTTP readiness"
+                        ),
+                    });
+                }
+                let bind_port = listener.bind.port.value.ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare a fixed `bind.port.value` for shared-backend `address_view: topology`"
+                        ),
+                    }
+                })?;
+                let Some(probe) = remote_readiness_probe_target(producer_backend, working_dir)
+                else {
+                    return Err(RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` currently supports built-in remote providers only; `{producer_task_name}` does not resolve to one"
+                        ),
+                    });
+                };
+                return Ok(RuntimeReadinessTarget::RemoteTcp {
+                    probe,
+                    port: bind_port,
+                });
             } else {
                 let host_projection = listener.project.host.as_ref().ok_or_else(|| {
                     RunError::TaskTargetResolutionFailed {
@@ -6109,6 +6280,13 @@ fn declared_target_readiness_target(
                         producer_task_name,
                         Backend::Native,
                     )))
+                && !(caller_backend == Backend::Remote
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Remote,
+                    ))
             {
                 return Err(RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
@@ -6127,6 +6305,34 @@ fn declared_target_readiness_target(
                     ),
                 }
             })?;
+            if caller_backend == Backend::Remote {
+                if matches!(
+                    readiness.map(|probe| probe.kind),
+                    Some(TaskRuntimeReadinessKind::Http)
+                ) {
+                    return Err(RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` currently supports remote producer TCP readiness only for `address_view: internal`; `{producer_task_name}` declares HTTP readiness"
+                        ),
+                    });
+                }
+                let Some(probe) = remote_readiness_probe_target(producer_backend, working_dir)
+                else {
+                    return Err(RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` currently supports built-in remote providers only; `{producer_task_name}` does not resolve to one"
+                        ),
+                    });
+                };
+                return Ok(RuntimeReadinessTarget::RemoteTcp {
+                    probe,
+                    port: bind_port,
+                });
+            }
             (
                 colocated_topology_listener_address(listener.bind.address.as_str()),
                 bind_port,
@@ -6418,8 +6624,12 @@ fn resolve_task_target_binding_url(
         }
         TaskTargetAddressView::Topology => {
             if caller_backend == Backend::Native {
-                if tasks_share_backend_binding(contract, task_name, service_task_name, Backend::Native)
-                {
+                if tasks_share_backend_binding(
+                    contract,
+                    task_name,
+                    service_task_name,
+                    Backend::Native,
+                ) {
                     return resolve_colocated_shared_backend_listener_endpoint(
                         task_name,
                         target_name,
@@ -6469,7 +6679,12 @@ fn resolve_task_target_binding_url(
             }
 
             if caller_backend == Backend::Remote
-                && tasks_share_backend_binding(contract, task_name, service_task_name, Backend::Remote)
+                && tasks_share_backend_binding(
+                    contract,
+                    task_name,
+                    service_task_name,
+                    Backend::Remote,
+                )
             {
                 return resolve_colocated_shared_backend_listener_endpoint(
                     task_name,
@@ -8732,6 +8947,7 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
                             provider: remote.provider.clone(),
                             target,
                             cwd: remote.cwd.clone(),
+                            ssh: remote.ssh.clone(),
                         })
                     } else {
                         let Some(extension) =
@@ -8849,6 +9065,7 @@ pub(crate) fn resolve_context_execution_backend(
                     provider: remote.provider.clone(),
                     target,
                     cwd: remote.cwd.clone(),
+                    ssh: remote.ssh.clone(),
                 })
             } else {
                 let Some(extension) = backend_provider_extension(contract, &remote.provider) else {
@@ -8900,20 +9117,58 @@ fn remote_target_example(provider: &str) -> &'static str {
     }
 }
 
+fn remote_readiness_probe_target(
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+) -> Option<RemoteReadinessProbeTarget> {
+    match backend {
+        ResolvedExecutionBackend::Remote {
+            provider,
+            target,
+            cwd,
+            ssh,
+            ..
+        } => Some(RemoteReadinessProbeTarget {
+            provider: provider.clone(),
+            target: target.clone(),
+            cwd: cwd
+                .clone()
+                .or_else(|| Some(working_dir.display().to_string())),
+            ssh: ssh.clone(),
+        }),
+        _ => None,
+    }
+}
+
 fn execute_remote_task_command(
     task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
     command: &str,
     env_overrides: &BTreeMap<String, String>,
     provider: &str,
     target: &str,
     cwd: Option<&str>,
+    ssh: Option<&crate::schema::RemoteSshOptions>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    let command = if matches!(mode, TaskExecutionMode::CaptureActivation)
+        && runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+    {
+        if let Some(runtime) = runtime
+            && let Some(ready_port) = remote_activation_readiness_port(runtime)
+        {
+            remote_activation_service_command_with_path_export(task_name, command, None, ready_port)
+        } else {
+            persistent_service_command_with_path_export(task_name, command, None)
+        }
+    } else {
+        command.to_string()
+    };
     let mut remote_command = match provider {
-        "daytona" => daytona_remote_command(target, cwd, command, env_overrides),
-        "ssh" => ssh_remote_command(target, cwd, command, env_overrides),
-        "tsh" => tsh_remote_command(target, cwd, command, env_overrides),
-        "kubectl" => kubectl_remote_command(target, cwd, command, env_overrides),
+        "daytona" => daytona_remote_command(target, cwd, command.as_str(), env_overrides),
+        "ssh" => ssh_remote_command(target, cwd, ssh, command.as_str(), env_overrides),
+        "tsh" => tsh_remote_command(target, cwd, command.as_str(), env_overrides),
+        "kubectl" => kubectl_remote_command(target, cwd, command.as_str(), env_overrides),
         other => {
             return Err(RunError::UnsupportedRemoteProvider {
                 task: task_name.to_string(),
@@ -9427,15 +9682,33 @@ fn daytona_remote_command(
 fn ssh_remote_command(
     target: &str,
     cwd: Option<&str>,
+    ssh: Option<&crate::schema::RemoteSshOptions>,
     command: &str,
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
+    let script = shell_script_with_env_and_cwd(command, env_overrides, cwd);
     let mut remote = Command::new("ssh");
+    if let Some(ssh) = ssh {
+        if let Some(config_file) = ssh
+            .config_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            remote.arg("-F").arg(config_file);
+        }
+        if let Some(identity_file) = ssh
+            .identity_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            remote.arg("-i").arg(identity_file);
+        }
+    }
     remote
         .arg(target)
-        .arg("sh")
-        .arg("-lc")
-        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
+        .arg(format!("sh -lc {}", shell_quote(script.as_str())));
     remote
 }
 
@@ -10425,6 +10698,9 @@ fn readiness_target_observed(target: &RuntimeReadinessTarget) -> bool {
             port,
             path,
         } => http_readiness_endpoint_reachable(address.as_str(), *port, path.as_str()),
+        RuntimeReadinessTarget::RemoteTcp { probe, port } => {
+            remote_target_probe_port_reachable(probe, *port)
+        }
     }
 }
 
@@ -10470,6 +10746,32 @@ fn http_readiness_endpoint_reachable(address: &str, port: u16, path: &str) -> bo
             })
         })
         .unwrap_or(false)
+}
+
+fn remote_target_probe_port_reachable(probe: &RemoteReadinessProbeTarget, port: u16) -> bool {
+    let command = format!(
+        "port={port}; \
+if command -v ss >/dev/null 2>&1; then \
+  ss -Htnl \"sport = :$port\" 2>/dev/null | awk 'NF {{ found=1; exit }} END {{ exit(found ? 0 : 1) }}' && exit 0; \
+fi; \
+if command -v netstat >/dev/null 2>&1; then \
+  netstat -an 2>/dev/null | awk -v port=\"$port\" '$0 ~ /LISTEN/ && ($0 ~ (\":\" port \"[[:space:]]\") || $0 ~ (\"\\.\" port \"[[:space:]]\")) {{ found=1; exit }} END {{ exit(found ? 0 : 1) }}' && exit 0; \
+fi; \
+hex=$(printf '%04X' \"$port\"); \
+awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if (($4 == \"0A\" || $4 == \"0a\") && toupper(a[2]) == toupper(target)) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null",
+    );
+    let output = execute_remote_task_command(
+        "__ota_remote_probe__",
+        None,
+        command.as_str(),
+        &BTreeMap::new(),
+        probe.provider.as_str(),
+        probe.target.as_str(),
+        probe.cwd.as_deref(),
+        probe.ssh.as_ref(),
+        TaskExecutionMode::Capture,
+    );
+    matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
 }
 
 fn start_runtime_readiness_probe(
@@ -12941,6 +13243,100 @@ exit 1
     }
 }
 
+fn cleanup_interrupted_remote_service_workload_and_note(
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    runtime: Option<&TaskRuntimeSpec>,
+) -> Option<String> {
+    let ResolvedExecutionBackend::Remote {
+        provider,
+        target,
+        cwd,
+        ..
+    } = backend
+    else {
+        return None;
+    };
+
+    let pidfile = persistent_service_workload_pidfile_path(task_name);
+    let fixed_bind_ports = runtime
+        .into_iter()
+        .flat_map(|runtime| runtime.listeners.values())
+        .filter_map(|listener| {
+            (listener.bind.port.mode == crate::schema::TaskRuntimePortMode::Fixed)
+                .then_some(listener.bind.port.value)
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    let fixed_bind_ports_arg = fixed_bind_ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cleanup_command = format!(
+        "pidfile={pidfile}; \
+ports={ports}; \
+cleaned=0; \
+port_listening() {{ target=\"$1\"; awk -v port=\"$target\" 'BEGIN {{ found = 0 }} NR > 1 {{ split($2, a, \":\"); if (($4 == \"0A\" || $4 == \"0a\") && (toupper(a[2]) == toupper(port) || a[2] == port)) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; }}; \
+terminate_pid_tree() {{ pid=\"$1\"; [ -n \"$pid\" ] || return 0; [ \"$pid\" = \"$$\" ] && return 0; [ \"$pid\" = \"1\" ] && return 0; kill -0 \"$pid\" 2>/dev/null || return 0; children=$(pgrep -P \"$pid\" 2>/dev/null || true); for child in $children; do terminate_pid_tree \"$child\"; done; kill -TERM \"$pid\" 2>/dev/null || true; sleep 0.2; i=0; while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 30 ]; do i=$((i + 1)); sleep 0.1; done; if kill -0 \"$pid\" 2>/dev/null; then kill -KILL \"$pid\" 2>/dev/null || true; sleep 0.5; fi; }}; \
+find_listener_owner_pids() {{ target_port=\"$1\"; owners=\"\"; if command -v ss >/dev/null 2>&1; then ss_pids=$(ss -Htnlp \"sport = :$target_port\" 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | sort -u || true); for pid in $ss_pids; do [ \"$pid\" = \"$$\" ] && continue; [ \"$pid\" = \"1\" ] && continue; case \" $owners \" in *\" $pid \"*) ;; *) owners=\"$owners $pid\" ;; esac; done; fi; if [ -z \"$owners\" ] && command -v lsof >/dev/null 2>&1; then lsof_pids=$(lsof -nP -iTCP:\"$target_port\" -sTCP:LISTEN -t 2>/dev/null || true); for pid in $lsof_pids; do [ \"$pid\" = \"$$\" ] && continue; [ \"$pid\" = \"1\" ] && continue; case \" $owners \" in *\" $pid \"*) ;; *) owners=\"$owners $pid\" ;; esac; done; fi; printf '%s\\n' \"$owners\"; }}; \
+cleanup_pidfile_owner() {{ [ -s \"$pidfile\" ] || return 0; read pid started < \"$pidfile\" || {{ rm -f \"$pidfile\"; return 0; }}; [ -n \"$pid\" ] || {{ rm -f \"$pidfile\"; return 0; }}; if [ -n \"$started\" ]; then current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); [ -n \"$current\" ] && [ \"$current\" = \"$started\" ] && terminate_pid_tree \"$pid\" && cleaned=1; elif kill -0 \"$pid\" 2>/dev/null; then terminate_pid_tree \"$pid\"; cleaned=1; fi; rm -f \"$pidfile\"; }}; \
+cleanup_listener_owners() {{ [ -n \"$ports\" ] || return 0; attempt=0; while [ \"$attempt\" -lt 20 ]; do for port in $ports; do owners=$(find_listener_owner_pids \"$port\"); for pid in $owners; do terminate_pid_tree \"$pid\"; cleaned=1; done; done; all_free=1; for port in $ports; do hex=$(printf '%04X' \"$port\"); if port_listening \"$hex\"; then all_free=0; break; fi; done; [ \"$all_free\" = \"1\" ] && return 0; attempt=$((attempt + 1)); sleep 0.1; done; return 1; }}; \
+cleanup_pidfile_owner; \
+cleanup_listener_owners; \
+status=$?; \
+if [ \"$cleaned\" = \"1\" ] || [ \"$status\" -eq 0 ]; then [ \"$cleaned\" = \"1\" ] && printf cleaned; exit 0; fi; \
+exit 1",
+        pidfile = shell_quote(&pidfile),
+        ports = shell_quote(&fixed_bind_ports_arg),
+    );
+    let probe = RemoteReadinessProbeTarget {
+        provider: provider.clone(),
+        target: target.clone(),
+        cwd: cwd.clone(),
+        ssh: match backend {
+            ResolvedExecutionBackend::Remote { ssh, .. } => ssh.clone(),
+            _ => None,
+        },
+    };
+    let ports_cleared = || {
+        fixed_bind_ports
+            .iter()
+            .all(|port| !remote_target_probe_port_reachable(&probe, *port))
+    };
+    match execute_remote_task_command(
+        task_name,
+        None,
+        cleanup_command.as_str(),
+        &BTreeMap::new(),
+        provider.as_str(),
+        target.as_str(),
+        cwd.as_deref(),
+        match backend {
+            ResolvedExecutionBackend::Remote { ssh, .. } => ssh.as_ref(),
+            _ => None,
+        },
+        TaskExecutionMode::Capture,
+    ) {
+        Ok(_) if ports_cleared() => Some(String::from(
+            "activation-started remote service workload cleaned up after interrupt",
+        )),
+        Ok(output) if output.exit_code == 0 && output.stdout.contains("cleaned") => Some(
+            String::from("activation-started remote service workload cleaned up after interrupt"),
+        ),
+        Ok(output) if output.exit_code == 0 => None,
+        Ok(output) if output.stdout.contains("cleaned") => Some(String::from(
+            "activation-started remote service workload cleaned up after interrupt",
+        )),
+        Ok(_) => Some(String::from(
+            "activation-started remote service cleanup could not verify listener release after interrupt",
+        )),
+        Err(error) => Some(format!(
+            "activation-started remote service cleanup failed: {error}"
+        )),
+    }
+}
+
 fn cleanup_activation_started_producer_and_note(
     producer_task_name: &str,
     backend: &ResolvedExecutionBackend,
@@ -12951,6 +13347,14 @@ fn cleanup_activation_started_producer_and_note(
     if resolved_execution_backend_kind(backend) == Backend::Native {
         return cleanup_interrupted_native_service_workload_and_note(producer_task_name, runtime)
             .map(|note| format!("activation-started producer `{producer_task_name}`: {note}"));
+    }
+    if resolved_execution_backend_kind(backend) == Backend::Remote {
+        return cleanup_interrupted_remote_service_workload_and_note(
+            producer_task_name,
+            backend,
+            runtime,
+        )
+        .map(|note| format!("activation-started producer `{producer_task_name}`: {note}"));
     }
     let Some((engine, container_name)) =
         persistent_container_target_for_backend(backend, working_dir)
@@ -15531,6 +15935,171 @@ tasks:
         .expect("shared native internal activation should succeed");
 
         assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_ready_activation_starts_and_cleans_up_shared_remote_internal_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: sandbox-dev
+        cwd: {}
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: python3 -c "import socket,time; sock=socket.socket(); sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); sock.bind(('127.0.0.1', {port})); sock.listen(1); time.sleep(30)"
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#,
+            dir.path().display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&ssh_path, permissions).unwrap();
+
+        let log_path = dir.path().join("ssh-log.txt");
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let task = contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &contract,
+            &file_path,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            None,
+            TaskExecutionMode::Capture,
+            dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("shared remote internal activation should succeed");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_SSH_LOG");
+            },
+        }
+
+        assert_eq!(status, TaskTargetActivationStatus::StartedReady);
+        let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &contract,
+            &file_path,
+            dir.path(),
+            &mut state,
+        );
+        assert!(
+            cleanup_note
+                .as_deref()
+                .is_some_and(|note| note.contains("remote service workload cleaned up")),
+            "{cleanup_note:?}"
+        );
+
+        for _ in 0..30 {
+            if !super::target_probe_endpoint_reachable("127.0.0.1", port) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        panic!("remote activation cleanup should free the producer port");
     }
 
     #[test]
@@ -20751,6 +21320,7 @@ exec "$(dirname "$0")/docker-real" "$@"
                     provider: String::from("ssh"),
                     target: String::from("user@host"),
                     cwd: None,
+                    ssh: None,
                 }
             ),
             "Running test (remote)"
@@ -25578,6 +26148,158 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn passes_through_ssh_config_and_identity_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let log_path = dir.path().join("ssh-log.txt");
+        let config_path = dir.path().join("ssh-config");
+        let identity_path = dir.path().join("ssh-key");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+      cwd: {}
+      ssh:
+        config_file: {}
+        identity_file: {}
+tasks:
+  setup:
+    run: echo ready > prepared.txt
+"#,
+            dir.path().display(),
+            config_path.display(),
+            identity_path.display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+        fs::write(&config_path, "Host sandbox-dev\n").unwrap();
+        fs::write(&identity_path, "not-a-real-key\n").unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&ssh_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let outcome = run_task(&contract, &file_path, "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_SSH_LOG");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains(&format!("arg -F {}", config_path.display())));
+        assert!(log.contains(&format!("arg -i {}", identity_path.display())));
+        assert!(log.contains("exec sandbox-dev"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_tcp_probe_does_not_trust_lsof_exit_code_alone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&ssh_path, permissions).unwrap();
+
+        let lsof_path = bin_dir.join("lsof");
+        install_fake_lsof_always_success(&lsof_path);
+        let mut permissions = fs::metadata(&lsof_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&lsof_path, permissions).unwrap();
+
+        let log_path = dir.path().join("ssh-log.txt");
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let probe = super::RemoteReadinessProbeTarget {
+            provider: String::from("ssh"),
+            target: String::from("sandbox-dev"),
+            cwd: Some(dir.path().display().to_string()),
+            ssh: None,
+        };
+        let observed = super::remote_target_probe_port_reachable(&probe, port);
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_SSH_LOG");
+            },
+        }
+
+        assert!(!observed, "probe should not trust lsof exit status alone");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn runs_tasks_in_tsh_remote_backend() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -29995,14 +30717,40 @@ exit 1
         fs::write(
             path,
             r#"#!/bin/sh
-target="$1"
-shift
-[ "$1" = "sh" ] || exit 1
-shift
-[ "$1" = "-lc" ] || exit 1
-shift
+target=""
+[ -n "$OTA_SSH_LOG" ] || exit 1
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -F|-i)
+      [ "$#" -ge 2 ] || exit 1
+      printf "arg %s %s\n" "$1" "$2" >> "$OTA_SSH_LOG"
+      shift 2
+      ;;
+    -*)
+      printf "arg %s\n" "$1" >> "$OTA_SSH_LOG"
+      shift
+      ;;
+    *)
+      target="$1"
+      shift
+      break
+      ;;
+  esac
+done
+[ -n "$target" ] || exit 1
+[ "$#" -ge 1 ] || exit 1
 printf "exec %s\n" "$target" >> "$OTA_SSH_LOG"
-exec /bin/sh -lc "$1"
+exec /bin/sh -lc "$*"
+"#,
+        )
+        .unwrap();
+    }
+
+    fn install_fake_lsof_always_success(path: &Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+exit 0
 "#,
         )
         .unwrap();

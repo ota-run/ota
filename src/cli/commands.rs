@@ -1552,6 +1552,7 @@ fn resolve_execution_plan(
                 provider,
                 target,
                 cwd,
+                ..
             } => (
                 None,
                 None,
@@ -26162,6 +26163,7 @@ execution:
                 provider_command: None,
                 target: String::from("sandbox-dev"),
                 cwd: Some(String::from("/tmp")),
+                ssh: None,
                 context_name: None,
             },
         );
