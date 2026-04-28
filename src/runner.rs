@@ -22329,7 +22329,7 @@ tasks:
         assert!(!first.interrupted);
         assert_eq!(
             second.execution_note.as_deref(),
-            Some("persistent container reused")
+            Some("persistent container reused; service stopped before readiness; service workload in persistent container exited")
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(
