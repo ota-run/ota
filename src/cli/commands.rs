@@ -26764,7 +26764,8 @@ tasks:
         );
 
         let rendered = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
-        assert!(!rendered.contains("Note:"), "{rendered}");
+        assert!(rendered.contains("Note:"), "{rendered}");
+        assert!(rendered.contains("running on the host environment"), "{rendered}");
     }
 
     #[test]
