@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use super::*;
+use crate::runner::TaskTargetResolutionSource;
 pub(super) fn render_execution_receipt_summary_block(
     receipt: &ExecutionReceipt,
     task: Option<&str>,
@@ -34,17 +35,6 @@ pub(super) fn render_execution_receipt_summary_block(
         paint(&format!("🦦 {title}"), "1")
     };
     let mut lines = vec![String::new(), title, String::new()];
-    let path_display = if receipt.scope == "repo" {
-        Path::new(receipt.path.as_str())
-            .parent()
-            .map(|parent| compact_path(parent, "."))
-            .unwrap_or_else(|| compact_path(Path::new(receipt.path.as_str()), "."))
-    } else if receipt.scope == "workspace" {
-        receipt.path.clone()
-    } else {
-        compact_path(Path::new(receipt.path.as_str()), ".")
-    };
-    let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
     let mode = receipt
         .backend
         .as_deref()
@@ -58,47 +48,20 @@ pub(super) fn render_execution_receipt_summary_block(
             .map(|step| step.label.as_str())
             .unwrap_or("setup")
     });
-    let mut note = match (mode.as_str(), receipt.lifecycle.as_deref()) {
-        ("container", Some("persistent")) => persistent_container_note_from_receipt(receipt, task)
-            .unwrap_or_else(|| String::from("reusing persistent container backend")),
-        ("container", Some("ephemeral")) => {
-            String::from("using a fresh container image for this run")
-        }
-        ("native", Some(lifecycle)) => format!(
-            "running on the host environment; requested `--lifecycle {lifecycle}` is advisory in native mode only"
-        ),
-        ("native", _) => String::from("running on the host environment"),
-        (other, _) => format!("executing through the `{other}` backend"),
-    };
-    if let Some(internal_note) = internal_task_note_from_receipt(receipt, task)
-        && !note.contains(internal_note.as_str())
-    {
-        note = format!("{note}; {internal_note}");
-    }
-    if let Some(requested_note) = requested_task_note_from_receipt(receipt, task)
-        && !note.contains(requested_note.as_str())
-    {
-        note = format!("{note}; {requested_note}");
-    }
-    if let Some(service_termination) = receipt.service_termination.as_ref() {
-        let service_note = service_termination_summary_note(service_termination);
-        if !note.contains(service_note.as_str()) {
-            note = format!("{note}; {service_note}");
-        }
-    }
+    let backend_summary = backend_summary_from_receipt(receipt, task, mode.as_str());
+    let note = execution_summary_note(receipt, task, backend_summary.as_deref());
     let log_capture_warning = receipt_log_capture_warning(receipt).map(str::to_string);
-    lines.push(summary_detail_line("Scope:", &receipt.scope));
-    lines.push(summary_detail_line("Path:", &path_display));
-    lines.push(summary_detail_line("Contract:", &contract_display));
+    let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
+    lines.push(summary_detail_line("Task:", task));
     if let Some(workspace) = receipt.workspace.as_deref() {
         lines.push(summary_detail_line("Workspace:", workspace));
     }
-    if let Some(lifecycle) = receipt.lifecycle.as_deref() {
-        lines.push(summary_detail_line("Lifecycle:", lifecycle));
-    }
-    lines.push(summary_detail_line("Mode:", &mode));
     if let Some(context) = receipt.context.as_deref() {
         lines.push(summary_detail_line("Context:", context));
+    }
+    lines.push(summary_detail_line("Mode:", &mode));
+    if let Some(lifecycle) = receipt.lifecycle.as_deref() {
+        lines.push(summary_detail_line("Lifecycle:", lifecycle));
     }
     if let Some(image) = receipt.image.as_deref() {
         lines.push(summary_detail_line("Image:", image));
@@ -116,6 +79,9 @@ pub(super) fn render_execution_receipt_summary_block(
         ) {
             lines.push(summary_detail_line("Target:", target));
         }
+    }
+    if let Some(backend_summary) = backend_summary.as_deref() {
+        lines.push(summary_detail_line("Backend:", backend_summary));
     }
     if let Some(endpoint) = primary_receipt_endpoint(receipt) {
         lines.push(summary_detail_line("External:", &endpoint));
@@ -135,13 +101,11 @@ pub(super) fn render_execution_receipt_summary_block(
     for resolution in requested_task_target_resolutions(receipt, task) {
         lines.push(summary_detail_line(
             &format!("Target {}:", resolution.target),
-            &format!(
-                "service({}.{}) -> {} ({})",
-                resolution.service_ref.task,
-                resolution.service_ref.listener,
-                resolution.effective_url,
-                crate::runner::render_target_resolution_source_and_activation_label(resolution)
-            ),
+            &human_target_resolution_summary(resolution),
+        ));
+        lines.push(summary_detail_line(
+            target_resolution_value_label(resolution),
+            &resolution.effective_url,
         ));
     }
     if let Some(shared_backend) = requested_task_shared_local_backend(receipt, task) {
@@ -201,14 +165,14 @@ pub(super) fn render_execution_receipt_summary_block(
     if let Some(backend_fulfillment) = requested_task_backend_fulfillment(receipt, task) {
         lines.push(summary_detail_line(
             "Fulfillment:",
-            &format!(
-                "{} ({}) -> {}",
-                backend_fulfillment.backend_unit,
-                backend_fulfillment_mode_label(backend_fulfillment.mode),
-                backend_fulfillment_result_label(backend_fulfillment.result),
-            ),
+            &human_backend_fulfillment_summary(backend_fulfillment),
         ));
-        if !backend_fulfillment.missing.is_empty() {
+        if matches!(
+            backend_fulfillment.result,
+            crate::runner::BackendFulfillmentResult::MissingRequirements
+                | crate::runner::BackendFulfillmentResult::Failed
+        ) && !backend_fulfillment.missing.is_empty()
+        {
             lines.push(summary_detail_line(
                 "Missing:",
                 &backend_fulfillment.missing.join("; "),
@@ -224,17 +188,66 @@ pub(super) fn render_execution_receipt_summary_block(
     if let Some(logs) = receipt.logs.as_ref() {
         lines.push(summary_detail_line("Logs:", &logs.dir));
     }
-    lines.push(summary_detail_line("Task:", task));
-    let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
     lines.push(summary_detail_line(
         "Status:",
         &render_execution_summary_status_value(&status),
     ));
-    lines.push(summary_detail_line("Note:", &note));
+    if let Some(note) = note.as_deref() {
+        lines.push(summary_detail_line("Note:", note));
+    }
     if let Some(log_warning) = log_capture_warning.as_deref() {
         lines.push(summary_detail_line("Warning:", log_warning));
     }
     lines.join("\n")
+}
+
+fn backend_summary_from_receipt(
+    receipt: &ExecutionReceipt,
+    task: &str,
+    mode: &str,
+) -> Option<String> {
+    match (mode, receipt.lifecycle.as_deref()) {
+        ("container", Some("persistent")) => Some(
+            persistent_container_note_from_receipt(receipt, task)
+                .unwrap_or_else(|| String::from("persistent container reused")),
+        ),
+        ("container", Some("ephemeral")) => Some(String::from("fresh container image for this run")),
+        ("native", _) => Some(String::from("host environment")),
+        (other, _) => Some(format!("executing through the `{other}` backend")),
+    }
+}
+
+fn execution_summary_note(
+    receipt: &ExecutionReceipt,
+    task: &str,
+    backend_summary: Option<&str>,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(internal_note) = internal_task_note_from_receipt(receipt, task) {
+        push_unique_summary_note_part(&mut parts, internal_note);
+    }
+    if let Some(requested_note) = requested_task_note_from_receipt(receipt, task) {
+        for part in requested_note.split("; ") {
+            let trimmed = part.trim();
+            if trimmed.is_empty()
+                || trimmed == "requested task"
+                || backend_summary.is_some_and(|backend| trimmed == backend)
+                || trimmed.starts_with("target `")
+                || trimmed.starts_with("backend `")
+                || trimmed.starts_with("activation ")
+            {
+                continue;
+            }
+            push_unique_summary_note_part(&mut parts, trimmed.to_string());
+        }
+    }
+    if let Some(service_termination) = receipt.service_termination.as_ref() {
+        push_unique_summary_note_part(
+            &mut parts,
+            service_termination_summary_note(service_termination),
+        );
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
 }
 
 fn persistent_container_note_from_receipt(
@@ -348,21 +361,65 @@ fn requested_task_backend_fulfillment<'a>(
         .or(receipt.backend_fulfillment.as_ref())
 }
 
-fn backend_fulfillment_mode_label(mode: crate::runner::BackendFulfillmentMode) -> &'static str {
-    match mode {
-        crate::runner::BackendFulfillmentMode::None => "none",
-        crate::runner::BackendFulfillmentMode::Run => "run",
+fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) -> String {
+    match resolution.activation.as_ref().map(|activation| activation.status) {
+        Some(crate::runner::TaskTargetActivationStatus::StartedReady) => format!(
+            "started producer `{}` and waited for readiness",
+            resolution.service_ref.task
+        ),
+        Some(crate::runner::TaskTargetActivationStatus::ReusedReady) => {
+            format!("reused ready producer `{}`", resolution.service_ref.task)
+        }
+        Some(crate::runner::TaskTargetActivationStatus::SkippedExplicitOverride) => {
+            String::from("skipped activation because an explicit override was provided")
+        }
+        _ => match resolution.source {
+            TaskTargetResolutionSource::ExplicitOverride => {
+                String::from("used explicit override")
+            }
+            TaskTargetResolutionSource::TargetBinding => format!(
+                "resolved from producer `{}.{}`",
+                resolution.service_ref.task, resolution.service_ref.listener
+            ),
+            TaskTargetResolutionSource::CompatibilityLiteralDefault => {
+                String::from("used compatibility literal default")
+            }
+        },
     }
 }
 
-fn backend_fulfillment_result_label(
-    result: crate::runner::BackendFulfillmentResult,
-) -> &'static str {
-    match result {
-        crate::runner::BackendFulfillmentResult::RequirementsSatisfied => "requirements_satisfied",
-        crate::runner::BackendFulfillmentResult::MissingRequirements => "missing_requirements",
-        crate::runner::BackendFulfillmentResult::Fulfilled => "fulfilled",
-        crate::runner::BackendFulfillmentResult::Failed => "failed",
+fn target_resolution_value_label(resolution: &TaskTargetResolutionEvidence) -> &'static str {
+    match resolution.override_input.as_deref() {
+        Some("base_url") => "Base URL:",
+        _ => "Resolved:",
+    }
+}
+
+fn human_backend_fulfillment_summary(
+    backend_fulfillment: &crate::runner::BackendFulfillmentEvidence,
+) -> String {
+    match backend_fulfillment.result {
+        crate::runner::BackendFulfillmentResult::RequirementsSatisfied => format!(
+            "requirements already satisfied for `{}`",
+            backend_fulfillment.backend_unit
+        ),
+        crate::runner::BackendFulfillmentResult::MissingRequirements => format!(
+            "missing requirements for `{}`",
+            backend_fulfillment.backend_unit
+        ),
+        crate::runner::BackendFulfillmentResult::Fulfilled => {
+            format!("prepared `{}`", backend_fulfillment.backend_unit)
+        }
+        crate::runner::BackendFulfillmentResult::Failed => format!(
+            "failed while preparing `{}`",
+            backend_fulfillment.backend_unit
+        ),
+    }
+}
+
+fn push_unique_summary_note_part(parts: &mut Vec<String>, part: String) {
+    if !parts.iter().any(|existing| existing == &part) {
+        parts.push(part);
     }
 }
 

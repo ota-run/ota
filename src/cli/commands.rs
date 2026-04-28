@@ -26593,7 +26593,7 @@ tasks:
         assert!(rendered.contains("Status:      failed"));
         assert!(rendered.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(!rendered.contains("Why: 🦦 RUN SUMMARY"));
-        assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nStatus:"));
+        assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nTask:"));
     }
 
     #[test]
@@ -26708,6 +26708,47 @@ tasks:
     }
 
     #[test]
+    fn run_execution_receipt_summary_omits_requested_task_placeholder_note() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: Some(String::from("requested task")),
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        let rendered =
+            render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        assert!(!rendered.contains("Note:"), "{rendered}");
+    }
+
+    #[test]
     fn run_execution_receipt_includes_target_resolution_evidence_in_json_and_summary() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -26775,6 +26816,65 @@ tasks:
         assert!(rendered.contains("started producer `dev` and waited for readiness"));
         assert!(rendered.contains("Base URL:"));
         assert!(rendered.contains("http://127.0.0.1:8080"));
+    }
+
+    #[test]
+    fn run_execution_receipt_summary_does_not_leak_activation_fragment_into_note() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  sandbox:
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "sandbox",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("sandbox"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: Some(String::from(
+                    "requested task; target `api` declared `service(dev.http)` via `base_url` -> `http://127.0.0.1:8080` (target binding; activation ensure_ready started_ready)",
+                )),
+            }],
+            &[],
+            &[TaskTargetResolutionEvidence {
+                target: String::from("api"),
+                override_input: Some(String::from("base_url")),
+                source: TaskTargetResolutionSource::TargetBinding,
+                activation: Some(crate::runner::TaskTargetActivationEvidence {
+                    mode: crate::schema::TaskTargetActivationMode::EnsureReady,
+                    status: crate::runner::TaskTargetActivationStatus::StartedReady,
+                }),
+                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                    task: String::from("dev"),
+                    listener: String::from("http"),
+                    address_view: TaskTargetAddressView::Topology,
+                },
+                effective_url: String::from("http://127.0.0.1:8080"),
+            }],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        let rendered =
+            render_execution_receipt_summary_block(&receipt, Some("sandbox"), "RUN SUMMARY");
+        assert!(!rendered.contains("started_ready)"), "{rendered}");
+        assert!(!rendered.contains("Note:        activation"), "{rendered}");
     }
 
     #[test]
@@ -31455,10 +31555,6 @@ fn run_single_contract_target_streaming(
                 Some(task_name.as_str()),
                 "RUN SUMMARY",
             ));
-            if !output.is_empty() {
-                output.push('\n');
-            }
-            output.push_str(details_footer);
             Ok(output)
         }
         Ok(outcome) => {
@@ -31683,10 +31779,6 @@ fn run_single_contract_target_captured(
                 Some(task_name.as_str()),
                 "RUN SUMMARY",
             ));
-            if !output.is_empty() {
-                output.push('\n');
-            }
-            output.push_str(details_footer);
             Ok(output)
         }
         Ok(outcome) => {
