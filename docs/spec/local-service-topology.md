@@ -24,7 +24,11 @@
 
 # Local Service Topology
 
-Status: proposed.
+Status: usage and adoption guide for the shipped target-binding, activation, shared-backend, and
+backend-fulfillment surface, plus adjacent extension direction where explicitly called out.
+
+Use [contract-reference.md](contract-reference.md) as the canonical field and validation truth.
+Use this page when the question is how to apply those fields honestly in real repo topology.
 
 This spec defines the long-term Ota feature program for container-first local development:
 
@@ -314,8 +318,20 @@ Current `ensure_ready` constraints:
   - `started_ready` = ota started the producer and waited for readiness
   - `reused_ready` = ota found the producer already ready and reused it
 - the current shipped slice auto-starts producer services only when ota can own them honestly:
-  persistent container producer services, or unix native producer services started through the
-  activation-owned native path, and only when the target binding itself already resolved truthfully
+  persistent container producer services, unix native producer services started through the
+  activation-owned native path, or built-in remote producer services (`ssh`, `tsh`, `kubectl`,
+  `daytona`) only when the caller and producer share one declared remote backend binding, the
+  target view is `address_view: topology` or `address_view: internal`, and readiness is TCP-based,
+  and only when the target binding itself already resolved truthfully
+- built-in remote provider examples:
+  - `ssh`: `user@host`
+  - `tsh`: `user@host`
+  - `kubectl`: `pod/ota-dev`
+  - `daytona`: `sandbox-dev`
+- for `provider: ssh`, prefer the default path first: omit `remote.ssh` and let OpenSSH use the
+  operator's normal `~/.ssh/config`, SSH agent, default identity selection, and host aliases
+- use `remote.ssh.config_file` or `remote.ssh.identity_file` only when the repo must force an
+  explicit SSH config or key path
 - unsupported producer shapes fail clearly instead of guessing orchestration
 - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
 - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -328,6 +344,8 @@ Current `runtime.readiness` support for service tasks:
 - `kind: tcp`
   - probe one declared listener through its projected host endpoint and wait until it accepts
     connections
+  - for shared-remote `ensure_ready`, built-in remote providers may instead probe the fixed
+    `bind.port.value` on the remote plane
 
 Override precedence:
 
@@ -411,7 +429,9 @@ Important status:
 - `execution.shared_backends` is the shipped contract surface now
 - `scope: local` is the shipped slice
 - `scope: remote` is now shipped for `backend: remote`
-- remote producer auto-start through `activation.mode: ensure_ready` is still later work
+- remote producer auto-start through `activation.mode: ensure_ready` is now shipped for built-in
+  remote providers on shared-remote `address_view: topology` / `address_view: internal` targets
+  with TCP readiness; remote host-view activation and remote HTTP readiness remain later work
 
 Why this is the intended long-term direction:
 
@@ -419,6 +439,26 @@ Why this is the intended long-term direction:
 - `scope` answers where that boundary lives
 - `backend` answers what execution kind it uses
 - task-level `runtime.backend_binding` can stay stable if Ota later broadens from local-only to local-plus-remote shared backend families
+
+Remote shared-backend operator guidance:
+
+- use this when the remote execution boundary itself matters:
+  - one remote devbox hosting both `dev` and `sandbox`
+  - one Teleport-managed host running multiple long-lived repo workloads
+  - one Kubernetes pod-local helper targeting a pod-local producer
+  - one Daytona workspace boundary reused by more than one repo task
+- choose provider by the boundary you already operate:
+  - `ssh`: normal SSH-reachable machine (`user@host`)
+  - `tsh`: Teleport-managed SSH target (`user@host`)
+  - `kubectl`: pod boundary (`pod/ota-dev`)
+  - `daytona`: Daytona workspace target (`sandbox-dev`)
+- do not use a shared remote backend just to point at a generic external URL; the shared backend model is for one intentional reusable remote execution boundary
+- truthful first test loop:
+  1. verify the provider works outside ota first (`ssh`, `tsh ssh`, `kubectl exec`, or the matching Daytona command)
+  2. declare a fixed producer listener endpoint with `bind.port.mode: fixed` and `bind.port.value`
+  3. use `runtime.readiness.kind: tcp` for the shipped remote activation slice
+  4. bind producer and consumer to the same `execution.shared_backends.<name>`
+  5. run the consumer and verify ota starts or reuses the producer, observes readiness on the remote plane, and only cleans up producer services it activation-started
 
 ### Fulfillment mode
 

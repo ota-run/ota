@@ -30,8 +30,8 @@ use crate::schema::{
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode,
     TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    parse_memory_size_bytes, task_target_env_name,
+    TaskRuntimeReadinessKind, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetSpec, parse_memory_size_bytes, task_target_env_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,6 +270,18 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`execution.backends.remote.cwd` must not be empty",
             ));
         }
+        if let Some(remote) = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+        {
+            validate_remote_ssh_options(
+                "execution.backends.remote",
+                remote.provider.trim(),
+                &remote.ssh,
+                errors,
+            );
+        }
 
         if execution.preferred == Some(crate::schema::Backend::Container)
             && execution
@@ -491,6 +503,12 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "`execution.contexts.{name}.remote.cwd` must not be empty"
                     )));
                 }
+                validate_remote_ssh_options(
+                    format!("execution.contexts.{name}.remote").as_str(),
+                    provider,
+                    &remote.ssh,
+                    errors,
+                );
                 if context.container.is_some() {
                     errors.push(ValidationError::new(format!(
                         "`execution.contexts.{name}.backend: remote` must not declare `container` settings"
@@ -781,6 +799,48 @@ fn remote_target_example(provider: &str) -> &'static str {
 
 fn is_builtin_remote_provider(provider: &str) -> bool {
     matches!(provider, "daytona" | "ssh" | "tsh" | "kubectl")
+}
+
+fn validate_remote_ssh_options(
+    label: &str,
+    provider: &str,
+    ssh: &Option<crate::schema::RemoteSshOptions>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(ssh) = ssh.as_ref() else {
+        return;
+    };
+
+    if provider != "ssh" {
+        if provider.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "`{label}.ssh` requires `{label}.provider: ssh`"
+            )));
+        } else {
+            errors.push(ValidationError::new(format!(
+                "`{label}.ssh` is supported only when `{label}.provider: ssh`"
+            )));
+        }
+    }
+
+    if ssh
+        .config_file
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "`{label}.ssh.config_file` must not be empty"
+        )));
+    }
+    if ssh
+        .identity_file
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "`{label}.ssh.identity_file` must not be empty"
+        )));
+    }
 }
 
 fn validate_named_versions<T>(
@@ -1478,15 +1538,36 @@ fn validate_task_target_activation_shape(
     let Some(listener) = runtime.listeners.get(readiness_listener_name) else {
         return;
     };
+    let remote_readiness_kind = readiness.kind;
+    let remote_provider =
+        resolved_task_context_for_backend(contract, service_task, Backend::Remote)
+            .and_then(|context| context.remote.as_ref())
+            .map(|remote| remote.provider.trim().to_string())
+            .or_else(|| {
+                contract
+                    .execution
+                    .as_ref()
+                    .and_then(|execution| execution.backends.as_ref())
+                    .and_then(|backends| backends.remote.as_ref())
+                    .map(|remote| remote.provider.trim().to_string())
+            });
     match target.service.address_view {
-        TaskTargetAddressView::Host => validate_ensure_ready_host_projection(
-            task_name,
-            target_name,
-            service_task_name,
-            readiness_listener_name,
-            listener.project.host.as_ref(),
-            errors,
-        ),
+        TaskTargetAddressView::Host => {
+            if backend == Backend::Remote {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently supports shared-backend `address_view: topology` and `address_view: internal` only"
+                )));
+                return;
+            }
+            validate_ensure_ready_host_projection(
+                task_name,
+                target_name,
+                service_task_name,
+                readiness_listener_name,
+                listener.project.host.as_ref(),
+                errors,
+            )
+        }
         TaskTargetAddressView::Topology => {
             if shared_container_backend {
                 validate_ensure_ready_bind_port(
@@ -1511,9 +1592,29 @@ fn validate_task_target_activation_shape(
                     errors,
                 );
             } else if shared_remote_backend {
-                errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with shared-backend `address_view: topology`, but remote producer activation is not supported yet"
-                )));
+                if remote_readiness_kind == TaskRuntimeReadinessKind::Http {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with shared-backend `address_view: topology`, but remote producer activation currently supports TCP readiness only"
+                    )));
+                } else if !remote_provider
+                    .as_deref()
+                    .is_some_and(is_builtin_remote_provider)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with shared-backend `address_view: topology`, but remote producer activation currently supports built-in remote providers only"
+                    )));
+                } else {
+                    validate_ensure_ready_bind_port(
+                        task_name,
+                        target_name,
+                        service_task_name,
+                        readiness_listener_name,
+                        listener.bind.port.mode,
+                        listener.bind.port.value,
+                        "shared-backend `address_view: topology`",
+                        errors,
+                    );
+                }
             } else {
                 validate_ensure_ready_host_projection(
                     task_name,
@@ -1527,12 +1628,23 @@ fn validate_task_target_activation_shape(
         }
         TaskTargetAddressView::Internal => {
             if shared_remote_backend {
-                errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation is not supported yet"
-                )));
-                return;
+                if remote_readiness_kind == TaskRuntimeReadinessKind::Http {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation currently supports TCP readiness only"
+                    )));
+                    return;
+                }
+                if !remote_provider
+                    .as_deref()
+                    .is_some_and(is_builtin_remote_provider)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation currently supports built-in remote providers only"
+                    )));
+                    return;
+                }
             }
-            if !shared_container_backend && !shared_native_backend {
+            if !shared_container_backend && !shared_native_backend && !shared_remote_backend {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but `{task_name}` and `{service_task_name}` do not share one declared backend binding on a supported execution plane"
                 )));
@@ -3335,6 +3447,39 @@ tasks:
     }
 
     #[test]
+    fn rejects_named_remote_context_ssh_options_for_non_ssh_provider() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: kubectl
+        target: pod/ota-dev
+        ssh:
+          config_file: ~/.ssh/work.conf
+tasks:
+  dev:
+    context: remote_app
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string()
+                == "`execution.contexts.remote_app.remote.ssh` is supported only when `execution.contexts.remote_app.remote.provider: ssh`"
+        }));
+    }
+
+    #[test]
     fn rejects_ephemeral_container_service_context_with_run_fulfillment() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -4459,6 +4604,92 @@ tasks:
             errors.errors()[0].to_string(),
             "`execution.preferred: remote` with provider `ssh` requires `execution.backends.remote.target` (example: `user@host`)"
         );
+    }
+
+    #[test]
+    fn allows_ssh_remote_backend_with_explicit_config_and_identity_files() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+      ssh:
+        config_file: ~/.ssh/work.conf
+        identity_file: ~/.ssh/work_rsa
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ssh remote hints should validate");
+    }
+
+    #[test]
+    fn rejects_remote_ssh_options_for_non_ssh_provider() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: user@host
+      ssh:
+        identity_file: ~/.ssh/work_rsa
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string()
+                == "`execution.backends.remote.ssh` is supported only when `execution.backends.remote.provider: ssh`"
+        }));
+    }
+
+    #[test]
+    fn rejects_empty_remote_ssh_identity_file() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+      ssh:
+        identity_file: "   "
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string() == "`execution.backends.remote.ssh.identity_file` must not be empty"
+        }));
     }
 
     #[test]
@@ -6349,6 +6580,12 @@ tasks:
             port:
               mode: fixed
               value: 8080
+          project:
+            host:
+              address: api.devbox.internal
+              port:
+                mode: fixed
+                value: 8080
   sandbox:
     run: echo sandbox
     targets:
@@ -6465,6 +6702,12 @@ tasks:
             port:
               mode: fixed
               value: 8080
+          project:
+            host:
+              address: api.devbox.internal
+              port:
+                mode: fixed
+                value: 8080
   sandbox:
     run: echo sandbox
     runtime:
@@ -6492,6 +6735,215 @@ tasks:
 
         validate_contract(&contract)
             .expect("shared native internal ensure_ready should validate without host projection");
+    }
+
+    #[test]
+    fn allows_ensure_ready_internal_shared_remote_backend_with_tcp_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: api.devbox.internal
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("shared remote internal ensure_ready should validate for tcp readiness");
+    }
+
+    #[test]
+    fn rejects_ensure_ready_host_view_for_remote_producer_activation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+        cwd: /workspace/app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: service.internal
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently supports shared-backend `address_view: topology` and `address_view: internal` only",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_ensure_ready_internal_shared_remote_backend_with_http_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation currently supports TCP readiness only",
+            )
+        }));
     }
 
     #[test]
@@ -6553,7 +7005,7 @@ tasks:
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
-                "uses `activation.mode: ensure_ready` with `address_view: internal`, but `sandbox` and `dev` do not share one declared container local backend binding",
+                "uses `activation.mode: ensure_ready` with `address_view: internal`, but `sandbox` and `dev` do not share one declared backend binding on a supported execution plane",
             )
         }));
     }

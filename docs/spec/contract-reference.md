@@ -26,6 +26,10 @@
 
 This document describes the current `ota.yaml` contract accepted by the shipped parser and validator.
 
+Use this page as the canonical field and validation reference for the shipped contract surface.
+When you need operator guidance for targets, shared backends, activation, and backend fulfillment,
+follow it with [local-service-topology.md](local-service-topology.md).
+
 ## Minimal contract
 
 ```yaml
@@ -253,6 +257,11 @@ execution:
       provider: ssh
       target: sandbox-dev
       cwd: /workspace
+      # Optional for provider: ssh only. When omitted, ota uses normal OpenSSH
+      # behavior (`~/.ssh/config`, agent/default identity selection, and host aliases).
+      ssh:
+        config_file: ~/.ssh/work.conf
+        identity_file: ~/.ssh/work_rsa
   # Context model (shipped)
   default_context: app
   contexts:
@@ -1023,7 +1032,10 @@ Task target binding semantics:
   - explicit operator override inputs skip producer auto-start and preserve the override value
   - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_ready` was requested
   - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract instead of treating an open listener socket as sufficient
-  - the current shipped slice supports actual producer auto-start only when ota can own the producer honestly: persistent container service backends, and unix native producer services started through the activation-owned native path; in both cases the target binding itself must already have resolved truthfully (for example `address_view: host`, shared-backend `topology`, or shared-backend `internal`)
+  - the current shipped slice supports actual producer auto-start only when ota can own the producer honestly:
+    - persistent container producer services
+    - unix native producer services started through the activation-owned native path
+    - built-in remote producer services (`ssh`, `tsh`, `kubectl`, `daytona`) only when the caller and producer share one declared remote backend binding, the target view is `address_view: topology` or `address_view: internal`, and readiness is TCP-based
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
   - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
   - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -1037,8 +1049,9 @@ Current `runtime.readiness` support for service tasks:
   - ota waits for a `2xx` or `3xx` response from that projected host endpoint
 - `kind: tcp`
   - requires `listener`
-  - requires the referenced listener to declare `project.host`
-  - ota waits until the projected host endpoint accepts TCP connections
+  - for local host-projected readiness, requires the referenced listener to declare `project.host`
+  - for shared-remote `ensure_ready`, built-in remote providers may instead use the listener `bind.port.value` on the remote plane
+  - ota waits until the selected probe endpoint accepts TCP connections or is listening on the shared remote plane
 
 Shared local backend semantics:
 
@@ -1092,7 +1105,18 @@ Shared local backend semantics:
   - bound workloads may differ in commands, listeners, readiness, and publications
   - ota rejects real workload-local conflicts inside that shared boundary, including conflicting in-backend bind endpoints and conflicting fixed host publications
   - persistent shared backend reconciliation uses the shared union of declared workload publications, while per-task runtime evidence and listener resolution remain task-scoped
-  - `activation.mode: ensure_ready` currently auto-starts only persistent container producer services and unix native producer services; remote producer auto-start is still later work and fails clearly when requested
+  - `activation.mode: ensure_ready` currently auto-starts:
+    - persistent container producer services
+    - unix native producer services
+    - built-in remote producer services only for shared-remote `address_view: topology` / `address_view: internal` with TCP readiness
+      - built-in remote providers:
+        - `ssh`: `user@host`
+        - `tsh`: `user@host`
+        - `kubectl`: `pod/ota-dev`
+        - `daytona`: `sandbox-dev`
+      - for `provider: ssh`, omit `remote.ssh` unless the repo must force a non-default SSH config
+        or identity file; when omitted, ota delegates host alias and identity selection to normal
+        OpenSSH behavior
   - shared backends currently ship as:
     - local `container`
     - local `native`

@@ -58,6 +58,7 @@ pub enum ProvisioningExecutionTarget {
         provider_command: Option<String>,
         target: String,
         cwd: Option<String>,
+        ssh: Option<crate::schema::RemoteSshOptions>,
         context_name: Option<String>,
     },
 }
@@ -3673,6 +3674,7 @@ fn execute_provisioning_command(
             provider_command,
             target,
             cwd,
+            ssh,
             ..
         } => {
             let backend = if let Some(command) = provider_command {
@@ -3689,6 +3691,7 @@ fn execute_provisioning_command(
                     provider: provider.clone(),
                     target: target.clone(),
                     cwd: cwd.clone(),
+                    ssh: ssh.clone(),
                 }
             };
             let output = run_backend_command_captured(
@@ -3848,6 +3851,7 @@ mod tests {
                 provider_command: None,
                 target: String::from("user@host"),
                 cwd: None,
+                ssh: None,
                 context_name: Some(String::from("tooling")),
             }),
             "Preparing environment (remote, ssh, user@host)"

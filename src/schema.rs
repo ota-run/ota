@@ -296,6 +296,17 @@ struct RemoteBackendWire {
     target: Option<String>,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    ssh: Option<RemoteSshOptionsWire>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct RemoteSshOptionsWire {
+    #[serde(default)]
+    config_file: Option<String>,
+    #[serde(default)]
+    identity_file: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -332,6 +343,13 @@ struct RemoteBackendMerged {
     provider: Option<String>,
     target: Option<String>,
     cwd: Option<String>,
+    ssh: Option<RemoteSshOptionsMerged>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct RemoteSshOptionsMerged {
+    config_file: Option<String>,
+    identity_file: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for Execution {
@@ -558,6 +576,17 @@ fn merge_remote_backend(target: &mut RemoteBackendMerged, source: &RemoteBackend
     if let Some(cwd) = source.cwd.as_ref() {
         target.cwd = Some(cwd.clone());
     }
+    if let Some(ssh) = source.ssh.as_ref() {
+        let merged = target
+            .ssh
+            .get_or_insert_with(RemoteSshOptionsMerged::default);
+        if let Some(config_file) = ssh.config_file.as_ref() {
+            merged.config_file = Some(config_file.clone());
+        }
+        if let Some(identity_file) = ssh.identity_file.as_ref() {
+            merged.identity_file = Some(identity_file.clone());
+        }
+    }
 }
 
 fn finalize_execution_context(
@@ -584,6 +613,10 @@ fn finalize_execution_context(
         provider: remote.provider.unwrap_or_default(),
         target: remote.target,
         cwd: remote.cwd,
+        ssh: remote.ssh.map(|ssh| RemoteSshOptions {
+            config_file: ssh.config_file,
+            identity_file: ssh.identity_file,
+        }),
     });
 
     Ok(ExecutionContext {
@@ -817,6 +850,17 @@ pub struct RemoteBackend {
     pub target: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<RemoteSshOptions>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSshOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]

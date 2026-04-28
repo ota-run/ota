@@ -357,6 +357,7 @@ fn remote_doctor_probe_contexts(
             provider: remote.provider.clone(),
             target,
             cwd: remote.cwd.clone(),
+            ssh: remote.ssh.clone(),
         },
         other => {
             let Some(extension) = contract.extensions.get(other) else {
@@ -4229,11 +4230,13 @@ fn remote_provisioning_target(
             provider,
             target,
             cwd,
+            ssh,
         } => Some(ProvisioningExecutionTarget::Remote {
             provider: provider.clone(),
             provider_command: None,
             target: target.clone(),
             cwd: cwd.clone(),
+            ssh: ssh.clone(),
             context_name: remote_context_name.map(str::to_string),
         }),
         ResolvedExecutionBackend::BackendProvider {
@@ -4247,6 +4250,7 @@ fn remote_provisioning_target(
             provider_command: Some(command.clone()),
             target: target.clone(),
             cwd: cwd.clone(),
+            ssh: None,
             context_name: remote_context_name.map(str::to_string),
         }),
         ResolvedExecutionBackend::Native { .. } | ResolvedExecutionBackend::Container { .. } => {
