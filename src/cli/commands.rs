@@ -31781,9 +31781,16 @@ fn run_single_contract_target_streaming(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                Some(String::from(
-                    "run `ota tasks --use` to inspect runnable task usage",
-                )),
+                {
+                    let repo_dir = target.contract_path.parent()
+                        .and_then(|p| std::fs::canonicalize(p).ok())
+                        .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
+                        .map(|p| p.display().to_string());
+                    Some(format!(
+                        "run `ota tasks --use{}` to inspect runnable task usage",
+                        repo_dir.as_ref().map(|d| format!(" {d}")).unwrap_or_default()
+                    ))
+                },
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
@@ -32007,9 +32014,16 @@ fn run_single_contract_target_captured(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                Some(String::from(
-                    "run `ota tasks --use` to inspect runnable task usage",
-                )),
+                {
+                    let repo_dir = target.contract_path.parent()
+                        .and_then(|p| std::fs::canonicalize(p).ok())
+                        .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
+                        .map(|p| p.display().to_string());
+                    Some(format!(
+                        "run `ota tasks --use{}` to inspect runnable task usage",
+                        repo_dir.as_ref().map(|d| format!(" {d}")).unwrap_or_default()
+                    ))
+                },
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
