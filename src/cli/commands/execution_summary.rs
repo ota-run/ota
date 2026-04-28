@@ -49,10 +49,11 @@ pub(super) fn render_execution_receipt_summary_block(
             .unwrap_or("setup")
     });
     let backend_summary = backend_summary_from_receipt(receipt, task, mode.as_str());
-    let note = build_execution_summary_note(receipt, task, backend_summary.as_deref(), mode.as_str());
+    let note =
+        build_execution_summary_note(receipt, task, backend_summary.as_deref(), mode.as_str());
     let log_capture_warning = receipt_log_capture_warning(receipt).map(str::to_string);
     let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
-    
+
     let path_display = if receipt.scope == "repo" {
         Path::new(receipt.path.as_str())
             .parent()
@@ -64,7 +65,7 @@ pub(super) fn render_execution_receipt_summary_block(
         compact_path(Path::new(receipt.path.as_str()), ".")
     };
     let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
-    
+
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
@@ -227,7 +228,9 @@ fn backend_summary_from_receipt(
             persistent_container_note_from_receipt(receipt, task)
                 .unwrap_or_else(|| String::from("persistent container reused")),
         ),
-        ("container", Some("ephemeral")) => Some(String::from("fresh container image for this run")),
+        ("container", Some("ephemeral")) => {
+            Some(String::from("fresh container image for this run"))
+        }
         ("native", _) => Some(String::from("host environment")),
         (other, _) => Some(format!("executing through the `{other}` backend")),
     }
@@ -240,27 +243,27 @@ fn build_execution_summary_note(
     mode: &str,
 ) -> Option<String> {
     let mut parts = Vec::new();
-    
+
     // Add base backend context note based on mode and lifecycle
     let base_note = match (mode, receipt.lifecycle.as_deref()) {
-        ("container", Some("persistent")) => {
-            Some(
-                persistent_container_note_from_receipt(receipt, task)
-                    .unwrap_or_else(|| String::from("reusing persistent container backend")),
-            )
+        ("container", Some("persistent")) => Some(
+            persistent_container_note_from_receipt(receipt, task)
+                .unwrap_or_else(|| String::from("reusing persistent container backend")),
+        ),
+        ("container", Some("ephemeral")) => {
+            Some(String::from("using a fresh container image for this run"))
         }
-        ("container", Some("ephemeral")) => Some(String::from("using a fresh container image for this run")),
         ("native", Some(lifecycle)) => Some(format!(
             "running on the host environment; requested `--lifecycle {lifecycle}` is advisory in native mode only"
         )),
         ("native", _) => Some(String::from("running on the host environment")),
         (other, _) => Some(format!("executing through the `{other}` backend")),
     };
-    
+
     if let Some(note) = base_note {
         parts.push(note);
     }
-    
+
     if let Some(internal_note) = internal_task_note_from_receipt(receipt, task) {
         push_unique_summary_note_part(&mut parts, internal_note);
     }
@@ -424,7 +427,11 @@ fn requested_task_backend_fulfillment<'a>(
 }
 
 fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) -> String {
-    match resolution.activation.as_ref().map(|activation| activation.status) {
+    match resolution
+        .activation
+        .as_ref()
+        .map(|activation| activation.status)
+    {
         Some(crate::runner::TaskTargetActivationStatus::StartedReady) => format!(
             "started producer `{}` and waited for readiness",
             resolution.service_ref.task
@@ -436,9 +443,7 @@ fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) ->
             String::from("skipped activation because an explicit override was provided")
         }
         _ => match resolution.source {
-            TaskTargetResolutionSource::ExplicitOverride => {
-                String::from("used explicit override")
-            }
+            TaskTargetResolutionSource::ExplicitOverride => String::from("used explicit override"),
             TaskTargetResolutionSource::TargetBinding => format!(
                 "resolved from producer `{}.{}`",
                 resolution.service_ref.task, resolution.service_ref.listener
