@@ -418,7 +418,14 @@ pub(crate) fn run_streaming_command_with_capture_with_loader_hook_options<F>(
 where
     F: FnOnce(Option<StreamPhaseNotifier>),
 {
-    let loader = StreamPhaseLoader::start(label);
+    // In capture-and-stream mode the task body will usually produce user-facing output
+    // that should own the transcript. Keep loaders for quiet phases, but do not inject
+    // a transient "Running ..." line into long captured streams.
+    let loader = if capture_output {
+        None
+    } else {
+        StreamPhaseLoader::start(label)
+    };
     let notifier = loader.as_ref().map(|loader| loader.notifier());
     on_notifier_ready(notifier.clone());
     let mut child = command
@@ -2822,6 +2829,7 @@ struct TaskRunState {
     execution_note: Option<String>,
     interrupted: bool,
     fulfilled_backend_units: BTreeMap<String, BackendFulfillmentEvidence>,
+    fulfilled_backend_source_managed_actions: BTreeMap<String, Vec<ProvisioningAction>>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -3424,7 +3432,7 @@ fn execute_task_with_hooks(
     }
     let env_overrides =
         resolve_task_env_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
-    let path_export = match backend {
+    let mut path_export = match backend {
         ResolvedExecutionBackend::Container { .. } => env_details
             .get("PATH")
             .map(|resolved| resolved.value.clone()),
@@ -3437,10 +3445,27 @@ fn execute_task_with_hooks(
     let mut combined_env = env_overrides;
     combined_env.extend(input_resolution.env_overrides.clone());
     let runtime = task.service_runtime_for_backend(backend_kind);
+    let mut command = execution.body.to_string();
+    if !backend_fulfillment_preparation
+        .source_managed_actions
+        .is_empty()
+    {
+        if source_managed_tool_wrappers_required(
+            &backend_fulfillment_preparation.source_managed_actions,
+        ) {
+            path_export = Some(source_managed_tool_wrapper_path_export(
+                path_export.as_deref(),
+            ));
+        }
+        command = wrap_command_for_source_managed_actions(
+            command.as_str(),
+            &backend_fulfillment_preparation.source_managed_actions,
+        );
+    }
     let command_output = execute_task_command(
         task_name,
         runtime,
-        execution.body,
+        command.as_str(),
         working_dir,
         &combined_env,
         path_export.as_deref(),
@@ -3887,6 +3912,7 @@ pub(crate) fn run_backend_command_captured(
 struct BackendFulfillmentPreparation {
     evidence: Option<BackendFulfillmentEvidence>,
     deferred_ephemeral_container: Option<DeferredContainerBackendFulfillment>,
+    source_managed_actions: Vec<ProvisioningAction>,
 }
 
 #[derive(Debug, Clone)]
@@ -3960,6 +3986,11 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         return Ok(BackendFulfillmentPreparation {
             evidence: Some(existing.clone()),
             deferred_ephemeral_container: None,
+            source_managed_actions: state
+                .fulfilled_backend_source_managed_actions
+                .get(plan.backend_unit.as_str())
+                .cloned()
+                .unwrap_or_default(),
         });
     }
 
@@ -3987,10 +4018,14 @@ fn maybe_fulfill_backend_requirements_on_run_path(
             state
                 .fulfilled_backend_units
                 .insert(plan.backend_unit.clone(), evidence.clone());
+            state
+                .fulfilled_backend_source_managed_actions
+                .remove(plan.backend_unit.as_str());
         }
         return Ok(BackendFulfillmentPreparation {
             evidence: Some(evidence),
             deferred_ephemeral_container: None,
+            source_managed_actions: Vec::new(),
         });
     }
 
@@ -4083,6 +4118,7 @@ fn maybe_fulfill_backend_requirements_on_run_path(
                 actions: request.actions,
                 adapter_bootstrap,
             }),
+            source_managed_actions: Vec::new(),
         });
     }
     let provisioning = apply_run_path_provisioning_request_with_bootstrap(
@@ -4110,12 +4146,27 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         }
     }
 
+    let mut source_managed_actions = Vec::new();
+    if let Some(ProvisioningExecutionTarget::Container {
+        engine,
+        container_name: Some(container_name),
+        ..
+    }) = plan.provisioning_target.as_ref()
+    {
+        install_source_managed_tool_wrappers(engine, container_name, task_name, &request.actions)?;
+        source_managed_actions = request.actions.clone();
+    }
+
     let remaining = detect_missing_backend_requirements(
         &plan.declared_runtimes,
         &plan.declared_tools,
         backend,
         working_dir,
     );
+    let remaining = remaining
+        .into_iter()
+        .filter(|gap| !source_managed_remaining_gap_covered(gap, &source_managed_actions))
+        .collect::<Vec<_>>();
     if !remaining.is_empty() {
         evidence.result = BackendFulfillmentResult::Failed;
         evidence.missing = remaining
@@ -4136,10 +4187,14 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     evidence.result = BackendFulfillmentResult::Fulfilled;
     state
         .fulfilled_backend_units
-        .insert(plan.backend_unit, evidence.clone());
+        .insert(plan.backend_unit.clone(), evidence.clone());
+    state
+        .fulfilled_backend_source_managed_actions
+        .insert(plan.backend_unit, source_managed_actions.clone());
     Ok(BackendFulfillmentPreparation {
         evidence: Some(evidence),
         deferred_ephemeral_container: None,
+        source_managed_actions,
     })
 }
 
@@ -4866,7 +4921,9 @@ fn wrap_command_for_source_managed_actions(
 ) -> String {
     let mise_targets = actions
         .iter()
-        .filter(|action| action.source == "mise")
+        .filter(|action| {
+            action.source == "mise" && action.target_kind == ProvisioningTargetKind::Runtime
+        })
         .map(|action| {
             format!(
                 "{}@{}",
@@ -13196,6 +13253,7 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use crate::parser::parse_contract_str;
+    use crate::policy_pack::{ProvisioningAction, ProvisioningActionKind, ProvisioningTargetKind};
     use crate::test_support::env_mutex_lock;
 
     use super::{
@@ -26551,6 +26609,27 @@ exit 0
                 Some("/tmp/ota-managed-tools/bin:$PATH")
             ),
             "export PATH='/tmp/ota-managed-tools/bin:'\"$PATH\"; echo hi"
+        );
+    }
+
+    #[test]
+    fn wrap_command_for_source_managed_actions_ignores_tool_only_actions() {
+        let actions = vec![ProvisioningAction {
+            kind: ProvisioningActionKind::Install,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: String::from("yq"),
+            requested_version: String::from("4.52.5"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("mise"),
+            approved_version: Some(String::from("4.52.5")),
+            source_config: None,
+            policy_match: None,
+        }];
+        assert_eq!(
+            super::wrap_command_for_source_managed_actions("yq --version", &actions),
+            "yq --version"
         );
     }
 

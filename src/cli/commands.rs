@@ -3080,8 +3080,14 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
     }
 
     for service in services {
+        let manager = service
+            .manager
+            .as_ref()
+            .map(|manager| manager.kind.as_str())
+            .or(service.provider.as_deref())
+            .unwrap_or("-");
         output.push_str(&format!(
-            "\n{} {} [{}]",
+            "\n\n{} {} [{}]",
             list_bullet(),
             paint(&service.name, "1"),
             if service.required {
@@ -3091,77 +3097,90 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
             }
         ));
 
+        output.push_str(&format!("\n  {} {manager}", paint_key("manager:")));
         output.push_str(&format!(
             "\n  {} {}",
-            paint_key("Manager:"),
-            service
-                .manager
-                .as_ref()
-                .map(|manager| manager.kind.as_str())
-                .or(service.provider.as_deref())
-                .unwrap_or("-")
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Depends On:"),
+            paint_key("depends on:"),
             if service.depends_on.is_empty() {
                 String::from("-")
             } else {
                 service.depends_on.join(", ")
             }
         ));
-
-        if let Some(start) = service.start.as_deref() {
-            append_wrapped_detail(&mut output, "Start:", start, "  ", 84, stylize_inline_text);
-        }
-        if let Some(stop) = service.stop.as_deref() {
-            append_wrapped_detail(&mut output, "Stop:", stop, "  ", 84, stylize_inline_text);
-        }
-        if let Some(healthcheck) = service.healthcheck.as_deref() {
-            append_wrapped_detail(
-                &mut output,
-                "Healthcheck:",
-                healthcheck,
-                "  ",
-                84,
-                stylize_inline_text,
-            );
-        }
         if let Some(readiness) = service.readiness.as_ref() {
             append_wrapped_detail(
                 &mut output,
-                "Readiness:",
+                "readiness:",
                 &format!("from {} -> {}", readiness.from, readiness.run),
                 "  ",
                 84,
                 stylize_inline_text,
             );
         }
-        if !service.endpoints.is_empty() {
-            let projections = service
-                .endpoints
-                .iter()
-                .map(|(context, endpoint)| {
-                    format!("{context}={}:{}", endpoint.address, endpoint.port)
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
+        if let Some(healthcheck) = service.healthcheck.as_deref() {
             append_wrapped_detail(
                 &mut output,
-                "Endpoints:",
-                &projections,
+                "healthcheck:",
+                healthcheck,
                 "  ",
                 84,
                 stylize_inline_text,
             );
         }
         if let Some(timeout) = service.timeout {
-            output.push_str(&format!("\n  {} {timeout}s", paint_key("Timeout:")));
+            output.push_str(&format!("\n  {} {timeout}s", paint_key("timeout:")));
+        }
+
+        if !service.endpoints.is_empty() {
+            let context_width = service
+                .endpoints
+                .keys()
+                .map(|context| context.len())
+                .max()
+                .unwrap_or(0);
+            output.push_str(&format!("\n  {}", paint_key("endpoints:")));
+            for (context, endpoint) in &service.endpoints {
+                output.push_str(&format!(
+                    "\n    {:<context_width$}  {}:{}",
+                    context,
+                    endpoint.address,
+                    endpoint.port,
+                    context_width = context_width
+                ));
+            }
+        }
+
+        if service.start.is_some() || service.stop.is_some() {
+            let command_label_width = ["start", "stop"]
+                .into_iter()
+                .filter(|label| match *label {
+                    "start" => service.start.is_some(),
+                    "stop" => service.stop.is_some(),
+                    _ => false,
+                })
+                .map(str::len)
+                .max()
+                .unwrap_or(0);
+            output.push_str(&format!("\n  {}", paint_key("commands:")));
+            if let Some(start) = service.start.as_deref() {
+                output.push_str(&format!(
+                    "\n    {} {}",
+                    paint_key(&format!("{:<command_label_width$}", "start")),
+                    stylize_inline_text(start)
+                ));
+            }
+            if let Some(stop) = service.stop.as_deref() {
+                output.push_str(&format!(
+                    "\n    {} {}",
+                    paint_key(&format!("{:<command_label_width$}", "stop")),
+                    stylize_inline_text(stop)
+                ));
+            }
         }
 
         output.push_str(&format!(
             "\n  {} {}, {}",
-            paint_key("Managed By:"),
+            paint_key("managed by:"),
             paint_code("ota doctor"),
             paint_code("ota up")
         ));
@@ -22034,7 +22053,8 @@ mod tests {
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
         DetectComparison, DetectComparisonRemoval, ExecutionReceipt, ExecutionReceiptLogs,
-        ExecutionReceiptSummary, ExecutionSummary, TaskSummary,
+        ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
+        ServiceReadinessSummary, ServiceSummary, TaskSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -22972,6 +22992,66 @@ tasks:
                 "add `services` to `ota.yaml` when repo readiness depends on local infra"
             )
         );
+    }
+
+    #[test]
+    fn services_text_groups_service_runtime_details_compactly() {
+        let mut endpoints = BTreeMap::new();
+        endpoints.insert(
+            String::from("container"),
+            ServiceEndpointSummary {
+                address: String::from("postgres"),
+                port: 5432,
+            },
+        );
+        endpoints.insert(
+            String::from("host"),
+            ServiceEndpointSummary {
+                address: String::from("127.0.0.1"),
+                port: 5432,
+            },
+        );
+
+        let services = vec![ServiceSummary {
+            name: String::from("postgres"),
+            required: true,
+            manager: Some(ServiceManagerSummary {
+                kind: String::from("compose"),
+                name: None,
+                file: None,
+                service: None,
+            }),
+            provider: None,
+            start: Some(String::from("docker compose up -d postgres")),
+            stop: Some(String::from("docker compose stop postgres")),
+            healthcheck: Some(String::from("pg_isready -U postgres")),
+            readiness: Some(ServiceReadinessSummary {
+                from: String::from("host"),
+                run: String::from("postgres://localhost:5432"),
+            }),
+            endpoints,
+            depends_on: Vec::new(),
+            timeout: Some(30),
+        }];
+
+        let text = strip_ansi_codes(&super::render_services_output_text("./ota.yaml", &services));
+
+        assert!(text.contains("✦ postgres [required]"), "{text}");
+        assert!(text.contains("manager: compose"), "{text}");
+        assert!(text.contains("depends on: -"), "{text}");
+        assert!(
+            text.contains("readiness: from host -> postgres://localhost:5432"),
+            "{text}"
+        );
+        assert!(text.contains("healthcheck: pg_isready -U postgres"), "{text}");
+        assert!(text.contains("timeout: 30s"), "{text}");
+        assert!(text.contains("\n  endpoints:\n"), "{text}");
+        assert!(text.contains("container  postgres:5432"), "{text}");
+        assert!(text.contains("host       127.0.0.1:5432"), "{text}");
+        assert!(text.contains("\n  commands:\n"), "{text}");
+        assert!(text.contains("start docker compose up -d postgres"), "{text}");
+        assert!(text.contains("stop  docker compose stop postgres"), "{text}");
+        assert!(text.contains("managed by: ota doctor, ota up"), "{text}");
     }
 
     #[test]
@@ -26513,7 +26593,7 @@ tasks:
         assert!(rendered.contains("Status:      failed"));
         assert!(rendered.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(!rendered.contains("Why: 🦦 RUN SUMMARY"));
-        assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nScope:"));
+        assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nStatus:"));
     }
 
     #[test]
@@ -26692,9 +26772,9 @@ tasks:
         let rendered =
             render_execution_receipt_summary_block(&receipt, Some("sandbox"), "RUN SUMMARY");
         assert!(rendered.contains("Target api:"));
-        assert!(rendered.contains(
-            "service(dev.http) -> http://127.0.0.1:8080 (target binding; activation ensure_ready started_ready)"
-        ));
+        assert!(rendered.contains("started producer `dev` and waited for readiness"));
+        assert!(rendered.contains("Base URL:"));
+        assert!(rendered.contains("http://127.0.0.1:8080"));
     }
 
     #[test]
@@ -32480,24 +32560,21 @@ fn summary_with_status_override(summary_block: Option<&str>, status: &str) -> Op
     summary_block.map(|summary| {
         let mut replaced = false;
         let status_value = render_execution_summary_status_value(status);
-        let lines = summary
-            .lines()
-            .map(|line| {
-                if line.starts_with("Status:") {
+        let mut lines = Vec::new();
+        for line in summary.lines() {
+            if line.starts_with("Result:") || line.starts_with("Status:") {
+                if !replaced {
+                    lines.push(summary_detail_line("Status:", status_value.as_str()));
                     replaced = true;
-                    summary_detail_line("Status:", status_value.as_str())
-                } else {
-                    line.to_string()
                 }
-            })
-            .collect::<Vec<_>>();
-        if replaced {
-            lines.join("\n")
-        } else {
-            let mut lines = lines;
-            lines.push(summary_detail_line("Status:", status_value.as_str()));
-            lines.join("\n")
+                continue;
+            }
+            lines.push(line.to_string());
         }
+        if !replaced {
+            lines.push(summary_detail_line("Status:", status_value.as_str()));
+        }
+        lines.join("\n")
     })
 }
 
