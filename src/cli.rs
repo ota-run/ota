@@ -15629,12 +15629,12 @@ services:
         assert_eq!(output.exit_code, 0);
         assert!(body.contains("SERVICES "));
         assert!(body.contains("postgres [required]"));
-        assert!(body.contains("Manager: docker-compose"));
-        assert!(body.contains("Start: docker compose up -d postgres"));
-        assert!(body.contains("Stop: docker compose stop postgres"));
-        assert!(body.contains("Healthcheck: pg_isready -U qredex -d qredex"));
-        assert!(body.contains("Timeout: 30s"));
-        assert!(body.contains("Managed By:"));
+        assert!(body.contains("manager: docker-compose"));
+        assert!(body.contains("start docker compose up -d postgres"));
+        assert!(body.contains("stop  docker compose stop postgres"));
+        assert!(body.contains("healthcheck: pg_isready -U qredex -d qredex"));
+        assert!(body.contains("timeout: 30s"));
+        assert!(body.contains("managed by:"));
     }
 
     #[test]
@@ -15687,11 +15687,11 @@ services:
         let body = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
-        assert!(body.contains("Manager: compose"));
+        assert!(body.contains("manager: compose"));
         assert!(
-            body.contains("Start: docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'")
+            body.contains("start docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'")
         );
-        assert!(body.contains("Healthcheck: pg_isready -U qredex -d qredex"));
+        assert!(body.contains("healthcheck: pg_isready -U qredex -d qredex"));
     }
 
     #[test]
@@ -15748,10 +15748,10 @@ services:
         let body = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
-        assert!(body.contains("Manager: host"));
-        assert!(body.contains("Healthcheck: pg_isready -h 127.0.0.1 -p 5432"));
-        assert!(!body.contains("Start:"));
-        assert!(!body.contains("Stop:"));
+        assert!(body.contains("manager: host"));
+        assert!(body.contains("healthcheck: pg_isready -h 127.0.0.1 -p 5432"));
+        assert!(!body.contains("start"));
+        assert!(!body.contains("stop"));
     }
 
     #[test]
