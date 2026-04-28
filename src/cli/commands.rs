@@ -22645,6 +22645,10 @@ tasks:
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "READY", None, Some(0))],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -23989,6 +23993,10 @@ tasks:
                 None,
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -24104,6 +24112,10 @@ tasks:
                 None,
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -24186,6 +24198,10 @@ tasks:
                 Some(1),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -24290,6 +24306,10 @@ tasks:
                 Some(1),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -26453,6 +26473,10 @@ execution:
                 Some(125),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -27062,6 +27086,97 @@ tasks:
     }
 
     #[test]
+    fn run_execution_receipt_reports_dependency_failure_context_in_json() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "build",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("typecheck"),
+                exit_code: 9,
+                relation: TaskExecutionRelation::DependsOn {
+                    parent: String::from("build"),
+                },
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            9,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["failed_task"], "build");
+        assert_eq!(json["failed_dependency"], "typecheck");
+        assert_eq!(json["failure_origin"], "dependency");
+    }
+
+    #[test]
+    fn run_execution_receipt_reports_after_success_failure_origin_in_json() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+"#,
+        )
+        .unwrap();
+
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "build",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("notify"),
+                exit_code: 1,
+                relation: TaskExecutionRelation::AfterSuccess {
+                    parent: String::from("build"),
+                },
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            1,
+            false,
+            None,
+            None,
+            None,
+        );
+
+        let json = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(json["failed_task"], "build");
+        assert!(json["failed_dependency"].is_null());
+        assert_eq!(json["failure_origin"], "after_success");
+    }
+
+    #[test]
     fn execution_receipt_step_detail_keeps_dependency_relation_when_note_exists() {
         let step = ExecutedTaskStep {
             name: String::from("sandbox"),
@@ -27562,6 +27677,10 @@ tasks:
                 None,
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -27607,6 +27726,10 @@ tasks:
                 None,
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -27646,6 +27769,10 @@ tasks:
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: Some(String::from(
                 "repair task `dev`; log capture failed: failed to create log directory",
@@ -27693,6 +27820,10 @@ tasks:
                 Some(1),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -27793,6 +27924,10 @@ tasks:
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(137))],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -27847,6 +27982,10 @@ tasks:
                 Some(1),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -28510,6 +28649,10 @@ tasks:
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(130))],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 1,
                 warn_count: 0,
@@ -28577,6 +28720,10 @@ tasks:
                 Some(130),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 1,
                 warn_count: 0,
@@ -28631,6 +28778,10 @@ tasks:
                 Some(0),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 0,
                 warn_count: 0,
@@ -28688,6 +28839,10 @@ tasks:
                 Some(1),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 1,
                 warn_count: 0,
@@ -28739,6 +28894,10 @@ tasks:
                 Some(1),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 1,
                 warn_count: 0,
@@ -28791,6 +28950,10 @@ tasks:
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 1,
                 warn_count: 0,
@@ -28847,6 +29010,10 @@ tasks:
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 1,
                 warn_count: 0,
@@ -29184,6 +29351,10 @@ tasks:
                 None,
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -29309,6 +29480,10 @@ tasks:
             policy: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "READY", None, None)],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary::default(),
             next: None,
         };
@@ -29406,6 +29581,10 @@ tasks:
                 Some(1),
             )],
             blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
             summary: ExecutionReceiptSummary {
                 error_count: 1,
                 warn_count: 0,
@@ -32170,6 +32349,11 @@ fn execution_receipt_failure_context(
 
     let failed_step = failed_execution_step(executed_steps, requested_task)?;
     match &failed_step.relation {
+        TaskExecutionRelation::Requested => Some(ExecutionReceiptFailureContext {
+            failed_task: requested_task.to_string(),
+            failed_dependency: None,
+            failure_origin: String::from("task"),
+        }),
         TaskExecutionRelation::DependsOn { .. } if failed_step.name != requested_task => {
             Some(ExecutionReceiptFailureContext {
                 failed_task: requested_task.to_string(),
@@ -32177,8 +32361,23 @@ fn execution_receipt_failure_context(
                 failure_origin: String::from("dependency"),
             })
         }
+        TaskExecutionRelation::AfterSuccess { .. } => Some(ExecutionReceiptFailureContext {
+            failed_task: requested_task.to_string(),
+            failed_dependency: None,
+            failure_origin: String::from("after_success"),
+        }),
+        TaskExecutionRelation::AfterFailure { .. } => Some(ExecutionReceiptFailureContext {
+            failed_task: requested_task.to_string(),
+            failed_dependency: None,
+            failure_origin: String::from("after_failure"),
+        }),
+        TaskExecutionRelation::AfterAlways { .. } => Some(ExecutionReceiptFailureContext {
+            failed_task: requested_task.to_string(),
+            failed_dependency: None,
+            failure_origin: String::from("after_always"),
+        }),
         _ => Some(ExecutionReceiptFailureContext {
-            failed_task: failed_step.name.clone(),
+            failed_task: requested_task.to_string(),
             failed_dependency: None,
             failure_origin: String::from("task"),
         }),
