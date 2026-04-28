@@ -506,6 +506,31 @@ impl OrgPolicyPack {
         violations
     }
 
+    pub fn strict_version_compliance_violation_for_actual_version_os(
+        &self,
+        os: &str,
+        kind: ProvisioningTargetKind,
+        name: &str,
+        actual_version: &str,
+    ) -> Option<String> {
+        if !self.policies.strict_versions {
+            return None;
+        }
+
+        let rule = match kind {
+            ProvisioningTargetKind::Runtime => self.policies.version_policy.runtimes.get(name)?,
+            ProvisioningTargetKind::Tool => self.policies.version_policy.tools.get(name)?,
+        };
+
+        evaluate_actual_version_policy_match(
+            kind,
+            name,
+            actual_version,
+            effective_version_policy_rule(rule, os).approved_versions(),
+        )
+        .err()
+    }
+
     pub fn effective_version_policy_versions_for_os(
         &self,
         os: &str,
@@ -1069,6 +1094,39 @@ fn evaluate_version_policy_match(
 
     Err(format!(
         "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
+        kind.as_str(),
+        approved_versions.join(", ")
+    ))
+}
+
+fn evaluate_actual_version_policy_match(
+    kind: ProvisioningTargetKind,
+    name: &str,
+    actual_version: &str,
+    approved_versions: &[String],
+) -> Result<(), String> {
+    if approved_versions.is_empty() {
+        return Ok(());
+    }
+
+    if approved_versions
+        .iter()
+        .any(|approved| approved.as_str() == actual_version)
+    {
+        return Ok(());
+    }
+
+    let parsed_actual = Version::parse(actual_version.trim_start_matches('v')).ok();
+    if let Some(actual) = parsed_actual
+        && approved_versions.iter().any(|approved| {
+            parse_policy_version_rule(approved).is_some_and(|rule| rule.req.matches(&actual))
+        })
+    {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{} `{name}` resolved version `{actual_version}` is not compliant with strict policy; expected one of: {}",
         kind.as_str(),
         approved_versions.join(", ")
     ))

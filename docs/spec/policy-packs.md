@@ -189,10 +189,11 @@ That makes the value visible immediately:
 
 - `required_sections` defines contract sections that every governed repo must provide.
 - `required_files` defines files that every governed repo must keep at the repo root or under the governed repo directory.
-- `strict_versions` is a coarse legacy version-discipline flag; prefer `version_policy` for explicit runtime and tool approval.
-- `version_policy` defines explicit approved runtime and tool versions without requiring provisioning.
-- `version_policy.runtimes.<name>.approved_versions` constrains the repo contract version for that runtime.
-- `version_policy.tools.<name>.approved_versions` constrains the repo contract version for that tool.
+- `strict_versions` tells ota whether already-installed runtime and tool versions must also comply with policy instead of only satisfying the repo contract.
+- `version_policy` defines explicit approved runtime and tool versions.
+- when `strict_versions: false`, `version_policy.runtimes.<name>.approved_versions` constrains the repo contract version for that runtime.
+- when `strict_versions: false`, `version_policy.tools.<name>.approved_versions` constrains the repo contract version for that tool.
+- when `strict_versions: true`, the same `version_policy` rules also constrain the resolved installed versions that `ota doctor` and `ota run` observe.
 - `version_policy.*.platforms.<os>` overrides approved versions for `linux`, `macos`, or `windows`.
 - `env.values` supplies approved shared env values for vars the repo contract already declares in `env.vars`.
 - `env.values` does not create new repo requirements by itself; it only helps satisfy declared env vars.
@@ -222,9 +223,14 @@ from the nearest ancestor when it exists, validates the file shape, and reports 
 - required sections declared by the policy pack are missing from the repo contract
 - required files declared by the policy pack are missing from the repo root
 - declared runtime/tool versions violate `policies.version_policy`
+- resolved installed runtime/tool versions violate `policies.version_policy` while `strict_versions: true`
 - `policies.adapter_bootstrap` is malformed
 
-The current implementation is read-only. It does not mutate repo contracts or apply policy remediation automatically.
+`ota doctor` remains read-only. It does not mutate repo contracts or apply policy remediation automatically.
+
+`ota run` stays non-mutating unless the selected backend or execution context opts into
+`fulfillment: run`. In that case, ota may use policy-approved provisioning to repair missing or
+policy-noncompliant runtime/tool versions on the actual run path.
 
 ## Scope
 

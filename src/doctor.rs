@@ -1926,6 +1926,7 @@ fn diagnose_contract_with_scope(
                         &remote_probe.requirement_surface.runtimes,
                         &remote_probe.target_os,
                         contract_path,
+                        loaded_policy.as_ref(),
                         mode,
                         None,
                         Some(&remote_probe.backend),
@@ -1937,6 +1938,7 @@ fn diagnose_contract_with_scope(
                         &remote_probe.requirement_surface.tools,
                         &remote_probe.target_os,
                         contract_path,
+                        loaded_policy.as_ref(),
                         mode,
                         None,
                         Some(&remote_probe.backend),
@@ -1961,6 +1963,7 @@ fn diagnose_contract_with_scope(
                     .runtimes,
                 policy_target_os_for_mode(mode),
                 contract_path,
+                loaded_policy.as_ref(),
                 mode,
                 container_probe.as_ref(),
                 None,
@@ -1973,6 +1976,7 @@ fn diagnose_contract_with_scope(
                     .tools,
                 policy_target_os_for_mode(mode),
                 contract_path,
+                loaded_policy.as_ref(),
                 mode,
                 container_probe.as_ref(),
                 None,
@@ -2766,6 +2770,7 @@ fn diagnose_runtimes(
     runtimes: &BTreeMap<String, RuntimeRequirement>,
     target_os: &str,
     contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
     mode: DoctorMode,
     container_probe: Option<&ContainerProbeContext>,
     remote_probe: Option<&ResolvedExecutionBackend>,
@@ -2796,6 +2801,8 @@ fn diagnose_runtimes(
             remote_probe,
             remote_context_name,
             contract_path,
+            loaded_policy,
+            target_os,
             provisioning_actions,
             findings,
         );
@@ -2807,6 +2814,7 @@ fn diagnose_tools(
     tools: &BTreeMap<String, ToolRequirement>,
     target_os: &str,
     contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
     mode: DoctorMode,
     container_probe: Option<&ContainerProbeContext>,
     remote_probe: Option<&ResolvedExecutionBackend>,
@@ -2837,6 +2845,8 @@ fn diagnose_tools(
             remote_probe,
             remote_context_name,
             contract_path,
+            loaded_policy,
+            target_os,
             provisioning_actions,
             findings,
         );
@@ -3648,6 +3658,8 @@ fn diagnose_command_version(
     remote_probe: Option<&ResolvedExecutionBackend>,
     remote_context_name: Option<&str>,
     contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+    target_os: &str,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) -> bool {
@@ -3967,6 +3979,74 @@ fn diagnose_command_version(
     };
 
     if version_matches(requirement, &actual) {
+        if let Some(loaded_policy) = loaded_policy
+            && let Some(policy_violation) = loaded_policy
+                .pack
+                .strict_version_compliance_violation_for_actual_version_os(
+                    target_os,
+                    target_kind,
+                    display_name,
+                    &actual,
+                )
+        {
+            let probe_suffix = version_probe
+                .as_ref()
+                .and_then(|probe| {
+                    let path = probe.resolved_path.as_ref()?;
+                    Some(match (mode, container_probe.map(|probe| probe.image.as_str()), remote_context_name) {
+                        (DoctorMode::Container, Some(image), _) => format!(
+                            "; ota probed `{}` inside container image `{image}` with `{}`",
+                            path.display(),
+                            probe.command
+                        ),
+                        (DoctorMode::Container, None, _) => format!(
+                            "; ota probed `{}` inside the configured container image with `{}`",
+                            path.display(),
+                            probe.command
+                        ),
+                        (DoctorMode::Remote, _, Some(context_name)) => format!(
+                            "; ota probed `{}` through remote context `{context_name}` with `{}`",
+                            path.display(),
+                            probe.command
+                        ),
+                        (DoctorMode::Remote, _, None) => format!(
+                            "; ota probed `{}` through the selected remote backend with `{}`",
+                            path.display(),
+                            probe.command
+                        ),
+                        _ => format!("; ota probed `{}` with `{}`", path.display(), probe.command),
+                    })
+                })
+                .unwrap_or_default();
+            findings.push(Finding {
+                severity: if required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!(
+                    "Installed {kind} is not compliant with org policy: {finding_display_name}"
+                ),
+                why: format!(
+                    "{display_name} resolved to `{actual}` and satisfies the repo contract `{requirement}`, but `{}` enforces strict version compliance and {policy_violation}{probe_suffix}",
+                    compact_display_path(&loaded_policy.path)
+                ),
+                next: match mode {
+                    DoctorMode::Container => format!(
+                        "update the selected execution environment so `{display_name}` uses an approved version, or widen `{}`",
+                        compact_display_path(&loaded_policy.path)
+                    ),
+                    DoctorMode::Remote => format!(
+                        "update the selected remote environment so `{display_name}` uses an approved version, or widen `{}`",
+                        compact_display_path(&loaded_policy.path)
+                    ),
+                    DoctorMode::Native => format!(
+                        "install an approved `{display_name}` version or widen `{}`",
+                        compact_display_path(&loaded_policy.path)
+                    ),
+                },
+            });
+        }
         return probe_started;
     }
 
@@ -7750,6 +7830,97 @@ policies:
                 .starts_with("update the repo contract versions or widen `")
         );
         assert!(finding.next.ends_with("org-policy.yaml`"));
+    }
+
+    #[test]
+    fn reports_strict_policy_compliance_violations_for_installed_tools() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  yq: "4"
+tasks:
+  test:
+    run: yq --version
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  strict_versions: true
+  version_policy:
+    tools:
+      yq:
+        approved_versions:
+          - "4.52.5"
+"#,
+        )
+        .unwrap();
+
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let _yq = write_fake_command(
+            &bin_dir,
+            "yq",
+            if cfg!(windows) {
+                "@echo off\r\necho yq 4.52.6\r\n"
+            } else {
+                "#!/bin/sh\nprintf \"yq 4.52.6\\n\"\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary == "Installed tool is not compliant with org policy: yq"
+            })
+            .expect("strict policy compliance finding should be present");
+        assert!(
+            finding
+                .why
+                .contains("resolved to `4.52.6` and satisfies the repo contract `4`")
+        );
+        assert!(
+            finding
+                .why
+                .contains("resolved version `4.52.6` is not compliant with strict policy")
+        );
     }
 
     #[test]

@@ -140,8 +140,9 @@ Keep the existing task-level binding model:
 
 ```yaml
 execution:
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -167,7 +168,7 @@ The stronger extension is:
 
 - keep `tasks.<name>.runtime.backend_binding`
 - treat listeners/publications as workload-local within that backend
-- keep backend environment and fulfillment on `execution.local_backends.<name>`
+- keep backend environment and fulfillment on `execution.shared_backends.<name>`
 
 That extends the current model cleanly without a second abstraction layer.
 

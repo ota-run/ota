@@ -34,6 +34,7 @@ It keeps the contract discipline high without turning the policy pack into a hid
 - require the core repo contract sections that make `doctor` and `up` useful
 - require `AGENTS.md` so agent guidance stays visible and reviewable
 - constrain runtime and tool versions explicitly with `version_policy`
+- optionally turn on `strict_versions` when already-installed versions must also stay policy-compliant
 - supply approved shared env values explicitly with `env.values`
 - require explicit agent safety surfaces
 - require `AGENTS.md` generation in exports
@@ -42,6 +43,7 @@ It keeps the contract discipline high without turning the policy pack into a hid
 ## Why it matters
 
 - `ota doctor` becomes a real governance check, not just a local readiness scan
+- `strict_versions` can turn version drift in an existing environment into an explicit policy finding instead of silent tolerance
 - repo contracts stay explicit instead of drifting into shell scripts
 - org-approved install sources stay reviewable by platform and by tool
 - shared env values stay explicit in policy instead of hiding in shell setup

@@ -176,7 +176,7 @@ pub struct Execution {
     pub backends: Option<ExecutionBackends>,
     pub default_context: Option<String>,
     pub contexts: BTreeMap<String, ExecutionContext>,
-    pub local_backends: BTreeMap<String, ExecutionLocalBackend>,
+    pub shared_backends: BTreeMap<String, ExecutionSharedBackend>,
     context_resolution_errors: Vec<String>,
 }
 
@@ -218,7 +218,7 @@ struct ExecutionWire {
     #[serde(default)]
     contexts: BTreeMap<String, ExecutionContextWire>,
     #[serde(default)]
-    local_backends: BTreeMap<String, ExecutionLocalBackend>,
+    shared_backends: BTreeMap<String, ExecutionSharedBackend>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -231,7 +231,7 @@ struct ExecutionContextWire {
     #[serde(default)]
     lifecycle: Option<Lifecycle>,
     #[serde(default)]
-    fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    fulfillment: Option<ExecutionSharedBackendFulfillment>,
     #[serde(default)]
     container: Option<ContainerBackendWire>,
     #[serde(default)]
@@ -302,7 +302,7 @@ struct RemoteBackendWire {
 struct ExecutionContextMerged {
     backend: Option<Backend>,
     lifecycle: Option<Lifecycle>,
-    fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    fulfillment: Option<ExecutionSharedBackendFulfillment>,
     container: Option<ContainerBackendMerged>,
     remote: Option<RemoteBackendMerged>,
     requirements: ExecutionContextRequirements,
@@ -348,7 +348,7 @@ impl<'de> Deserialize<'de> for Execution {
             backends: wire.backends,
             default_context: wire.default_context,
             contexts,
-            local_backends: wire.local_backends,
+            shared_backends: wire.shared_backends,
             context_resolution_errors,
         })
     }
@@ -677,7 +677,7 @@ pub struct ExecutionContext {
     #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
     #[serde(default)]
-    pub fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    pub fulfillment: Option<ExecutionSharedBackendFulfillment>,
     #[serde(default)]
     pub container: Option<ContainerBackend>,
     #[serde(default)]
@@ -690,27 +690,35 @@ pub struct ExecutionContext {
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ExecutionLocalBackend {
+pub struct ExecutionSharedBackend {
+    pub scope: ExecutionSharedBackendScope,
     pub backend: Backend,
     pub lifecycle: Lifecycle,
     #[serde(default)]
     pub context: Option<String>,
     #[serde(default)]
-    pub fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    pub fulfillment: Option<ExecutionSharedBackendFulfillment>,
     #[serde(default)]
-    pub environment: Option<ExecutionLocalBackendEnvironment>,
+    pub environment: Option<ExecutionSharedBackendEnvironment>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionSharedBackendScope {
+    Local,
+    Remote,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ExecutionLocalBackendFulfillment {
+pub enum ExecutionSharedBackendFulfillment {
     None,
     Run,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ExecutionLocalBackendEnvironment {
+pub struct ExecutionSharedBackendEnvironment {
     #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]
