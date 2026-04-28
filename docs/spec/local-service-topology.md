@@ -168,9 +168,9 @@ Rules:
 - otherwise Ota resolves the effective target from declared topology truth
 - Ota must reject ambiguous, invalid, or recursive references
 
-### 2. Shared local backend binding
+### 2. Shared backend binding
 
-Multiple long-running tasks may intentionally share one local backend instance.
+Multiple long-running tasks may intentionally share one backend instance.
 
 Conceptual shape:
 
@@ -210,7 +210,7 @@ This is distinct from:
 - `depends_on`
 - service-manager attachments
 
-Contexts still describe workload shape. Backend bindings describe shared local realization.
+Contexts still describe workload shape. Backend bindings describe shared realization.
 
 ### 3. Backend-scoped run-path fulfillment
 
@@ -341,7 +341,7 @@ Override precedence:
 
 Required fields:
 
-- `scope` (`local` now; `remote` later)
+- `scope`
 - `backend`
 - `lifecycle`
 
@@ -355,11 +355,18 @@ Optional fields:
 
 Rules:
 
-- `scope: local` is the shipped slice for this feature surface
-- `backend: container | native` are the shipped local backend families
+- shipped backend families are:
+  - `scope: local` + `backend: container`
+  - `scope: local` + `backend: native`
+  - `scope: remote` + `backend: remote`
 - multiple tasks may bind to the same shared backend
 - service identity remains task-scoped even when the backend is shared
 - backend bindings must not replace service managers; they describe workload colocation
+- `backend: native` and `backend: remote` are currently `lifecycle: persistent` only
+- `backend: remote` currently uses contract-declared fixed listener endpoints:
+  - `bind.port.mode: fixed`
+  - `bind.port.value`
+  - and if `project.host` is declared, `project.host.port.mode: fixed`
 - `environment` intent is currently container-only and is resolved to one effective backend image deterministically:
   - `profile` / `image_alias` require policy-backed approval
   - literal `image` remains supported for compatibility
@@ -367,15 +374,15 @@ Rules:
   - policy may enforce allowed/denied source classes and registries
 - `ota execution plan` and `ota run` must surface the same effective image for both explicit and inferred shared-backend contexts
 
-### Long-term shared-backend shape
+### Shared-backend shape
 
-The shipped contract today is still:
+The shipped contract today is:
 
 - `execution.shared_backends.<name>`
 
-That remains the correct current surface for local shared backend boundaries.
+That is the correct stable surface for shared backend boundaries.
 
-Long term, if Ota adds remote shared backend families, the intended stable model is:
+Current local and remote shapes:
 
 ```yaml
 execution:
@@ -394,18 +401,17 @@ execution:
   shared_backends:
     workbench:
       scope: remote
-      backend: container
-      remote:
-        provider: ssh
-        target: devbox-a
-        cwd: /workspace/app
+      backend: remote
+      context: remote_app
+      lifecycle: persistent
 ```
 
 Important status:
 
 - `execution.shared_backends` is the shipped contract surface now
 - `scope: local` is the shipped slice
-- `scope: remote` is later work
+- `scope: remote` is now shipped for `backend: remote`
+- remote producer auto-start through `activation.mode: ensure_ready` is still later work
 
 Why this is the intended long-term direction:
 
@@ -528,17 +534,21 @@ Current constraints:
 - workload-local listeners, readiness, and publications may differ
 - Ota rejects real workload-local conflicts, including conflicting in-backend bind endpoints and conflicting fixed host publications
 
-2. `address_view: topology` is conservative
-- for container callers, Ota resolves topology only when caller and producer share one declared local backend binding
+2. `address_view: topology` and `address_view: internal` are conservative
+- for container callers, Ota resolves them only when caller and producer share one declared container backend binding
+- for native callers, Ota resolves them only when caller and producer share one declared native backend binding
+- for remote callers, Ota resolves them only when caller and producer share one declared remote backend binding
 
-3. Shared local backends are currently `container` or `native`
-- remote shared-local-backend semantics are deferred
-- native shared backends are currently persistent-only and do not carry container image/environment semantics
+3. Shared backends are currently:
+- local `container`
+- local `native`
+- remote `remote`
+- native and remote shared backends are currently persistent-only and do not carry container image/environment semantics
 
 4. Fulfillment is backend-scoped
 - Ota now prepares the effective shared backend requirement union when the shared boundary declares `fulfillment: run`
 - native shared-backend fulfillment now runs against the host execution target
-- remote shared-backend fulfillment remains later work
+- remote shared-backend fulfillment now runs against the remote execution target
 
 ### Why these constraints exist now
 
@@ -560,8 +570,7 @@ Later slices may relax current strictness by extending the same model, not by re
 Expected future expansion areas:
 
 - richer shared backend realization than one strict container shape
-- broader truthful `address_view: topology` resolution
-- native and remote shared backend families
+- broader truthful orchestration breadth on top of shared native and shared remote backends
 - backend fulfillment integrated directly into shared backend realization
 
 The important rule is:

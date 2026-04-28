@@ -353,6 +353,7 @@ fn remote_doctor_probe_contexts(
     };
     let backend = match remote.provider.as_str() {
         "daytona" | "ssh" | "tsh" | "kubectl" => ResolvedExecutionBackend::Remote {
+            shared_local_backend: None,
             provider: remote.provider.clone(),
             target,
             cwd: remote.cwd.clone(),
@@ -365,6 +366,7 @@ fn remote_doctor_probe_contexts(
                 return probes;
             }
             ResolvedExecutionBackend::BackendProvider {
+                shared_local_backend: None,
                 provider: remote.provider.clone(),
                 command: extension.command.clone(),
                 target,
@@ -4223,6 +4225,7 @@ fn remote_provisioning_target(
 ) -> Option<ProvisioningExecutionTarget> {
     match remote_probe? {
         ResolvedExecutionBackend::Remote {
+            shared_local_backend: _,
             provider,
             target,
             cwd,
@@ -4234,6 +4237,7 @@ fn remote_provisioning_target(
             context_name: remote_context_name.map(str::to_string),
         }),
         ResolvedExecutionBackend::BackendProvider {
+            shared_local_backend: _,
             provider,
             command,
             target,

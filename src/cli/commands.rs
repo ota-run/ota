@@ -1548,6 +1548,7 @@ fn resolve_execution_plan(
                 )
             }
             ResolvedExecutionBackend::Remote {
+                shared_local_backend: _,
                 provider,
                 target,
                 cwd,

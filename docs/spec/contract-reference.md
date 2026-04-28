@@ -899,7 +899,7 @@ Fields:
 `runtime` fields:
 
 - `kind`: currently `service`
-- `backend_binding`: optional shared local backend binding name declared under `execution.shared_backends`
+- `backend_binding`: optional shared backend binding name declared under `execution.shared_backends`
 - `listeners`: named listener map
 - `listeners.<name>.protocol`: `http`, `https`, or `tcp`
 - `listeners.<name>.bind.address`: bind address inside the task execution context
@@ -1011,10 +1011,13 @@ Task target binding semantics:
     - `started_ready` = ota started the producer and waited for readiness
     - `reused_ready` = ota found the producer already ready and reused it
 - topology resolution rules are:
-  - native caller: resolves from declared fixed `project.host` endpoint
-  - container caller: resolves only when caller and producer share one declared `runtime.backend_binding` local backend; ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - native caller: resolves from declared fixed `project.host` endpoint unless caller and producer share one declared native `runtime.backend_binding`, in which case ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - container caller: resolves only when caller and producer share one declared container `runtime.backend_binding`; ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - remote caller: resolves only when caller and producer share one declared remote `runtime.backend_binding`; ota resolves to the producer fixed bind endpoint inside that shared boundary
 - internal resolution rules are:
-  - container caller: resolves only when caller and producer share one declared `runtime.backend_binding` local backend; ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - container caller: resolves only when caller and producer share one declared container `runtime.backend_binding`; ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - native caller: resolves only when caller and producer share one declared native `runtime.backend_binding`; ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - remote caller: resolves only when caller and producer share one declared remote `runtime.backend_binding`; ota resolves to the producer fixed bind endpoint inside that shared boundary
   - unresolved topology and unresolved `internal` views fail clearly at run time without host/bridge guessing
 - current `activation.mode: ensure_ready` constraints:
   - explicit operator override inputs skip producer auto-start and preserve the override value
@@ -1041,8 +1044,8 @@ Shared local backend semantics:
 
 - `execution.shared_backends.<name>` declares an explicit ota-owned shared backend boundary for co-located long-running tasks
 - required fields:
-  - `scope` (`local` now; `remote` is later work)
-  - `backend` (current slice supports `container`)
+  - `scope`
+  - `backend`
   - `lifecycle`
 - optional fields:
   - `context` to pin the shared backend to one named execution context
@@ -1058,16 +1061,19 @@ Shared local backend semantics:
 - `execution.shared_backends.<name>.backend` currently supports:
   - `container`
   - `native`
+  - `remote`
 - current constraints by backend family:
   - `container` may use `environment`, shared publications, and container-shape reconciliation
   - `native` is currently `scope: local` + `lifecycle: persistent` only, and does not support `environment`
+  - `remote` is currently `scope: remote` + `lifecycle: persistent` only, and does not support `environment`
+  - remote service listeners are currently contract-driven fixed endpoints: declare `bind.port.mode: fixed`, `bind.port.value`, and if `project.host` is used declare `project.host.port.mode: fixed`
 - contract meaning:
   - `requirements` still declare what the backend or context needs
   - `fulfillment` declares whether ota may try to make that true on the `ota run` path
   - org policy still decides which provisioning sources and versions are approved
-- shared local backend identity is deterministic and drives:
+- shared backend identity is deterministic and drives:
   - persistent container family/shape reconciliation for create/reuse/recreate
-  - topology addressability for container caller `address_view: topology` target bindings
+  - topology/internal addressability for shared `container`, `native`, and `remote` target bindings when ota can prove that shared boundary
   - backend-scoped run-path fulfillment when the group declares `fulfillment: run`
   - receipt evidence in `receipt.steps[*].shared_local_backend` (`name`, `backend`, `lifecycle`, declared environment intent, effective profile/image/source/registry, effective identity, and reuse state when known)
   - receipt evidence in `receipt.steps[*].backend_fulfillment` when ota probes or prepares the backend
@@ -1082,13 +1088,16 @@ Shared local backend semantics:
   - binding backend family must match task runtime backend
   - when a local backend omits `context`, bound tasks must not span multiple resolved contexts
 - current slice constraints:
-  - shared local backend groups must resolve one deterministic backend shape (same effective image, dependency-isolation shape, and memory shape)
+  - shared backend groups must resolve one deterministic backend shape within their shipped backend family (same effective image, dependency-isolation shape, and memory shape where those dimensions apply)
   - bound workloads may differ in commands, listeners, readiness, and publications
   - ota rejects real workload-local conflicts inside that shared boundary, including conflicting in-backend bind endpoints and conflicting fixed host publications
   - persistent shared backend reconciliation uses the shared union of declared workload publications, while per-task runtime evidence and listener resolution remain task-scoped
-  - `address_view: topology` for container callers resolves only when caller and producer share one declared local backend binding
-  - shared local backends are currently `container` only
-  - fulfillment currently acts on the effective shared backend requirement union only; it does not yet cover native or remote shared backend families
+  - `activation.mode: ensure_ready` currently auto-starts only persistent container producer services and unix native producer services; remote producer auto-start is still later work and fails clearly when requested
+  - shared backends currently ship as:
+    - local `container`
+    - local `native`
+    - remote `remote`
+  - fulfillment currently acts on the effective shared backend requirement union for container, native, and remote shared backend families
   - profile/alias environment intent requires an active org policy pack under `.ota/org-policy.yaml` (`policies.backend_environment`)
   - policy may govern allowed/denied `source` classes and registries for the effective backend image
   - `fulfillment: none` fails clearly when required runtimes or tools are missing, while `fulfillment: run` attempts approved provisioning before any bound task body or dependency task uses that backend
