@@ -27701,7 +27701,9 @@ tasks:
             "RUN SUMMARY",
         ));
         assert!(
-            rendered.contains("Note:        depends_on task `typecheck` failed for requested task `build`"),
+            rendered.contains(
+                "Note:        depends_on task `typecheck` failed for requested task `build`"
+            ),
             "{rendered}"
         );
     }
@@ -31598,7 +31600,9 @@ fn run_single_contract_target_streaming(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                Some(String::from("run `ota tasks --use` to inspect runnable task usage")),
+                Some(String::from(
+                    "run `ota tasks --use` to inspect runnable task usage",
+                )),
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
@@ -31822,7 +31826,9 @@ fn run_single_contract_target_captured(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                Some(String::from("run `ota tasks --use` to inspect runnable task usage")),
+                Some(String::from(
+                    "run `ota tasks --use` to inspect runnable task usage",
+                )),
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
