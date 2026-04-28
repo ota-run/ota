@@ -12113,6 +12113,53 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn run_failure_names_failed_depends_on_task() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+tasks:
+  typecheck:
+    context: app
+    run: exit 9
+  build:
+    context: app
+    depends_on:
+      - typecheck
+    run: echo build
+"#,
+        );
+
+        let output = run_with(["ota", "run", "build", fixture.path()]);
+
+        assert_eq!(output.exit_code, 9);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Task Failed"), "{stderr}");
+        assert!(stderr.contains("Requested: build"), "{stderr}");
+        assert!(stderr.contains("Failed Step: typecheck"), "{stderr}");
+        assert!(
+            stderr.contains(
+                "requested task `build` failed because depends_on task `typecheck` returned a non-zero exit code"
+            ),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(
+                "Note:        depends_on task `typecheck` failed for requested task `build`"
+            ),
+            "{stderr}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_failure_reports_host_publication_conflict_as_a_host_port_error() {
         let _guard = env_mutex_lock();
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
