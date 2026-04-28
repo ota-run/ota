@@ -564,9 +564,17 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             )));
         }
 
-        if shared_backend.backend != Backend::Container {
+        if shared_backend.backend == Backend::Remote {
             errors.push(ValidationError::new(format!(
-                "`execution.shared_backends.{name}.backend` currently supports `container` only"
+                "`execution.shared_backends.{name}.backend` does not support `remote` yet; only `container` and `native` are currently shipped"
+            )));
+        }
+
+        if shared_backend.backend == Backend::Native
+            && shared_backend.lifecycle != Lifecycle::Persistent
+        {
+            errors.push(ValidationError::new(format!(
+                "`execution.shared_backends.{name}.backend: native` currently supports `lifecycle: persistent` only"
             )));
         }
 
@@ -608,6 +616,15 @@ fn validate_execution_shared_backend_environment(
     shared_backend: &ExecutionSharedBackend,
     errors: &mut Vec<ValidationError>,
 ) {
+    if shared_backend.backend != Backend::Container {
+        if shared_backend.environment.is_some() {
+            errors.push(ValidationError::new(format!(
+                "`execution.shared_backends.{name}.environment` is currently supported only for `backend: container`"
+            )));
+        }
+        return;
+    }
+
     let Some(environment) = shared_backend.environment.as_ref() else {
         return;
     };
@@ -5219,6 +5236,48 @@ tasks:
     }
 
     #[test]
+    fn allows_declared_shared_native_backend_binding_for_service_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+tasks:
+  dev:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
     fn allows_shared_local_backend_lifecycle_to_override_global_execution_lifecycle() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -5291,6 +5350,56 @@ tasks:
                 "`execution.shared_backends.workbench.scope: remote` is not supported yet; only `scope: local` is currently shipped",
             )
         }));
+    }
+
+    #[test]
+    fn rejects_native_shared_backend_non_persistent_lifecycle_and_environment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: ephemeral
+      environment:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| error
+            .to_string()
+            .contains("`execution.shared_backends.workbench.backend: native` currently supports `lifecycle: persistent` only")));
+        assert!(errors.errors().iter().any(|error| error
+            .to_string()
+            .contains("`execution.shared_backends.workbench.environment` is currently supported only for `backend: container`")));
     }
 
     #[test]

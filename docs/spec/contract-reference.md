@@ -1020,7 +1020,7 @@ Task target binding semantics:
   - explicit operator override inputs skip producer auto-start and preserve the override value
   - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_ready` was requested
   - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract instead of treating an open listener socket as sufficient
-  - the current shipped slice supports actual producer auto-start only for producer tasks that resolve to persistent container service backends, and only when the target binding itself already resolved truthfully (for example `address_view: host`, shared-backend `topology`, or shared-backend `internal`)
+  - the current shipped slice supports actual producer auto-start only when ota can own the producer honestly: persistent container service backends, and unix native producer services started through the activation-owned native path; in both cases the target binding itself must already have resolved truthfully (for example `address_view: host`, shared-backend `topology`, or shared-backend `internal`)
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
   - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
   - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -1055,6 +1055,12 @@ Shared local backend semantics:
     - an empty `environment: {}` is allowed when the repo wants policy `default_profile` resolution to choose the effective backend image
     - if no policy `default_profile` resolves, ota falls back to the task/container image and shared-backend shape validation follows that same fallback instead of assuming one synthetic shared image
 - tasks opt in through `tasks.<name>.runtime.backend_binding: <name>`
+- `execution.shared_backends.<name>.backend` currently supports:
+  - `container`
+  - `native`
+- current constraints by backend family:
+  - `container` may use `environment`, shared publications, and container-shape reconciliation
+  - `native` is currently `scope: local` + `lifecycle: persistent` only, and does not support `environment`
 - contract meaning:
   - `requirements` still declare what the backend or context needs
   - `fulfillment` declares whether ota may try to make that true on the `ota run` path

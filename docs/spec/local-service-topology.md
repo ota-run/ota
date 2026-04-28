@@ -313,8 +313,9 @@ Current `ensure_ready` constraints:
 - run receipts summarize producer activation plainly as:
   - `started_ready` = ota started the producer and waited for readiness
   - `reused_ready` = ota found the producer already ready and reused it
-- the current shipped slice only auto-starts producer services that resolve to persistent container
-  backends, and only when the target binding itself already resolved truthfully
+- the current shipped slice auto-starts producer services only when ota can own them honestly:
+  persistent container producer services, or unix native producer services started through the
+  activation-owned native path, and only when the target binding itself already resolved truthfully
 - unsupported producer shapes fail clearly instead of guessing orchestration
 - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
 - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -355,11 +356,11 @@ Optional fields:
 Rules:
 
 - `scope: local` is the shipped slice for this feature surface
-- `backend: container` is the primary initial target
+- `backend: container | native` are the shipped local backend families
 - multiple tasks may bind to the same shared backend
 - service identity remains task-scoped even when the backend is shared
 - backend bindings must not replace service managers; they describe workload colocation
-- `environment` intent is resolved to one effective backend image deterministically:
+- `environment` intent is currently container-only and is resolved to one effective backend image deterministically:
   - `profile` / `image_alias` require policy-backed approval
   - literal `image` remains supported for compatibility
   - an empty `environment: {}` may opt into policy `default_profile`, but falls back to the task/container image when no default profile applies
@@ -530,12 +531,14 @@ Current constraints:
 2. `address_view: topology` is conservative
 - for container callers, Ota resolves topology only when caller and producer share one declared local backend binding
 
-3. Shared local backends are currently container-only
-- native and remote shared-local-backend semantics are deferred
+3. Shared local backends are currently `container` or `native`
+- remote shared-local-backend semantics are deferred
+- native shared backends are currently persistent-only and do not carry container image/environment semantics
 
 4. Fulfillment is backend-scoped
 - Ota now prepares the effective shared backend requirement union when the shared boundary declares `fulfillment: run`
-- native and remote shared-backend fulfillment remain later work
+- native shared-backend fulfillment now runs against the host execution target
+- remote shared-backend fulfillment remains later work
 
 ### Why these constraints exist now
 

@@ -1509,7 +1509,7 @@ fn resolve_execution_plan(
 
     let (image, engine, engine_candidates, provider, target, target_strategy, cwd) =
         match resolved_backend {
-            ResolvedExecutionBackend::Native => (
+            ResolvedExecutionBackend::Native { .. } => (
                 None,
                 None,
                 Vec::new(),
@@ -33875,7 +33875,7 @@ fn run_execution_receipt_with_shared(
     let backend = resolved_backend
         .as_ref()
         .map(|backend| match backend {
-            ResolvedExecutionBackend::Native => Backend::Native,
+            ResolvedExecutionBackend::Native { .. } => Backend::Native,
             ResolvedExecutionBackend::Container { .. } => Backend::Container,
             ResolvedExecutionBackend::Remote { .. }
             | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
@@ -39142,7 +39142,7 @@ fn resolve_provisioning_execution_target(
             lifecycle,
             container_name: None,
         }),
-        Ok(ResolvedExecutionBackend::Native) => Err(Finding {
+        Ok(ResolvedExecutionBackend::Native { .. }) => Err(Finding {
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
             why: String::from(
