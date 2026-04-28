@@ -57,11 +57,11 @@ use crate::provisioning::{
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
-    ExecutionLocalBackendEnvironment, ExecutionLocalBackendFulfillment, ExtensionKind, Lifecycle,
-    RemoteBackend, RequirementSurface, RuntimeRequirement, TaskModeBranchSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessKind,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, format_memory_size_bytes, parse_memory_size_bytes, task_target_env_name,
+    ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment, ExtensionKind, Lifecycle,
+    RemoteBackend, RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode,
+    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessKind, TaskRuntimeSpec, TaskSpec,
+    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, ToolRequirement,
+    format_memory_size_bytes, parse_memory_size_bytes, task_target_env_name,
 };
 
 #[derive(Clone)]
@@ -2430,15 +2430,15 @@ fn persistent_cleanup_targets(
             }
         }
 
-        for (local_backend_name, local_backend) in &execution.local_backends {
-            if local_backend.backend != Backend::Container {
+        for (shared_backend_name, shared_backend) in &execution.shared_backends {
+            if shared_backend.backend != Backend::Container {
                 continue;
             }
 
-            let context_name = local_backend.context.clone().or_else(|| {
+            let context_name = shared_backend.context.clone().or_else(|| {
                 contract.tasks.iter().find_map(|(task_name, task)| {
                     (task.backend_binding_for_backend(Backend::Container)
-                        == Some(local_backend_name.as_str()))
+                        == Some(shared_backend_name.as_str()))
                     .then(|| {
                         selected_task_context_for_backend(contract, task_name, Backend::Container)
                             .map(|(name, _)| name.to_string())
@@ -2461,12 +2461,12 @@ fn persistent_cleanup_targets(
                         .and_then(|backends| backends.container.as_ref())
                 })
                 .ok_or_else(|| RunError::MissingContainerImage {
-                    task: format!("local_backend:{local_backend_name}"),
+                    task: format!("shared_backend:{shared_backend_name}"),
                 })?;
             let engine =
                 selected_container_engine_from_backend(Some(container)).ok_or_else(|| {
                     RunError::MissingContainerBackendCli {
-                        task: format!("local_backend:{local_backend_name}"),
+                        task: format!("shared_backend:{shared_backend_name}"),
                         engines: container_engine_candidates_from_backend(Some(container))
                             .join(", "),
                     }
@@ -2485,13 +2485,13 @@ fn persistent_cleanup_targets(
                 None,
             )?;
 
-            if local_backend.lifecycle == Lifecycle::Persistent {
+            if shared_backend.lifecycle == Lifecycle::Persistent {
                 let target = (
                     context_name.clone(),
-                    Some(local_backend_name.clone()),
+                    Some(shared_backend_name.clone()),
                     container.image.clone(),
                     engine.clone(),
-                    shared_local_backend_publications(contract, local_backend_name),
+                    shared_local_backend_publications(contract, shared_backend_name),
                     dependency_isolation_paths.clone(),
                     memory_bytes,
                     true,
@@ -2502,7 +2502,7 @@ fn persistent_cleanup_targets(
             } else if !dependency_isolation_paths.is_empty() {
                 let target = (
                     context_name.clone(),
-                    Some(local_backend_name.clone()),
+                    Some(shared_backend_name.clone()),
                     container.image.clone(),
                     engine.clone(),
                     Vec::new(),
@@ -2917,7 +2917,8 @@ pub(crate) struct ResolvedSharedLocalBackend {
     backend: Backend,
     lifecycle: Lifecycle,
     context_name: Option<String>,
-    fulfillment: Option<ExecutionLocalBackendFulfillment>,
+    publications: Vec<ContainerPortPublication>,
+    fulfillment: Option<ExecutionSharedBackendFulfillment>,
     environment: Option<BackendEnvironmentEvidence>,
 }
 
@@ -3355,6 +3356,11 @@ fn execute_task_with_hooks(
         contract_path,
         task_name,
         &backend,
+        if requested_relation {
+            requested_overrides.host_port
+        } else {
+            None
+        },
         mode.clone(),
         state,
     )?;
@@ -3394,6 +3400,7 @@ fn execute_task_with_hooks(
         contract_path,
         task_name,
         task,
+        backend_kind,
         policy_env,
         mode.clone(),
         working_dir,
@@ -3849,7 +3856,11 @@ fn execute_task_command(
             *lifecycle,
             *memory_bytes,
             compose_networks,
-            publications,
+            effective_execution_publications(
+                *lifecycle,
+                shared_local_backend.as_ref(),
+                publications,
+            ),
             dependency_isolation_paths,
             deferred_backend_fulfillment,
             host_port_override,
@@ -3918,13 +3929,14 @@ struct BackendFulfillmentPreparation {
 #[derive(Debug, Clone)]
 struct BackendFulfillmentPlan {
     backend_unit: String,
+    cache_key: String,
     backend_label: String,
     mode: BackendFulfillmentMode,
     strategy: BackendFulfillmentStrategy,
     target_os: String,
-    requirement_surface: RequirementSurface,
     declared_runtimes: BTreeMap<String, String>,
     declared_tools: BTreeMap<String, String>,
+    probe_backend: ResolvedExecutionBackend,
     provisioning_target: Option<ProvisioningExecutionTarget>,
 }
 
@@ -3939,6 +3951,8 @@ struct DeferredContainerBackendFulfillment {
     evidence: BackendFulfillmentEvidence,
     actions: Vec<ProvisioningAction>,
     adapter_bootstrap: ProvisioningBackendRequest,
+    target_os: String,
+    policy_pack: Option<Arc<OrgPolicyPack>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3971,24 +3985,38 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     contract_path: &Path,
     task_name: &str,
     backend: &ResolvedExecutionBackend,
+    host_port_override: Option<u16>,
     mode: TaskExecutionMode,
     state: &mut TaskRunState,
 ) -> Result<BackendFulfillmentPreparation, RunError> {
-    let Some(plan) = backend_fulfillment_plan(contract, contract_path, task_name, backend)? else {
+    let Some(plan) = backend_fulfillment_plan(
+        contract,
+        contract_path,
+        task_name,
+        backend,
+        host_port_override,
+    )?
+    else {
         return Ok(BackendFulfillmentPreparation::default());
     };
+    let loaded_policy = load_org_policy_pack_auto_details(contract_path).map_err(|error| {
+        RunError::InvalidPolicyPack {
+            details: error.to_string(),
+        }
+    })?;
+    let active_policy = loaded_policy
+        .as_ref()
+        .map(|loaded_policy| &loaded_policy.pack);
 
     if plan.strategy == BackendFulfillmentStrategy::Immediate
-        && let Some(existing) = state
-            .fulfilled_backend_units
-            .get(plan.backend_unit.as_str())
+        && let Some(existing) = state.fulfilled_backend_units.get(plan.cache_key.as_str())
     {
         return Ok(BackendFulfillmentPreparation {
             evidence: Some(existing.clone()),
             deferred_ephemeral_container: None,
             source_managed_actions: state
                 .fulfilled_backend_source_managed_actions
-                .get(plan.backend_unit.as_str())
+                .get(plan.cache_key.as_str())
                 .cloned()
                 .unwrap_or_default(),
         });
@@ -4010,17 +4038,19 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     let missing = detect_missing_backend_requirements(
         &plan.declared_runtimes,
         &plan.declared_tools,
-        backend,
+        &plan.probe_backend,
         working_dir,
+        active_policy,
+        plan.target_os.as_str(),
     );
     if missing.is_empty() {
         if plan.strategy == BackendFulfillmentStrategy::Immediate {
             state
                 .fulfilled_backend_units
-                .insert(plan.backend_unit.clone(), evidence.clone());
+                .insert(plan.cache_key.clone(), evidence.clone());
             state
                 .fulfilled_backend_source_managed_actions
-                .remove(plan.backend_unit.as_str());
+                .remove(plan.cache_key.as_str());
         }
         return Ok(BackendFulfillmentPreparation {
             evidence: Some(evidence),
@@ -4048,11 +4078,6 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         BackendFulfillmentMode::Run => {}
     }
 
-    let loaded_policy = load_org_policy_pack_auto_details(contract_path).map_err(|error| {
-        RunError::InvalidPolicyPack {
-            details: error.to_string(),
-        }
-    })?;
     let Some(loaded_policy) = loaded_policy else {
         evidence.result = BackendFulfillmentResult::Failed;
         return Err(RunError::BackendFulfillmentFailed {
@@ -4065,28 +4090,17 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         });
     };
 
-    let missing_keys = missing
-        .iter()
-        .map(BackendRequirementGap::key)
-        .collect::<BTreeSet<_>>();
-    let actions = loaded_policy
-        .pack
-        .selected_provisioning_actions_for_requirement_surface_os(
-            plan.target_os.as_str(),
-            &plan.requirement_surface,
-        )
-        .into_iter()
-        .filter(|action| {
-            missing_keys.contains(
-                format!(
-                    "{}:{}",
-                    action.target_kind.to_string().to_ascii_lowercase(),
-                    action.name.trim()
-                )
-                .as_str(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let actions = select_provisioning_actions_for_backend_gaps(
+        &loaded_policy.pack,
+        plan.target_os.as_str(),
+        &missing,
+    )
+    .map_err(|details| RunError::BackendFulfillmentFailed {
+        task: task_name.to_string(),
+        backend_unit: plan.backend_unit.clone(),
+        details,
+        evidence: evidence.clone(),
+    })?;
 
     evidence.actions = actions
         .iter()
@@ -4117,6 +4131,8 @@ fn maybe_fulfill_backend_requirements_on_run_path(
                 evidence,
                 actions: request.actions,
                 adapter_bootstrap,
+                target_os: plan.target_os,
+                policy_pack: Some(Arc::new(loaded_policy.pack)),
             }),
             source_managed_actions: Vec::new(),
         });
@@ -4160,8 +4176,10 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     let remaining = detect_missing_backend_requirements(
         &plan.declared_runtimes,
         &plan.declared_tools,
-        backend,
+        &plan.probe_backend,
         working_dir,
+        Some(&loaded_policy.pack),
+        plan.target_os.as_str(),
     );
     let remaining = remaining
         .into_iter()
@@ -4187,10 +4205,10 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     evidence.result = BackendFulfillmentResult::Fulfilled;
     state
         .fulfilled_backend_units
-        .insert(plan.backend_unit.clone(), evidence.clone());
+        .insert(plan.cache_key.clone(), evidence.clone());
     state
         .fulfilled_backend_source_managed_actions
-        .insert(plan.backend_unit, source_managed_actions.clone());
+        .insert(plan.cache_key, source_managed_actions.clone());
     Ok(BackendFulfillmentPreparation {
         evidence: Some(evidence),
         deferred_ephemeral_container: None,
@@ -4203,6 +4221,7 @@ fn backend_fulfillment_plan(
     contract_path: &Path,
     task_name: &str,
     backend: &ResolvedExecutionBackend,
+    host_port_override: Option<u16>,
 ) -> Result<Option<BackendFulfillmentPlan>, RunError> {
     let ResolvedExecutionBackend::Container {
         context_name,
@@ -4214,13 +4233,19 @@ fn backend_fulfillment_plan(
         return Ok(None);
     };
     let target_os = String::from("linux");
+    let probe_backend = effective_immediate_container_fulfillment_backend(
+        contract,
+        task_name,
+        backend,
+        host_port_override,
+    )?;
     if let Some(shared_local_backend) = shared_local_backend {
         let Some(fulfillment) = shared_local_backend.fulfillment else {
             return Ok(None);
         };
         let mode = match fulfillment {
-            ExecutionLocalBackendFulfillment::None => BackendFulfillmentMode::None,
-            ExecutionLocalBackendFulfillment::Run => BackendFulfillmentMode::Run,
+            ExecutionSharedBackendFulfillment::None => BackendFulfillmentMode::None,
+            ExecutionSharedBackendFulfillment::Run => BackendFulfillmentMode::Run,
         };
         let (declared_runtimes, declared_tools) = shared_local_backend_requirement_versions(
             contract,
@@ -4244,19 +4269,30 @@ fn backend_fulfillment_plan(
                 task_executed: false,
             },
         })?;
-        let requirement_surface =
-            requirement_surface_from_versions(&declared_runtimes, &declared_tools);
-        let provisioning_target = provisioning_target_for_resolved_backend(contract_path, backend)?;
+        let backend_unit = format!("shared_local_backend:{}", shared_local_backend.name);
+        let strategy = match shared_local_backend.lifecycle {
+            Lifecycle::Persistent => BackendFulfillmentStrategy::Immediate,
+            Lifecycle::Ephemeral => BackendFulfillmentStrategy::DeferredEphemeralContainer,
+        };
+        let provisioning_target = if strategy == BackendFulfillmentStrategy::Immediate {
+            Some(provisioning_target_for_resolved_backend(
+                contract_path,
+                &probe_backend,
+            )?)
+        } else {
+            None
+        };
         return Ok(Some(BackendFulfillmentPlan {
-            backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+            backend_unit: backend_unit.clone(),
+            cache_key: backend_fulfillment_cache_key(backend_unit, provisioning_target.as_ref()),
             backend_label: String::from("container"),
             mode,
-            strategy: BackendFulfillmentStrategy::Immediate,
+            strategy,
             target_os,
-            requirement_surface,
             declared_runtimes,
             declared_tools,
-            provisioning_target: Some(provisioning_target),
+            probe_backend,
+            provisioning_target,
         }));
     }
 
@@ -4272,8 +4308,8 @@ fn backend_fulfillment_plan(
         return Ok(None);
     };
     let mode = match fulfillment {
-        ExecutionLocalBackendFulfillment::None => BackendFulfillmentMode::None,
-        ExecutionLocalBackendFulfillment::Run => BackendFulfillmentMode::Run,
+        ExecutionSharedBackendFulfillment::None => BackendFulfillmentMode::None,
+        ExecutionSharedBackendFulfillment::Run => BackendFulfillmentMode::Run,
     };
     let (declared_runtimes, declared_tools) =
         direct_context_requirement_versions(contract, context_name, target_os.as_str()).map_err(
@@ -4294,8 +4330,6 @@ fn backend_fulfillment_plan(
                 },
             },
         )?;
-    let requirement_surface =
-        requirement_surface_from_versions(&declared_runtimes, &declared_tools);
     let strategy = match lifecycle {
         Lifecycle::Persistent => BackendFulfillmentStrategy::Immediate,
         Lifecycle::Ephemeral => BackendFulfillmentStrategy::DeferredEphemeralContainer,
@@ -4303,37 +4337,89 @@ fn backend_fulfillment_plan(
     let provisioning_target = if strategy == BackendFulfillmentStrategy::Immediate {
         Some(provisioning_target_for_resolved_backend(
             contract_path,
-            backend,
+            &probe_backend,
         )?)
     } else {
         None
     };
+    let backend_unit = format!("context:{context_name}");
     Ok(Some(BackendFulfillmentPlan {
-        backend_unit: format!("context:{context_name}"),
+        backend_unit: backend_unit.clone(),
+        cache_key: backend_fulfillment_cache_key(backend_unit, provisioning_target.as_ref()),
         backend_label: String::from("container"),
         mode,
         strategy,
         target_os,
-        requirement_surface,
         declared_runtimes,
         declared_tools,
+        probe_backend,
         provisioning_target,
     }))
 }
 
-fn requirement_surface_from_versions(
-    runtimes: &BTreeMap<String, String>,
-    tools: &BTreeMap<String, String>,
-) -> RequirementSurface {
-    RequirementSurface {
-        runtimes: runtimes
-            .iter()
-            .map(|(name, version)| (name.clone(), RuntimeRequirement::Simple(version.clone())))
-            .collect(),
-        tools: tools
-            .iter()
-            .map(|(name, version)| (name.clone(), ToolRequirement::Simple(version.clone())))
-            .collect(),
+fn effective_immediate_container_fulfillment_backend(
+    contract: &Contract,
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    host_port_override: Option<u16>,
+) -> Result<ResolvedExecutionBackend, RunError> {
+    let ResolvedExecutionBackend::Container {
+        shared_local_backend,
+        lifecycle,
+        publications,
+        ..
+    } = backend
+    else {
+        return Ok(backend.clone());
+    };
+
+    if *lifecycle != Lifecycle::Persistent {
+        return Ok(backend.clone());
+    }
+
+    let runtime = contract
+        .tasks
+        .get(task_name)
+        .and_then(|task| task.service_runtime_for_backend(Backend::Container));
+    let runtime_listener_publications = task_runtime_listener_publications(runtime);
+    if runtime_listener_publications.is_empty() && host_port_override.is_none() {
+        return Ok(backend.clone());
+    }
+
+    let projection = prepare_container_runtime_projection(
+        task_name,
+        runtime,
+        shared_backend_publications_or_current(shared_local_backend.as_ref(), publications),
+        &runtime_listener_publications,
+        false,
+        host_port_override,
+    )?;
+
+    let mut effective_backend = backend.clone();
+    if let ResolvedExecutionBackend::Container {
+        shared_local_backend,
+        publications,
+        ..
+    } = &mut effective_backend
+    {
+        *publications = projection.publications.clone();
+        if let Some(shared_local_backend) = shared_local_backend.as_mut() {
+            shared_local_backend.publications = projection.publications;
+        }
+    }
+    Ok(effective_backend)
+}
+
+fn backend_fulfillment_cache_key(
+    backend_unit: String,
+    provisioning_target: Option<&ProvisioningExecutionTarget>,
+) -> String {
+    match provisioning_target {
+        Some(ProvisioningExecutionTarget::Container {
+            container_name: Some(container_name),
+            ..
+        }) => format!("{backend_unit}::container:{container_name}"),
+        _ => backend_unit,
     }
 }
 
@@ -4500,6 +4586,8 @@ fn detect_missing_backend_requirements(
     tools: &BTreeMap<String, String>,
     backend: &ResolvedExecutionBackend,
     working_dir: &Path,
+    policy_pack: Option<&OrgPolicyPack>,
+    target_os: &str,
 ) -> Vec<BackendRequirementGap> {
     let mut missing = Vec::new();
 
@@ -4521,13 +4609,24 @@ fn detect_missing_backend_requirements(
                     details: format!("resolved version is `{actual_version}`"),
                 });
             }
+            Ok(Some(actual_version)) => {
+                if let Some(gap) = strict_policy_backend_gap(
+                    policy_pack,
+                    target_os,
+                    ProvisioningTargetKind::Runtime,
+                    name,
+                    required_version,
+                    &actual_version,
+                ) {
+                    missing.push(gap);
+                }
+            }
             Err(details) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Runtime,
                 name: name.clone(),
                 required_version: required_version.clone(),
                 details,
             }),
-            _ => {}
         }
     }
 
@@ -4550,13 +4649,24 @@ fn detect_missing_backend_requirements(
                     details: format!("resolved version is `{actual_version}`"),
                 });
             }
+            Ok(Some(actual_version)) => {
+                if let Some(gap) = strict_policy_backend_gap(
+                    policy_pack,
+                    target_os,
+                    ProvisioningTargetKind::Tool,
+                    name,
+                    required_version,
+                    &actual_version,
+                ) {
+                    missing.push(gap);
+                }
+            }
             Err(details) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
                 required_version: required_version.clone(),
                 details,
             }),
-            _ => {}
         }
     }
 
@@ -4569,6 +4679,8 @@ fn detect_missing_named_container_requirements(
     engine: &str,
     container_name: &str,
     task_name: &str,
+    policy_pack: Option<&OrgPolicyPack>,
+    target_os: &str,
 ) -> Vec<BackendRequirementGap> {
     let mut missing = Vec::new();
 
@@ -4595,13 +4707,24 @@ fn detect_missing_named_container_requirements(
                     details: format!("resolved version is `{actual_version}`"),
                 });
             }
+            Ok(Some(actual_version)) => {
+                if let Some(gap) = strict_policy_backend_gap(
+                    policy_pack,
+                    target_os,
+                    ProvisioningTargetKind::Runtime,
+                    name,
+                    required_version,
+                    &actual_version,
+                ) {
+                    missing.push(gap);
+                }
+            }
             Err(details) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Runtime,
                 name: name.clone(),
                 required_version: required_version.clone(),
                 details,
             }),
-            _ => {}
         }
     }
 
@@ -4624,17 +4747,123 @@ fn detect_missing_named_container_requirements(
                     details: format!("resolved version is `{actual_version}`"),
                 });
             }
+            Ok(Some(actual_version)) => {
+                if let Some(gap) = strict_policy_backend_gap(
+                    policy_pack,
+                    target_os,
+                    ProvisioningTargetKind::Tool,
+                    name,
+                    required_version,
+                    &actual_version,
+                ) {
+                    missing.push(gap);
+                }
+            }
             Err(details) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
                 required_version: required_version.clone(),
                 details,
             }),
-            _ => {}
         }
     }
 
     missing
+}
+
+fn strict_policy_backend_gap(
+    policy_pack: Option<&OrgPolicyPack>,
+    target_os: &str,
+    kind: ProvisioningTargetKind,
+    name: &str,
+    required_version: &str,
+    actual_version: &str,
+) -> Option<BackendRequirementGap> {
+    let details = policy_pack?.strict_version_compliance_violation_for_actual_version_os(
+        target_os,
+        kind,
+        name,
+        actual_version,
+    )?;
+    Some(BackendRequirementGap {
+        kind,
+        name: name.to_string(),
+        required_version: required_version.to_string(),
+        details,
+    })
+}
+
+fn select_provisioning_actions_for_backend_gaps(
+    policy_pack: &OrgPolicyPack,
+    target_os: &str,
+    missing: &[BackendRequirementGap],
+) -> Result<Vec<ProvisioningAction>, String> {
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for gap in missing {
+        if !seen.insert(gap.key()) {
+            continue;
+        }
+        let decision = match policy_pack.resolve_provisioning_for_os(
+            target_os,
+            gap.kind,
+            gap.name.as_str(),
+            gap.required_version.as_str(),
+        ) {
+            Ok(Some(decision)) => Some(decision),
+            Ok(None) => resolve_strict_policy_backend_gap_fallback(policy_pack, target_os, gap)?,
+            Err(_) => resolve_strict_policy_backend_gap_fallback(policy_pack, target_os, gap)?,
+        };
+        let Some(decision) = decision else {
+            continue;
+        };
+        actions.push(ProvisioningAction {
+            kind: crate::policy_pack::ProvisioningActionKind::SelectSource,
+            target_kind: decision.kind,
+            name: decision.name,
+            requested_version: decision.requested_version,
+            normalized_requirement: decision.normalized_requirement,
+            resolved_version: decision.resolved_version,
+            package: decision.package,
+            source: decision.source,
+            source_config: decision.source_config,
+            approved_version: decision.approved_version,
+            policy_match: decision.policy_match,
+        });
+    }
+
+    Ok(actions)
+}
+
+fn resolve_strict_policy_backend_gap_fallback(
+    policy_pack: &OrgPolicyPack,
+    target_os: &str,
+    gap: &BackendRequirementGap,
+) -> Result<Option<crate::policy_pack::ProvisioningDecision>, String> {
+    let Some(approved_versions) = policy_pack.effective_version_policy_versions_for_os(
+        target_os,
+        gap.kind,
+        gap.name.as_str(),
+    ) else {
+        return Ok(None);
+    };
+
+    for approved_version in approved_versions {
+        if !version_matches_requirement(gap.required_version.as_str(), approved_version.as_str()) {
+            continue;
+        }
+        if let Some(decision) = policy_pack.resolve_provisioning_for_os(
+            target_os,
+            gap.kind,
+            gap.name.as_str(),
+            approved_version.as_str(),
+        )? {
+            return Ok(Some(decision));
+        }
+    }
+
+    Ok(None)
 }
 
 fn version_matches_requirement(requirement: &str, actual: &str) -> bool {
@@ -4765,7 +4994,7 @@ fn provisioning_target_for_resolved_backend(
                 shared_local_backend
                     .as_ref()
                     .map(|shared| shared.name.as_str()),
-                publications,
+                shared_backend_publications_or_current(shared_local_backend.as_ref(), publications),
                 dependency_isolation_paths,
                 *memory_bytes,
             );
@@ -5207,6 +5436,7 @@ fn apply_task_target_activations(
     contract_path: &Path,
     task_name: &str,
     task: &TaskSpec,
+    caller_backend: Backend,
     policy_env: Option<&BTreeMap<String, String>>,
     mode: TaskExecutionMode,
     working_dir: &Path,
@@ -5245,6 +5475,7 @@ fn apply_task_target_activations(
                         task_name,
                         resolution.target.as_str(),
                         target_spec,
+                        caller_backend,
                         policy_env,
                         mode.clone(),
                         working_dir,
@@ -5271,6 +5502,7 @@ fn ensure_target_producer_ready(
     task_name: &str,
     target_name: &str,
     target_spec: &TaskTargetSpec,
+    caller_backend: Backend,
     policy_env: Option<&BTreeMap<String, String>>,
     mode: TaskExecutionMode,
     working_dir: &Path,
@@ -5278,16 +5510,6 @@ fn ensure_target_producer_ready(
     generation: usize,
     state: &mut TaskRunState,
 ) -> Result<TaskTargetActivationStatus, RunError> {
-    if target_spec.service.address_view != TaskTargetAddressView::Host {
-        return Err(RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: String::from(
-                "target activation `ensure_ready` currently supports only `address_view: host`",
-            ),
-        });
-    }
-
     let producer_task_name = target_spec.service.task.trim();
     let producer_listener_name = target_spec.service.listener.trim();
     let producer_key = (
@@ -5336,6 +5558,8 @@ fn ensure_target_producer_ready(
         contract,
         task_name,
         target_name,
+        target_spec,
+        caller_backend,
         producer_task_name,
         producer_listener_name,
         producer_runtime_spec,
@@ -5557,6 +5781,8 @@ fn declared_target_readiness_target(
     contract: &Contract,
     task_name: &str,
     target_name: &str,
+    target_spec: &TaskTargetSpec,
+    caller_backend: Backend,
     producer_task_name: &str,
     producer_listener_name: &str,
     producer_runtime_spec: &TaskRuntimeSpec,
@@ -5574,47 +5800,138 @@ fn declared_target_readiness_target(
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .unwrap_or(producer_listener_name);
-    let listener = select_target_listener_for_host_view(service_task, probe_listener_name)
+    let listener = match target_spec.service.address_view {
+        TaskTargetAddressView::Host => select_target_listener_for_host_view(
+            service_task,
+            probe_listener_name,
+        )
         .map_err(|details| RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
             target: target_name.to_string(),
             details,
-        })?
-        .ok_or_else(|| RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: format!(
-                "target readiness references unknown listener `{probe_listener_name}` on service task `{producer_task_name}`"
-            ),
-        })?;
-    let host_projection = listener.project.host.as_ref().ok_or_else(|| {
-        RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: format!(
-                "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare `project.host`"
-            ),
+        })?,
+        TaskTargetAddressView::Topology => {
+            if caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, producer_task_name)
+            {
+                select_target_listener_for_backend(service_task, probe_listener_name, caller_backend)
+            } else {
+                select_target_listener_for_host_view(service_task, probe_listener_name)
+                    .map_err(|details| RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details,
+                    })?
+            }
         }
-    })?;
-    let host_port = host_projection.port.value.ok_or_else(|| {
-        RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: format!(
-                "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare a fixed `project.host.port.value`"
-            ),
+        TaskTargetAddressView::Internal => {
+            select_target_listener_for_backend(service_task, probe_listener_name, caller_backend)
         }
+    }
+    .ok_or_else(|| RunError::TaskTargetResolutionFailed {
+        task: task_name.to_string(),
+        target: target_name.to_string(),
+        details: format!(
+            "target readiness references unknown listener `{probe_listener_name}` on service task `{producer_task_name}`"
+        ),
     })?;
+    let (address, port) = match target_spec.service.address_view {
+        TaskTargetAddressView::Host => {
+            let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+                RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare `project.host`"
+                    ),
+                }
+            })?;
+            let host_port = host_projection.port.value.ok_or_else(|| {
+                RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare a fixed `project.host.port.value`"
+                    ),
+                }
+            })?;
+            (host_projection.address.clone(), host_port)
+        }
+        TaskTargetAddressView::Topology => {
+            if caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, producer_task_name)
+            {
+                let bind_port = listener.bind.port.value.ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare a fixed `bind.port.value` for shared-backend `address_view: topology`"
+                        ),
+                    }
+                })?;
+                (
+                    colocated_topology_listener_address(listener.bind.address.as_str()),
+                    bind_port,
+                )
+            } else {
+                let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare `project.host`"
+                        ),
+                    }
+                })?;
+                let host_port = host_projection.port.value.ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare a fixed `project.host.port.value`"
+                        ),
+                    }
+                })?;
+                (host_projection.address.clone(), host_port)
+            }
+        }
+        TaskTargetAddressView::Internal => {
+            if caller_backend != Backend::Container
+                || !tasks_share_container_local_backend(contract, task_name, producer_task_name)
+            {
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `ensure_ready` cannot probe `address_view: internal` for `{task_name}` -> `{producer_task_name}` without a shared container local backend binding"
+                    ),
+                });
+            }
+            let bind_port = listener.bind.port.value.ok_or_else(|| {
+                RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `ensure_ready` requires readiness listener `{producer_task_name}.{probe_listener_name}` to declare a fixed `bind.port.value` for `address_view: internal`"
+                    ),
+                }
+            })?;
+            (
+                colocated_topology_listener_address(listener.bind.address.as_str()),
+                bind_port,
+            )
+        }
+    };
     match readiness.map(|probe| probe.kind) {
         Some(TaskRuntimeReadinessKind::Http) => Ok(RuntimeReadinessTarget::Http {
-            address: host_projection.address.clone(),
-            port: host_port,
+            address,
+            port,
             path: normalized_runtime_path(readiness.and_then(|probe| probe.path.as_deref())),
         }),
-        Some(TaskRuntimeReadinessKind::Tcp) | None => Ok(RuntimeReadinessTarget::Tcp {
-            address: host_projection.address.clone(),
-            port: host_port,
-        }),
+        Some(TaskRuntimeReadinessKind::Tcp) | None => {
+            Ok(RuntimeReadinessTarget::Tcp { address, port })
+        }
     }
 }
 
@@ -5920,21 +6237,14 @@ fn resolve_task_target_binding_url(
             if caller_backend == Backend::Container
                 && tasks_share_container_local_backend(contract, task_name, service_task_name)
             {
-                let bind_port = listener.bind.port.value.ok_or_else(|| {
-                    RunError::TaskTargetResolutionFailed {
-                        task: task_name.to_string(),
-                        target: target_name.to_string(),
-                        details: format!(
-                            "listener `{service_task_name}.{listener_name}` requires `bind.port.mode: fixed` to resolve `address_view: topology` for shared local backends"
-                        ),
-                    }
-                })?;
-                return Ok(format_task_target_host_endpoint(
-                    listener.protocol,
-                    colocated_topology_listener_address(listener.bind.address.as_str()).as_str(),
-                    bind_port,
-                    None,
-                ));
+                return resolve_colocated_shared_backend_listener_endpoint(
+                    task_name,
+                    target_name,
+                    service_task_name,
+                    listener_name,
+                    listener,
+                    TaskTargetAddressView::Topology,
+                );
             }
 
             if caller_backend != Backend::Native {
@@ -5953,14 +6263,64 @@ fn resolve_task_target_binding_url(
             }
             unreachable!()
         }
-        TaskTargetAddressView::Internal => Err(RunError::TaskTargetResolutionFailed {
+        TaskTargetAddressView::Internal => {
+            if caller_backend == Backend::Container
+                && tasks_share_container_local_backend(contract, task_name, service_task_name)
+            {
+                return resolve_colocated_shared_backend_listener_endpoint(
+                    task_name,
+                    target_name,
+                    service_task_name,
+                    listener_name,
+                    listener,
+                    TaskTargetAddressView::Internal,
+                );
+            }
+
+            Err(RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details: format!(
+                    "`address_view: internal` requires a shared local backend binding between `{task_name}` and `{service_task_name}`; current caller backend is `{}`",
+                    match caller_backend {
+                        Backend::Native => "native",
+                        Backend::Container => "container",
+                        Backend::Remote => "remote",
+                    }
+                ),
+            })
+        }
+    }
+}
+
+fn resolve_colocated_shared_backend_listener_endpoint(
+    task_name: &str,
+    target_name: &str,
+    service_task_name: &str,
+    listener_name: &str,
+    listener: &crate::schema::TaskRuntimeListenerSpec,
+    address_view: TaskTargetAddressView,
+) -> Result<String, RunError> {
+    let bind_port = listener.bind.port.value.ok_or_else(|| {
+        RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
             target: target_name.to_string(),
-            details: String::from(
-                "`address_view: internal` is not resolvable in the current local topology runtime yet",
+            details: format!(
+                "listener `{service_task_name}.{listener_name}` requires `bind.port.mode: fixed` to resolve `address_view: {}` for shared local backends",
+                match address_view {
+                    TaskTargetAddressView::Topology => "topology",
+                    TaskTargetAddressView::Host => "host",
+                    TaskTargetAddressView::Internal => "internal",
+                }
             ),
-        }),
-    }
+        }
+    })?;
+    Ok(format_task_target_host_endpoint(
+        listener.protocol,
+        colocated_topology_listener_address(listener.bind.address.as_str()).as_str(),
+        bind_port,
+        None,
+    ))
 }
 
 fn resolve_host_view_address_for_caller(
@@ -6814,10 +7174,13 @@ fn prepare_container_runtime_projection(
         }
     }
 
-    let prepared_publications = prepared_listeners
-        .iter()
-        .map(|(_, publication)| publication.clone())
-        .collect::<Vec<_>>();
+    let prepared_publications = merge_container_publication_sets(
+        publications,
+        &prepared_listeners
+            .iter()
+            .map(|(_, publication)| publication.clone())
+            .collect::<Vec<_>>(),
+    );
 
     let mut expected_host_ports = BTreeMap::new();
     for (listener_name, publication) in &prepared_listeners {
@@ -6838,6 +7201,25 @@ fn prepare_container_runtime_projection(
         env,
         expected_host_ports,
     })
+}
+
+fn merge_container_publication_sets(
+    base: &[ContainerPortPublication],
+    overlay: &[ContainerPortPublication],
+) -> Vec<ContainerPortPublication> {
+    let mut merged = base.to_vec();
+    for overlay_publication in overlay {
+        if let Some(existing) = merged.iter_mut().find(|existing| {
+            existing.bind_port == overlay_publication.bind_port
+                && existing.host_address == overlay_publication.host_address
+                && existing.protocol == overlay_publication.protocol
+        }) {
+            *existing = overlay_publication.clone();
+        } else {
+            merged.push(overlay_publication.clone());
+        }
+    }
+    merged
 }
 
 fn resolve_container_task_runtime_from_publications(
@@ -7480,20 +7862,20 @@ fn resolve_task_shared_local_backend(
             details: String::from("execution block is missing"),
         });
     };
-    let Some(local_backend) = execution.local_backends.get(binding_name) else {
+    let Some(shared_backend) = execution.shared_backends.get(binding_name) else {
         return Err(RunError::SharedLocalBackendResolutionFailed {
             task: task_name.to_string(),
             binding: binding_name.to_string(),
-            details: String::from("binding is not declared under `execution.local_backends`"),
+            details: String::from("binding is not declared under `execution.shared_backends`"),
         });
     };
-    if local_backend.backend != backend {
+    if shared_backend.backend != backend {
         return Err(RunError::SharedLocalBackendResolutionFailed {
             task: task_name.to_string(),
             binding: binding_name.to_string(),
             details: format!(
                 "binding backend `{}` does not match resolved task backend `{}`",
-                match local_backend.backend {
+                match shared_backend.backend {
                     Backend::Native => "native",
                     Backend::Container => "container",
                     Backend::Remote => "remote",
@@ -7506,7 +7888,7 @@ fn resolve_task_shared_local_backend(
             ),
         });
     }
-    let context_name = local_backend
+    let context_name = shared_backend
         .context
         .as_deref()
         .map(str::trim)
@@ -7519,12 +7901,34 @@ fn resolve_task_shared_local_backend(
 
     Ok(Some(ResolvedSharedLocalBackend {
         name: binding_name.to_string(),
-        backend: local_backend.backend,
-        lifecycle: local_backend.lifecycle,
+        backend: shared_backend.backend,
+        lifecycle: shared_backend.lifecycle,
         context_name,
-        fulfillment: local_backend.fulfillment,
+        publications: shared_local_backend_publications(contract, binding_name),
+        fulfillment: shared_backend.fulfillment,
         environment: None,
     }))
+}
+
+fn shared_backend_publications_or_current<'a>(
+    shared_local_backend: Option<&'a ResolvedSharedLocalBackend>,
+    publications: &'a [ContainerPortPublication],
+) -> &'a [ContainerPortPublication] {
+    shared_local_backend
+        .map(|shared_local_backend| shared_local_backend.publications.as_slice())
+        .unwrap_or(publications)
+}
+
+fn effective_execution_publications<'a>(
+    lifecycle: Lifecycle,
+    shared_local_backend: Option<&'a ResolvedSharedLocalBackend>,
+    publications: &'a [ContainerPortPublication],
+) -> &'a [ContainerPortPublication] {
+    if lifecycle == Lifecycle::Persistent {
+        shared_backend_publications_or_current(shared_local_backend, publications)
+    } else {
+        publications
+    }
 }
 
 fn shared_local_backend_publications(
@@ -7551,7 +7955,7 @@ pub(crate) fn resolve_shared_local_backend_environment(
     contract_path: Option<&Path>,
     task_name: &str,
     binding_name: &str,
-    environment: Option<&ExecutionLocalBackendEnvironment>,
+    environment: Option<&ExecutionSharedBackendEnvironment>,
     fallback_image: &str,
 ) -> Result<(String, Option<BackendEnvironmentEvidence>), RunError> {
     let Some(environment) = environment else {
@@ -7793,16 +8197,16 @@ pub(crate) fn resolve_effective_task_container_backend(
             task: task_name.to_string(),
         })?;
     let (image, shared_environment) = if let Some(shared) = shared_local_backend.as_ref() {
-        let local_backend_environment = contract
+        let shared_backend_environment = contract
             .execution
             .as_ref()
-            .and_then(|execution| execution.local_backends.get(shared.name.as_str()))
-            .and_then(|local_backend| local_backend.environment.as_ref());
+            .and_then(|execution| execution.shared_backends.get(shared.name.as_str()))
+            .and_then(|shared_backend| shared_backend.environment.as_ref());
         resolve_shared_local_backend_environment(
             contract_path,
             task_name,
             shared.name.as_str(),
-            local_backend_environment,
+            shared_backend_environment,
             container.image.as_str(),
         )?
     } else {
@@ -10312,6 +10716,8 @@ fn execute_fulfilled_ephemeral_container_task_command(
         engine,
         &container_name,
         task_name,
+        deferred_backend_fulfillment.policy_pack.as_deref(),
+        deferred_backend_fulfillment.target_os.as_str(),
     );
     let remaining = remaining
         .into_iter()
@@ -12035,7 +12441,7 @@ fn persistent_container_target_for_backend(
         shared_local_backend
             .as_ref()
             .map(|shared| shared.name.as_str()),
-        publications,
+        shared_backend_publications_or_current(shared_local_backend.as_ref(), publications),
         dependency_isolation_paths,
         *memory_bytes,
     );
@@ -14245,6 +14651,305 @@ tasks:
     }
 
     #[test]
+    fn ensure_ready_activation_reuses_reachable_shared_backend_internal_target() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut TaskRunState::default(),
+        )
+        .expect("shared-backend internal activation should succeed");
+
+        assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
+    }
+
+    #[test]
+    fn ensure_ready_activation_reuses_reachable_shared_backend_topology_target() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut TaskRunState::default(),
+        )
+        .expect("shared-backend topology activation should succeed");
+
+        assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
+    }
+
+    #[test]
+    fn ensure_ready_activation_internal_readiness_does_not_require_project_host() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: tcp
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut TaskRunState::default(),
+        )
+        .expect("shared-backend internal readiness should succeed without project.host");
+
+        assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
+    }
+
+    #[test]
     fn ensure_ready_activation_http_readiness_requires_more_than_an_open_port() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener
@@ -15260,8 +15965,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15322,6 +16028,84 @@ tasks:
     }
 
     #[test]
+    fn internal_target_binding_resolves_for_co_located_shared_local_backend_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let resolved = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .expect("shared-local-backend internal resolution should succeed");
+
+        assert_eq!(resolved, "http://127.0.0.1:8080");
+    }
+
+    #[test]
     fn topology_target_binding_fails_for_container_tasks_without_shared_local_backend() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -15337,8 +16121,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     dev_stack:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15392,6 +16177,77 @@ tasks:
     }
 
     #[test]
+    fn internal_target_binding_fails_without_shared_local_backend() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+  shared_backends:
+    dev_stack:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: dev_stack
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+"#,
+        )
+        .unwrap();
+
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+
+        let error = resolve_task_target_binding_url(
+            &contract,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Container,
+            ExecutionOverrides::default(),
+        )
+        .expect_err("non-shared internal resolution should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires a shared local backend binding")
+        );
+    }
+
+    #[test]
     fn shared_local_backend_resolution_keeps_publications_task_scoped() {
         if crate::execution::available_container_engines().is_empty() {
             return;
@@ -15410,8 +16266,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15502,8 +16359,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15580,8 +16438,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15638,8 +16497,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15705,8 +16565,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15779,8 +16640,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -15854,8 +16716,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -19704,9 +20567,11 @@ tasks:
             );
         }
         assert_eq!(second.exit_code, 0);
-        assert_eq!(
-            first.execution_note.as_deref(),
-            Some("persistent container created")
+        assert!(
+            first
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.starts_with("persistent container created"))
         );
         assert_eq!(
             second.execution_note.as_deref(),
@@ -19835,8 +20700,9 @@ execution:
       lifecycle: persistent
       container:
         image: ghcr.io/ota/test:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -19871,7 +20737,7 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: 4000
           project:
             host:
               address: 127.0.0.1
@@ -19908,7 +20774,7 @@ tasks:
                 ResolvedExecutionBackend::Container {
                     context_name: dev_context,
                     shared_local_backend: Some(dev_shared),
-                    publications: dev_publications,
+                    publications: _dev_publications,
                     dependency_isolation_paths: dev_isolated_paths,
                     memory_bytes: dev_memory,
                     ..
@@ -19916,7 +20782,7 @@ tasks:
                 ResolvedExecutionBackend::Container {
                     context_name: sandbox_context,
                     shared_local_backend: Some(sandbox_shared),
-                    publications: sandbox_publications,
+                    publications: _sandbox_publications,
                     dependency_isolation_paths: sandbox_isolated_paths,
                     memory_bytes: sandbox_memory,
                     ..
@@ -19928,18 +20794,20 @@ tasks:
                 let dev_seed = container_identity_seed(
                     dev_context.as_deref(),
                     Some(dev_shared.name.as_str()),
-                    dev_publications,
+                    &dev_shared.publications,
                     dev_isolated_paths,
                     *dev_memory,
                 );
                 let sandbox_seed = container_identity_seed(
                     sandbox_context.as_deref(),
                     Some(sandbox_shared.name.as_str()),
-                    sandbox_publications,
+                    &sandbox_shared.publications,
                     sandbox_isolated_paths,
                     *sandbox_memory,
                 );
                 assert_eq!(dev_seed, sandbox_seed);
+                assert_eq!(dev_shared.publications.len(), 2);
+                assert_eq!(sandbox_shared.publications.len(), 2);
             }
             other => panic!("expected container backends with shared local binding, got {other:?}"),
         }
@@ -19957,20 +20825,196 @@ tasks:
             },
         }
 
-        assert_eq!(
-            first.execution_note.as_deref(),
-            Some("persistent container created")
+        assert!(
+            first
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.starts_with("persistent container created"))
         );
-        assert!(matches!(
-            second.execution_note.as_deref(),
-            Some("persistent container reused")
-                | Some("persistent container recreated (execution shape changed)")
-        ));
+        assert!(
+            second
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.starts_with("persistent container reused"))
+        );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert!(
-            log.matches("run-persistent").count() <= 2,
+            log.matches("run-persistent").count() == 1,
             "\nactual docker log:\n{log}\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_local_backend_fulfillment_runs_once_per_backend_unit_across_workloads() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+      requirements:
+        tools:
+          yq: "4.52.5"
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: app
+      fulfillment: run
+tasks:
+  dev:
+    run: yq --version > dev.txt
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+  sandbox:
+    run: yq --version > sandbox.txt
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 4000
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  version_policy:
+    tools:
+      yq:
+        approved_versions:
+          - "4.52.5"
+  provisioning:
+    yq:
+      source: apt
+      package: yq
+      approved_versions:
+        - "4.52.5"
+      platforms:
+        linux:
+          source: apt
+          package: yq
+          approved_versions:
+            - "4.52.5"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let apt_get_path = bin_dir.join("apt-get");
+        fs::write(
+            &apt_get_path,
+            format!(
+                r#"#!/bin/sh
+printf "apt-get %s\n" "$*" >> "{log}"
+if printf "%s" "$*" | grep -q "install -y yq"; then
+  cat > "{bin}/yq" <<'EOF'
+#!/bin/sh
+printf "yq 4.52.5\n"
+EOF
+  chmod +x "{bin}/yq"
+fi
+exit 0
+"#,
+                log = fixture.dir.path().join("apt-log.txt").display(),
+                bin = bin_dir.display(),
+            ),
+        )
+        .unwrap();
+        for path in [&docker_path, &apt_get_path] {
+            let mut permissions = fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).unwrap();
+        }
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let dev_backend =
+            resolve_execution_backend(&fixture.contract, "dev", ExecutionOverrides::default())
+                .expect("dev backend should resolve");
+        let sandbox_backend =
+            resolve_execution_backend(&fixture.contract, "sandbox", ExecutionOverrides::default())
+                .expect("sandbox backend should resolve");
+        let mut state = TaskRunState::default();
+        let first = super::maybe_fulfill_backend_requirements_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            &dev_backend,
+            None,
+            TaskExecutionMode::Capture,
+            &mut state,
+        )
+        .expect("first shared-backend fulfillment should succeed");
+        let second = super::maybe_fulfill_backend_requirements_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            &sandbox_backend,
+            None,
+            TaskExecutionMode::Capture,
+            &mut state,
+        )
+        .expect("second shared-backend fulfillment should reuse cached backend preparation");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(
+            first.evidence.as_ref().map(|evidence| evidence.result),
+            Some(super::BackendFulfillmentResult::Fulfilled)
+        );
+        assert_eq!(
+            second.evidence.as_ref().map(|evidence| evidence.result),
+            Some(super::BackendFulfillmentResult::Fulfilled)
+        );
+
+        let apt_log = fs::read_to_string(fixture.dir.path().join("apt-log.txt")).unwrap();
+        assert_eq!(apt_log.matches("install -y yq").count(), 1, "{apt_log}");
+        assert_eq!(state.fulfilled_backend_units.len(), 1);
     }
 
     #[cfg(all(unix, target_os = "linux"))]
@@ -26583,6 +27627,383 @@ exit 0
         assert!(docker_log.matches("exec\n").count() >= 2);
         assert!(docker_log.contains("start\n"));
         assert!(docker_log.contains("rm\n"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strict_policy_noncompliant_backend_version_triggers_run_path_fulfillment() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: tooling
+  contexts:
+    tooling:
+      backend: container
+      lifecycle: ephemeral
+      fulfillment: run
+      container:
+        image: ghcr.io/ota/test:latest
+      requirements:
+        tools:
+          yq: "4"
+tasks:
+  test:
+    context: tooling
+    run: yq --version > fulfilled.txt
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: true
+  version_policy:
+    tools:
+      yq:
+        approved_versions:
+          - "4.52.5"
+  provisioning:
+    yq:
+      source: apt
+      package: yq
+      approved_versions:
+        - "4.52.5"
+      platforms:
+        linux:
+          source: apt
+          package: yq
+          approved_versions:
+            - "4.52.5"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let yq_path = bin_dir.join("yq");
+        fs::write(
+            &yq_path,
+            r#"#!/bin/sh
+printf "yq 4.52.6\n"
+"#,
+        )
+        .unwrap();
+        let apt_get_path = bin_dir.join("apt-get");
+        fs::write(
+            &apt_get_path,
+            format!(
+                r#"#!/bin/sh
+printf "apt-get %s\n" "$*" >> "{log}"
+if printf "%s" "$*" | grep -q "install -y yq"; then
+  cat > "{bin}/yq" <<'EOF'
+#!/bin/sh
+printf "yq 4.52.5\n"
+EOF
+  chmod +x "{bin}/yq"
+fi
+exit 0
+"#,
+                log = fixture.dir.path().join("apt-log.txt").display(),
+                bin = bin_dir.display(),
+            ),
+        )
+        .unwrap();
+        for path in [&docker_path, &yq_path, &apt_get_path] {
+            let mut permissions = fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).unwrap();
+        }
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "test").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            outcome
+                .backend_fulfillment
+                .as_ref()
+                .map(|evidence| evidence.result),
+            Some(super::BackendFulfillmentResult::Fulfilled)
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("fulfilled.txt")).unwrap(),
+            "yq 4.52.5\n"
+        );
+        assert!(
+            outcome
+                .backend_fulfillment
+                .as_ref()
+                .expect("fulfillment evidence should exist")
+                .actions
+                .iter()
+                .any(|action| action.contains("tool yq") && action.contains("4.52.5")),
+            "strict policy mismatch should trigger an approved provisioning action"
+        );
+    }
+
+    #[test]
+    fn backend_fulfillment_plan_uses_effective_persistent_container_identity_for_host_port_override()
+     {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      fulfillment: run
+      container:
+        image: ghcr.io/ota/test:latest
+      requirements:
+        tools:
+          yq: "4.52.5"
+tasks:
+  test:
+    context: app
+    run: yq --version
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        );
+
+        let backend =
+            resolve_execution_backend(&fixture.contract, "test", ExecutionOverrides::default())
+                .expect("backend should resolve");
+        let plan_default = super::backend_fulfillment_plan(
+            &fixture.contract,
+            fixture.file_path(),
+            "test",
+            &backend,
+            None,
+        )
+        .expect("plan should resolve")
+        .expect("fulfillment plan should exist");
+        let plan_override = super::backend_fulfillment_plan(
+            &fixture.contract,
+            fixture.file_path(),
+            "test",
+            &backend,
+            Some(4000),
+        )
+        .expect("override plan should resolve")
+        .expect("override fulfillment plan should exist");
+
+        let runtime = fixture
+            .contract
+            .tasks
+            .get("test")
+            .and_then(|task| task.service_runtime_for_backend(Backend::Container))
+            .expect("runtime should exist");
+        let runtime_listener_publications =
+            super::task_runtime_listener_publications(Some(runtime));
+        let (context_name, image, engine, publications, memory_bytes) = match &backend {
+            ResolvedExecutionBackend::Container {
+                context_name,
+                image,
+                engine,
+                publications,
+                memory_bytes,
+                ..
+            } => (
+                context_name.as_deref(),
+                image.as_str(),
+                engine.as_str(),
+                publications.as_slice(),
+                *memory_bytes,
+            ),
+            other => panic!("expected container backend, got {other:?}"),
+        };
+        let projection = super::prepare_container_runtime_projection(
+            "test",
+            Some(runtime),
+            publications,
+            &runtime_listener_publications,
+            false,
+            Some(4000),
+        )
+        .expect("projection should apply override");
+        let expected_seed = super::container_identity_seed(
+            context_name,
+            None,
+            &projection.publications,
+            &[],
+            memory_bytes,
+        );
+        let expected_name = super::persistent_container_name_for_seed(
+            fixture.dir.path(),
+            image,
+            engine,
+            expected_seed.as_deref(),
+        );
+
+        let default_name = match plan_default.provisioning_target.as_ref() {
+            Some(super::ProvisioningExecutionTarget::Container {
+                container_name: Some(container_name),
+                ..
+            }) => container_name.clone(),
+            other => panic!("expected named container target, got {other:?}"),
+        };
+        let override_name = match plan_override.provisioning_target.as_ref() {
+            Some(super::ProvisioningExecutionTarget::Container {
+                container_name: Some(container_name),
+                ..
+            }) => container_name.clone(),
+            other => panic!("expected named container target, got {other:?}"),
+        };
+
+        assert_ne!(default_name, override_name);
+        assert_eq!(override_name, expected_name);
+        assert_ne!(plan_default.cache_key, plan_override.cache_key);
+    }
+
+    #[test]
+    fn shared_ephemeral_backend_fulfillment_uses_deferred_strategy() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+      requirements:
+        tools:
+          yq: "4.52.5"
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: ephemeral
+      context: app
+      fulfillment: run
+tasks:
+  test:
+    context: app
+    run: yq --version
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        );
+
+        let backend =
+            resolve_execution_backend(&fixture.contract, "test", ExecutionOverrides::default())
+                .expect("backend should resolve");
+        let plan = super::backend_fulfillment_plan(
+            &fixture.contract,
+            fixture.file_path(),
+            "test",
+            &backend,
+            None,
+        )
+        .expect("plan should resolve")
+        .expect("fulfillment plan should exist");
+
+        assert_eq!(
+            plan.strategy,
+            super::BackendFulfillmentStrategy::DeferredEphemeralContainer
+        );
+        assert!(plan.provisioning_target.is_none());
+    }
+
+    #[test]
+    fn shared_ephemeral_backend_execution_keeps_publications_task_scoped() {
+        let task_publications = vec![ContainerPortPublication {
+            bind_port: 3000,
+            host_address: String::from("127.0.0.1"),
+            host_port_mode: TaskRuntimeHostPortMode::Fixed,
+            host_port: Some(3000),
+            protocol: TaskRuntimeProtocol::Http,
+        }];
+        let shared_publications = vec![
+            ContainerPortPublication {
+                bind_port: 3000,
+                host_address: String::from("127.0.0.1"),
+                host_port_mode: TaskRuntimeHostPortMode::Fixed,
+                host_port: Some(3000),
+                protocol: TaskRuntimeProtocol::Http,
+            },
+            ContainerPortPublication {
+                bind_port: 4000,
+                host_address: String::from("127.0.0.1"),
+                host_port_mode: TaskRuntimeHostPortMode::Fixed,
+                host_port: Some(4000),
+                protocol: TaskRuntimeProtocol::Http,
+            },
+        ];
+        let shared_backend = super::ResolvedSharedLocalBackend {
+            name: String::from("workbench"),
+            backend: Backend::Container,
+            lifecycle: Lifecycle::Ephemeral,
+            context_name: Some(String::from("app")),
+            publications: shared_publications,
+            fulfillment: None,
+            environment: None,
+        };
+
+        let effective = super::effective_execution_publications(
+            Lifecycle::Ephemeral,
+            Some(&shared_backend),
+            &task_publications,
+        );
+
+        assert_eq!(effective, task_publications.as_slice());
     }
 
     #[test]

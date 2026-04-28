@@ -899,7 +899,7 @@ Fields:
 `runtime` fields:
 
 - `kind`: currently `service`
-- `backend_binding`: optional shared local backend binding name declared under `execution.local_backends`
+- `backend_binding`: optional shared local backend binding name declared under `execution.shared_backends`
 - `listeners`: named listener map
 - `listeners.<name>.protocol`: `http`, `https`, or `tcp`
 - `listeners.<name>.bind.address`: bind address inside the task execution context
@@ -990,7 +990,7 @@ Task target binding semantics:
 - `service.address_view` tells ota which reachable address shape to resolve for the consumer
   - `host`: use the producer's published host URL
   - `topology`: use the current local topology address when ota can resolve it truthfully
-  - `internal`: reserved for direct internal-plane addressing; unresolved cases fail clearly today
+  - `internal`: use the producer's in-backend address when ota can resolve that internal plane truthfully
   - omit it only when the default resolution rules for that binding are already sufficient and explicit in the surrounding contract
 - optional `override_input` points at a declared task input used as an explicit operator override channel
   - use it when an operator may intentionally point the consumer at another target such as staging, preview, or a separately started local app
@@ -1013,12 +1013,14 @@ Task target binding semantics:
 - topology resolution rules are:
   - native caller: resolves from declared fixed `project.host` endpoint
   - container caller: resolves only when caller and producer share one declared `runtime.backend_binding` local backend; ota resolves to the producer fixed bind endpoint inside that shared boundary
-  - unresolved topology and all `internal` views fail clearly at run time without host/bridge guessing
+- internal resolution rules are:
+  - container caller: resolves only when caller and producer share one declared `runtime.backend_binding` local backend; ota resolves to the producer fixed bind endpoint inside that shared boundary
+  - unresolved topology and unresolved `internal` views fail clearly at run time without host/bridge guessing
 - current `activation.mode: ensure_ready` constraints:
   - explicit operator override inputs skip producer auto-start and preserve the override value
   - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_ready` was requested
   - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract instead of treating an open listener socket as sufficient
-  - the first shipped slice supports actual producer auto-start only for producer tasks that resolve to persistent container service backends on the host-view path
+  - the current shipped slice supports actual producer auto-start only for producer tasks that resolve to persistent container service backends, and only when the target binding itself already resolved truthfully (for example `address_view: host`, shared-backend `topology`, or shared-backend `internal`)
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
   - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
   - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -1037,8 +1039,9 @@ Current `runtime.readiness` support for service tasks:
 
 Shared local backend semantics:
 
-- `execution.local_backends.<name>` declares an explicit ota-owned local backend boundary for co-located long-running tasks
+- `execution.shared_backends.<name>` declares an explicit ota-owned shared backend boundary for co-located long-running tasks
 - required fields:
+  - `scope` (`local` now; `remote` is later work)
   - `backend` (current slice supports `container`)
   - `lifecycle`
 - optional fields:
@@ -1069,11 +1072,14 @@ Shared local backend semantics:
       - `failed` = ota attempted fulfillment or setup, but it did not complete successfully
   - `ota execution plan`, `ota run`, and run receipts all resolve the same effective backend image for explicit-context and inferred-context shared backend groups
 - validation rules include:
-  - binding must reference declared `execution.local_backends.<name>`
+  - binding must reference declared `execution.shared_backends.<name>`
   - binding backend family must match task runtime backend
   - when a local backend omits `context`, bound tasks must not span multiple resolved contexts
 - current slice constraints:
-  - shared local backend groups must resolve one deterministic container shape (same effective image, publication shape, dependency-isolation shape, and memory shape)
+  - shared local backend groups must resolve one deterministic backend shape (same effective image, dependency-isolation shape, and memory shape)
+  - bound workloads may differ in commands, listeners, readiness, and publications
+  - ota rejects real workload-local conflicts inside that shared boundary, including conflicting in-backend bind endpoints and conflicting fixed host publications
+  - persistent shared backend reconciliation uses the shared union of declared workload publications, while per-task runtime evidence and listener resolution remain task-scoped
   - `address_view: topology` for container callers resolves only when caller and producer share one declared local backend binding
   - shared local backends are currently `container` only
   - fulfillment currently acts on the effective shared backend requirement union only; it does not yet cover native or remote shared backend families
@@ -1092,6 +1098,7 @@ Direct container-context fulfillment semantics:
 - `fulfillment: run` tells ota to satisfy declared context requirements on the actual `ota run` path when policy-approved provisioning is available
 - `fulfillment: none` keeps the same requirements truth but fails clearly instead of mutating the execution environment
 - org policy still governs whether ota may provision and which sources/versions are approved; `fulfillment: run` is runtime intent, not a policy bypass
+- when the active org policy enables `strict_versions`, ota also treats already-installed repo-satisfying versions as missing if they are not policy-compliant, and `fulfillment: run` may repair them with an approved exact version
 - current slice behavior:
   - persistent container contexts are fulfilled immediately against the resolved persistent execution container
   - ephemeral container contexts are fulfilled inside the same named ephemeral execution container before the task body runs

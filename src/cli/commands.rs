@@ -114,7 +114,7 @@ use crate::runner::{
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
 };
 use crate::schema::{
-    Backend, ContainerBackend, Contract, EnvRequirement, ExecutionLocalBackend, ExtensionSpec,
+    Backend, ContainerBackend, Contract, EnvRequirement, ExecutionSharedBackend, ExtensionSpec,
     Lifecycle, RequirementSurface, TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes,
     parse_memory_size_bytes,
 };
@@ -1610,16 +1610,16 @@ fn resolve_execution_plan_container_image(
     };
 
     let matching_backends = execution
-        .local_backends
+        .shared_backends
         .iter()
-        .filter(|(binding_name, local_backend)| {
-            if local_backend.backend != Backend::Container
-                || !lifecycle.is_none_or(|selected| local_backend.lifecycle == selected)
+        .filter(|(binding_name, shared_backend)| {
+            if shared_backend.backend != Backend::Container
+                || !lifecycle.is_none_or(|selected| shared_backend.lifecycle == selected)
             {
                 return false;
             }
 
-            let backend_context_name = local_backend.context.as_deref().or_else(|| {
+            let backend_context_name = shared_backend.context.as_deref().or_else(|| {
                 contract.tasks.iter().find_map(|(bound_task_name, task)| {
                     (task.backend_binding_for_backend(Backend::Container)
                         == Some(binding_name.as_str()))
@@ -1637,16 +1637,16 @@ fn resolve_execution_plan_container_image(
 
             backend_context_name == Some(context_name)
         })
-        .collect::<Vec<(&String, &ExecutionLocalBackend)>>();
+        .collect::<Vec<(&String, &ExecutionSharedBackend)>>();
 
     match matching_backends.as_slice() {
         [] => Ok(Some(fallback_image.to_string())),
-        [(binding_name, local_backend)] => {
+        [(binding_name, shared_backend)] => {
             let (image, _) = crate::runner::resolve_shared_local_backend_environment(
                 Some(contract_path),
                 task_name,
                 binding_name.as_str(),
-                local_backend.environment.as_ref(),
+                shared_backend.environment.as_ref(),
                 fallback_image,
             )?;
             Ok(Some(image))
@@ -1655,7 +1655,7 @@ fn resolve_execution_plan_container_image(
             task: task_name.to_string(),
             binding: String::from("<execution-plan>"),
             details: format!(
-                "multiple shared local backends match container context `{context_name}`; add a single deterministic `execution.local_backends.<name>.context` binding for execution planning"
+                "multiple shared local backends match container context `{context_name}`; add a single deterministic `execution.shared_backends.<name>.context` binding for execution planning"
             ),
         }),
     }
@@ -17752,7 +17752,11 @@ fn render_task_inputs_compact(inputs: &BTreeMap<String, crate::schema::TaskInput
     let mut output = String::new();
 
     for ((_, spec), label) in inputs.iter().zip(labels.iter()) {
-        let requirement = if spec.required { "required" } else { "optional" };
+        let requirement = if spec.required {
+            "required"
+        } else {
+            "optional"
+        };
         let has_metadata = spec.default.is_some() || !spec.allowed.is_empty();
         let mut first_line_parts = Vec::new();
         if let Some(default) = spec.default.as_deref() {
@@ -22042,9 +22046,8 @@ mod tests {
         render_detect_comparison_section, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_tasks_text,
         render_tasks_use_text, render_up_result, render_up_section_from_parts,
-        render_windows_uninstall_pending,
-        run_execution_receipt, run_execution_receipt_with_shared, strip_ansi_codes,
-        stylize_text_failure, up_doctor_mode, windows_uninstall_script,
+        render_windows_uninstall_pending, run_execution_receipt, run_execution_receipt_with_shared,
+        strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
         workspace_refresh_command, write_detected_merge,
     };
     use crate::detector::{
@@ -22184,7 +22187,10 @@ mod tests {
             rendered.contains("--mode      optional   default=`standard` allowed=`standard|chaos`"),
             "{rendered}"
         );
-        assert!(rendered.contains("Run mode for the API suite"), "{rendered}");
+        assert!(
+            rendered.contains("Run mode for the API suite"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -23043,14 +23049,23 @@ tasks:
             text.contains("readiness: from host -> postgres://localhost:5432"),
             "{text}"
         );
-        assert!(text.contains("healthcheck: pg_isready -U postgres"), "{text}");
+        assert!(
+            text.contains("healthcheck: pg_isready -U postgres"),
+            "{text}"
+        );
         assert!(text.contains("timeout: 30s"), "{text}");
         assert!(text.contains("\n  endpoints:\n"), "{text}");
         assert!(text.contains("container  postgres:5432"), "{text}");
         assert!(text.contains("host       127.0.0.1:5432"), "{text}");
         assert!(text.contains("\n  commands:\n"), "{text}");
-        assert!(text.contains("start docker compose up -d postgres"), "{text}");
-        assert!(text.contains("stop  docker compose stop postgres"), "{text}");
+        assert!(
+            text.contains("start docker compose up -d postgres"),
+            "{text}"
+        );
+        assert!(
+            text.contains("stop  docker compose stop postgres"),
+            "{text}"
+        );
         assert!(text.contains("managed by: ota doctor, ota up"), "{text}");
     }
 
@@ -24857,8 +24872,9 @@ execution:
         image: ghcr.io/ota/raw:latest
         engines:
           - docker
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app
@@ -24944,8 +24960,9 @@ execution:
         image: ghcr.io/ota/raw:latest
         engines:
           - docker
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       environment:
@@ -26743,8 +26760,7 @@ tasks:
             None,
         );
 
-        let rendered =
-            render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        let rendered = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
         assert!(!rendered.contains("Note:"), "{rendered}");
     }
 
@@ -27217,8 +27233,9 @@ execution:
   backends:
     container:
       image: ghcr.io/ota/dev:latest
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
 tasks:
@@ -33172,7 +33189,7 @@ fn render_run_structured_error_text(
             ],
             vec![
                 format!(
-                    "set `execution.local_backends.<name>.fulfillment: run` for `{backend_unit}` if ota should provision this backend on the run path"
+                    "set `execution.shared_backends.<name>.fulfillment: run` for `{backend_unit}` if ota should provision this backend on the run path"
                 ),
                 String::from(
                     "or satisfy the missing prerequisites in the backend environment manually",

@@ -176,8 +176,9 @@ Conceptual shape:
 
 ```yaml
 execution:
-  local_backends:
+  shared_backends:
     workbench:
+      scope: local
       backend: container
       lifecycle: persistent
       context: app-base
@@ -199,7 +200,7 @@ tasks:
 
 Meaning:
 
-- `local_backends.workbench` defines one intentional reusable local backend boundary
+- `shared_backends.workbench` defines one intentional reusable shared backend boundary
 - multiple tasks can bind to it
 - Ota owns reuse, lifecycle, addressing, and cleanup semantics for that boundary
 
@@ -312,8 +313,8 @@ Current `ensure_ready` constraints:
 - run receipts summarize producer activation plainly as:
   - `started_ready` = ota started the producer and waited for readiness
   - `reused_ready` = ota found the producer already ready and reused it
-- the first shipped slice only auto-starts producer services that resolve to persistent container
-  backends on the host-view path
+- the current shipped slice only auto-starts producer services that resolve to persistent container
+  backends, and only when the target binding itself already resolved truthfully
 - unsupported producer shapes fail clearly instead of guessing orchestration
 - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
 - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -335,10 +336,11 @@ Override precedence:
 
 ### Local backend bindings
 
-`execution.local_backends.<name>` declares an Ota-owned local backend instance.
+`execution.shared_backends.<name>` declares an Ota-owned shared backend instance.
 
 Required fields:
 
+- `scope` (`local` now; `remote` later)
 - `backend`
 - `lifecycle`
 
@@ -352,9 +354,9 @@ Optional fields:
 
 Rules:
 
-- only local execution backends are in scope for this feature slice
+- `scope: local` is the shipped slice for this feature surface
 - `backend: container` is the primary initial target
-- multiple tasks may bind to the same local backend
+- multiple tasks may bind to the same shared backend
 - service identity remains task-scoped even when the backend is shared
 - backend bindings must not replace service managers; they describe workload colocation
 - `environment` intent is resolved to one effective backend image deterministically:
@@ -362,11 +364,58 @@ Rules:
   - literal `image` remains supported for compatibility
   - an empty `environment: {}` may opt into policy `default_profile`, but falls back to the task/container image when no default profile applies
   - policy may enforce allowed/denied source classes and registries
-  - `ota execution plan` and `ota run` must surface the same effective image for both explicit and inferred shared-backend contexts
+- `ota execution plan` and `ota run` must surface the same effective image for both explicit and inferred shared-backend contexts
+
+### Long-term shared-backend shape
+
+The shipped contract today is still:
+
+- `execution.shared_backends.<name>`
+
+That remains the correct current surface for local shared backend boundaries.
+
+Long term, if Ota adds remote shared backend families, the intended stable model is:
+
+```yaml
+execution:
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      context: app
+      lifecycle: persistent
+```
+
+And later:
+
+```yaml
+execution:
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: container
+      remote:
+        provider: ssh
+        target: devbox-a
+        cwd: /workspace/app
+```
+
+Important status:
+
+- `execution.shared_backends` is the shipped contract surface now
+- `scope: local` is the shipped slice
+- `scope: remote` is later work
+
+Why this is the intended long-term direction:
+
+- one stable concept: shared backend boundary
+- `scope` answers where that boundary lives
+- `backend` answers what execution kind it uses
+- task-level `runtime.backend_binding` can stay stable if Ota later broadens from local-only to local-plus-remote shared backend families
 
 ### Fulfillment mode
 
-`execution.local_backends.<name>.fulfillment` is:
+`execution.shared_backends.<name>.fulfillment` is:
 
 - `none` = do not fulfill; fail if requirements are missing
 - `run` = fulfill on the run path before the backend is used
@@ -424,6 +473,11 @@ Examples:
 - sibling task in separate but connected backend may see `http://dev:8080`
 - sibling task in an ephemeral helper container attached through the host bridge may see `http://host.docker.internal:8080`
 
+Current shipped `internal` slice:
+
+- container caller + producer sharing one declared local backend binding: ota resolves the producer fixed bind endpoint inside that shared boundary
+- other `internal` shapes still fail clearly instead of guessing bridges, host aliases, or synthetic service names
+
 The repo should not have to encode those distinctions manually when Ota already knows the chosen
 topology.
 
@@ -468,9 +522,10 @@ Current constraints:
 
 1. Shared local backend groups must resolve one deterministic container shape
 - same effective image
-- same effective publication shape
 - same effective dependency-isolation shape
 - same effective memory shape
+- workload-local listeners, readiness, and publications may differ
+- Ota rejects real workload-local conflicts, including conflicting in-backend bind endpoints and conflicting fixed host publications
 
 2. `address_view: topology` is conservative
 - for container callers, Ota resolves topology only when caller and producer share one declared local backend binding
@@ -478,8 +533,9 @@ Current constraints:
 3. Shared local backends are currently container-only
 - native and remote shared-local-backend semantics are deferred
 
-4. Fulfillment is not integrated yet
-- Ota can model the shared backend boundary, but later slices are responsible for preparing the effective backend automatically
+4. Fulfillment is backend-scoped
+- Ota now prepares the effective shared backend requirement union when the shared boundary declares `fulfillment: run`
+- native and remote shared-backend fulfillment remain later work
 
 ### Why these constraints exist now
 
@@ -644,8 +700,9 @@ execution:
         tools:
           curl: "*"
 
-  local_backends:
+  shared_backends:
     dev-stack:
+      scope: local
       backend: container
       lifecycle: persistent
       fulfillment: run
