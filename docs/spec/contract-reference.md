@@ -1049,6 +1049,10 @@ Shared local backend semantics:
     - an empty `environment: {}` is allowed when the repo wants policy `default_profile` resolution to choose the effective backend image
     - if no policy `default_profile` resolves, ota falls back to the task/container image and shared-backend shape validation follows that same fallback instead of assuming one synthetic shared image
 - tasks opt in through `tasks.<name>.runtime.backend_binding: <name>`
+- contract meaning:
+  - `requirements` still declare what the backend or context needs
+  - `fulfillment` declares whether ota may try to make that true on the `ota run` path
+  - org policy still decides which provisioning sources and versions are approved
 - shared local backend identity is deterministic and drives:
   - persistent container family/shape reconciliation for create/reuse/recreate
   - topology addressability for container caller `address_view: topology` target bindings
@@ -1076,7 +1080,10 @@ Direct container-context fulfillment semantics:
 - valid values are:
   - `none`
   - `run`
+- `execution.contexts.<name>.requirements` still declares what that execution plane needs; `fulfillment` does not replace or infer the requirements surface
 - `fulfillment: run` tells ota to satisfy declared context requirements on the actual `ota run` path when policy-approved provisioning is available
+- `fulfillment: none` keeps the same requirements truth but fails clearly instead of mutating the execution environment
+- org policy still governs whether ota may provision and which sources/versions are approved; `fulfillment: run` is runtime intent, not a policy bypass
 - current slice behavior:
   - persistent container contexts are fulfilled immediately against the resolved persistent execution container
   - ephemeral container contexts are fulfilled inside the same named ephemeral execution container before the task body runs
