@@ -49,9 +49,26 @@ pub(super) fn render_execution_receipt_summary_block(
             .unwrap_or("setup")
     });
     let backend_summary = backend_summary_from_receipt(receipt, task, mode.as_str());
-    let note = execution_summary_note(receipt, task, backend_summary.as_deref());
+    let note = build_execution_summary_note(receipt, task, backend_summary.as_deref(), mode.as_str());
     let log_capture_warning = receipt_log_capture_warning(receipt).map(str::to_string);
     let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
+    
+    let path_display = if receipt.scope == "repo" {
+        Path::new(receipt.path.as_str())
+            .parent()
+            .map(|parent| compact_path(parent, "."))
+            .unwrap_or_else(|| compact_path(Path::new(receipt.path.as_str()), "."))
+    } else if receipt.scope == "workspace" {
+        receipt.path.clone()
+    } else {
+        compact_path(Path::new(receipt.path.as_str()), ".")
+    };
+    let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
+    
+    lines.push(summary_detail_line("Scope:", &receipt.scope));
+    lines.push(summary_detail_line("Path:", &path_display));
+    lines.push(summary_detail_line("Contract:", &contract_display));
+    lines.push(summary_detail_line("Mode:", &mode));
     lines.push(summary_detail_line("Task:", task));
     if let Some(workspace) = receipt.workspace.as_deref() {
         lines.push(summary_detail_line("Workspace:", workspace));
@@ -59,7 +76,6 @@ pub(super) fn render_execution_receipt_summary_block(
     if let Some(context) = receipt.context.as_deref() {
         lines.push(summary_detail_line("Context:", context));
     }
-    lines.push(summary_detail_line("Mode:", &mode));
     if let Some(lifecycle) = receipt.lifecycle.as_deref() {
         lines.push(summary_detail_line("Lifecycle:", lifecycle));
     }
@@ -79,9 +95,6 @@ pub(super) fn render_execution_receipt_summary_block(
         ) {
             lines.push(summary_detail_line("Target:", target));
         }
-    }
-    if let Some(backend_summary) = backend_summary.as_deref() {
-        lines.push(summary_detail_line("Backend:", backend_summary));
     }
     if let Some(endpoint) = primary_receipt_endpoint(receipt) {
         lines.push(summary_detail_line("External:", &endpoint));
@@ -192,9 +205,7 @@ pub(super) fn render_execution_receipt_summary_block(
         "Status:",
         &render_execution_summary_status_value(&status),
     ));
-    if let Some(note) = note.as_deref() {
-        lines.push(summary_detail_line("Note:", note));
-    }
+    lines.push(summary_detail_line("Note:", &note));
     if let Some(log_warning) = log_capture_warning.as_deref() {
         lines.push(summary_detail_line("Warning:", log_warning));
     }
@@ -217,12 +228,29 @@ fn backend_summary_from_receipt(
     }
 }
 
-fn execution_summary_note(
+fn build_execution_summary_note(
     receipt: &ExecutionReceipt,
     task: &str,
-    backend_summary: Option<&str>,
-) -> Option<String> {
+    _backend_summary: Option<&str>,
+    mode: &str,
+) -> String {
     let mut parts = Vec::new();
+    
+    let base_note = match (mode, receipt.lifecycle.as_deref()) {
+        ("container", Some("persistent")) => {
+            persistent_container_note_from_receipt(receipt, task)
+                .unwrap_or_else(|| String::from("running on persistent container backend"))
+        }
+        ("container", Some("ephemeral")) => String::from("using a fresh container image for this run"),
+        ("native", Some(lifecycle)) => format!(
+            "running on the host environment; requested `--lifecycle {lifecycle}` is advisory in native mode only"
+        ),
+        ("native", _) => String::from("running on the host environment"),
+        (other, _) => format!("executing through the `{other}` backend"),
+    };
+    
+    parts.push(base_note);
+    
     if let Some(internal_note) = internal_task_note_from_receipt(receipt, task) {
         push_unique_summary_note_part(&mut parts, internal_note);
     }
@@ -230,8 +258,10 @@ fn execution_summary_note(
         for part in requested_note.split("; ") {
             let trimmed = part.trim();
             if trimmed.is_empty()
-                || trimmed == "requested task"
-                || backend_summary.is_some_and(|backend| trimmed == backend)
+                || trimmed.contains("running on the host environment")
+                || trimmed.contains("running on persistent container")
+                || trimmed.contains("using a fresh container")
+                || trimmed.contains("executing through")
                 || trimmed.starts_with("target `")
                 || trimmed.starts_with("backend `")
                 || trimmed.starts_with("activation ")
@@ -247,7 +277,7 @@ fn execution_summary_note(
             service_termination_summary_note(service_termination),
         );
     }
-    (!parts.is_empty()).then(|| parts.join("; "))
+    parts.join("; ")
 }
 
 fn persistent_container_note_from_receipt(
