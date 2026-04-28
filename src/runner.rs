@@ -48,8 +48,8 @@ use crate::execution::{
     selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
-    LoadPolicyPackError, PolicyPackSource, ProvisioningAction, ProvisioningBackendRequest,
-    ProvisioningTargetKind, load_org_policy_pack_auto_details,
+    LoadPolicyPackError, OrgPolicyPack, PolicyPackSource, ProvisioningAction,
+    ProvisioningBackendRequest, ProvisioningTargetKind, load_org_policy_pack_auto_details,
 };
 use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningOutputMode,
@@ -1610,9 +1610,34 @@ fn command_with_path_export(command: &str, path_export: Option<&str>) -> String 
     signal_forwarding_shell_script(command_with_optional_path_export(command, path_export))
 }
 
+fn render_path_export_value(path: &str) -> String {
+    if !path.contains("$PATH") {
+        return shell_quote(path);
+    }
+
+    let mut rendered = String::new();
+    let mut remaining = path;
+    while let Some(index) = remaining.find("$PATH") {
+        let (before, after) = remaining.split_at(index);
+        if !before.is_empty() {
+            rendered.push_str(&shell_quote(before));
+        }
+        rendered.push_str("\"$PATH\"");
+        remaining = &after["$PATH".len()..];
+    }
+    if !remaining.is_empty() {
+        rendered.push_str(&shell_quote(remaining));
+    }
+    if rendered.is_empty() {
+        String::from("\"$PATH\"")
+    } else {
+        rendered
+    }
+}
+
 fn command_with_optional_path_export(command: &str, path_export: Option<&str>) -> String {
     match path_export {
-        Some(path) => format!("export PATH={}; {command}", shell_quote(path)),
+        Some(path) => format!("export PATH={}; {command}", render_path_export_value(path)),
         None => command.to_string(),
     }
 }
@@ -3320,7 +3345,7 @@ fn execute_task_with_hooks(
         return Ok(exit_code);
     }
 
-    let mut backend_fulfillment = maybe_fulfill_backend_requirements_on_run_path(
+    let backend_fulfillment_preparation = maybe_fulfill_backend_requirements_on_run_path(
         contract,
         contract_path,
         task_name,
@@ -3328,6 +3353,7 @@ fn execute_task_with_hooks(
         mode.clone(),
         state,
     )?;
+    let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
     for dependency in &task.depends_on {
         let dependency_backend = resolve_execution_backend_with_contract_path(
@@ -3423,6 +3449,9 @@ fn execute_task_with_hooks(
         path_export.as_deref(),
         &secret_env_names,
         &backend,
+        backend_fulfillment_preparation
+            .deferred_ephemeral_container
+            .as_ref(),
         if requested_relation {
             requested_overrides.host_port
         } else {
@@ -3431,6 +3460,13 @@ fn execute_task_with_hooks(
         mode.clone(),
     )?;
     if let Some(evidence) = backend_fulfillment.as_mut() {
+        if backend_fulfillment_preparation
+            .deferred_ephemeral_container
+            .is_some()
+            && evidence.result == BackendFulfillmentResult::RequirementsSatisfied
+        {
+            evidence.result = BackendFulfillmentResult::Fulfilled;
+        }
         evidence.task_executed = true;
     }
 
@@ -3748,6 +3784,7 @@ fn execute_task_command(
     path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     backend: &ResolvedExecutionBackend,
+    deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
@@ -3792,6 +3829,7 @@ fn execute_task_command(
             compose_networks,
             publications,
             dependency_isolation_paths,
+            deferred_backend_fulfillment,
             host_port_override,
             mode,
         ),
@@ -3843,8 +3881,15 @@ pub(crate) fn run_backend_command_captured(
         &BTreeSet::new(),
         backend,
         None,
+        None,
         TaskExecutionMode::Capture,
     )
+}
+
+#[derive(Debug, Clone, Default)]
+struct BackendFulfillmentPreparation {
+    evidence: Option<BackendFulfillmentEvidence>,
+    deferred_ephemeral_container: Option<DeferredContainerBackendFulfillment>,
 }
 
 #[derive(Debug, Clone)]
@@ -3852,11 +3897,25 @@ struct BackendFulfillmentPlan {
     backend_unit: String,
     backend_label: String,
     mode: BackendFulfillmentMode,
+    strategy: BackendFulfillmentStrategy,
     target_os: String,
     requirement_surface: RequirementSurface,
     declared_runtimes: BTreeMap<String, String>,
     declared_tools: BTreeMap<String, String>,
-    provisioning_target: ProvisioningExecutionTarget,
+    provisioning_target: Option<ProvisioningExecutionTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendFulfillmentStrategy {
+    Immediate,
+    DeferredEphemeralContainer,
+}
+
+#[derive(Debug, Clone)]
+struct DeferredContainerBackendFulfillment {
+    evidence: BackendFulfillmentEvidence,
+    actions: Vec<ProvisioningAction>,
+    adapter_bootstrap: ProvisioningBackendRequest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3891,16 +3950,18 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
     state: &mut TaskRunState,
-) -> Result<Option<BackendFulfillmentEvidence>, RunError> {
+) -> Result<BackendFulfillmentPreparation, RunError> {
     let Some(plan) = backend_fulfillment_plan(contract, contract_path, task_name, backend)? else {
-        return Ok(None);
+        return Ok(BackendFulfillmentPreparation::default());
     };
 
-    if let Some(existing) = state
-        .fulfilled_backend_units
-        .get(plan.backend_unit.as_str())
+    if plan.strategy == BackendFulfillmentStrategy::Immediate
+        && let Some(existing) = state.fulfilled_backend_units.get(plan.backend_unit.as_str())
     {
-        return Ok(Some(existing.clone()));
+        return Ok(BackendFulfillmentPreparation {
+            evidence: Some(existing.clone()),
+            deferred_ephemeral_container: None,
+        });
     }
 
     let mut evidence = BackendFulfillmentEvidence {
@@ -3923,10 +3984,15 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         working_dir,
     );
     if missing.is_empty() {
-        state
-            .fulfilled_backend_units
-            .insert(plan.backend_unit.clone(), evidence.clone());
-        return Ok(Some(evidence));
+        if plan.strategy == BackendFulfillmentStrategy::Immediate {
+            state
+                .fulfilled_backend_units
+                .insert(plan.backend_unit.clone(), evidence.clone());
+        }
+        return Ok(BackendFulfillmentPreparation {
+            evidence: Some(evidence),
+            deferred_ephemeral_container: None,
+        });
     }
 
     evidence.missing = missing
@@ -4008,10 +4074,25 @@ fn maybe_fulfill_backend_requirements_on_run_path(
 
     let output_mode = backend_fulfillment_output_mode(mode);
     let request = ProvisioningBackendRequest { actions };
-    let provisioning = apply_provisioning_request_with_target(
+    let adapter_bootstrap =
+        adapter_bootstrap_request_for_provisioning_sources(&loaded_policy.pack, &request);
+    if plan.strategy == BackendFulfillmentStrategy::DeferredEphemeralContainer {
+        return Ok(BackendFulfillmentPreparation {
+            evidence: Some(evidence.clone()),
+            deferred_ephemeral_container: Some(DeferredContainerBackendFulfillment {
+                evidence,
+                actions: request.actions,
+                adapter_bootstrap,
+            }),
+        });
+    }
+    let provisioning = apply_run_path_provisioning_request_with_bootstrap(
         &request,
+        &adapter_bootstrap,
         working_dir,
-        &plan.provisioning_target,
+        plan.provisioning_target
+            .as_ref()
+            .expect("immediate backend fulfillment requires a provisioning target"),
         output_mode,
     );
     match provisioning {
@@ -4057,7 +4138,10 @@ fn maybe_fulfill_backend_requirements_on_run_path(
     state
         .fulfilled_backend_units
         .insert(plan.backend_unit, evidence.clone());
-    Ok(Some(evidence))
+    Ok(BackendFulfillmentPreparation {
+        evidence: Some(evidence),
+        deferred_ephemeral_container: None,
+    })
 }
 
 fn backend_fulfillment_plan(
@@ -4067,33 +4151,86 @@ fn backend_fulfillment_plan(
     backend: &ResolvedExecutionBackend,
 ) -> Result<Option<BackendFulfillmentPlan>, RunError> {
     let ResolvedExecutionBackend::Container {
-        shared_local_backend: Some(shared_local_backend),
+        context_name,
+        shared_local_backend,
+        lifecycle,
         ..
     } = backend
     else {
         return Ok(None);
     };
-    let Some(fulfillment) = shared_local_backend.fulfillment else {
+    let target_os = String::from("linux");
+    if let Some(shared_local_backend) = shared_local_backend {
+        let Some(fulfillment) = shared_local_backend.fulfillment else {
+            return Ok(None);
+        };
+        let mode = match fulfillment {
+            ExecutionLocalBackendFulfillment::None => BackendFulfillmentMode::None,
+            ExecutionLocalBackendFulfillment::Run => BackendFulfillmentMode::Run,
+        };
+        let (declared_runtimes, declared_tools) = shared_local_backend_requirement_versions(
+            contract,
+            shared_local_backend.name.as_str(),
+            Backend::Container,
+            target_os.as_str(),
+        )
+        .map_err(|details| RunError::BackendFulfillmentFailed {
+            task: task_name.to_string(),
+            backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+            details,
+            evidence: BackendFulfillmentEvidence {
+                backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+                backend: String::from("container"),
+                mode,
+                declared_runtimes: BTreeMap::new(),
+                declared_tools: BTreeMap::new(),
+                missing: Vec::new(),
+                actions: Vec::new(),
+                result: BackendFulfillmentResult::Failed,
+                task_executed: false,
+            },
+        })?;
+        let requirement_surface =
+            requirement_surface_from_versions(&declared_runtimes, &declared_tools);
+        let provisioning_target = provisioning_target_for_resolved_backend(contract_path, backend)?;
+        return Ok(Some(BackendFulfillmentPlan {
+            backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+            backend_label: String::from("container"),
+            mode,
+            strategy: BackendFulfillmentStrategy::Immediate,
+            target_os,
+            requirement_surface,
+            declared_runtimes,
+            declared_tools,
+            provisioning_target: Some(provisioning_target),
+        }));
+    }
+
+    let Some(context_name) = context_name.as_deref() else {
+        return Ok(None);
+    };
+    let Some((_, context)) = selected_task_context_for_backend(contract, task_name, Backend::Container)
+    else {
+        return Ok(None);
+    };
+    let Some(fulfillment) = context.fulfillment else {
         return Ok(None);
     };
     let mode = match fulfillment {
         ExecutionLocalBackendFulfillment::None => BackendFulfillmentMode::None,
         ExecutionLocalBackendFulfillment::Run => BackendFulfillmentMode::Run,
     };
-
-    let target_os = String::from("linux");
-    let (declared_runtimes, declared_tools) = shared_local_backend_requirement_versions(
+    let (declared_runtimes, declared_tools) = direct_context_requirement_versions(
         contract,
-        shared_local_backend.name.as_str(),
-        Backend::Container,
+        context_name,
         target_os.as_str(),
     )
     .map_err(|details| RunError::BackendFulfillmentFailed {
         task: task_name.to_string(),
-        backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+        backend_unit: format!("context:{context_name}"),
         details,
         evidence: BackendFulfillmentEvidence {
-            backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+            backend_unit: format!("context:{context_name}"),
             backend: String::from("container"),
             mode,
             declared_runtimes: BTreeMap::new(),
@@ -4104,14 +4241,21 @@ fn backend_fulfillment_plan(
             task_executed: false,
         },
     })?;
-
-    let requirement_surface =
-        requirement_surface_from_versions(&declared_runtimes, &declared_tools);
-    let provisioning_target = provisioning_target_for_resolved_backend(contract_path, backend)?;
+    let requirement_surface = requirement_surface_from_versions(&declared_runtimes, &declared_tools);
+    let strategy = match lifecycle {
+        Lifecycle::Persistent => BackendFulfillmentStrategy::Immediate,
+        Lifecycle::Ephemeral => BackendFulfillmentStrategy::DeferredEphemeralContainer,
+    };
+    let provisioning_target = if strategy == BackendFulfillmentStrategy::Immediate {
+        Some(provisioning_target_for_resolved_backend(contract_path, backend)?)
+    } else {
+        None
+    };
     Ok(Some(BackendFulfillmentPlan {
-        backend_unit: format!("shared_local_backend:{}", shared_local_backend.name),
+        backend_unit: format!("context:{context_name}"),
         backend_label: String::from("container"),
         mode,
+        strategy,
         target_os,
         requirement_surface,
         declared_runtimes,
@@ -4177,6 +4321,56 @@ fn shared_local_backend_requirement_versions(
             tool_source.as_str(),
         )?;
     }
+
+    Ok((
+        runtimes
+            .into_iter()
+            .map(|(name, (version, _))| (name, version))
+            .collect(),
+        tools
+            .into_iter()
+            .map(|(name, (version, _))| (name, version))
+            .collect(),
+    ))
+}
+
+fn direct_context_requirement_versions(
+    contract: &Contract,
+    context_name: &str,
+    target_os: &str,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
+    let Some(context) = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.contexts.get(context_name))
+    else {
+        return Err(format!("unknown execution context `{context_name}`"));
+    };
+
+    let mut runtimes = BTreeMap::<String, (String, String)>::new();
+    let mut tools = BTreeMap::<String, (String, String)>::new();
+    merge_requirement_versions(
+        &mut runtimes,
+        &contract.runtimes,
+        target_os,
+        "contract.runtimes",
+    )?;
+    merge_requirement_versions(&mut tools, &contract.tools, target_os, "contract.tools")?;
+
+    let runtime_source = format!("execution context `{context_name}` runtimes");
+    let tool_source = format!("execution context `{context_name}` tools");
+    merge_requirement_versions(
+        &mut runtimes,
+        &context.requirements.runtimes,
+        target_os,
+        runtime_source.as_str(),
+    )?;
+    merge_requirement_versions(
+        &mut tools,
+        &context.requirements.tools,
+        target_os,
+        tool_source.as_str(),
+    )?;
 
     Ok((
         runtimes
@@ -4312,6 +4506,75 @@ fn detect_missing_backend_requirements(
     missing
 }
 
+fn detect_missing_named_container_requirements(
+    runtimes: &BTreeMap<String, String>,
+    tools: &BTreeMap<String, String>,
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+) -> Vec<BackendRequirementGap> {
+    let mut missing = Vec::new();
+
+    for (name, required_version) in runtimes {
+        match probe_named_container_command_version(engine, container_name, task_name, name.as_str()) {
+            Ok(None) => missing.push(BackendRequirementGap {
+                kind: ProvisioningTargetKind::Runtime,
+                name: name.clone(),
+                required_version: required_version.clone(),
+                details: String::from("command is not available"),
+            }),
+            Ok(Some(actual_version))
+                if !version_matches_requirement(required_version, &actual_version) =>
+            {
+                missing.push(BackendRequirementGap {
+                    kind: ProvisioningTargetKind::Runtime,
+                    name: name.clone(),
+                    required_version: required_version.clone(),
+                    details: format!("resolved version is `{actual_version}`"),
+                });
+            }
+            Err(details) => missing.push(BackendRequirementGap {
+                kind: ProvisioningTargetKind::Runtime,
+                name: name.clone(),
+                required_version: required_version.clone(),
+                details,
+            }),
+            _ => {}
+        }
+    }
+
+    for (name, required_version) in tools {
+        let executable = task_tool_executable_name(name.as_str());
+        match probe_named_container_command_version(engine, container_name, task_name, executable) {
+            Ok(None) => missing.push(BackendRequirementGap {
+                kind: ProvisioningTargetKind::Tool,
+                name: name.clone(),
+                required_version: required_version.clone(),
+                details: format!("command `{executable}` is not available"),
+            }),
+            Ok(Some(actual_version))
+                if !version_matches_requirement(required_version, &actual_version) =>
+            {
+                missing.push(BackendRequirementGap {
+                    kind: ProvisioningTargetKind::Tool,
+                    name: name.clone(),
+                    required_version: required_version.clone(),
+                    details: format!("resolved version is `{actual_version}`"),
+                });
+            }
+            Err(details) => missing.push(BackendRequirementGap {
+                kind: ProvisioningTargetKind::Tool,
+                name: name.clone(),
+                required_version: required_version.clone(),
+                details,
+            }),
+            _ => {}
+        }
+    }
+
+    missing
+}
+
 fn version_matches_requirement(requirement: &str, actual: &str) -> bool {
     crate::doctor::version_matches(requirement, actual)
 }
@@ -4337,6 +4600,41 @@ fn probe_backend_command_version(
         probe_command.as_str(),
         working_dir,
         backend,
+    )
+    .map_err(|error| error.to_string())?;
+    if output.exit_code == 127 {
+        return Ok(None);
+    }
+    let combined = format!("{} {}", output.stdout, output.stderr);
+    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+        return Ok(Some(version));
+    }
+    if output.exit_code != 0 {
+        return Err(format!(
+            "version probe command exited with code {}",
+            output.exit_code
+        ));
+    }
+    Err(String::from(
+        "version probe did not return a parseable version",
+    ))
+}
+
+fn probe_named_container_command_version(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+    command_name: &str,
+) -> Result<Option<String>, String> {
+    let quoted = shell_quote(command_name);
+    let probe_command = format!(
+        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
+    );
+    let output = container_command_output(
+        engine,
+        &["exec", "-i", container_name, "sh", "-lc", probe_command.as_str()],
+        None,
+        task_name,
     )
     .map_err(|error| error.to_string())?;
     if output.exit_code == 127 {
@@ -4459,6 +4757,181 @@ fn render_backend_fulfillment_action(action: &ProvisioningAction) -> String {
         action.source,
         action.policy_display_suffix()
     )
+}
+
+fn adapter_bootstrap_request_for_provisioning_sources(
+    policy_pack: &OrgPolicyPack,
+    provisioning_request: &ProvisioningBackendRequest,
+) -> ProvisioningBackendRequest {
+    let mut adapters = provisioning_request
+        .actions
+        .iter()
+        .map(|action| action.source.trim())
+        .filter(|source| !source.is_empty() && !source.ends_with("-bootstrap"))
+        .collect::<Vec<_>>();
+    adapters.sort_unstable();
+    adapters.dedup();
+    policy_pack.adapter_bootstrap_backend_request(&adapters)
+}
+
+fn apply_run_path_provisioning_request_with_bootstrap(
+    request: &ProvisioningBackendRequest,
+    adapter_bootstrap: &ProvisioningBackendRequest,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+    output_mode: ProvisioningOutputMode,
+) -> Result<crate::provisioning::ProvisioningBackendOutput, ProvisioningBackendError> {
+    match apply_provisioning_request_with_target(request, working_dir, target, output_mode) {
+        Ok(output) => Ok(output),
+        Err(error)
+            if !adapter_bootstrap.actions.is_empty()
+                && run_path_provisioning_error_supports_adapter_bootstrap(&error) =>
+        {
+            let bootstrap_output = apply_provisioning_request_with_target(
+                adapter_bootstrap,
+                working_dir,
+                target,
+                output_mode,
+            )?;
+            let mut output =
+                apply_provisioning_request_with_target(request, working_dir, target, output_mode)?;
+            output.stdout = format!("{}{}", bootstrap_output.stdout, output.stdout);
+            output.stderr = format!("{}{}", bootstrap_output.stderr, output.stderr);
+            Ok(output)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn source_managed_tool_wrapper_dir() -> &'static str {
+    "/tmp/ota-managed-tools/bin"
+}
+
+fn source_managed_tool_wrappers_required(actions: &[ProvisioningAction]) -> bool {
+    actions
+        .iter()
+        .any(|action| action.source == "mise" && action.target_kind == ProvisioningTargetKind::Tool)
+}
+
+fn source_managed_tool_wrapper_path_export(path_export: Option<&str>) -> String {
+    match path_export {
+        Some(path) => format!("{}:{path}", source_managed_tool_wrapper_dir()),
+        None => format!("{}:$PATH", source_managed_tool_wrapper_dir()),
+    }
+}
+
+fn source_managed_remaining_gap_covered(
+    gap: &BackendRequirementGap,
+    actions: &[ProvisioningAction],
+) -> bool {
+    actions.iter().any(|action| {
+        action.source == "mise"
+            && action.name == gap.name
+            && matches!(
+                (&gap.kind, action.target_kind),
+                (ProvisioningTargetKind::Tool, ProvisioningTargetKind::Tool)
+                    | (ProvisioningTargetKind::Runtime, ProvisioningTargetKind::Runtime)
+            )
+    })
+}
+
+fn provisioning_action_effective_version(action: &ProvisioningAction) -> &str {
+    action
+        .resolved_version
+        .as_deref()
+        .or(action.approved_version.as_deref())
+        .unwrap_or(action.requested_version.as_str())
+}
+
+fn wrap_command_for_source_managed_actions(command: &str, actions: &[ProvisioningAction]) -> String {
+    let mise_targets = actions
+        .iter()
+        .filter(|action| action.source == "mise")
+        .map(|action| format!("{}@{}", action.install_name(), provisioning_action_effective_version(action)))
+        .collect::<Vec<_>>();
+    if mise_targets.is_empty() {
+        return command.to_string();
+    }
+
+    let mut wrapped = String::from(
+        r#"if command -v mise >/dev/null 2>&1; then __ota_mise="$(command -v mise)"; elif [ -x "$HOME/.local/bin/mise" ]; then __ota_mise="$HOME/.local/bin/mise"; else __ota_mise="mise"; fi; "$__ota_mise" exec"#,
+    );
+    for target in &mise_targets {
+        wrapped.push(' ');
+        wrapped.push_str(&shell_quote(target));
+    }
+    wrapped.push_str(" -- sh -lc ");
+    wrapped.push_str(&shell_quote(command));
+    wrapped
+}
+
+fn install_source_managed_tool_wrappers(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+    actions: &[ProvisioningAction],
+) -> Result<(), RunError> {
+    for action in actions {
+        if action.source != "mise" || action.target_kind != ProvisioningTargetKind::Tool {
+            continue;
+        }
+        let tool = action.install_name();
+        let version = provisioning_action_effective_version(action);
+        let wrapper = format!(
+            "mkdir -p {wrapper_dir}\ncat > {wrapper_dir}/{tool} <<'EOF'\n#!/bin/sh\nif command -v mise >/dev/null 2>&1; then __ota_mise=\"$(command -v mise)\"; elif [ -x \"$HOME/.local/bin/mise\" ]; then __ota_mise=\"$HOME/.local/bin/mise\"; else __ota_mise=\"mise\"; fi\nexec \"$__ota_mise\" exec {target} -- {tool} \"$@\"\nEOF\nchmod +x {wrapper_dir}/{tool}",
+            tool = tool,
+            wrapper_dir = source_managed_tool_wrapper_dir(),
+            target = shell_quote(&format!("{tool}@{version}")),
+        );
+        let output = container_command_output(
+            engine,
+            &["exec", "-i", container_name, "sh", "-lc", wrapper.as_str()],
+            None,
+            task_name,
+        )?;
+        if output.exit_code != 0 {
+            return Err(RunError::BackendFulfillmentFailed {
+                task: task_name.to_string(),
+                backend_unit: format!("context-wrapper:{container_name}"),
+                details: format!(
+                    "failed to materialize source-managed tool wrapper for `{tool}`"
+                ),
+                evidence: BackendFulfillmentEvidence {
+                    backend_unit: format!("context-wrapper:{container_name}"),
+                    backend: String::from("container"),
+                    mode: BackendFulfillmentMode::Run,
+                    declared_runtimes: BTreeMap::new(),
+                    declared_tools: BTreeMap::new(),
+                    missing: vec![format!("tool `{tool}` wrapper installation failed")],
+                    actions: vec![format!("tool {tool} {} via {}", action.requested_version, action.source)],
+                    result: BackendFulfillmentResult::Failed,
+                    task_executed: false,
+                },
+            });
+        }
+    }
+    Ok(())
+}
+
+fn run_path_provisioning_error_supports_adapter_bootstrap(
+    error: &ProvisioningBackendError,
+) -> bool {
+    match error {
+        ProvisioningBackendError::MissingCommand { .. } => true,
+        ProvisioningBackendError::CommandFailed {
+            exit_code, stderr, ..
+        }
+        | ProvisioningBackendError::DiagnosedCommandFailed {
+            exit_code, stderr, ..
+        } => {
+            *exit_code == 127
+                && stderr.lines().any(|line| {
+                    let normalized = line.trim().to_ascii_lowercase();
+                    normalized.contains("not found") || normalized.contains("command not found")
+                })
+        }
+        _ => false,
+    }
 }
 
 fn render_backend_fulfillment_failure(error: ProvisioningBackendError) -> String {
@@ -5588,12 +6061,18 @@ fn format_task_target_host_endpoint(
     path: Option<&str>,
 ) -> String {
     if let Some(scheme) = protocol.url_scheme() {
+        let normalized_path = normalized_runtime_path(path);
+        let path_suffix = if normalized_path == "/" {
+            ""
+        } else {
+            normalized_path.as_str()
+        };
         format!(
             "{}://{}:{}{}",
             scheme,
             address.trim(),
             port,
-            normalized_runtime_path(path)
+            path_suffix
         )
     } else {
         format!("{}:{}", address.trim(), port)
@@ -8695,6 +9174,7 @@ fn execute_container_task_command(
     compose_networks: &[String],
     publications: &[ContainerPortPublication],
     dependency_isolation_paths: &[String],
+    deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
@@ -8743,6 +9223,29 @@ fn execute_container_task_command(
                 )?;
                 let mut resolved_env = env_overrides.clone();
                 resolved_env.extend(projection.env.clone());
+                if let Some(deferred_backend_fulfillment) = deferred_backend_fulfillment {
+                    return execute_fulfilled_ephemeral_container_task_command(
+                        task_name,
+                        runtime,
+                        context_name,
+                        shared_local_backend_name,
+                        &repo_ownership_token,
+                        command,
+                        working_dir,
+                        &resolved_env,
+                        path_export,
+                        secret_env_names,
+                        image,
+                        engine,
+                        memory_bytes,
+                        compose_networks,
+                        &projection.publications,
+                        &projection.listener_publications,
+                        dependency_isolation_paths,
+                        deferred_backend_fulfillment,
+                        mode,
+                    );
+                }
                 if let Err(preflight_error) = preflight_container_host_publications(
                     task_name,
                     &projection.listener_publications,
@@ -9600,6 +10103,273 @@ fn execute_ephemeral_container_task_command(
             })
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_fulfilled_ephemeral_container_task_command(
+    task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    context_name: Option<&str>,
+    shared_local_backend_name: Option<&str>,
+    repo_ownership_token: &str,
+    command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
+    secret_env_names: &BTreeSet<String>,
+    image: &str,
+    engine: &str,
+    memory_bytes: Option<u64>,
+    compose_networks: &[String],
+    publications: &[ContainerPortPublication],
+    _listener_publications: &[(String, ContainerPortPublication)],
+    dependency_isolation_paths: &[String],
+    deferred_backend_fulfillment: &DeferredContainerBackendFulfillment,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    if runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service) {
+        let mut evidence = deferred_backend_fulfillment.evidence.clone();
+        evidence.result = BackendFulfillmentResult::Failed;
+        return Err(RunError::BackendFulfillmentFailed {
+            task: task_name.to_string(),
+            backend_unit: evidence.backend_unit.clone(),
+            details: String::from(
+                "run-path fulfillment for direct ephemeral container contexts does not support service tasks yet",
+            ),
+            evidence,
+        });
+    }
+
+    let identity_seed = container_identity_seed(
+        context_name,
+        shared_local_backend_name,
+        publications,
+        dependency_isolation_paths,
+        memory_bytes,
+    );
+    let container_name =
+        ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
+
+    let create = create_idle_ephemeral_container(
+        task_name,
+        working_dir,
+        context_name,
+        repo_ownership_token,
+        image,
+        engine,
+        &container_name,
+        memory_bytes,
+        compose_networks,
+        publications,
+        dependency_isolation_paths,
+        env_overrides,
+        secret_env_names,
+    )?;
+    if create.exit_code != 0 {
+        return Ok(TaskCommandOutput {
+            exit_code: create.exit_code,
+            stdout: create.stdout,
+            stderr: create.stderr,
+            target: Some(container_name),
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        });
+    }
+
+    if let Some(failure) = ensure_container_networks(engine, &container_name, compose_networks, task_name)? {
+        let _ = remove_persistent_container(engine, &container_name, task_name);
+        return Ok(container_command_failure(failure, container_name));
+    }
+    let start = container_command_output(engine, &["start", &container_name], None, task_name)?;
+    if start.exit_code != 0 {
+        let _ = remove_persistent_container(engine, &container_name, task_name);
+        return Ok(container_command_failure(start, container_name));
+    }
+
+    let provisioning_target = ProvisioningExecutionTarget::Container {
+        image: image.to_string(),
+        engine: engine.to_string(),
+        lifecycle: Lifecycle::Persistent,
+        container_name: Some(container_name.clone()),
+    };
+    let provisioning = apply_run_path_provisioning_request_with_bootstrap(
+        &ProvisioningBackendRequest {
+            actions: deferred_backend_fulfillment.actions.clone(),
+        },
+        &deferred_backend_fulfillment.adapter_bootstrap,
+        working_dir,
+        &provisioning_target,
+        backend_fulfillment_output_mode(mode.clone()),
+    );
+    let provisioning_output = match provisioning {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = remove_persistent_container(engine, &container_name, task_name);
+            let mut evidence = deferred_backend_fulfillment.evidence.clone();
+            evidence.result = BackendFulfillmentResult::Failed;
+            return Err(RunError::BackendFulfillmentFailed {
+                task: task_name.to_string(),
+                backend_unit: evidence.backend_unit.clone(),
+                details: render_backend_fulfillment_failure(error),
+                evidence,
+            });
+        }
+    };
+    if let Err(error) = install_source_managed_tool_wrappers(
+        engine,
+        &container_name,
+        task_name,
+        &deferred_backend_fulfillment.actions,
+    ) {
+        let _ = remove_persistent_container(engine, &container_name, task_name);
+        return Err(error);
+    }
+    let remaining = detect_missing_named_container_requirements(
+        &deferred_backend_fulfillment.evidence.declared_runtimes,
+        &deferred_backend_fulfillment.evidence.declared_tools,
+        engine,
+        &container_name,
+        task_name,
+    );
+    let remaining = remaining
+        .into_iter()
+        .filter(|gap| {
+            !source_managed_remaining_gap_covered(gap, &deferred_backend_fulfillment.actions)
+        })
+        .collect::<Vec<_>>();
+    if !remaining.is_empty() {
+        let _ = remove_persistent_container(engine, &container_name, task_name);
+        let mut evidence = deferred_backend_fulfillment.evidence.clone();
+        evidence.result = BackendFulfillmentResult::Failed;
+        evidence.missing = remaining
+            .iter()
+            .map(BackendRequirementGap::description)
+            .collect();
+        return Err(RunError::BackendFulfillmentFailed {
+            task: task_name.to_string(),
+            backend_unit: evidence.backend_unit.clone(),
+            details: format!(
+                "provisioning finished but requirements are still missing: {}",
+                evidence.missing.join("; ")
+            ),
+            evidence,
+        });
+    }
+
+    let deferred_path_export = source_managed_tool_wrappers_required(
+        &deferred_backend_fulfillment.actions,
+    )
+    .then(|| source_managed_tool_wrapper_path_export(path_export));
+    let wrapped_command =
+        wrap_command_for_source_managed_actions(command, &deferred_backend_fulfillment.actions);
+    let output_result = exec_persistent_container_task_command(
+        task_name,
+        runtime,
+        &wrapped_command,
+        env_overrides,
+        deferred_path_export.as_deref().or(path_export),
+        secret_env_names,
+        engine,
+        mode,
+        &container_name,
+    );
+    let mut output = match output_result {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = remove_persistent_container(engine, &container_name, task_name);
+            return Err(error);
+        }
+    };
+    output.stdout = format!("{}{}", provisioning_output.stdout, output.stdout);
+    output.stderr = format!("{}{}", provisioning_output.stderr, output.stderr);
+    output.execution_note = merge_execution_note(
+        output.execution_note,
+        remove_ephemeral_container_and_note(task_name, engine, &container_name),
+    );
+    Ok(output)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_idle_ephemeral_container(
+    task_name: &str,
+    working_dir: &Path,
+    context_name: Option<&str>,
+    repo_ownership_token: &str,
+    image: &str,
+    engine: &str,
+    container_name: &str,
+    memory_bytes: Option<u64>,
+    compose_networks: &[String],
+    publications: &[ContainerPortPublication],
+    dependency_isolation_paths: &[String],
+    env_overrides: &BTreeMap<String, String>,
+    secret_env_names: &BTreeSet<String>,
+) -> Result<ContainerCommandOutput, RunError> {
+    let mut create = Command::new(engine);
+    create
+        .arg("create")
+        .arg("-i")
+        .arg("--name")
+        .arg(container_name)
+        .arg("--label")
+        .arg(OTA_MANAGED_CONTAINER_LABEL)
+        .arg("--label")
+        .arg(OTA_EPHEMERAL_CONTAINER_LABEL)
+        .arg("--label")
+        .arg(format!(
+            "{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}"
+        ))
+        .arg("--label")
+        .arg(format!(
+            "{OTA_OWNER_PID_CONTAINER_LABEL_KEY}={}",
+            std::process::id()
+        ))
+        .arg("--entrypoint")
+        .arg("sh")
+        .arg("-v")
+        .arg(format!("{}:/workspace", working_dir.display()))
+        .arg("-w")
+        .arg("/workspace");
+    if let Some(network) = compose_networks.first() {
+        create.arg("--network").arg(network);
+    }
+    for (volume_name, container_path) in container_dependency_isolation_mounts(
+        task_name,
+        working_dir,
+        context_name,
+        image,
+        engine,
+        repo_ownership_token,
+        dependency_isolation_paths,
+    )? {
+        create.arg("-v").arg(format!("{volume_name}:{container_path}"));
+    }
+    append_container_publication_args(&mut create, publications);
+    append_container_memory_arg(&mut create, memory_bytes);
+    for (name, value) in env_overrides {
+        if secret_env_names.contains(name) {
+            create.env(name, value);
+            create.arg("--env").arg(name);
+        } else {
+            create.arg("--env").arg(format!("{name}={value}"));
+        }
+    }
+    create
+        .arg(image)
+        .arg("-c")
+        .arg("while true; do sleep 3600; done");
+
+    let output = create.output().map_err(|source| RunError::SpawnFailed {
+        task: task_name.to_string(),
+        source,
+    })?;
+    Ok(ContainerCommandOutput {
+        exit_code: output.status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
 }
 
 fn execute_persistent_container_task_command(
@@ -13175,7 +13945,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("inputs.txt")).unwrap(),
-            "http://127.0.0.1:8080/"
+            "http://127.0.0.1:8080"
         );
         assert_eq!(outcome.target_resolutions.len(), 1);
         assert_eq!(outcome.target_resolutions[0].target, "api");
@@ -13185,7 +13955,7 @@ tasks:
         );
         assert_eq!(
             outcome.target_resolutions[0].effective_url,
-            "http://127.0.0.1:8080/"
+            "http://127.0.0.1:8080"
         );
     }
 
@@ -13708,7 +14478,7 @@ tasks:
 
         assert!(matches!(error, RunError::InvalidTaskInputValue { .. }));
         assert!(error.to_string().contains(
-            "input `base_url` resolved to `http://127.0.0.1:8080/`, which is not allowed"
+            "input `base_url` resolved to `http://127.0.0.1:8080`, which is not allowed"
         ));
     }
 
@@ -13823,7 +14593,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("target.txt")).unwrap(),
-            "http://127.0.0.1:8080/"
+            "http://127.0.0.1:8080"
         );
         assert_eq!(outcome.target_resolutions.len(), 1);
         assert_eq!(outcome.target_resolutions[0].target, "api");
@@ -13899,7 +14669,7 @@ tasks:
         )
         .unwrap();
 
-        assert_eq!(resolved, "http://host.docker.internal:8080/");
+        assert_eq!(resolved, "http://host.docker.internal:8080");
     }
 
     #[test]
@@ -14160,7 +14930,7 @@ tasks:
         )
         .expect("host-view resolution should prefer consistent host projection");
 
-        assert_eq!(resolved, "http://host.docker.internal:3000/");
+        assert_eq!(resolved, "http://host.docker.internal:3000");
     }
 
     #[test]
@@ -14233,7 +15003,7 @@ tasks:
             ExecutionOverrides::default(),
         )
         .unwrap();
-        assert_eq!(resolved, "http://host.docker.internal:9090/");
+        assert_eq!(resolved, "http://host.docker.internal:9090");
     }
 
     #[test]
@@ -14300,7 +15070,7 @@ tasks:
         )
         .unwrap();
 
-        assert_eq!(resolved, "http://host.containers.internal:8080/");
+        assert_eq!(resolved, "http://host.containers.internal:8080");
     }
 
     #[test]
@@ -14466,7 +15236,7 @@ tasks:
         )
         .expect("shared-local-backend topology resolution should succeed");
 
-        assert_eq!(resolved, "http://127.0.0.1:8080/");
+        assert_eq!(resolved, "http://127.0.0.1:8080");
     }
 
     #[test]
@@ -15209,7 +15979,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("sandbox_url.txt")).unwrap(),
-            "http://127.0.0.1:8080/"
+            "http://127.0.0.1:8080"
         );
         let dependency_step = outcome
             .task_steps
@@ -15250,7 +16020,7 @@ tasks:
 "#,
         );
 
-        let outcome = run_task(&fixture.contract, fixture.file_path(), "test").unwrap();
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "test").unwrap();
 
         assert_eq!(outcome.executed_tasks, vec!["setup", "test"]);
         assert_eq!(outcome.exit_code, 0);
@@ -25608,6 +26378,152 @@ tasks:
         assert!(
             state_dir.join(format!("{container_name}.path")).exists(),
             "bind reservation failures should not reclaim same-repo persistent backends"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fulfills_direct_ephemeral_container_context_requirements_on_run_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: tooling
+  contexts:
+    tooling:
+      backend: container
+      lifecycle: ephemeral
+      fulfillment: run
+      container:
+        image: ghcr.io/ota/test:latest
+      requirements:
+        tools:
+          yq: "4.52.5"
+tasks:
+  test:
+    context: tooling
+    run: yq --version > fulfilled.txt
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  version_policy:
+    tools:
+      yq:
+        approved_versions:
+          - "4.52.5"
+  provisioning:
+    yq:
+      source: apt
+      package: yq
+      approved_versions:
+        - "4.52.5"
+      platforms:
+        linux:
+          source: apt
+          package: yq
+          approved_versions:
+            - "4.52.5"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let apt_get_path = bin_dir.join("apt-get");
+        fs::write(
+            &apt_get_path,
+            format!(
+                r#"#!/bin/sh
+printf "apt-get %s\n" "$*" >> "{log}"
+if printf "%s" "$*" | grep -q "install -y yq"; then
+  cat > "{bin}/yq" <<'EOF'
+#!/bin/sh
+printf "yq 4.52.5\n"
+EOF
+  chmod +x "{bin}/yq"
+fi
+exit 0
+"#,
+                log = fixture.dir.path().join("apt-log.txt").display(),
+                bin = bin_dir.display(),
+            ),
+        )
+        .unwrap();
+        for path in [&docker_path, &apt_get_path] {
+            let mut permissions = fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).unwrap();
+        }
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "test").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            outcome
+                .backend_fulfillment
+                .as_ref()
+                .map(|evidence| evidence.result),
+            Some(super::BackendFulfillmentResult::Fulfilled)
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("fulfilled.txt")).unwrap(),
+            "yq 4.52.5\n"
+        );
+        let docker_log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert!(docker_log.matches("exec\n").count() >= 2);
+        assert!(docker_log.contains("start\n"));
+        assert!(docker_log.contains("rm\n"));
+    }
+
+    #[test]
+    fn source_managed_tool_wrapper_path_export_prepends_wrapper_dir() {
+        assert_eq!(
+            super::source_managed_tool_wrapper_path_export(Some("/custom/bin:/usr/bin")),
+            "/tmp/ota-managed-tools/bin:/custom/bin:/usr/bin"
+        );
+        assert_eq!(
+            super::source_managed_tool_wrapper_path_export(None),
+            "/tmp/ota-managed-tools/bin:$PATH"
+        );
+    }
+
+    #[test]
+    fn render_path_export_value_preserves_path_expansion_tokens() {
+        assert_eq!(
+            super::render_path_export_value("/tmp/ota-managed-tools/bin:$PATH"),
+            "'/tmp/ota-managed-tools/bin:'\"$PATH\""
+        );
+        assert_eq!(
+            super::command_with_optional_path_export("echo hi", Some("/tmp/ota-managed-tools/bin:$PATH")),
+            "export PATH='/tmp/ota-managed-tools/bin:'\"$PATH\"; echo hi"
         );
     }
 

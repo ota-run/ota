@@ -1302,10 +1302,9 @@ fn ensure_bootstrap_source_version(
         });
     };
 
-    if approved_versions
-        .iter()
-        .any(|approved| version.contains(approved))
-    {
+    if approved_versions.iter().any(|approved| {
+        approved.trim() == "*" || text_output_contains_requested_version(&version, approved)
+    }) {
         return Ok(());
     }
 
@@ -3416,7 +3415,15 @@ fn text_output_contains_requested_version(value: &str, request: &str) -> bool {
 
 fn shell_command(command: &str, args: &[&str]) -> String {
     let mut script = String::new();
-    script.push_str(&shell_quote(command));
+    match command {
+        "mise" => {
+            script.push_str(
+                r#"if command -v mise >/dev/null 2>&1; then __ota_cmd="$(command -v mise)"; elif [ -x "$HOME/.local/bin/mise" ]; then __ota_cmd="$HOME/.local/bin/mise"; else __ota_cmd="mise"; fi; "#,
+            );
+            script.push_str("\"$__ota_cmd\"");
+        }
+        _ => script.push_str(&shell_quote(command)),
+    }
     for arg in args {
         script.push(' ');
         script.push_str(&shell_quote(arg));
@@ -4044,6 +4051,48 @@ mod tests {
             error,
             ProvisioningBackendError::MissingCommand { command } if command == "sdk"
         ));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn ensure_bootstrap_source_version_accepts_wildcard_approved_version() {
+        let _guard = env_mutex_lock();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("sdk.log");
+        let shim = shim_dir.path().join("sdk");
+        fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"version\" ]; then\n  printf '%s\\n' 'SDKMAN! script: 5.20.0 native: 0.7.4'\nfi\nexit 0\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        make_executable(&shim);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        ensure_bootstrap_source_version(
+            &ProvisioningExecutionTarget::Native,
+            Path::new("."),
+            "sdk",
+            &["version"],
+            &[String::from("*")],
+            ProvisioningOutputMode::Capture,
+        )
+        .unwrap();
+        assert!(fs::read_to_string(log).unwrap().contains("version"));
 
         unsafe {
             env::set_var("PATH", original_path);
