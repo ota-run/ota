@@ -19279,12 +19279,15 @@ tasks:
         let outcome = match run_task_captured(&fixture.contract, fixture.file_path(), "dev") {
             Ok(outcome) => outcome,
             Err(RunError::RuntimeListenerResolutionFailed {
-                kind: RuntimeListenerResolutionKind::BindDiscovery(
-                    super::RuntimeListenerBindDiscoveryFailure::MultiplePorts { .. },
-                ),
+                kind:
+                    RuntimeListenerResolutionKind::BindDiscovery(
+                        super::RuntimeListenerBindDiscoveryFailure::MultiplePorts { .. },
+                    ),
                 ..
             }) => return,
-            Err(error) => panic!("native runtime discovery should succeed or report multiple ports, got {error:?}"),
+            Err(error) => panic!(
+                "native runtime discovery should succeed or report multiple ports, got {error:?}"
+            ),
         };
         let runtime = outcome
             .runtime
@@ -19366,9 +19369,10 @@ tasks:
         let outcome = match run_task_captured(&fixture.contract, fixture.file_path(), "dev") {
             Ok(outcome) => outcome,
             Err(RunError::RuntimeListenerResolutionFailed {
-                kind: RuntimeListenerResolutionKind::BindDiscovery(
-                    super::RuntimeListenerBindDiscoveryFailure::MultiplePorts { .. },
-                ),
+                kind:
+                    RuntimeListenerResolutionKind::BindDiscovery(
+                        super::RuntimeListenerBindDiscoveryFailure::MultiplePorts { .. },
+                    ),
                 ..
             }) => return,
             Err(error) => panic!(
