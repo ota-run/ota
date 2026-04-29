@@ -1441,9 +1441,27 @@ impl TaskSpec {
         execution: Option<&Execution>,
         backend: Backend,
     ) -> BTreeMap<String, String> {
-        let mut merged = self
-            .context_for_backend(execution, backend)
-            .and_then(|context_name| execution.and_then(|spec| spec.contexts.get(context_name)))
+        self.env_for_backend_with_context_name(execution, backend, None)
+    }
+
+    pub fn env_for_backend_with_context_name(
+        &self,
+        execution: Option<&Execution>,
+        backend: Backend,
+        context_name_override: Option<&str>,
+    ) -> BTreeMap<String, String> {
+        let mut merged = context_name_override
+            .and_then(|context_name| {
+                execution
+                    .and_then(|spec| spec.contexts.get(context_name))
+                    .filter(|context| context.backend == backend)
+            })
+            .or_else(|| {
+                self.context_for_backend(execution, backend)
+                    .and_then(|context_name| {
+                        execution.and_then(|spec| spec.contexts.get(context_name))
+                    })
+            })
             .map(|context| context.env.clone())
             .unwrap_or_default();
         merged.extend(self.env.clone());

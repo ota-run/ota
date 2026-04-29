@@ -328,7 +328,7 @@ Current behavior:
 
 - validates the contract first
 - when `--member` is set, inspects the merged member contract
-- when `--task` is set, includes task-scoped env alongside the contract env view
+- when `--task` is set, includes the effective execution env for that task alongside the contract env view
 - resolves values in the same precedence order as task execution
 - reports declared env source status alongside the env-variable view
 - shows the winning source for each contract env entry
@@ -338,7 +338,7 @@ Current behavior:
 Text output:
 
 - header: `ENV <path>`
-- includes a readiness status line, a short overview, a `Declared env sources` section when sources exist, and separate `Contract env` / `Task env` sections when task-specific env is present
+- includes a readiness status line, a short overview, a `Declared env sources` section when sources exist, and separate `Contract env` / `Execution env` sections when task-specific execution env is present
 - each env entry may include `kind`, `required`, `value`, `source`, `status`, `allowed`, `default`, and `Next`
 - each declared source may include `kind`, `path`, `must_exist`, `status`, `detail`, and `Next`
 - missing or invalid contract env entries point to a specific fix rather than guessing
@@ -359,7 +359,8 @@ Contract env
 - DOCS_SITE_BASE_URL required=true value=https://docs.internal.example source=org policy status=resolved
 - RELEASE_CHANNEL required=false value=stable source=default status=resolved allowed=[stable, canary]
 
-Task env
+Execution env
+- OTA_WORKSPACE value=/workspace source=execution status=task
 - CI value=true source=task status=task
 ```
 

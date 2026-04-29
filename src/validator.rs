@@ -2829,23 +2829,32 @@ fn collect_attachment_use_advisories(contract: &Contract) -> Vec<ContractAdvisor
             else {
                 continue;
             };
-            let used_by_task = contract.tasks.values().any(|task| {
+            let mut explicit_supported = false;
+            let mut explicit_conflict = false;
+            for task in contract.tasks.values() {
                 let backend = task_execution_backend(contract, task, Backend::Native);
                 if backend != Backend::Container {
-                    return false;
+                    continue;
                 }
                 let Some(task_context_name) = task_execution_context_name(contract, task, backend)
                 else {
-                    return false;
+                    continue;
                 };
                 if task_context_name != context_name {
-                    return false;
+                    continue;
                 }
-                task.env_for_backend(contract.execution.as_ref(), backend)
-                    .get(expected_env)
-                    .is_some_and(|value| value.contains(expected_value))
-            });
-            if used_by_task {
+                let env = task.env_for_backend(contract.execution.as_ref(), backend);
+                let Some(value) = env.get(expected_env) else {
+                    continue;
+                };
+                let normalized = normalize_container_workspace_template(value);
+                if normalized.contains(expected_value) {
+                    explicit_supported = true;
+                } else {
+                    explicit_conflict = true;
+                }
+            }
+            if explicit_supported || !explicit_conflict {
                 continue;
             }
             advisories.push(ContractAdvisory::LikelyUnusedAttachment(
@@ -2869,6 +2878,12 @@ fn attachment_path_expectation(path: &str) -> Option<(&'static str, &'static str
         ".npm" => Some(("npm", "NPM_CONFIG_CACHE", "/workspace/.npm")),
         _ => None,
     }
+}
+
+fn normalize_container_workspace_template(value: &str) -> String {
+    value
+        .replace("${OTA_WORKSPACE}", "/workspace")
+        .replace("$OTA_WORKSPACE", "/workspace")
 }
 
 fn default_task_execution_boundary(
@@ -3689,7 +3704,7 @@ tasks:
     }
 
     #[test]
-    fn collects_attachment_use_advisory_when_maven_cache_path_is_not_redirected() {
+    fn does_not_collect_attachment_use_advisory_for_supported_derived_maven_cache() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -3717,6 +3732,44 @@ tasks:
 
         let advisories = collect_contract_advisories(&contract);
 
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LikelyUnusedAttachment(value)
+                if value.context_name == "app" && value.isolated_path == ".m2"
+        )));
+    }
+
+    #[test]
+    fn collects_attachment_use_advisory_when_explicit_maven_cache_points_elsewhere() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        isolated_paths:
+          - .m2
+tasks:
+  build:
+    context: app
+    env:
+      MAVEN_OPTS: -Dmaven.repo.local=/tmp/m2/repository
+    run: mvn -q test
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
         assert!(advisories.iter().any(|advisory| matches!(
             advisory,
             ContractAdvisory::LikelyUnusedAttachment(value)
@@ -3724,6 +3777,44 @@ tasks:
                     && value.isolated_path == ".m2"
                     && value.effective_path == "/workspace/.m2"
                     && value.expected_env == "MAVEN_OPTS"
+        )));
+    }
+
+    #[test]
+    fn does_not_collect_attachment_use_advisory_for_workspace_template_override() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        isolated_paths:
+          - .m2
+tasks:
+  build:
+    context: app
+    env:
+      MAVEN_OPTS: -Dmaven.repo.local=${OTA_WORKSPACE}/.m2/repository
+    run: mvn -q test
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LikelyUnusedAttachment(value)
+                if value.context_name == "app" && value.isolated_path == ".m2"
         )));
     }
 

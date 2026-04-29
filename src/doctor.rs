@@ -5260,6 +5260,8 @@ execution:
 tasks:
   build:
     context: app
+    env:
+      MAVEN_OPTS: -Dmaven.repo.local=/tmp/m2/repository
     run: mvn -q test
 "#,
         )
