@@ -120,8 +120,9 @@ use crate::schema::{
     parse_memory_size_bytes,
 };
 use crate::update;
-use crate::validator::collect_contract_advisories;
-use crate::validator::{ValidationErrors, validate_contract};
+use crate::validator::{
+    ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract,
+};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceContract, WorkspaceExecutionSummary, WorkspaceRepoRef,
     WorkspaceValidationErrors, diagnose_workspace_contract_with_jobs, diagnose_workspace_repo,
@@ -851,12 +852,12 @@ pub fn validate(
             Ok(target) => match validate_declared_monorepo_members(&resolved_path) {
                 Ok(()) => match format {
                     OutputFormat::Text => {
-                        let warnings = collect_validate_warnings(&target.contract);
+                        let advisories = collect_contract_advisories(&target.contract);
                         CommandOutput::success(render_validate_success_output(
                             &resolved_path,
                             member,
                             &text_path_display,
-                            &warnings,
+                            &advisories,
                         ))
                     }
                     OutputFormat::Json => {
@@ -947,11 +948,96 @@ fn collect_validate_warnings(contract: &Contract) -> Vec<String> {
         .collect()
 }
 
+fn validate_boundary_side_label(
+    context_name: Option<&str>,
+    backend: Backend,
+    lifecycle: Option<Lifecycle>,
+) -> String {
+    let context = context_name.unwrap_or("none");
+    let backend = match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    };
+    let lifecycle = lifecycle.map(format_lifecycle).unwrap_or("none");
+    if plain_mode() {
+        return format!("{context} / {backend} / {lifecycle}");
+    }
+    let slash = paint("/", "1;37");
+    format!("{context} {slash} {backend} {slash} {lifecycle}")
+}
+
+fn validate_boundary_summary(
+    parent: &crate::validator::TaskExecutionBoundary,
+    dependency: &crate::validator::TaskExecutionBoundary,
+) -> String {
+    let left = validate_boundary_side_label(
+        parent.context_name.as_deref(),
+        parent.backend,
+        parent.lifecycle,
+    );
+    let right = validate_boundary_side_label(
+        dependency.context_name.as_deref(),
+        dependency.backend,
+        dependency.lifecycle,
+    );
+    if plain_mode() {
+        return format!("{left} → {right}");
+    }
+    let arrow = paint("→", "1;37");
+    format!("{left} {arrow} {right}")
+}
+
+fn validate_depends_on_why(
+    parent: &crate::validator::TaskExecutionBoundary,
+    dependency: &crate::validator::TaskExecutionBoundary,
+) -> String {
+    if parent.context_name == dependency.context_name
+        && parent.backend == dependency.backend
+        && parent.lifecycle != dependency.lifecycle
+    {
+        return String::from("in-process and container-local prep does not carry across");
+    }
+    String::from("only durable external side effects survive this edge")
+}
+
+fn render_validate_warning(advisory: &ContractAdvisory) -> String {
+    match advisory {
+        ContractAdvisory::DependsOnBoundary(value) => format!(
+            "  {} `{}` → `{}`\n    {} {}\n    {} {}\n    {} {}",
+            list_bullet(),
+            value.parent_task,
+            value.dependency_task,
+            paint_key("Boundary:"),
+            paint_group_meta(&validate_boundary_summary(&value.parent, &value.dependency)),
+            paint_key("Why:"),
+            paint_group_meta(&validate_depends_on_why(&value.parent, &value.dependency)),
+            paint_key("Next:"),
+            paint_group_meta(&advisory.next()),
+        ),
+        ContractAdvisory::LikelyUnusedAttachment(value) => format!(
+            "  {} context `{}` cache `{}`\n    {} {}\n    {} {}\n    {} {}",
+            list_bullet(),
+            value.context_name,
+            value.isolated_path,
+            paint_key("Boundary:"),
+            paint_group_meta(&format!(
+                "{} attachment → {}",
+                value.tool, value.effective_path
+            )),
+            paint_key("Why:"),
+            paint_group_meta(&advisory.why()),
+            paint_key("Next:"),
+            paint_group_meta(&advisory.next()),
+        ),
+    }
+}
+
 fn render_validate_success_output(
     resolved_path: &Path,
     member: Option<&str>,
     text_path_display: &str,
-    warnings: &[String],
+    advisories: &[ContractAdvisory],
 ) -> String {
     let mut stdout = format!(
         "{}\n\n{}{}",
@@ -959,10 +1045,20 @@ fn render_validate_success_output(
         render_valid_status(),
         render_validate_ready_next(resolved_path, member)
     );
-    if !warnings.is_empty() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Warnings")));
-        for warning in warnings {
-            stdout.push_str(&format!("\n  {} {}", list_bullet(), warning));
+    if !advisories.is_empty() {
+        let warnings_title = if plain_mode() {
+            String::from("Warnings")
+        } else {
+            paint("Warnings", "1;33")
+        };
+        stdout.push_str(&format!("\n\n{}", warnings_title));
+        for (index, advisory) in advisories.iter().enumerate() {
+            if index == 0 {
+                stdout.push('\n');
+            } else {
+                stdout.push_str("\n\n");
+            }
+            stdout.push_str(&render_validate_warning(advisory));
         }
     }
     stdout
@@ -22234,6 +22330,7 @@ mod tests {
         Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, parse_memory_size_bytes,
     };
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
+    use crate::validator::{ContractAdvisory, TaskExecutionBoundary};
     use tempfile::TempDir;
 
     fn write_executable_script(path: &Path, body: &str) {
@@ -26360,17 +26457,38 @@ tasks:
 
     #[test]
     fn render_validate_success_output_includes_warning_section() {
+        let advisories = vec![ContractAdvisory::DependsOnBoundary(
+            crate::validator::DependsOnBoundaryAdvisory {
+                parent_task: String::from("build"),
+                dependency_task: String::from("setup"),
+                parent: TaskExecutionBoundary {
+                    context_name: Some(String::from("verify")),
+                    backend: Backend::Native,
+                    lifecycle: None,
+                    backend_binding: None,
+                },
+                dependency: TaskExecutionBoundary {
+                    context_name: Some(String::from("app")),
+                    backend: Backend::Container,
+                    lifecycle: Some(Lifecycle::Persistent),
+                    backend_binding: None,
+                },
+            },
+        )];
         let rendered = strip_ansi_codes(&render_validate_success_output(
             Path::new("/tmp/ota.yaml"),
             None,
             "./ota.yaml",
-            &[String::from(
-                "Task `build` depends_on `setup` across different execution boundaries | Why: Only durable external side effects survive across this boundary.",
-            )],
+            &advisories,
         ));
 
         assert!(rendered.contains("Warnings"));
-        assert!(rendered.contains("depends_on `setup` across different execution boundaries"));
+        assert!(rendered.contains("`build` → `setup`"));
+        assert!(
+            rendered.contains("Boundary: verify / native / none → app / container / persistent")
+        );
+        assert!(rendered.contains("Why: only durable external side effects survive this edge"));
+        assert!(rendered.contains("Next:"));
     }
 
     #[test]

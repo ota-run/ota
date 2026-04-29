@@ -2758,6 +2758,34 @@ impl ContractAdvisory {
         }
     }
 
+    pub fn impact(&self) -> Option<String> {
+        match self {
+            ContractAdvisory::DependsOnBoundary(_) => Some(String::from(
+                "only durable external side effects carry across",
+            )),
+            ContractAdvisory::LikelyUnusedAttachment(_) => None,
+        }
+    }
+
+    pub fn drift(&self) -> Option<String> {
+        match self {
+            ContractAdvisory::DependsOnBoundary(advisory) => Some(
+                describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", "),
+            ),
+            ContractAdvisory::LikelyUnusedAttachment(_) => None,
+        }
+    }
+
+    pub fn fix(&self) -> Option<String> {
+        match self {
+            ContractAdvisory::DependsOnBoundary(_) => None,
+            ContractAdvisory::LikelyUnusedAttachment(advisory) => Some(format!(
+                "point {} at `{}`",
+                advisory.tool, advisory.effective_path
+            )),
+        }
+    }
+
     pub fn next(&self) -> String {
         match self {
             ContractAdvisory::DependsOnBoundary(advisory) => format!(
