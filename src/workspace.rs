@@ -1726,7 +1726,7 @@ tasks:
 
         assert_eq!(
             summary.env[0].source.as_deref(),
-            Some("invalid dotenv:.env")
+            Some("parse failed dotenv:.env")
         );
     }
 }

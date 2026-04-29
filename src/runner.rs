@@ -63,6 +63,7 @@ use crate::schema::{
     TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, ToolRequirement,
     format_memory_size_bytes, parse_memory_size_bytes, task_target_env_name,
 };
+use crate::terminal::supports_dynamic_stderr_ui;
 
 #[derive(Clone)]
 pub(crate) struct StreamPhaseNotifier {
@@ -123,6 +124,7 @@ pub(crate) struct StreamPhaseLoader {
     saw_output: Arc<AtomicBool>,
     output_lock: Arc<Mutex<()>>,
     last_output_at: Arc<Mutex<Instant>>,
+    clear_on_stop: bool,
     handle: Option<thread::JoinHandle<()>>,
 }
 
@@ -133,10 +135,6 @@ impl StreamPhaseLoader {
 
     pub(crate) fn start_immediate(label: &str) -> Option<Self> {
         Self::start_with_delay(label, Duration::ZERO)
-    }
-
-    pub(crate) fn start_for_preflight(label: &str) -> Option<Self> {
-        Self::start_with_delay(label, Duration::from_millis(80))
     }
 
     fn start_with_delay(label: &str, delay: Duration) -> Option<Self> {
@@ -192,6 +190,7 @@ impl StreamPhaseLoader {
             saw_output,
             output_lock,
             last_output_at,
+            clear_on_stop: true,
             handle: Some(handle),
         })
     }
@@ -210,7 +209,7 @@ impl StreamPhaseLoader {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        if self.shown.load(Ordering::Relaxed) {
+        if self.clear_on_stop && self.shown.load(Ordering::Relaxed) {
             let _guard = self
                 .output_lock
                 .lock()
@@ -221,14 +220,14 @@ impl StreamPhaseLoader {
 }
 
 fn should_show_stream_phase_loader() -> bool {
-    io::stderr().is_terminal()
+    supports_dynamic_stderr_ui(io::stderr().is_terminal())
         && env::var_os("OTA_PLAIN_MODE").is_none()
         && env::var_os("OTA_JSON_MODE").is_none()
 }
 
 fn clear_stream_phase_line() {
     let mut stderr = io::stderr();
-    let _ = write!(stderr, "\r\x1b[2K\r");
+    let _ = write!(stderr, "\r\x1b[2K\r\n");
     let _ = stderr.flush();
 }
 
@@ -249,6 +248,7 @@ fn backend_loader_suffix(backend: &ResolvedExecutionBackend) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn preparing_loader_label(task_name: &str, backend: Backend) -> String {
     format!(
         "Preparing {task_name}{}",
@@ -917,8 +917,11 @@ pub struct PolicyEnvOverlay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeclaredEnvSourceStatus {
     Loaded,
-    Missing,
-    Invalid,
+    MissingOptional,
+    MissingRequired,
+    ParseFailed,
+    InvalidStructure,
+    Collision,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -934,6 +937,53 @@ pub struct LoadedDeclaredEnvSource {
 impl LoadedDeclaredEnvSource {
     pub fn label(&self) -> String {
         format!("{}:{}", self.kind, self.path)
+    }
+
+    pub fn status_label(&self) -> &'static str {
+        match self.status {
+            DeclaredEnvSourceStatus::Loaded => "loaded",
+            DeclaredEnvSourceStatus::MissingOptional => "missing_optional",
+            DeclaredEnvSourceStatus::MissingRequired => "missing_required",
+            DeclaredEnvSourceStatus::ParseFailed => "parse_failed",
+            DeclaredEnvSourceStatus::InvalidStructure => "invalid_structure",
+            DeclaredEnvSourceStatus::Collision => "collision",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeclaredEnvSourceLoadErrorKind {
+    ParseFailed,
+    InvalidStructure,
+    Collision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeclaredEnvSourceLoadError {
+    kind: DeclaredEnvSourceLoadErrorKind,
+    details: String,
+}
+
+impl DeclaredEnvSourceLoadError {
+    fn parse_failed(details: impl Into<String>) -> Self {
+        Self {
+            kind: DeclaredEnvSourceLoadErrorKind::ParseFailed,
+            details: details.into(),
+        }
+    }
+
+    fn invalid_structure(details: impl Into<String>) -> Self {
+        Self {
+            kind: DeclaredEnvSourceLoadErrorKind::InvalidStructure,
+            details: details.into(),
+        }
+    }
+
+    fn collision(details: impl Into<String>) -> Self {
+        Self {
+            kind: DeclaredEnvSourceLoadErrorKind::Collision,
+            details: details.into(),
+        }
     }
 }
 
@@ -1378,6 +1428,30 @@ fn derived_attachment_env_for_isolation_paths(
                     format!("{ota_workspace}/.npm"),
                 );
             }
+            ".pnpm-store" => {
+                derived.insert(
+                    String::from("PNPM_STORE_DIR"),
+                    format!("{ota_workspace}/.pnpm-store"),
+                );
+            }
+            ".gradle" => {
+                derived.insert(
+                    String::from("GRADLE_USER_HOME"),
+                    format!("{ota_workspace}/.gradle"),
+                );
+            }
+            ".pip-cache" => {
+                derived.insert(
+                    String::from("PIP_CACHE_DIR"),
+                    format!("{ota_workspace}/.pip-cache"),
+                );
+            }
+            ".pypoetry-cache" => {
+                derived.insert(
+                    String::from("POETRY_CACHE_DIR"),
+                    format!("{ota_workspace}/.pypoetry-cache"),
+                );
+            }
             _ => {}
         }
     }
@@ -1626,6 +1700,105 @@ fn load_declared_env_source(
     let source_path = contract_dir.join(path);
     match kind {
         EnvSourceKind::Dotenv => load_dotenv_source(kind, path, must_exist, &source_path),
+        EnvSourceKind::Properties => load_text_declared_env_source(
+            kind,
+            path,
+            must_exist,
+            &source_path,
+            parse_properties_declared_env_source,
+        ),
+        EnvSourceKind::Json => load_text_declared_env_source(
+            kind,
+            path,
+            must_exist,
+            &source_path,
+            parse_json_declared_env_source,
+        ),
+        EnvSourceKind::Yaml => load_text_declared_env_source(
+            kind,
+            path,
+            must_exist,
+            &source_path,
+            parse_yaml_declared_env_source,
+        ),
+        EnvSourceKind::Toml => load_text_declared_env_source(
+            kind,
+            path,
+            must_exist,
+            &source_path,
+            parse_toml_declared_env_source,
+        ),
+    }
+}
+
+#[derive(Debug, Clone)]
+enum StructuredDeclaredEnvValue {
+    String(String),
+    Number(String),
+    Bool(bool),
+    Null,
+    Array,
+    Object(BTreeMap<String, StructuredDeclaredEnvValue>),
+}
+
+fn load_text_declared_env_source(
+    kind: EnvSourceKind,
+    path: &str,
+    must_exist: bool,
+    source_path: &Path,
+    parser: fn(&str) -> Result<BTreeMap<String, String>, DeclaredEnvSourceLoadError>,
+) -> LoadedDeclaredEnvSource {
+    let contents = match fs::read_to_string(source_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return LoadedDeclaredEnvSource {
+                kind,
+                path: path.to_string(),
+                must_exist,
+                status: if must_exist {
+                    DeclaredEnvSourceStatus::MissingRequired
+                } else {
+                    DeclaredEnvSourceStatus::MissingOptional
+                },
+                details: None,
+                values: BTreeMap::new(),
+            };
+        }
+        Err(error) => {
+            return LoadedDeclaredEnvSource {
+                kind,
+                path: path.to_string(),
+                must_exist,
+                status: DeclaredEnvSourceStatus::ParseFailed,
+                details: Some(error.to_string()),
+                values: BTreeMap::new(),
+            };
+        }
+    };
+
+    match parser(&contents) {
+        Ok(values) => LoadedDeclaredEnvSource {
+            kind,
+            path: path.to_string(),
+            must_exist,
+            status: DeclaredEnvSourceStatus::Loaded,
+            details: None,
+            values,
+        },
+        Err(error) => LoadedDeclaredEnvSource {
+            kind,
+            path: path.to_string(),
+            must_exist,
+            status: match error.kind {
+                DeclaredEnvSourceLoadErrorKind::ParseFailed => DeclaredEnvSourceStatus::ParseFailed,
+                DeclaredEnvSourceLoadErrorKind::InvalidStructure => {
+                    DeclaredEnvSourceStatus::InvalidStructure
+                }
+                DeclaredEnvSourceLoadErrorKind::Collision => DeclaredEnvSourceStatus::Collision,
+            },
+            details: Some(error.details),
+            values: BTreeMap::new(),
+        },
     }
 }
 
@@ -1642,7 +1815,11 @@ fn load_dotenv_source(
                 kind,
                 path: path.to_string(),
                 must_exist,
-                status: DeclaredEnvSourceStatus::Missing,
+                status: if must_exist {
+                    DeclaredEnvSourceStatus::MissingRequired
+                } else {
+                    DeclaredEnvSourceStatus::MissingOptional
+                },
                 details: None,
                 values: BTreeMap::new(),
             };
@@ -1652,7 +1829,7 @@ fn load_dotenv_source(
                 kind,
                 path: path.to_string(),
                 must_exist,
-                status: DeclaredEnvSourceStatus::Invalid,
+                status: DeclaredEnvSourceStatus::ParseFailed,
                 details: Some(error.to_string()),
                 values: BTreeMap::new(),
             };
@@ -1670,7 +1847,7 @@ fn load_dotenv_source(
                     kind,
                     path: path.to_string(),
                     must_exist,
-                    status: DeclaredEnvSourceStatus::Invalid,
+                    status: DeclaredEnvSourceStatus::ParseFailed,
                     details: Some(error.to_string()),
                     values: BTreeMap::new(),
                 };
@@ -1688,18 +1865,402 @@ fn load_dotenv_source(
     }
 }
 
+fn parse_properties_declared_env_source(
+    contents: &str,
+) -> Result<BTreeMap<String, String>, DeclaredEnvSourceLoadError> {
+    let mut values = BTreeMap::new();
+    let logical_lines = properties_logical_lines(contents)?;
+    let mut normalized_keys = BTreeMap::new();
+
+    for line in logical_lines {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
+            continue;
+        }
+        let (raw_key, raw_value) = split_properties_entry(trimmed);
+        let key = properties_unescape(raw_key).map_err(|details| {
+            DeclaredEnvSourceLoadError::parse_failed(format!(
+                "invalid properties key `{raw_key}`: {details}"
+            ))
+        })?;
+        let value = properties_unescape(raw_value).map_err(|details| {
+            DeclaredEnvSourceLoadError::parse_failed(format!(
+                "invalid properties value for `{raw_key}`: {details}"
+            ))
+        })?;
+        insert_normalized_declared_env_value(&mut values, &mut normalized_keys, &key, value)?;
+    }
+
+    Ok(values)
+}
+
+fn properties_logical_lines(contents: &str) -> Result<Vec<String>, DeclaredEnvSourceLoadError> {
+    let mut logical_lines = Vec::new();
+    let mut current = String::new();
+
+    for raw_line in contents.lines() {
+        let mut line = raw_line.trim_end_matches('\r').to_string();
+        if current.is_empty() {
+            current.push_str(&line);
+        } else {
+            line = line.trim_start_matches(char::is_whitespace).to_string();
+            current.push_str(&line);
+        }
+
+        if properties_line_continues(&current) {
+            current.pop();
+            continue;
+        }
+
+        logical_lines.push(std::mem::take(&mut current));
+    }
+
+    if properties_line_continues(&current) {
+        return Err(DeclaredEnvSourceLoadError::parse_failed(
+            "properties source ends with an unterminated line continuation",
+        ));
+    }
+    if !current.is_empty() {
+        logical_lines.push(current);
+    }
+
+    Ok(logical_lines)
+}
+
+fn properties_line_continues(line: &str) -> bool {
+    let slash_count = line
+        .chars()
+        .rev()
+        .take_while(|character| *character == '\\')
+        .count();
+    slash_count % 2 == 1
+}
+
+fn split_properties_entry(line: &str) -> (&str, &str) {
+    let mut escaped = false;
+    for (index, character) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character == '=' || character == ':' {
+            let mut value_index = index + character.len_utf8();
+            while let Some(next_character) = line[value_index..].chars().next() {
+                if !next_character.is_whitespace() {
+                    break;
+                }
+                value_index += next_character.len_utf8();
+            }
+            return (&line[..index], &line[value_index..]);
+        }
+        if character.is_whitespace() {
+            let mut value_index = index;
+            let mut separator_seen = false;
+            for (offset, trailing) in line[index..].char_indices() {
+                if trailing.is_whitespace() {
+                    value_index = index + offset + trailing.len_utf8();
+                    continue;
+                }
+                if !separator_seen && (trailing == '=' || trailing == ':') {
+                    separator_seen = true;
+                    value_index = index + offset + trailing.len_utf8();
+                    continue;
+                }
+                break;
+            }
+            return (&line[..index], &line[value_index..]);
+        }
+    }
+    (line, "")
+}
+
+fn properties_unescape(value: &str) -> Result<String, String> {
+    let mut output = String::new();
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            output.push(character);
+            continue;
+        }
+        let escaped = characters
+            .next()
+            .ok_or_else(|| String::from("dangling escape sequence"))?;
+        match escaped {
+            't' => output.push('\t'),
+            'n' => output.push('\n'),
+            'r' => output.push('\r'),
+            'f' => output.push('\u{000C}'),
+            '\\' => output.push('\\'),
+            'u' => {
+                let mut hex = String::new();
+                for _ in 0..4 {
+                    hex.push(
+                        characters
+                            .next()
+                            .ok_or_else(|| String::from("truncated unicode escape"))?,
+                    );
+                }
+                let code_point = u32::from_str_radix(&hex, 16)
+                    .map_err(|_| format!("invalid unicode escape `\\u{hex}`"))?;
+                let decoded = char::from_u32(code_point)
+                    .ok_or_else(|| format!("invalid unicode scalar `\\u{hex}`"))?;
+                output.push(decoded);
+            }
+            other => output.push(other),
+        }
+    }
+    Ok(output)
+}
+
+fn parse_json_declared_env_source(
+    contents: &str,
+) -> Result<BTreeMap<String, String>, DeclaredEnvSourceLoadError> {
+    let parsed: serde_json::Value = serde_json::from_str(contents)
+        .map_err(|error| DeclaredEnvSourceLoadError::parse_failed(error.to_string()))?;
+    let structured = structured_env_value_from_json(parsed);
+    parse_structured_declared_env_source("json", "object", structured)
+}
+
+fn parse_yaml_declared_env_source(
+    contents: &str,
+) -> Result<BTreeMap<String, String>, DeclaredEnvSourceLoadError> {
+    let parsed: serde_yaml::Value = serde_yaml::from_str(contents)
+        .map_err(|error| DeclaredEnvSourceLoadError::parse_failed(error.to_string()))?;
+    let structured = structured_env_value_from_yaml(parsed)?;
+    parse_structured_declared_env_source("yaml", "object", structured)
+}
+
+fn parse_toml_declared_env_source(
+    contents: &str,
+) -> Result<BTreeMap<String, String>, DeclaredEnvSourceLoadError> {
+    let parsed: toml::Value = toml::from_str(contents)
+        .map_err(|error| DeclaredEnvSourceLoadError::parse_failed(error.to_string()))?;
+    let structured = structured_env_value_from_toml(parsed)?;
+    parse_structured_declared_env_source("toml", "table", structured)
+}
+
+fn parse_structured_declared_env_source(
+    source_kind: &str,
+    root_label: &str,
+    root: StructuredDeclaredEnvValue,
+) -> Result<BTreeMap<String, String>, DeclaredEnvSourceLoadError> {
+    let StructuredDeclaredEnvValue::Object(root) = root else {
+        return Err(DeclaredEnvSourceLoadError::invalid_structure(format!(
+            "{source_kind} source root must be an {root_label}"
+        )));
+    };
+    let mut values = BTreeMap::new();
+    let mut normalized_keys = BTreeMap::new();
+    for (key, value) in &root {
+        flatten_structured_declared_env_value(
+            source_kind,
+            key.as_str(),
+            value,
+            &mut values,
+            &mut normalized_keys,
+        )?;
+    }
+    Ok(values)
+}
+
+fn flatten_structured_declared_env_value(
+    source_kind: &str,
+    path: &str,
+    value: &StructuredDeclaredEnvValue,
+    values: &mut BTreeMap<String, String>,
+    normalized_keys: &mut BTreeMap<String, String>,
+) -> Result<(), DeclaredEnvSourceLoadError> {
+    match value {
+        StructuredDeclaredEnvValue::String(text) => {
+            insert_normalized_declared_env_value(values, normalized_keys, path, text.clone())
+        }
+        StructuredDeclaredEnvValue::Number(number) => {
+            insert_normalized_declared_env_value(values, normalized_keys, path, number.to_string())
+        }
+        StructuredDeclaredEnvValue::Bool(boolean) => {
+            insert_normalized_declared_env_value(values, normalized_keys, path, boolean.to_string())
+        }
+        StructuredDeclaredEnvValue::Null => Err(DeclaredEnvSourceLoadError::invalid_structure(
+            format!("{source_kind} key `{path}` resolves to null; null is not supported"),
+        )),
+        StructuredDeclaredEnvValue::Array => Err(DeclaredEnvSourceLoadError::invalid_structure(
+            format!("{source_kind} key `{path}` resolves to an array; arrays are not supported"),
+        )),
+        StructuredDeclaredEnvValue::Object(map) => {
+            if map.is_empty() {
+                return Err(DeclaredEnvSourceLoadError::invalid_structure(format!(
+                    "{source_kind} key `{path}` resolves to an object; object leaf values are not supported"
+                )));
+            }
+            for (child_key, child_value) in map {
+                let child_path = format!("{path}.{child_key}");
+                flatten_structured_declared_env_value(
+                    source_kind,
+                    &child_path,
+                    child_value,
+                    values,
+                    normalized_keys,
+                )?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn structured_env_value_from_json(value: serde_json::Value) -> StructuredDeclaredEnvValue {
+    match value {
+        serde_json::Value::String(text) => StructuredDeclaredEnvValue::String(text),
+        serde_json::Value::Number(number) => StructuredDeclaredEnvValue::Number(number.to_string()),
+        serde_json::Value::Bool(boolean) => StructuredDeclaredEnvValue::Bool(boolean),
+        serde_json::Value::Null => StructuredDeclaredEnvValue::Null,
+        serde_json::Value::Array(_) => StructuredDeclaredEnvValue::Array,
+        serde_json::Value::Object(map) => StructuredDeclaredEnvValue::Object(
+            map.into_iter()
+                .map(|(key, value)| (key, structured_env_value_from_json(value)))
+                .collect(),
+        ),
+    }
+}
+
+fn structured_env_value_from_yaml(
+    value: serde_yaml::Value,
+) -> Result<StructuredDeclaredEnvValue, DeclaredEnvSourceLoadError> {
+    match value {
+        serde_yaml::Value::String(text) => Ok(StructuredDeclaredEnvValue::String(text)),
+        serde_yaml::Value::Number(number) => {
+            Ok(StructuredDeclaredEnvValue::Number(number.to_string()))
+        }
+        serde_yaml::Value::Bool(boolean) => Ok(StructuredDeclaredEnvValue::Bool(boolean)),
+        serde_yaml::Value::Null => Ok(StructuredDeclaredEnvValue::Null),
+        serde_yaml::Value::Sequence(_) => Ok(StructuredDeclaredEnvValue::Array),
+        serde_yaml::Value::Tagged(tagged) => structured_env_value_from_yaml(tagged.value),
+        serde_yaml::Value::Mapping(map) => {
+            let mut values = BTreeMap::new();
+            for (key, value) in map {
+                let key = match key {
+                    serde_yaml::Value::String(text) => text,
+                    serde_yaml::Value::Number(number) => number.to_string(),
+                    serde_yaml::Value::Bool(boolean) => boolean.to_string(),
+                    other => {
+                        return Err(DeclaredEnvSourceLoadError::invalid_structure(format!(
+                            "yaml object key `{}` is not supported; only string, number, and bool keys are supported",
+                            render_yaml_value_for_error(&other)
+                        )));
+                    }
+                };
+                values.insert(key, structured_env_value_from_yaml(value)?);
+            }
+            Ok(StructuredDeclaredEnvValue::Object(values))
+        }
+    }
+}
+
+fn structured_env_value_from_toml(
+    value: toml::Value,
+) -> Result<StructuredDeclaredEnvValue, DeclaredEnvSourceLoadError> {
+    match value {
+        toml::Value::String(text) => Ok(StructuredDeclaredEnvValue::String(text)),
+        toml::Value::Integer(number) => Ok(StructuredDeclaredEnvValue::Number(number.to_string())),
+        toml::Value::Float(number) => Ok(StructuredDeclaredEnvValue::Number(number.to_string())),
+        toml::Value::Boolean(boolean) => Ok(StructuredDeclaredEnvValue::Bool(boolean)),
+        toml::Value::Array(_) => Ok(StructuredDeclaredEnvValue::Array),
+        toml::Value::Table(map) => {
+            let mut values = BTreeMap::new();
+            for (key, value) in map {
+                values.insert(key, structured_env_value_from_toml(value)?);
+            }
+            Ok(StructuredDeclaredEnvValue::Object(values))
+        }
+        toml::Value::Datetime(_) => Err(DeclaredEnvSourceLoadError::invalid_structure(
+            "toml datetime values are not supported; only string, number, and bool leaves are allowed",
+        )),
+    }
+}
+
+fn render_yaml_value_for_error(value: &serde_yaml::Value) -> String {
+    match value {
+        serde_yaml::Value::String(text) => text.clone(),
+        serde_yaml::Value::Number(number) => number.to_string(),
+        serde_yaml::Value::Bool(boolean) => boolean.to_string(),
+        serde_yaml::Value::Null => String::from("null"),
+        other => serde_yaml::to_string(other)
+            .unwrap_or_else(|_| format!("{other:?}"))
+            .trim()
+            .to_string(),
+    }
+}
+
+fn insert_normalized_declared_env_value(
+    values: &mut BTreeMap<String, String>,
+    normalized_keys: &mut BTreeMap<String, String>,
+    raw_key: &str,
+    value: String,
+) -> Result<(), DeclaredEnvSourceLoadError> {
+    let normalized = normalize_declared_env_source_key(raw_key)?;
+    if let Some(previous) = normalized_keys.get(&normalized) {
+        return Err(DeclaredEnvSourceLoadError::collision(format!(
+            "keys `{previous}` and `{raw_key}` both normalize to `{normalized}`"
+        )));
+    }
+    normalized_keys.insert(normalized.clone(), raw_key.to_string());
+    values.insert(normalized, value);
+    Ok(())
+}
+
+fn normalize_declared_env_source_key(raw_key: &str) -> Result<String, DeclaredEnvSourceLoadError> {
+    let trimmed = raw_key.trim();
+    let mut normalized = String::new();
+    let mut last_was_separator = false;
+
+    for character in trimmed.chars() {
+        let is_separator = character == '.'
+            || character == '-'
+            || character == '/'
+            || character == ':'
+            || character == '_'
+            || character.is_whitespace();
+        if is_separator {
+            if !last_was_separator && !normalized.is_empty() {
+                normalized.push('_');
+            }
+            last_was_separator = true;
+            continue;
+        }
+        normalized.extend(character.to_uppercase());
+        last_was_separator = false;
+    }
+
+    if normalized.ends_with('_') {
+        normalized.pop();
+    }
+
+    if normalized.is_empty() {
+        return Err(DeclaredEnvSourceLoadError::collision(format!(
+            "key `{raw_key}` normalizes to an empty env name"
+        )));
+    }
+
+    Ok(normalized)
+}
+
 fn ensure_declared_env_sources_ready(sources: &[LoadedDeclaredEnvSource]) -> Result<(), RunError> {
     for source in sources {
         match source.status {
             DeclaredEnvSourceStatus::Loaded => {}
-            DeclaredEnvSourceStatus::Missing if !source.must_exist => {}
-            DeclaredEnvSourceStatus::Missing => {
+            DeclaredEnvSourceStatus::MissingOptional => {}
+            DeclaredEnvSourceStatus::MissingRequired => {
                 return Err(RunError::MissingRequiredEnvSource {
                     kind: source.kind.to_string(),
                     path: source.path.clone(),
                 });
             }
-            DeclaredEnvSourceStatus::Invalid => {
+            DeclaredEnvSourceStatus::ParseFailed
+            | DeclaredEnvSourceStatus::InvalidStructure
+            | DeclaredEnvSourceStatus::Collision => {
                 return Err(RunError::InvalidEnvSource {
                     kind: source.kind.to_string(),
                     path: source.path.clone(),
@@ -1745,9 +2306,15 @@ pub fn env_resolution_source_label(source: &EnvResolutionSource) -> String {
 pub fn blocking_declared_env_source_label(sources: &[LoadedDeclaredEnvSource]) -> Option<String> {
     sources.iter().find_map(|source| match source.status {
         DeclaredEnvSourceStatus::Loaded => None,
-        DeclaredEnvSourceStatus::Missing if !source.must_exist => None,
-        DeclaredEnvSourceStatus::Missing => Some(format!("missing required {}", source.label())),
-        DeclaredEnvSourceStatus::Invalid => Some(format!("invalid {}", source.label())),
+        DeclaredEnvSourceStatus::MissingOptional => None,
+        DeclaredEnvSourceStatus::MissingRequired => {
+            Some(format!("missing required {}", source.label()))
+        }
+        DeclaredEnvSourceStatus::ParseFailed => Some(format!("parse failed {}", source.label())),
+        DeclaredEnvSourceStatus::InvalidStructure => {
+            Some(format!("invalid structure {}", source.label()))
+        }
+        DeclaredEnvSourceStatus::Collision => Some(format!("collision {}", source.label())),
     })
 }
 
@@ -3226,22 +3793,6 @@ fn run_task_internal(
             task: task_name.to_string(),
         });
     }
-    let preferred_backend = effective_task_execution(contract, task_name, overrides).backend;
-    let mut preflight_loader = match mode {
-        TaskExecutionMode::Stream {
-            emit_progress: true,
-            ..
-        } => StreamPhaseLoader::start_for_preflight(&preparing_loader_label(
-            task_name,
-            preferred_backend,
-        )),
-        TaskExecutionMode::Stream {
-            emit_progress: false,
-            ..
-        }
-        | TaskExecutionMode::Capture
-        | TaskExecutionMode::CaptureActivation => None,
-    };
     let working_dir = contract_working_dir(contract_path);
     let backend = match resolve_execution_backend_with_contract_path(
         contract,
@@ -3250,12 +3801,7 @@ fn run_task_internal(
         Some(contract_path),
     ) {
         Ok(backend) => backend,
-        Err(error) => {
-            if let Some(loader) = preflight_loader.take() {
-                loader.stop();
-            }
-            return Err(error);
-        }
+        Err(error) => return Err(error),
     };
     let mut preflight_execution_note = None;
     if let ResolvedExecutionBackend::Container { lifecycle, .. } = &backend
@@ -3324,17 +3870,11 @@ fn run_task_internal(
             overrides.host_port,
         )
     {
-        if let Some(loader) = preflight_loader.take() {
-            loader.stop();
-        }
         return Err(error);
     }
     let current_os = current_os();
     let mut state = TaskRunState::default();
     state.execution_note = preflight_execution_note;
-    if let Some(loader) = preflight_loader.take() {
-        loader.stop();
-    }
     let execute_result = execute_task_with_hooks(
         contract,
         contract_path,
@@ -7978,10 +8518,10 @@ fn ready_runtime_public_endpoint_line(runtime: &ResolvedTaskRuntime) -> Option<S
             let external = resolved_runtime_host_endpoint_text(&endpoint.host);
             let internal = resolved_runtime_internal_endpoint_text(endpoint);
             if external == internal {
-                format!("\n\n🦦 External: {}\n\n", external)
+                format!("\n\n🟢 External: {}\n\n", external)
             } else {
                 format!(
-                    "\n\n🦦 External: {}\n🦦 Internal: {}\n\n",
+                    "\n\n🟢 External: {}\n🔵 Internal: {}\n\n",
                     external, internal
                 )
             }
@@ -15341,6 +15881,61 @@ tasks:
     }
 
     #[test]
+    fn effective_task_env_for_backend_derives_extended_known_cache_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    run: true
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("verify").unwrap(),
+            &ResolvedExecutionBackend::Container {
+                context_name: Some(String::from("tooling")),
+                shared_local_backend: None,
+                image: String::from("python:3.12-bookworm"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Ephemeral,
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                publications: Vec::new(),
+                dependency_isolation_paths: vec![
+                    String::from(".pnpm-store"),
+                    String::from(".gradle"),
+                    String::from(".pip-cache"),
+                    String::from(".pypoetry-cache"),
+                ],
+            },
+            Path::new("/tmp/repo"),
+        );
+
+        assert_eq!(
+            env.get("PNPM_STORE_DIR").map(String::as_str),
+            Some("/workspace/.pnpm-store")
+        );
+        assert_eq!(
+            env.get("GRADLE_USER_HOME").map(String::as_str),
+            Some("/workspace/.gradle")
+        );
+        assert_eq!(
+            env.get("PIP_CACHE_DIR").map(String::as_str),
+            Some("/workspace/.pip-cache")
+        );
+        assert_eq!(
+            env.get("POETRY_CACHE_DIR").map(String::as_str),
+            Some("/workspace/.pypoetry-cache")
+        );
+    }
+
+    #[test]
     fn rejects_disallowed_task_env_override_values() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -15500,6 +16095,283 @@ tasks:
     }
 
     #[test]
+    fn declared_properties_sources_parse_and_normalize_keys() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+    FEATURE_FLAG:
+      required: true
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("app.properties"),
+            " app.port = 8080\nfeature-flag: true\n",
+        )
+        .unwrap();
+        let original_port = env::var_os("APP_PORT");
+        let original_flag = env::var_os("FEATURE_FLAG");
+        unsafe {
+            env::remove_var("APP_PORT");
+            env::remove_var("FEATURE_FLAG");
+        }
+
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+
+        assert_eq!(resolved["APP_PORT"].value, "8080");
+        assert_eq!(resolved["FEATURE_FLAG"].value, "true");
+        assert_eq!(
+            resolved["APP_PORT"].source,
+            EnvResolutionSource::Source(String::from("properties:app.properties"))
+        );
+
+        match original_port {
+            Some(value) => unsafe { env::set_var("APP_PORT", value) },
+            None => unsafe { env::remove_var("APP_PORT") },
+        }
+        match original_flag {
+            Some(value) => unsafe { env::set_var("FEATURE_FLAG", value) },
+            None => unsafe { env::remove_var("FEATURE_FLAG") },
+        }
+    }
+
+    #[test]
+    fn undeclared_properties_source_is_not_auto_discovered_at_runtime() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(fixture.dir.path().join("app.properties"), "app.port=8080\n").unwrap();
+        let original = env::var_os("APP_PORT");
+        unsafe {
+            env::remove_var("APP_PORT");
+        }
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(error, RunError::MissingRequiredEnv { name } if name == "APP_PORT"));
+
+        match original {
+            Some(value) => unsafe { env::set_var("APP_PORT", value) },
+            None => unsafe { env::remove_var("APP_PORT") },
+        }
+    }
+
+    #[test]
+    fn declared_json_sources_parse_normalize_and_flatten_nested_keys() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    SERVICE_PORT:
+      required: true
+    FEATURE_FLAGS_ALPHA:
+      required: true
+    FEATURE_FLAGS_BETA_ENABLED:
+      required: true
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.json"),
+            r#"{"service.port":8080,"feature flags":{"alpha":"on","beta-enabled":true}}"#,
+        )
+        .unwrap();
+        let original_port = env::var_os("SERVICE_PORT");
+        let original_alpha = env::var_os("FEATURE_FLAGS_ALPHA");
+        let original_beta = env::var_os("FEATURE_FLAGS_BETA_ENABLED");
+        unsafe {
+            env::remove_var("SERVICE_PORT");
+            env::remove_var("FEATURE_FLAGS_ALPHA");
+            env::remove_var("FEATURE_FLAGS_BETA_ENABLED");
+        }
+
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+
+        assert_eq!(resolved["SERVICE_PORT"].value, "8080");
+        assert_eq!(resolved["FEATURE_FLAGS_ALPHA"].value, "on");
+        assert_eq!(resolved["FEATURE_FLAGS_BETA_ENABLED"].value, "true");
+        assert_eq!(
+            resolved["SERVICE_PORT"].source,
+            EnvResolutionSource::Source(String::from("json:env.json"))
+        );
+
+        match original_port {
+            Some(value) => unsafe { env::set_var("SERVICE_PORT", value) },
+            None => unsafe { env::remove_var("SERVICE_PORT") },
+        }
+        match original_alpha {
+            Some(value) => unsafe { env::set_var("FEATURE_FLAGS_ALPHA", value) },
+            None => unsafe { env::remove_var("FEATURE_FLAGS_ALPHA") },
+        }
+        match original_beta {
+            Some(value) => unsafe { env::set_var("FEATURE_FLAGS_BETA_ENABLED", value) },
+            None => unsafe { env::remove_var("FEATURE_FLAGS_BETA_ENABLED") },
+        }
+    }
+
+    #[test]
+    fn declared_yaml_sources_parse_normalize_and_flatten_nested_keys() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    SERVICE_PORT:
+      required: true
+    FEATURE_FLAGS_ALPHA:
+      required: true
+    FEATURE_FLAGS_BETA_ENABLED:
+      required: true
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.yaml"),
+            "service:\n  port: 8080\nfeature flags:\n  alpha: on\n  beta-enabled: true\n",
+        )
+        .unwrap();
+        let original_port = env::var_os("SERVICE_PORT");
+        let original_alpha = env::var_os("FEATURE_FLAGS_ALPHA");
+        let original_beta = env::var_os("FEATURE_FLAGS_BETA_ENABLED");
+        unsafe {
+            env::remove_var("SERVICE_PORT");
+            env::remove_var("FEATURE_FLAGS_ALPHA");
+            env::remove_var("FEATURE_FLAGS_BETA_ENABLED");
+        }
+
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+
+        assert_eq!(resolved["SERVICE_PORT"].value, "8080");
+        assert_eq!(resolved["FEATURE_FLAGS_ALPHA"].value, "on");
+        assert_eq!(resolved["FEATURE_FLAGS_BETA_ENABLED"].value, "true");
+        assert_eq!(
+            resolved["SERVICE_PORT"].source,
+            EnvResolutionSource::Source(String::from("yaml:env.yaml"))
+        );
+
+        match original_port {
+            Some(value) => unsafe { env::set_var("SERVICE_PORT", value) },
+            None => unsafe { env::remove_var("SERVICE_PORT") },
+        }
+        match original_alpha {
+            Some(value) => unsafe { env::set_var("FEATURE_FLAGS_ALPHA", value) },
+            None => unsafe { env::remove_var("FEATURE_FLAGS_ALPHA") },
+        }
+        match original_beta {
+            Some(value) => unsafe { env::set_var("FEATURE_FLAGS_BETA_ENABLED", value) },
+            None => unsafe { env::remove_var("FEATURE_FLAGS_BETA_ENABLED") },
+        }
+    }
+
+    #[test]
+    fn declared_toml_sources_parse_normalize_and_flatten_nested_keys() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    SERVICE_PORT:
+      required: true
+    FEATURE_FLAGS_ALPHA:
+      required: true
+    FEATURE_FLAGS_BETA_ENABLED:
+      required: true
+  sources:
+    - kind: toml
+      path: env.toml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.toml"),
+            "service.port = 8080\n[\"feature flags\"]\nalpha = \"on\"\nbeta-enabled = true\n",
+        )
+        .unwrap();
+        let original_port = env::var_os("SERVICE_PORT");
+        let original_alpha = env::var_os("FEATURE_FLAGS_ALPHA");
+        let original_beta = env::var_os("FEATURE_FLAGS_BETA_ENABLED");
+        unsafe {
+            env::remove_var("SERVICE_PORT");
+            env::remove_var("FEATURE_FLAGS_ALPHA");
+            env::remove_var("FEATURE_FLAGS_BETA_ENABLED");
+        }
+
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+
+        assert_eq!(resolved["SERVICE_PORT"].value, "8080");
+        assert_eq!(resolved["FEATURE_FLAGS_ALPHA"].value, "on");
+        assert_eq!(resolved["FEATURE_FLAGS_BETA_ENABLED"].value, "true");
+        assert_eq!(
+            resolved["SERVICE_PORT"].source,
+            EnvResolutionSource::Source(String::from("toml:env.toml"))
+        );
+
+        match original_port {
+            Some(value) => unsafe { env::set_var("SERVICE_PORT", value) },
+            None => unsafe { env::remove_var("SERVICE_PORT") },
+        }
+        match original_alpha {
+            Some(value) => unsafe { env::set_var("FEATURE_FLAGS_ALPHA", value) },
+            None => unsafe { env::remove_var("FEATURE_FLAGS_ALPHA") },
+        }
+        match original_beta {
+            Some(value) => unsafe { env::set_var("FEATURE_FLAGS_BETA_ENABLED", value) },
+            None => unsafe { env::remove_var("FEATURE_FLAGS_BETA_ENABLED") },
+        }
+    }
+
+    #[test]
     fn policy_env_overrides_declared_dotenv_source_values() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -15582,6 +16454,584 @@ tasks:
             RunError::MissingRequiredEnvSource { kind, path }
                 if kind == "dotenv" && path == ".env"
         ));
+    }
+
+    #[test]
+    fn missing_must_exist_properties_source_fails_task_env_resolution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: properties
+      path: app.properties
+      must_exist: true
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::MissingRequiredEnvSource { kind, path }
+                if kind == "properties" && path == "app.properties"
+        ));
+    }
+
+    #[test]
+    fn invalid_json_root_not_object_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.json"), r#"[1,2,3]"#).unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "json"
+                    && path == "env.json"
+                    && details.contains("root must be an object")
+        ));
+    }
+
+    #[test]
+    fn invalid_json_array_leaf_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_FEATURES:
+      required: true
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.json"),
+            r#"{"app.features":["a","b"]}"#,
+        )
+        .unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "json"
+                    && path == "env.json"
+                    && details.contains("array")
+        ));
+    }
+
+    #[test]
+    fn invalid_json_empty_object_leaf_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_CONFIG:
+      required: true
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.json"), r#"{"app.config":{}}"#).unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "json"
+                    && path == "env.json"
+                    && details.contains("object leaf values are not supported")
+        ));
+    }
+
+    #[test]
+    fn invalid_json_null_leaf_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.json"), r#"{"app.port":null}"#).unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "json"
+                    && path == "env.json"
+                    && details.contains("null is not supported")
+        ));
+    }
+
+    #[test]
+    fn invalid_yaml_root_not_object_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.yaml"), "- 8080\n").unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "yaml"
+                    && path == "env.yaml"
+                    && details.contains("root must be an object")
+        ));
+    }
+
+    #[test]
+    fn invalid_yaml_array_leaf_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_FEATURES:
+      required: true
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.yaml"),
+            "app:\n  features:\n    - a\n    - b\n",
+        )
+        .unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "yaml"
+                    && path == "env.yaml"
+                    && details.contains("arrays are not supported")
+        ));
+    }
+
+    #[test]
+    fn invalid_yaml_null_leaf_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.yaml"), "app:\n  port: null\n").unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "yaml"
+                    && path == "env.yaml"
+                    && details.contains("null is not supported")
+        ));
+    }
+
+    #[test]
+    fn normalized_yaml_key_collisions_fail_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.yaml"),
+            "app.port: 8080\napp-port: 8081\n",
+        )
+        .unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "yaml"
+                    && path == "env.yaml"
+                    && details.contains("both normalize to `APP_PORT`")
+        ));
+    }
+
+    #[test]
+    fn invalid_toml_array_leaf_fails_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_FEATURES:
+      required: true
+  sources:
+    - kind: toml
+      path: env.toml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.toml"),
+            "app.features = [\"a\", \"b\"]\n",
+        )
+        .unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "toml"
+                    && path == "env.toml"
+                    && details.contains("arrays are not supported")
+        ));
+    }
+
+    #[test]
+    fn normalized_toml_key_collisions_fail_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: toml
+      path: env.toml
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("env.toml"),
+            "app.port = 8080\napp-port = 8081\n",
+        )
+        .unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "toml"
+                    && path == "env.toml"
+                    && details.contains("both normalize to `APP_PORT`")
+        ));
+    }
+
+    #[test]
+    fn normalized_key_collisions_fail_declared_source_loading() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join("app.properties"),
+            "app.port=8080\napp-port=8081\n",
+        )
+        .unwrap();
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvSource { kind, path, details }
+                if kind == "properties"
+                    && path == "app.properties"
+                    && details.contains("both normalize to `APP_PORT`")
+        ));
+    }
+
+    #[test]
+    fn run_path_reads_required_env_from_declared_properties_source() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  print:
+    run: env | grep '^APP_PORT=' > app-port.txt
+"#,
+        );
+        fs::write(fixture.dir.path().join("app.properties"), "app.port=8080\n").unwrap();
+        let original = env::var_os("APP_PORT");
+        unsafe {
+            env::remove_var("APP_PORT");
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "print").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("app-port.txt")).unwrap(),
+            "APP_PORT=8080\n"
+        );
+
+        match original {
+            Some(value) => unsafe { env::set_var("APP_PORT", value) },
+            None => unsafe { env::remove_var("APP_PORT") },
+        }
+    }
+
+    #[test]
+    fn run_path_reads_required_env_from_declared_json_source() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  print:
+    run: env | grep '^APP_PORT=' > app-port.txt
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.json"), r#"{"app.port":8080}"#).unwrap();
+        let original = env::var_os("APP_PORT");
+        unsafe {
+            env::remove_var("APP_PORT");
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "print").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("app-port.txt")).unwrap(),
+            "APP_PORT=8080\n"
+        );
+
+        match original {
+            Some(value) => unsafe { env::set_var("APP_PORT", value) },
+            None => unsafe { env::remove_var("APP_PORT") },
+        }
+    }
+
+    #[test]
+    fn run_path_reads_required_env_from_declared_yaml_source() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  print:
+    run: env | grep '^APP_PORT=' > app-port.txt
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.yaml"), "app:\n  port: 8080\n").unwrap();
+        let original = env::var_os("APP_PORT");
+        unsafe {
+            env::remove_var("APP_PORT");
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "print").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("app-port.txt")).unwrap(),
+            "APP_PORT=8080\n"
+        );
+
+        match original {
+            Some(value) => unsafe { env::set_var("APP_PORT", value) },
+            None => unsafe { env::remove_var("APP_PORT") },
+        }
+    }
+
+    #[test]
+    fn run_path_reads_required_env_from_declared_toml_source() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: toml
+      path: env.toml
+tasks:
+  print:
+    run: env | grep '^APP_PORT=' > app-port.txt
+"#,
+        );
+        fs::write(fixture.dir.path().join("env.toml"), "app.port = 8080\n").unwrap();
+        let original = env::var_os("APP_PORT");
+        unsafe {
+            env::remove_var("APP_PORT");
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "print").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("app-port.txt")).unwrap(),
+            "APP_PORT=8080\n"
+        );
+
+        match original {
+            Some(value) => unsafe { env::set_var("APP_PORT", value) },
+            None => unsafe { env::remove_var("APP_PORT") },
+        }
     }
 
     #[test]
@@ -19782,7 +21232,7 @@ tasks:
 
         assert_eq!(
             ready_runtime_public_endpoint_line(&runtime).as_deref(),
-            Some("\n\n🦦 External: http://127.0.0.1:49153/\n🦦 Internal: http://0.0.0.0:3000/\n\n")
+            Some("\n\n🟢 External: http://127.0.0.1:49153/\n🔵 Internal: http://0.0.0.0:3000/\n\n")
         );
     }
 

@@ -246,6 +246,14 @@ pub struct ExecutionReceiptEnvSource {
     pub name: String,
     pub value: String,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_status: Option<EnvSourceStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_label: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -1586,18 +1594,22 @@ pub struct EnvSummary {
     pub invalid_count: usize,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvSourceStatus {
     Loaded,
-    Missing,
-    Invalid,
+    MissingOptional,
+    MissingRequired,
+    ParseFailed,
+    InvalidStructure,
+    Collision,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct EnvSourceEntry {
     pub kind: String,
     pub path: String,
+    pub label: String,
     pub must_exist: bool,
     pub status: EnvSourceStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1635,6 +1647,14 @@ pub struct EnvEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_status: Option<EnvSourceStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_label: Option<String>,
     pub status: EnvEntryStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,

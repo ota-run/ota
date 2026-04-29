@@ -1091,12 +1091,20 @@ impl<'a> IntoIterator for &'a EnvConfig {
 #[serde(rename_all = "snake_case")]
 pub enum EnvSourceKind {
     Dotenv,
+    Properties,
+    Json,
+    Yaml,
+    Toml,
 }
 
 impl std::fmt::Display for EnvSourceKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Dotenv => f.write_str("dotenv"),
+            Self::Properties => f.write_str("properties"),
+            Self::Json => f.write_str("json"),
+            Self::Yaml => f.write_str("yaml"),
+            Self::Toml => f.write_str("toml"),
         }
     }
 }

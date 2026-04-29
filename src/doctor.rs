@@ -58,6 +58,7 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     RequirementSurface, RuntimeRequirement, ServiceSpec, ToolRequirement,
 };
+use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, collect_contract_advisories};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2721,10 +2722,10 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
     for source in declared_sources {
         match source.status {
             DeclaredEnvSourceStatus::Loaded => {}
-            DeclaredEnvSourceStatus::Missing if !source.must_exist => {}
-            DeclaredEnvSourceStatus::Missing => findings.push(Finding {
+            DeclaredEnvSourceStatus::MissingOptional => {}
+            DeclaredEnvSourceStatus::MissingRequired => findings.push(Finding {
                 severity: FindingSeverity::Error,
-                summary: format!("Missing environment source: {}", source.path),
+                summary: format!("Missing required environment source: {}", source.label()),
                 why: format!(
                     "the repo declares `{}:{}` with `must_exist: true`, but that file is missing",
                     source.kind, source.path
@@ -2734,9 +2735,9 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
                     source.path
                 ),
             }),
-            DeclaredEnvSourceStatus::Invalid => findings.push(Finding {
+            DeclaredEnvSourceStatus::ParseFailed => findings.push(Finding {
                 severity: FindingSeverity::Error,
-                summary: format!("Invalid environment source: {}", source.path),
+                summary: format!("Environment source parse failed: {}", source.label()),
                 why: format!(
                     "ota could not read declared source `{}:{}`: {}",
                     source.kind,
@@ -2744,7 +2745,35 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
                     source.details.as_deref().unwrap_or("unknown parse error")
                 ),
                 next: format!(
-                    "fix `{}` so ota can parse it as a dotenv file, then rerun `ota doctor`",
+                    "fix `{}` so ota can parse declared source `{}`, then rerun `ota doctor`",
+                    source.path
+                    ,
+                    source.label()
+                ),
+            }),
+            DeclaredEnvSourceStatus::InvalidStructure => findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Environment source has invalid structure: {}", source.label()),
+                why: format!(
+                    "declared source `{}` loaded as text, but its structure is not supported: {}",
+                    source.label(),
+                    source.details.as_deref().unwrap_or("unknown structure error")
+                ),
+                next: format!(
+                    "replace unsupported values in `{}` with scalar env-shaped values only, then rerun `ota doctor`",
+                    source.path
+                ),
+            }),
+            DeclaredEnvSourceStatus::Collision => findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Environment source key collision: {}", source.label()),
+                why: format!(
+                    "declared source `{}` contains multiple keys that normalize to the same env name: {}",
+                    source.label(),
+                    source.details.as_deref().unwrap_or("unknown collision")
+                ),
+                next: format!(
+                    "rename the colliding keys in `{}` so each normalized env name is unique, then rerun `ota doctor`",
                     source.path
                 ),
             }),
@@ -4702,7 +4731,7 @@ impl CheckSpinner {
 }
 
 fn should_show_spinner() -> bool {
-    io::stderr().is_terminal()
+    supports_dynamic_stderr_ui(io::stderr().is_terminal())
         && std::env::var_os("OTA_PLAIN_MODE").is_none()
         && std::env::var_os("OTA_JSON_MODE").is_none()
 }
@@ -6854,10 +6883,9 @@ tasks:
         let report = diagnose_contract(&contract, &contract_path);
 
         assert!(
-            report
-                .findings
-                .iter()
-                .any(|finding| finding.summary == "Missing environment source: .env")
+            report.findings.iter().any(
+                |finding| finding.summary == "Missing required environment source: dotenv:.env"
+            )
         );
     }
 
@@ -6889,11 +6917,134 @@ tasks:
         let report = diagnose_contract_in_mode(&contract, &contract_path, DoctorMode::Container);
 
         assert!(
-            report
-                .findings
-                .iter()
-                .any(|finding| finding.summary == "Missing environment source: .env")
+            report.findings.iter().any(
+                |finding| finding.summary == "Missing required environment source: dotenv:.env"
+            )
         );
+    }
+
+    #[test]
+    fn reports_env_source_parse_failures() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  test:
+    run: cargo test
+"#;
+        fs::write(fixture.path().join("app.properties"), "bad=\\u12G4\n").unwrap();
+        let contract = parse_contract_str(&contract_path, contents.trim_start()).unwrap();
+
+        let report = diagnose_contract(&contract, &contract_path);
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Environment source parse failed: properties:app.properties"
+                && finding
+                    .why
+                    .contains("ota could not read declared source `properties:app.properties`")
+        }));
+    }
+
+    #[test]
+    fn reports_env_source_invalid_structure_failures() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  test:
+    run: cargo test
+"#;
+        fs::write(
+            fixture.path().join("env.json"),
+            r#"{"app":{"ports":[8080]}}"#,
+        )
+        .unwrap();
+        let contract = parse_contract_str(&contract_path, contents.trim_start()).unwrap();
+
+        let report = diagnose_contract(&contract, &contract_path);
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Environment source has invalid structure: json:env.json"
+                && finding.why.contains("arrays are not supported")
+                && finding.next.contains("scalar env-shaped values only")
+        }));
+    }
+
+    #[test]
+    fn reports_yaml_env_source_invalid_structure_failures() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  test:
+    run: cargo test
+"#;
+        fs::write(
+            fixture.path().join("env.yaml"),
+            "app:\n  ports:\n    - 8080\n",
+        )
+        .unwrap();
+        let contract = parse_contract_str(&contract_path, contents.trim_start()).unwrap();
+
+        let report = diagnose_contract(&contract, &contract_path);
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Environment source has invalid structure: yaml:env.yaml"
+                && finding.why.contains("arrays are not supported")
+                && finding.next.contains("scalar env-shaped values only")
+        }));
+    }
+
+    #[test]
+    fn reports_env_source_key_collisions() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  test:
+    run: cargo test
+"#;
+        fs::write(
+            fixture.path().join("app.properties"),
+            "app.port=8080\napp-port=8081\n",
+        )
+        .unwrap();
+        let contract = parse_contract_str(&contract_path, contents.trim_start()).unwrap();
+
+        let report = diagnose_contract(&contract, &contract_path);
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Environment source key collision: properties:app.properties"
+                && finding.why.contains("normalize to the same env name")
+        }));
     }
 
     #[test]

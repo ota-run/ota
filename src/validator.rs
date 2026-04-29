@@ -2904,6 +2904,10 @@ fn attachment_path_expectation(path: &str) -> Option<(&'static str, &'static str
     match path {
         ".m2" => Some(("Maven", "MAVEN_OPTS", "/workspace/.m2")),
         ".npm" => Some(("npm", "NPM_CONFIG_CACHE", "/workspace/.npm")),
+        ".pnpm-store" => Some(("pnpm", "PNPM_STORE_DIR", "/workspace/.pnpm-store")),
+        ".gradle" => Some(("Gradle", "GRADLE_USER_HOME", "/workspace/.gradle")),
+        ".pip-cache" => Some(("pip", "PIP_CACHE_DIR", "/workspace/.pip-cache")),
+        ".pypoetry-cache" => Some(("Poetry", "POETRY_CACHE_DIR", "/workspace/.pypoetry-cache")),
         _ => None,
     }
 }
@@ -3843,6 +3847,83 @@ tasks:
             advisory,
             ContractAdvisory::LikelyUnusedAttachment(value)
                 if value.context_name == "app" && value.isolated_path == ".m2"
+        )));
+    }
+
+    #[test]
+    fn does_not_collect_attachment_use_advisory_for_supported_derived_gradle_cache() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: gradle:8.14.3-jdk21
+      attachments:
+        isolated_paths:
+          - .gradle
+tasks:
+  build:
+    context: app
+    run: gradle test
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LikelyUnusedAttachment(value)
+                if value.context_name == "app" && value.isolated_path == ".gradle"
+        )));
+    }
+
+    #[test]
+    fn collects_attachment_use_advisory_when_explicit_pip_cache_points_elsewhere() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: python:3.12-bookworm
+      attachments:
+        isolated_paths:
+          - .pip-cache
+tasks:
+  test:
+    context: app
+    env:
+      PIP_CACHE_DIR: /tmp/pip-cache
+    run: pip --version
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LikelyUnusedAttachment(value)
+                if value.context_name == "app"
+                    && value.isolated_path == ".pip-cache"
+                    && value.effective_path == "/workspace/.pip-cache"
+                    && value.expected_env == "PIP_CACHE_DIR"
         )));
     }
 

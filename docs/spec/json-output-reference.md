@@ -160,15 +160,24 @@ Success:
   },
   "sources": [
     {
-      "kind": "dotenv",
-      "path": ".env.local",
+      "kind": "properties",
+      "path": "app.properties",
+      "label": "properties:app.properties",
       "must_exist": false,
       "status": "loaded"
     },
     {
-      "kind": "dotenv",
-      "path": ".env",
+      "kind": "json",
+      "path": "env/runtime.json",
+      "label": "json:env/runtime.json",
       "must_exist": true,
+      "status": "loaded"
+    },
+    {
+      "kind": "yaml",
+      "path": "env/runtime.yaml",
+      "label": "yaml:env/runtime.yaml",
+      "must_exist": false,
       "status": "loaded"
     }
   ],
@@ -178,7 +187,11 @@ Success:
       "kind": "contract",
       "required": true,
       "value": "***",
-      "source": "dotenv:.env",
+      "source": "properties:app.properties",
+      "source_kind": "properties",
+      "source_path": "app.properties",
+      "source_status": "loaded",
+      "source_label": "properties:app.properties",
       "status": "resolved"
     },
     {
@@ -201,9 +214,21 @@ Success:
 }
 ```
 
-When a declared source is missing or invalid, `sources` carries the source status and `summary` counts
-the issue. Missing or invalid required env values remain visible in `env` with `status` such as
-`missing` or `invalid`.
+When a declared source is missing or invalid, `sources` carries additive source metadata:
+`kind`, `path`, `label`, `status`, optional `detail`, and optional `next`. Resolved env entries
+loaded from declared sources also carry additive `source_kind`, `source_path`, `source_status`, and
+`source_label` fields. Missing or invalid required env values remain visible in `env` with `status`
+such as `missing` or `invalid`. The `kind` field is an explicit curated source kind such as
+`dotenv`, `properties`, `json`, `yaml`, or `toml`.
+
+Canonical source status values are:
+
+- `loaded`
+- `missing_optional`
+- `missing_required`
+- `parse_failed`
+- `invalid_structure`
+- `collision`
 
 When `--task` is set, the payload includes the task name:
 

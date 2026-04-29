@@ -35,6 +35,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::Value as JsonValue;
 
 use crate::output::CommandOutput;
+use crate::terminal::supports_dynamic_stderr_ui;
 
 const DEFAULT_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/ota-run/ota/releases/latest";
@@ -459,7 +460,7 @@ fn run_with_spinner<F>(work: F) -> CommandOutput
 where
     F: FnOnce() -> CommandOutput,
 {
-    if !std::io::stderr().is_terminal() {
+    if !supports_dynamic_stderr_ui(std::io::stderr().is_terminal()) {
         return work();
     }
 

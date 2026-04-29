@@ -31,6 +31,7 @@ pub mod policy_pack;
 pub mod provisioning;
 pub mod runner;
 pub mod schema;
+pub(crate) mod terminal;
 #[cfg(test)]
 pub mod test_support;
 pub mod update;

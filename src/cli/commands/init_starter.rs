@@ -27,14 +27,23 @@ use std::path::Path;
 use serde_json::Value as JsonValue;
 
 use crate::detector::{
-    Confidence, DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject,
-    DetectReport, DetectTask, Inference,
+    DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject, DetectReport,
+    DetectTask, Inference,
 };
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig, EnvSource, EnvSourceKind,
 };
 
-const INIT_DOTENV_SOURCE_PATHS: &[&str] = &[".env.local", ".env"];
+const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
+    (EnvSourceKind::Dotenv, ".env.local"),
+    (EnvSourceKind::Dotenv, ".env"),
+    (
+        EnvSourceKind::Properties,
+        "src/main/resources/application.properties",
+    ),
+    (EnvSourceKind::Json, "appsettings.json"),
+    (EnvSourceKind::Json, "appsettings.Development.json"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum StarterPack {
@@ -566,36 +575,12 @@ pub(super) fn apply_inferred_init_env_sources(contract: &mut DetectContract, roo
     }
 }
 
-pub(super) fn inferred_init_env_inferences(root: &Path) -> Vec<Inference> {
-    inferred_init_env_sources(root)
-        .into_iter()
-        .enumerate()
-        .flat_map(|(index, source)| {
-            let source_path = source.path.clone();
-            [
-                Inference {
-                    field: format!("env.sources.{index}.kind"),
-                    value: String::from("dotenv"),
-                    source: source_path.clone(),
-                    confidence: Confidence::Medium,
-                },
-                Inference {
-                    field: format!("env.sources.{index}.path"),
-                    value: source.path,
-                    source: source_path,
-                    confidence: Confidence::Medium,
-                },
-            ]
-        })
-        .collect()
-}
-
 fn inferred_init_env_sources(root: &Path) -> Vec<EnvSource> {
-    INIT_DOTENV_SOURCE_PATHS
+    INIT_ENV_SOURCE_CANDIDATES
         .iter()
-        .filter(|path| root.join(path).is_file())
-        .map(|path| EnvSource {
-            kind: EnvSourceKind::Dotenv,
+        .filter(|(_, path)| root.join(path).is_file())
+        .map(|(kind, path)| EnvSource {
+            kind: *kind,
             path: (*path).to_string(),
             must_exist: false,
         })
@@ -1222,6 +1207,7 @@ mod tests {
         starter_pack_contract,
     };
     use crate::detector::{DetectContract, DetectReport, DetectTask};
+    use crate::schema::{EnvSource, EnvSourceKind};
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
@@ -1271,6 +1257,49 @@ mod tests {
         assert_eq!(
             contract.tasks.get("setup").map(|task| task.internal),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn bootstrap_contract_carries_curated_detected_env_sources() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(fixture.path().join(".env.local"), "APP_PORT=3000\n").unwrap();
+        std::fs::create_dir_all(fixture.path().join("src/main/resources")).unwrap();
+        std::fs::write(
+            fixture
+                .path()
+                .join("src/main/resources/application.properties"),
+            "app.port=8080\n",
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.path().join("appsettings.json"),
+            "{ \"App\": { \"Port\": 8081 } }",
+        )
+        .unwrap();
+
+        let report = crate::detector::detect_repo(fixture.path()).unwrap();
+        let contract = bootstrap_init_contract(&report);
+
+        assert_eq!(
+            contract.env.sources,
+            vec![
+                EnvSource {
+                    kind: EnvSourceKind::Dotenv,
+                    path: String::from(".env.local"),
+                    must_exist: false,
+                },
+                EnvSource {
+                    kind: EnvSourceKind::Properties,
+                    path: String::from("src/main/resources/application.properties"),
+                    must_exist: false,
+                },
+                EnvSource {
+                    kind: EnvSourceKind::Json,
+                    path: String::from("appsettings.json"),
+                    must_exist: false,
+                },
+            ]
         );
     }
 }
