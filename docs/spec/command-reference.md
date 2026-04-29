@@ -215,6 +215,7 @@ Current behavior:
 - when a root contract declares `workspace.type: monorepo`, `ota validate` also validates each declared merged member contract
 - parses the contract
 - applies semantic validation
+- emits advisory warnings when authoring choices are valid but likely misleading, such as `depends_on` crossing execution boundaries or isolated cache paths that are not wired to the tool's effective `/workspace/...` path
 - includes provider-specific target examples for remote target validation errors:
 - `daytona`: `sandbox-dev`
 - `ssh` / `tsh`: `user@host`
@@ -228,8 +229,8 @@ Text output:
 
 JSON output:
 
-- success: `ok`, `path`, `summary.error_count`
-- failure: `ok`, `path`, `summary.error_count`, and either `errors` or `error`
+- success: `ok`, `path`, `summary.error_count`, `summary.warn_count`, and `warnings`
+- failure: `ok`, `path`, `summary.error_count`, `summary.warn_count`, `warnings`, and either `errors` or `error`
 
 ## `ota tasks`
 

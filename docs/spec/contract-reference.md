@@ -396,12 +396,13 @@ Current validation rule:
 - each `execution.contexts.<name>` requires:
   - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
   - optional `container.resources.memory.minimum` and `container.resources.memory.default` for container contexts
+  - optional `env` for context-wide environment defaults that apply before task-level and mode-level env overrides
   - optional `requirements.<runtimes|tools>` to scope readiness checks to that context
   - optional `attachments.compose` to attach container workloads to compose project networks
   - optional `attachments.isolated_paths` to mount Ota-managed, engine-owned named volumes over workspace-relative dependency paths such as `node_modules`
 - inheritance merge rules for `extends`:
   - scalar fields override within a backend family (`lifecycle`, image/target/provider)
-  - maps merge recursively (`container.resources`, `requirements`, `attachments`)
+  - maps merge recursively (`container.resources`, `env`, `requirements`, `attachments`)
   - lists replace (`container.engines`, `attachments.compose`, `attachments.isolated_paths`)
 - backend-family switches across `extends` are rejected (for example inheriting from a `container` parent and setting child `backend: native`)
 - `extends` is additive inheritance within one backend family, not a generic "inherit anything, then replace `backend` later" escape hatch
@@ -418,6 +419,7 @@ Current implementation:
 - named contexts can now share a base execution shape through `extends`, while shorthand remains the lean authoring path for shorthand-only repos
 - `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
+- task env precedence is: resolved context env, then `tasks.<name>.env`, then selected `tasks.<name>.execution.modes.<mode>.env`
 - container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
 - `ota up` now runs the `setup` task in the task's resolved context backend
 - `ota run` supports remote execution when the resolved context or legacy `execution.backends.remote` declares `provider` and `target`
@@ -435,6 +437,7 @@ Current lifecycle meaning:
 Current command behavior:
 
 - `ota doctor` warns when `ephemeral` is declared and surfaces container dependency isolation in execution summaries when contexts declare `attachments.isolated_paths`
+- `ota validate` and `ota doctor` also warn when `depends_on` crosses execution boundaries in a way that drops in-place prep value, and when a declared isolated cache path is likely unused by the tool configuration
 - `ota run` prints a lifecycle note on stderr and can execute via the configured container backend
 - `ota run` can also override execution mode and lifecycle for one invocation with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - `ota up` can also override execution mode and lifecycle for the `setup` phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
