@@ -119,6 +119,7 @@ use crate::schema::{
     parse_memory_size_bytes,
 };
 use crate::update;
+use crate::validator::collect_contract_advisories;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceContract, WorkspaceExecutionSummary, WorkspaceRepoRef,
@@ -846,19 +847,29 @@ pub fn validate(
 
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
-            Ok(_contract) => match validate_declared_monorepo_members(&resolved_path) {
+            Ok(target) => match validate_declared_monorepo_members(&resolved_path) {
                 Ok(()) => match format {
-                    OutputFormat::Text => CommandOutput::success(format!(
-                        "{}\n\n{}{}",
-                        format_command_header("VALIDATE", &text_path_display),
-                        render_valid_status(),
-                        render_validate_ready_next(&resolved_path, member)
-                    )),
-                    OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
-                        ok: true,
-                        path: &path_display,
-                        summary: Some(ValidateSummary { error_count: 0 }),
-                    })),
+                    OutputFormat::Text => {
+                        let warnings = collect_validate_warnings(&target.contract);
+                        CommandOutput::success(render_validate_success_output(
+                            &resolved_path,
+                            member,
+                            &text_path_display,
+                            &warnings,
+                        ))
+                    }
+                    OutputFormat::Json => {
+                        let warnings = collect_validate_warnings(&target.contract);
+                        CommandOutput::success(to_json(&ValidateSuccess {
+                            ok: true,
+                            path: &path_display,
+                            summary: Some(ValidateSummary {
+                                error_count: 0,
+                                warn_count: warnings.len(),
+                            }),
+                            warnings,
+                        }))
+                    }
                 },
                 Err(errors) => invalid_repo_contract_output(
                     "VALIDATE",
@@ -895,7 +906,9 @@ pub fn validate(
                     path: &path_display,
                     summary: Some(ValidateSummary {
                         error_count: errors.errors().len(),
+                        warn_count: 0,
                     }),
+                    warnings: Vec::new(),
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                 })),
@@ -911,7 +924,11 @@ pub fn validate(
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
-                    summary: Some(ValidateSummary { error_count: 1 }),
+                    summary: Some(ValidateSummary {
+                        error_count: 1,
+                        warn_count: 0,
+                    }),
+                    warnings: Vec::new(),
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                 })),
@@ -920,6 +937,34 @@ pub fn validate(
         debug,
         debug_lines,
     )
+}
+
+fn collect_validate_warnings(contract: &Contract) -> Vec<String> {
+    collect_contract_advisories(contract)
+        .into_iter()
+        .map(|advisory| format!("{} | Why: {}", advisory.summary(), advisory.why()))
+        .collect()
+}
+
+fn render_validate_success_output(
+    resolved_path: &Path,
+    member: Option<&str>,
+    text_path_display: &str,
+    warnings: &[String],
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}{}",
+        format_command_header("VALIDATE", text_path_display),
+        render_valid_status(),
+        render_validate_ready_next(resolved_path, member)
+    );
+    if !warnings.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Warnings")));
+        for warning in warnings {
+            stdout.push_str(&format!("\n  {} {}", list_bullet(), warning));
+        }
+    }
+    stdout
 }
 
 fn validate_invalid_contract_next_steps(contract_path: &Path) -> Vec<String> {
@@ -4158,7 +4203,11 @@ fn wrong_repo_contract_target_output(
         OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
             ok: false,
             path: &path_display,
-            summary: Some(ValidateSummary { error_count: 1 }),
+            summary: Some(ValidateSummary {
+                error_count: 1,
+                warn_count: 0,
+            }),
+            warnings: Vec::new(),
             errors: why_lines
                 .iter()
                 .map(|line| compact_backticked_paths(line))
@@ -4318,7 +4367,9 @@ fn invalid_repo_contract_output(
             path: &path_display,
             summary: Some(ValidateSummary {
                 error_count: why_lines.len(),
+                warn_count: 0,
             }),
+            warnings: Vec::new(),
             errors: why_lines
                 .iter()
                 .map(|line| compact_backticked_paths(line))
@@ -5405,6 +5456,7 @@ pub fn doctor(
                                                             .map(ToString::to_string)
                                                             .collect(),
                                                         error: None,
+                                                        warnings: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -5425,6 +5477,7 @@ pub fn doctor(
                                                         path: &path_display,
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
+                                                        warnings: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -5599,6 +5652,7 @@ pub fn doctor(
                                                     .map(ToString::to_string)
                                                     .collect(),
                                                 error: None,
+                                                warnings: Vec::new(),
                                             }))
                                         }
                                     },
@@ -5619,6 +5673,7 @@ pub fn doctor(
                                                 path: &path_display,
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
+                                                warnings: Vec::new(),
                                             }))
                                         }
                                     },
@@ -5708,6 +5763,7 @@ pub fn doctor(
                         path: &path_display,
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
+                        warnings: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -5728,6 +5784,7 @@ pub fn doctor(
                         path: &path_display,
                         errors: Vec::new(),
                         error: Some(error.to_string()),
+                        warnings: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -6232,6 +6289,7 @@ pub fn check(
                                                             .map(ToString::to_string)
                                                             .collect(),
                                                         error: None,
+                                                        warnings: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -6288,6 +6346,7 @@ pub fn check(
                                                         path: &path_display,
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
+                                                        warnings: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -6455,6 +6514,7 @@ pub fn check(
                                                     .map(ToString::to_string)
                                                     .collect(),
                                                 error: None,
+                                                warnings: Vec::new(),
                                             }))
                                         }
                                     },
@@ -6509,6 +6569,7 @@ pub fn check(
                                                 path: &path_display,
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
+                                                warnings: Vec::new(),
                                             }))
                                         }
                                     },
@@ -6596,6 +6657,7 @@ pub fn check(
                         path: &path_display,
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
+                        warnings: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -6635,6 +6697,7 @@ pub fn check(
                         path: &path_display,
                         errors: Vec::new(),
                         error: Some(error.to_string()),
+                        warnings: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -6675,6 +6738,7 @@ pub fn receipt(
                                 path: &history_path,
                                 errors,
                                 error: None,
+                                warnings: Vec::new(),
                             }),
                             stderr: None,
                             exit_code: 1,
@@ -6709,6 +6773,7 @@ pub fn receipt(
                                 path: &history_path,
                                 errors,
                                 error: None,
+                                warnings: Vec::new(),
                             }),
                             stderr: None,
                             exit_code: 1,
@@ -6910,6 +6975,7 @@ pub fn receipt(
                         path: &path_display,
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
+                        warnings: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -6949,6 +7015,7 @@ pub fn receipt(
                         path: &path_display,
                         errors: Vec::new(),
                         error: Some(error.to_string()),
+                        warnings: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -7229,6 +7296,7 @@ pub fn extensions(
                                                         path: &path_display,
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
+                                                        warnings: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -7393,6 +7461,7 @@ pub fn extensions(
                                                 path: &path_display,
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
+                                                warnings: Vec::new(),
                                             }))
                                         }
                                     },
@@ -7483,6 +7552,7 @@ pub fn extensions(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -7949,6 +8019,7 @@ pub fn agents(
                         path: &path_display,
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
+                        warnings: Vec::new(),
                     })),
                 },
                 debug,
@@ -7993,6 +8064,7 @@ pub fn agents(
                         path: &path_display,
                         errors: Vec::new(),
                         error: Some(error.to_string()),
+                        warnings: Vec::new(),
                     })),
                 },
                 debug,
@@ -8371,6 +8443,7 @@ pub fn up(
                                                         .map(ToString::to_string)
                                                         .collect(),
                                                     error: None,
+                                                    warnings: Vec::new(),
                                                 }))
                                             }
                                         };
@@ -8387,6 +8460,7 @@ pub fn up(
                                                     path: &path_display,
                                                     errors: Vec::new(),
                                                     error: Some(error.to_string()),
+                                                    warnings: Vec::new(),
                                                 }))
                                             }
                                         };
@@ -8479,6 +8553,7 @@ pub fn up(
                                                 .map(ToString::to_string)
                                                 .collect(),
                                             error: None,
+                                            warnings: Vec::new(),
                                         }))
                                     }
                                 };
@@ -8493,6 +8568,7 @@ pub fn up(
                                             path: &path_display,
                                             errors: Vec::new(),
                                             error: Some(error.to_string()),
+                                            warnings: Vec::new(),
                                         }))
                                     }
                                 };
@@ -8578,6 +8654,7 @@ pub fn up(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(ContractProblem::Load(error)) => match format {
@@ -8613,6 +8690,7 @@ pub fn up(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -8890,6 +8968,7 @@ pub fn clean(
                                                     path: &path_display,
                                                     errors: Vec::new(),
                                                     error: Some(error.to_string()),
+                                                    warnings: Vec::new(),
                                                 }))
                                             }
                                         },
@@ -9030,6 +9109,7 @@ pub fn clean(
                                                 path: &path_display,
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
+                                                warnings: Vec::new(),
                                             }))
                                         }
                                     },
@@ -9126,6 +9206,7 @@ pub fn clean(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -9577,7 +9658,11 @@ pub fn workspace_validate(
                 OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                     ok: true,
                     path: &path_display,
-                    summary: Some(ValidateSummary { error_count: 0 }),
+                    summary: Some(ValidateSummary {
+                        error_count: 0,
+                        warn_count: 0,
+                    }),
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Validation(errors)) => match format {
@@ -9595,7 +9680,9 @@ pub fn workspace_validate(
                     path: &path_display,
                     summary: Some(ValidateSummary {
                         error_count: errors.errors().len(),
+                        warn_count: 0,
                     }),
+                    warnings: Vec::new(),
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                 })),
@@ -9609,7 +9696,11 @@ pub fn workspace_validate(
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
-                    summary: Some(ValidateSummary { error_count: 1 }),
+                    summary: Some(ValidateSummary {
+                        error_count: 1,
+                        warn_count: 0,
+                    }),
+                    warnings: Vec::new(),
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                 })),
@@ -9650,7 +9741,9 @@ fn invalid_workspace_contract_output(
             path: &path_display,
             summary: Some(ValidateSummary {
                 error_count: why_lines.len(),
+                warn_count: 0,
             }),
+            warnings: Vec::new(),
             errors: why_lines
                 .iter()
                 .map(|line| compact_backticked_paths(line))
@@ -11072,6 +11165,7 @@ pub fn workspace_tasks(
                                         path: &path_display,
                                         errors: Vec::new(),
                                         error: Some(error.to_string()),
+                                        warnings: Vec::new(),
                                     }))
                                 }
                             };
@@ -11103,6 +11197,7 @@ pub fn workspace_tasks(
                                         .map(ToString::to_string)
                                         .collect(),
                                     error: None,
+                                    warnings: Vec::new(),
                                 }))
                             }
                         };
@@ -11184,6 +11279,7 @@ pub fn workspace_tasks(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -11281,6 +11377,7 @@ pub fn workspace_list(
                                     path: &path_display,
                                     errors: Vec::new(),
                                     error: Some(error),
+                                    warnings: Vec::new(),
                                 }))
                             }
                         };
@@ -11373,6 +11470,7 @@ pub fn workspace_list(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -11484,6 +11582,7 @@ pub fn workspace_execution_plan(
                                     path: &path_display,
                                     errors: Vec::new(),
                                     error: Some(error),
+                                    warnings: Vec::new(),
                                 }))
                             }
                         };
@@ -11523,6 +11622,7 @@ pub fn workspace_execution_plan(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -11632,6 +11732,7 @@ pub fn workspace_doctor(
                                     path: &path_display,
                                     errors: Vec::new(),
                                     error: Some(error),
+                                    warnings: Vec::new(),
                                 }))
                             }
                         };
@@ -11677,6 +11778,7 @@ pub fn workspace_doctor(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -11693,6 +11795,7 @@ pub fn workspace_doctor(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -11792,6 +11895,7 @@ pub fn workspace_explain(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -11808,6 +11912,7 @@ pub fn workspace_explain(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -11896,6 +12001,7 @@ pub fn workspace_check(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -11912,6 +12018,7 @@ pub fn workspace_check(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -12021,6 +12128,7 @@ pub fn workspace_up(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -12037,6 +12145,7 @@ pub fn workspace_up(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -12162,6 +12271,7 @@ pub fn workspace_refresh(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -12178,6 +12288,7 @@ pub fn workspace_refresh(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -12250,6 +12361,7 @@ pub fn workspace_diff(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -12266,6 +12378,7 @@ pub fn workspace_diff(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -12338,6 +12451,7 @@ pub fn workspace_status(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -12354,6 +12468,7 @@ pub fn workspace_status(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -12462,6 +12577,7 @@ pub fn workspace_receipt(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -12478,6 +12594,7 @@ pub fn workspace_receipt(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -12592,6 +12709,7 @@ pub fn workspace_run(
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
+                    warnings: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -12608,6 +12726,7 @@ pub fn workspace_run(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -14323,6 +14442,7 @@ fn render_repo_receipt_diff(
                         path: json_path,
                         errors: vec![error],
                         error: None,
+                        warnings: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -20776,7 +20896,10 @@ fn format_execution_context_brief(context: &ExecutionContextSummary<'_>) -> Stri
     if let Some(attachments) = context.attachments.as_ref()
         && !attachments.isolated_paths.is_empty()
     {
-        details.push(format!("isolated={}", attachments.isolated_paths.join("+")));
+        details.push(format!(
+            "isolated={}",
+            attachments.isolated_effective_paths.join("+")
+        ));
     }
 
     format!("{} ({})", context.name, details.join(", "))
@@ -20800,6 +20923,14 @@ fn execution_context_plan_details(context: &ExecutionContextSummary<'_>) -> Stri
         && !attachments.compose.is_empty()
     {
         details.push(format!("compose={}", attachments.compose.join("+")));
+    }
+    if let Some(attachments) = context.attachments.as_ref()
+        && !attachments.isolated_effective_paths.is_empty()
+    {
+        details.push(format!(
+            "isolated={}",
+            attachments.isolated_effective_paths.join("+")
+        ));
     }
 
     details.join(", ")
@@ -22042,12 +22173,13 @@ mod tests {
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
-        build_up_preview, compact_contract_file_path_relative_to, compact_path_relative_to,
-        compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
-        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
-        render_detect_comparison_section, render_execution_receipt_summary_block,
-        render_execution_receipt_text, render_report_section, render_tasks_text,
-        render_tasks_use_text, render_up_result, render_up_section_from_parts,
+        build_up_preview, collect_validate_warnings, compact_contract_file_path_relative_to,
+        compact_path_relative_to, compact_policy_path_relative_to_contract,
+        doctor_mode_execution_overrides, execute_repo_up, execution_receipt_step,
+        execution_receipt_step_detail, render_clean_text, render_detect_comparison_section,
+        render_execution_receipt_summary_block, render_execution_receipt_text,
+        render_report_section, render_tasks_text, render_tasks_use_text, render_up_result,
+        render_up_section_from_parts, render_validate_success_output,
         render_windows_uninstall_pending, run_execution_receipt, run_execution_receipt_with_shared,
         strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
         workspace_refresh_command, write_detected_merge,
@@ -26007,6 +26139,7 @@ policies:
                     attachments: Some(crate::output::ExecutionContextAttachmentsSummary {
                         compose: vec!["local"],
                         isolated_paths: vec!["node_modules"],
+                        isolated_effective_paths: vec![String::from("/workspace/node_modules")],
                     }),
                 },
                 crate::output::ExecutionContextSummary {
@@ -26048,7 +26181,7 @@ policies:
         assert!(rendered.contains("\n→ Lifecycle: ephemeral"));
         assert!(rendered.contains("\n→ Image: rust:1.94-bookworm"));
         assert!(rendered.contains(
-            "\n→ Contexts: app (container, ephemeral, image=rust:1.94-bookworm, compose=local, isolated=node_modules), host (native), remote-build (remote, provider=ssh, target=devbox)"
+            "\n→ Contexts: app (container, ephemeral, image=rust:1.94-bookworm, compose=local, isolated=/workspace/node_modules), host (native), remote-build (remote, provider=ssh, target=devbox)"
         ));
         assert!(rendered.contains("\n→ Env precedence:"));
         assert!(rendered.contains("\n→ Env:"));
@@ -26081,6 +26214,7 @@ policies:
                     attachments: Some(crate::output::ExecutionContextAttachmentsSummary {
                         compose: vec!["local"],
                         isolated_paths: vec!["node_modules"],
+                        isolated_effective_paths: vec![String::from("/workspace/node_modules")],
                     }),
                 },
                 crate::output::ExecutionContextSummary {
@@ -26105,8 +26239,63 @@ policies:
         assert!(rendered.contains("\n »  Preferred: `container`"));
         assert!(rendered.contains("\n »  Image: `maven:3.9.14-eclipse-temurin-21-noble`"));
         assert!(rendered.contains(
-            "\n »  Contexts: app (container, persistent, image=maven:3.9.14-eclipse-temurin-21-noble, compose=local, isolated=node_modules), host (native)"
+            "\n »  Contexts: app (container, persistent, image=maven:3.9.14-eclipse-temurin-21-noble, compose=local, isolated=/workspace/node_modules), host (native)"
         ));
+    }
+
+    #[test]
+    fn collect_validate_warnings_reports_cross_boundary_depends_on() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+    verify:
+      backend: native
+tasks:
+  setup:
+    context: app
+    run: npm install
+  build:
+    context: verify
+    run: npm run build
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let warnings = collect_validate_warnings(&contract);
+
+        assert!(warnings.iter().any(|warning| {
+            warning
+                .contains("task `build` depends_on `setup` across different execution boundaries")
+                && warning.contains("only durable external side effects survive")
+        }));
+    }
+
+    #[test]
+    fn render_validate_success_output_includes_warning_section() {
+        let rendered = strip_ansi_codes(&render_validate_success_output(
+            Path::new("/tmp/ota.yaml"),
+            None,
+            "./ota.yaml",
+            &[String::from(
+                "Task `build` depends_on `setup` across different execution boundaries | Why: Only durable external side effects survive across this boundary.",
+            )],
+        ));
+
+        assert!(rendered.contains("Warnings"));
+        assert!(rendered.contains("depends_on `setup` across different execution boundaries"));
     }
 
     #[test]
@@ -34239,9 +34428,13 @@ fn run_execution_receipt_with_shared(
         _ => effective.context_name.map(str::to_string),
     };
     let target = target.or_else(|| effective_task_execution_target(contract_path, effective));
-    let task_env = contract.tasks.get(task_name).map(|task| &task.env);
+    let effective_task_env = contract
+        .tasks
+        .get(task_name)
+        .map(|task| task.env_for_backend(contract.execution.as_ref(), backend));
     let env_details =
-        resolve_task_env_details(contract, contract_path, task_env).unwrap_or_default();
+        resolve_task_env_details(contract, contract_path, effective_task_env.as_ref())
+            .unwrap_or_default();
     let steps = executed_steps
         .iter()
         .enumerate()
@@ -38491,11 +38684,12 @@ fn repo_execution_receipt(
     exit_code: Option<i32>,
     next: Option<String>,
 ) -> ExecutionReceipt {
-    let task_env = task
-        .and_then(|task_name| contract.tasks.get(task_name))
-        .map(|task| &task.env);
-    let env_details = resolve_task_env_details(contract, path, task_env).unwrap_or_default();
     let execution_backend = phase_execution_backend(&context).unwrap_or(Backend::Native);
+    let effective_task_env = task
+        .and_then(|task_name| contract.tasks.get(task_name))
+        .map(|task| task.env_for_backend(contract.execution.as_ref(), execution_backend));
+    let env_details =
+        resolve_task_env_details(contract, path, effective_task_env.as_ref()).unwrap_or_default();
     let detail = service
         .map(|service| format!("service `{service}`"))
         .or_else(|| task.map(|task| format!("task `{task}`")));

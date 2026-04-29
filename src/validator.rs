@@ -2694,6 +2694,267 @@ fn backend_mode_name(backend: Backend) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContractAdvisory {
+    DependsOnBoundary(DependsOnBoundaryAdvisory),
+    LikelyUnusedAttachment(AttachmentUseAdvisory),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependsOnBoundaryAdvisory {
+    pub parent_task: String,
+    pub dependency_task: String,
+    pub parent: TaskExecutionBoundary,
+    pub dependency: TaskExecutionBoundary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachmentUseAdvisory {
+    pub context_name: String,
+    pub isolated_path: String,
+    pub effective_path: String,
+    pub tool: String,
+    pub expected_env: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskExecutionBoundary {
+    pub context_name: Option<String>,
+    pub backend: Backend,
+    pub lifecycle: Option<Lifecycle>,
+    pub backend_binding: Option<String>,
+}
+
+impl ContractAdvisory {
+    pub fn summary(&self) -> String {
+        match self {
+            ContractAdvisory::DependsOnBoundary(advisory) => format!(
+                "task `{}` depends_on `{}` across different execution boundaries",
+                advisory.parent_task, advisory.dependency_task
+            ),
+            ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
+                "context `{}` isolates `{}` but no task config points {} at `{}`",
+                advisory.context_name,
+                advisory.isolated_path,
+                advisory.tool,
+                advisory.effective_path
+            ),
+        }
+    }
+
+    pub fn why(&self) -> String {
+        match self {
+            ContractAdvisory::DependsOnBoundary(advisory) => format!(
+                "execution differs across the dependency edge ({}) so only durable external side effects survive; in-process, session-local, and container-local prep does not carry across",
+                describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", ")
+            ),
+            ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
+                "the attached path is durable, but `{}` only benefits if tasks in context `{}` point {} at `{}`",
+                advisory.isolated_path,
+                advisory.context_name,
+                advisory.tool,
+                advisory.effective_path
+            ),
+        }
+    }
+
+    pub fn next(&self) -> String {
+        match self {
+            ContractAdvisory::DependsOnBoundary(advisory) => format!(
+                "keep `{}` and `{}` on the same execution boundary when the dependency is meant to prepare the parent in place, or make the durable shared surface explicit",
+                advisory.parent_task, advisory.dependency_task
+            ),
+            ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
+                "configure {} to use `{}` or remove `execution.contexts.{}.attachments.isolated_paths: [{}]` if that cache should stay container-local",
+                advisory.tool,
+                advisory.effective_path,
+                advisory.context_name,
+                advisory.isolated_path
+            ),
+        }
+    }
+}
+
+pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    advisories.extend(collect_depends_on_boundary_advisories(contract));
+    advisories.extend(collect_attachment_use_advisories(contract));
+    advisories
+}
+
+fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        let Some(parent_boundary) = default_task_execution_boundary(contract, task) else {
+            continue;
+        };
+        for dependency_name in &task.depends_on {
+            let Some(dependency_task) = contract.tasks.get(dependency_name) else {
+                continue;
+            };
+            let Some(dependency_boundary) =
+                default_task_execution_boundary(contract, dependency_task)
+            else {
+                continue;
+            };
+            if describe_boundary_differences(&parent_boundary, &dependency_boundary).is_empty() {
+                continue;
+            }
+            advisories.push(ContractAdvisory::DependsOnBoundary(
+                DependsOnBoundaryAdvisory {
+                    parent_task: task_name.clone(),
+                    dependency_task: dependency_name.clone(),
+                    parent: parent_boundary.clone(),
+                    dependency: dependency_boundary,
+                },
+            ));
+        }
+    }
+    advisories
+}
+
+fn collect_attachment_use_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let Some(execution) = contract.execution.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut advisories = Vec::new();
+    for (context_name, context) in &execution.contexts {
+        if context.backend != Backend::Container {
+            continue;
+        }
+        for isolated_path in crate::execution::context_dependency_isolation_paths(context) {
+            let Some((tool, expected_env, expected_value)) =
+                attachment_path_expectation(isolated_path.as_str())
+            else {
+                continue;
+            };
+            let used_by_task = contract.tasks.values().any(|task| {
+                let backend = task_execution_backend(contract, task, Backend::Native);
+                if backend != Backend::Container {
+                    return false;
+                }
+                let Some(task_context_name) = task_execution_context_name(contract, task, backend)
+                else {
+                    return false;
+                };
+                if task_context_name != context_name {
+                    return false;
+                }
+                task.env_for_backend(contract.execution.as_ref(), backend)
+                    .get(expected_env)
+                    .is_some_and(|value| value.contains(expected_value))
+            });
+            if used_by_task {
+                continue;
+            }
+            advisories.push(ContractAdvisory::LikelyUnusedAttachment(
+                AttachmentUseAdvisory {
+                    context_name: context_name.clone(),
+                    isolated_path: isolated_path.clone(),
+                    effective_path: format!("/workspace/{isolated_path}"),
+                    tool: tool.to_string(),
+                    expected_env: expected_env.to_string(),
+                },
+            ));
+        }
+    }
+
+    advisories
+}
+
+fn attachment_path_expectation(path: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    match path {
+        ".m2" => Some(("Maven", "MAVEN_OPTS", "/workspace/.m2")),
+        ".npm" => Some(("npm", "NPM_CONFIG_CACHE", "/workspace/.npm")),
+        _ => None,
+    }
+}
+
+fn default_task_execution_boundary(
+    contract: &Contract,
+    task: &TaskSpec,
+) -> Option<TaskExecutionBoundary> {
+    let backend = task_execution_backend(contract, task, Backend::Native);
+    let context_name = task_execution_context_name(contract, task, backend).map(str::to_string);
+    let lifecycle = if let Some(branch) = task.mode_execution_branch(backend) {
+        branch.lifecycle.or_else(|| {
+            context_name
+                .as_deref()
+                .and_then(|name| contract.execution.as_ref()?.contexts.get(name))
+                .and_then(|context| context.lifecycle)
+        })
+    } else if let Some(context_name) = context_name.as_deref() {
+        contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get(context_name))
+            .and_then(|context| context.lifecycle)
+            .or_else(|| {
+                contract
+                    .execution
+                    .as_ref()
+                    .and_then(|execution| execution.lifecycle)
+            })
+    } else {
+        contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.lifecycle)
+    };
+
+    Some(TaskExecutionBoundary {
+        context_name,
+        backend,
+        lifecycle,
+        backend_binding: task
+            .backend_binding_for_backend(backend)
+            .map(str::to_string),
+    })
+}
+
+fn describe_boundary_differences(
+    parent: &TaskExecutionBoundary,
+    dependency: &TaskExecutionBoundary,
+) -> Vec<String> {
+    let mut differences = Vec::new();
+    if parent.context_name != dependency.context_name {
+        differences.push(format!(
+            "context: {} -> {}",
+            parent.context_name.as_deref().unwrap_or("none"),
+            dependency.context_name.as_deref().unwrap_or("none")
+        ));
+    }
+    if parent.backend != dependency.backend {
+        differences.push(format!(
+            "backend: {} -> {}",
+            backend_mode_name(parent.backend),
+            backend_mode_name(dependency.backend)
+        ));
+    }
+    if parent.lifecycle != dependency.lifecycle {
+        differences.push(format!(
+            "lifecycle: {} -> {}",
+            parent
+                .lifecycle
+                .map(crate::execution::format_lifecycle)
+                .unwrap_or("none"),
+            dependency
+                .lifecycle
+                .map(crate::execution::format_lifecycle)
+                .unwrap_or("none")
+        ));
+    }
+    if parent.backend_binding != dependency.backend_binding {
+        differences.push(format!(
+            "shared backend: {} -> {}",
+            parent.backend_binding.as_deref().unwrap_or("none"),
+            dependency.backend_binding.as_deref().unwrap_or("none")
+        ));
+    }
+    differences
+}
+
 fn is_loopback_only_address(value: &str) -> bool {
     let normalized = value.trim().to_ascii_lowercase();
     normalized == "localhost"
@@ -3313,7 +3574,10 @@ mod tests {
 
     use crate::parser::parse_contract_str;
 
-    use super::{task_shared_container_backend_shape, validate_contract};
+    use super::{
+        ContractAdvisory, collect_contract_advisories, task_shared_container_backend_shape,
+        validate_contract,
+    };
 
     #[test]
     fn validates_a_minimal_contract() {
@@ -3382,6 +3646,85 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn collects_depends_on_boundary_advisory_when_tasks_resolve_to_different_boundaries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+    verify:
+      backend: native
+tasks:
+  setup:
+    context: app
+    run: npm install
+  build:
+    context: verify
+    run: npm run build
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DependsOnBoundary(value)
+                if value.parent_task == "build" && value.dependency_task == "setup"
+        )));
+    }
+
+    #[test]
+    fn collects_attachment_use_advisory_when_maven_cache_path_is_not_redirected() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        isolated_paths:
+          - .m2
+tasks:
+  build:
+    context: app
+    run: mvn -q test
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LikelyUnusedAttachment(value)
+                if value.context_name == "app"
+                    && value.isolated_path == ".m2"
+                    && value.effective_path == "/workspace/.m2"
+                    && value.expected_env == "MAVEN_OPTS"
+        )));
     }
 
     #[test]
