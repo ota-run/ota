@@ -12873,7 +12873,7 @@ tasks:
             .display()
             .to_string();
         assert!(stderr.contains(&format!(
-            "Next: run `ota tasks --use {repo_path}` to inspect runnable task usage"
+            "Next:        run `ota tasks --use {repo_path}` to inspect runnable task usage"
         )));
         assert!(!stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
     }
