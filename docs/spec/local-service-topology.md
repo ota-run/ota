@@ -505,13 +505,16 @@ Ota should either:
 Ota must distinguish at least three views:
 
 1. `host`
-- the host-published address visible outside the local backend
 
-2. `internal`
-- the address reachable from another workload in the same backend or network
+   - the host-published address visible outside the local backend
 
-3. `topology`
-- the best address for the current task in the current local topology
+1. `internal`
+
+   - the address reachable from another workload in the same backend or network
+
+1. `topology`
+
+   - the best address for the current task in the current local topology
 
 Examples:
 
@@ -568,27 +571,31 @@ The current shared-local-backend slice is intentionally stricter than the long-t
 Current constraints:
 
 1. Shared local backend groups must resolve one deterministic container shape
-- same effective image
-- same effective dependency-isolation shape
-- same effective memory shape
-- workload-local listeners, readiness, and publications may differ
-- Ota rejects real workload-local conflicts, including conflicting in-backend bind endpoints and conflicting fixed host publications
 
-2. `address_view: topology` and `address_view: internal` are conservative
-- for container callers, Ota resolves them only when caller and producer share one declared container backend binding
-- for native callers, Ota resolves them only when caller and producer share one declared native backend binding
-- for remote callers, Ota resolves them only when caller and producer share one declared remote backend binding
+   - same effective image
+   - same effective dependency-isolation shape
+   - same effective memory shape
+   - workload-local listeners, readiness, and publications may differ
+   - Ota rejects real workload-local conflicts, including conflicting in-backend bind endpoints and conflicting fixed host publications
 
-3. Shared backends are currently:
-- local `container`
-- local `native`
-- remote `remote`
-- native and remote shared backends are currently persistent-only and do not carry container image/environment semantics
+1. `address_view: topology` and `address_view: internal` are conservative
 
-4. Fulfillment is backend-scoped
-- Ota now prepares the effective shared backend requirement union when the shared boundary declares `fulfillment: run`
-- native shared-backend fulfillment now runs against the host execution target
-- remote shared-backend fulfillment now runs against the remote execution target
+   - for container callers, Ota resolves them only when caller and producer share one declared container backend binding
+   - for native callers, Ota resolves them only when caller and producer share one declared native backend binding
+   - for remote callers, Ota resolves them only when caller and producer share one declared remote backend binding
+
+1. Shared backends are currently:
+
+   - local `container`
+   - local `native`
+   - remote `remote`
+   - native and remote shared backends are currently persistent-only and do not carry container image/environment semantics
+
+1. Fulfillment is backend-scoped
+
+   - Ota now prepares the effective shared backend requirement union when the shared boundary declares `fulfillment: run`
+   - native shared-backend fulfillment now runs against the host execution target
+   - remote shared-backend fulfillment now runs against the remote execution target
 
 ### Why these constraints exist now
 
@@ -700,26 +707,31 @@ Required adoption discipline:
 Recommended rollout by slice:
 
 1. task target bindings
-- update an existing service example to show first-class `targets`
-- add an advanced example showing topology binding plus open operator override
 
-2. shared local backends
-- add an advanced example with two long-running local services intentionally sharing one backend
-- make clear why this is not `depends_on`
+   - update an existing service example to show first-class `targets`
+   - add an advanced example showing topology binding plus open operator override
 
-3. backend-scoped run-path fulfillment
-- extend the advanced example to show mixed-runtime fulfillment in the shared backend
-- document the resulting declared-versus-effective environment evidence
+1. shared local backends
 
-4. policy-governed fulfillment and image/profile resolution
-- add or extend an advanced example showing declared profile intent versus policy-resolved effective
-  environment
-- keep the local example usable without enterprise policy, but add a governed variant where helpful
+   - add an advanced example with two long-running local services intentionally sharing one backend
+   - make clear why this is not `depends_on`
 
-5. advanced examples and adoption surface
-- update core site/reference docs as each slice ships
-- keep `examples/` and public teaching surfaces aligned with the canonical contract shape
-- ensure at least one advanced topology example remains current end-to-end
+1. backend-scoped run-path fulfillment
+
+   - extend the advanced example to show mixed-runtime fulfillment in the shared backend
+   - document the resulting declared-versus-effective environment evidence
+
+1. policy-governed fulfillment and image/profile resolution
+
+   - add or extend an advanced example showing declared profile intent versus policy-resolved effective
+     environment
+   - keep the local example usable without enterprise policy, but add a governed variant where helpful
+
+1. advanced examples and adoption surface
+
+   - update core site/reference docs as each slice ships
+   - keep `examples/` and public teaching surfaces aligned with the canonical contract shape
+   - ensure at least one advanced topology example remains current end-to-end
 
 The goal is adoption leverage, not example count. Every slice should leave Ota easier to understand
 through a concrete contract in `examples/`.

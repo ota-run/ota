@@ -6103,11 +6103,9 @@ tasks:
             r#"#!/bin/sh
 target="$1"
 shift
-[ "$1" = "sh" ] || exit 1
-shift
-[ "$1" = "-lc" ] || exit 1
-shift
-exec /bin/sh -lc "$1"
+[ -n "$target" ] || exit 1
+[ "$#" -ge 1 ] || exit 1
+exec /bin/sh -lc "$*"
 "#,
         );
 
@@ -6266,11 +6264,9 @@ tasks:
             r#"#!/bin/sh
 target="$1"
 shift
-[ "$1" = "sh" ] || exit 1
-shift
-[ "$1" = "-lc" ] || exit 1
-shift
-exec /bin/sh -lc "$1"
+[ -n "$target" ] || exit 1
+[ "$#" -ge 1 ] || exit 1
+exec /bin/sh -lc "$*"
 "#,
         );
 
@@ -6358,11 +6354,9 @@ esac
             r#"#!/bin/sh
 target="$1"
 shift
-[ "$1" = "sh" ] || exit 1
-shift
-[ "$1" = "-lc" ] || exit 1
-shift
-exec /bin/sh -lc "$1"
+[ -n "$target" ] || exit 1
+[ "$#" -ge 1 ] || exit 1
+exec /bin/sh -lc "$*"
 "#,
         );
 
@@ -6473,11 +6467,9 @@ policies:
             r#"#!/bin/sh
 target="$1"
 shift
-[ "$1" = "sh" ] || exit 1
-shift
-[ "$1" = "-lc" ] || exit 1
-shift
-exec /bin/sh -lc "$1"
+[ -n "$target" ] || exit 1
+[ "$#" -ge 1 ] || exit 1
+exec /bin/sh -lc "$*"
 "#,
         );
 

@@ -26790,7 +26790,10 @@ tasks:
 
         let rendered = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
         assert!(rendered.contains("Note:"), "{rendered}");
-        assert!(rendered.contains("running on the host environment"), "{rendered}");
+        assert!(
+            rendered.contains("running on the host environment"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -31785,13 +31788,20 @@ fn run_single_contract_target_streaming(
                     let repo_dir = std::fs::canonicalize(&target.contract_path)
                         .ok()
                         .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
-                        .or_else(|| target.contract_path.parent()
-                            .and_then(|p| std::fs::canonicalize(p).ok()))
+                        .or_else(|| {
+                            target
+                                .contract_path
+                                .parent()
+                                .and_then(|p| std::fs::canonicalize(p).ok())
+                        })
                         .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
                         .map(|p| p.display().to_string());
                     Some(format!(
                         "run `ota tasks --use{}` to inspect runnable task usage",
-                        repo_dir.as_ref().map(|d| format!(" {d}")).unwrap_or_default()
+                        repo_dir
+                            .as_ref()
+                            .map(|d| format!(" {d}"))
+                            .unwrap_or_default()
                     ))
                 },
             );
@@ -32021,13 +32031,20 @@ fn run_single_contract_target_captured(
                     let repo_dir = std::fs::canonicalize(&target.contract_path)
                         .ok()
                         .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
-                        .or_else(|| target.contract_path.parent()
-                            .and_then(|p| std::fs::canonicalize(p).ok()))
+                        .or_else(|| {
+                            target
+                                .contract_path
+                                .parent()
+                                .and_then(|p| std::fs::canonicalize(p).ok())
+                        })
                         .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
                         .map(|p| p.display().to_string());
                     Some(format!(
                         "run `ota tasks --use{}` to inspect runnable task usage",
-                        repo_dir.as_ref().map(|d| format!(" {d}")).unwrap_or_default()
+                        repo_dir
+                            .as_ref()
+                            .map(|d| format!(" {d}"))
+                            .unwrap_or_default()
                     ))
                 },
             );
@@ -34307,7 +34324,9 @@ fn run_execution_receipt_with_shared(
         policy: execution_policy_lines(contract, contract_path, backend),
         steps,
         status: Some(status),
-        failed_task: failure_context.as_ref().map(|context| context.failed_task.clone()),
+        failed_task: failure_context
+            .as_ref()
+            .map(|context| context.failed_task.clone()),
         failed_dependency: failure_context
             .as_ref()
             .and_then(|context| context.failed_dependency.clone()),
