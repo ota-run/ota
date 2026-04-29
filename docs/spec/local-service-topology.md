@@ -320,9 +320,12 @@ Current `ensure_ready` constraints:
 - the current shipped slice auto-starts producer services only when ota can own them honestly:
   persistent container producer services, unix native producer services started through the
   activation-owned native path, or built-in remote producer services (`ssh`, `tsh`, `kubectl`,
-  `daytona`) only when the caller and producer share one declared remote backend binding, the
-  target view is `address_view: topology` or `address_view: internal`, and readiness is TCP-based,
-  and only when the target binding itself already resolved truthfully
+  `daytona`) only when the caller and producer share one declared remote backend binding, and only
+  when the target binding itself already resolved truthfully:
+  - `address_view: host` requires a fixed `project.host` endpoint
+  - `address_view: topology` and `address_view: internal` may probe the fixed bind endpoint on
+    the remote plane
+  - readiness may be `tcp` or `http`
 - built-in remote provider examples:
   - `ssh`: `user@host`
   - `tsh`: `user@host`
@@ -341,6 +344,8 @@ Current `runtime.readiness` support for service tasks:
 - `kind: http`
   - probe one declared listener through its projected host endpoint and wait for a `2xx` or `3xx`
     response on the declared `path`
+  - for shared-remote `ensure_ready`, built-in remote providers may instead probe the declared
+    remote-plane listener address and fixed `bind.port.value`
 - `kind: tcp`
   - probe one declared listener through its projected host endpoint and wait until it accepts
     connections
@@ -430,8 +435,9 @@ Important status:
 - `scope: local` is the shipped slice
 - `scope: remote` is now shipped for `backend: remote`
 - remote producer auto-start through `activation.mode: ensure_ready` is now shipped for built-in
-  remote providers on shared-remote `address_view: topology` / `address_view: internal` targets
-  with TCP readiness; remote host-view activation and remote HTTP readiness remain later work
+  remote providers on shared-remote `address_view: host` / `address_view: topology` /
+  `address_view: internal` targets, with `tcp` and `http` readiness supported on the shipped
+  built-in remote path; backend-provider remote activation remains later work
 
 Why this is the intended long-term direction:
 

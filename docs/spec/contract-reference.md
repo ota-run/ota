@@ -1089,7 +1089,10 @@ Task target binding semantics:
   - the current shipped slice supports actual producer auto-start only when ota can own the producer honestly:
     - persistent container producer services
     - unix native producer services started through the activation-owned native path
-    - built-in remote producer services (`ssh`, `tsh`, `kubectl`, `daytona`) only when the caller and producer share one declared remote backend binding, the target view is `address_view: topology` or `address_view: internal`, and readiness is TCP-based
+    - built-in remote producer services (`ssh`, `tsh`, `kubectl`, `daytona`) only when the caller and producer share one declared remote backend binding:
+      - `address_view: host` requires a fixed `project.host` endpoint
+      - `address_view: topology` and `address_view: internal` may probe the fixed remote-plane bind endpoint
+      - readiness may be `tcp` or `http`
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
   - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
   - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -1099,8 +1102,10 @@ Current `runtime.readiness` support for service tasks:
 - `kind: http`
   - requires `listener`
   - requires `path`
-  - requires the referenced listener to declare `project.host`
-  - ota waits for a `2xx` or `3xx` response from that projected host endpoint
+  - requires the referenced listener to declare `project.host`, except for shared-remote
+    `ensure_ready` on built-in remote providers where ota may instead probe the declared
+    remote-plane listener address and fixed `bind.port.value`
+  - ota waits for a `2xx` or `3xx` response from the selected probe endpoint
 - `kind: tcp`
   - requires `listener`
   - for local host-projected readiness, requires the referenced listener to declare `project.host`
@@ -1162,7 +1167,10 @@ Shared local backend semantics:
   - `activation.mode: ensure_ready` currently auto-starts:
     - persistent container producer services
     - unix native producer services
-    - built-in remote producer services only for shared-remote `address_view: topology` / `address_view: internal` with TCP readiness
+    - built-in remote producer services for shared-remote `address_view: host` / `address_view: topology` / `address_view: internal`
+      - `address_view: host` uses the listener fixed `project.host` endpoint
+      - shared-remote `address_view: topology` / `address_view: internal` use the listener fixed `bind.port.value` on the remote plane
+      - readiness may be `tcp` or `http`
       - built-in remote providers:
         - `ssh`: `user@host`
         - `tsh`: `user@host`
