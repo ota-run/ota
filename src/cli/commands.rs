@@ -103,9 +103,10 @@ use crate::runner::{
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
     TaskTargetResolutionEvidence, clean_execution_report, clean_stale_execution,
-    effective_execution, effective_task_execution, env_resolution_source_label,
-    ephemeral_container_name, load_declared_env_sources, load_policy_env_overlay,
-    named_execution_context, persistent_container_name, reported_task_context_for_backend,
+    effective_execution, effective_task_env_for_backend, effective_task_env_for_selection,
+    effective_task_execution, env_resolution_source_label, ephemeral_container_name,
+    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
+    persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_effective_task_container_backend,
     resolve_execution_backend, resolve_execution_backend_with_contract_path,
     resolve_task_env_details, resolve_task_env_details_with_policy,
@@ -1870,7 +1871,7 @@ fn build_env_report(
     contract_path: &Path,
     task_name: Option<&str>,
 ) -> Result<EnvReport, String> {
-    let task_env = match task_name {
+    let (task_env, explicit_task_env) = match task_name {
         Some(task_name) => {
             let Some(task) = contract.tasks.get(task_name) else {
                 return Err(RunError::UnknownTask {
@@ -1878,9 +1879,17 @@ fn build_env_report(
                 }
                 .to_string());
             };
-            Some(&task.env)
+            (
+                effective_task_env_for_selection(
+                    contract,
+                    task_name,
+                    ExecutionOverrides::default(),
+                    contract_working_dir(contract_path),
+                ),
+                Some(&task.env),
+            )
         }
-        None => None,
+        None => (None, None),
     };
 
     let policy_env = load_policy_env_overlay(contract_path).map_err(|error| error.to_string())?;
@@ -1929,10 +1938,20 @@ fn build_env_report(
     }
 
     for (name, requirement) in &contract.env {
-        let task_override = task_env.and_then(|task_env| task_env.get(name));
+        let task_override = task_env.as_ref().and_then(|task_env| task_env.get(name));
 
         if let Some(value) = task_override {
-            env.push(build_task_overridden_env_entry(name, requirement, value));
+            let source = if explicit_task_env.is_some_and(|task_env| task_env.contains_key(name)) {
+                "task"
+            } else {
+                "execution"
+            };
+            env.push(build_task_overridden_env_entry(
+                name,
+                requirement,
+                value,
+                source,
+            ));
             contract_resolved_count += 1;
             continue;
         }
@@ -2024,11 +2043,16 @@ fn build_env_report(
         }
     }
 
-    if let Some(task_env) = task_env {
+    if let Some(task_env) = task_env.as_ref() {
         for (name, value) in task_env {
             if contract.env.contains_key(name) {
                 continue;
             }
+            let source = if explicit_task_env.is_some_and(|raw_env| raw_env.contains_key(name)) {
+                String::from("task")
+            } else {
+                String::from("execution")
+            };
             env.push(EnvEntry {
                 name: name.clone(),
                 kind: EnvEntryKind::Task,
@@ -2036,7 +2060,7 @@ fn build_env_report(
                 default: None,
                 allowed: Vec::new(),
                 value: Some(value.clone()),
-                source: String::from("task"),
+                source,
                 status: EnvEntryStatus::Task,
                 next: None,
             });
@@ -2068,6 +2092,7 @@ fn build_task_overridden_env_entry(
     name: &str,
     requirement: &EnvRequirement,
     value: &str,
+    source: &str,
 ) -> EnvEntry {
     EnvEntry {
         name: name.to_string(),
@@ -2076,7 +2101,7 @@ fn build_task_overridden_env_entry(
         default: requirement.default.clone(),
         allowed: requirement.allowed.clone(),
         value: Some(display_env_value(value, requirement.secret)),
-        source: String::from("task"),
+        source: String::from(source),
         status: EnvEntryStatus::Resolved,
         next: None,
     }
@@ -22173,16 +22198,16 @@ mod tests {
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
-        build_up_preview, collect_validate_warnings, compact_contract_file_path_relative_to,
-        compact_path_relative_to, compact_policy_path_relative_to_contract,
-        doctor_mode_execution_overrides, execute_repo_up, execution_receipt_step,
-        execution_receipt_step_detail, render_clean_text, render_detect_comparison_section,
-        render_execution_receipt_summary_block, render_execution_receipt_text,
-        render_report_section, render_tasks_text, render_tasks_use_text, render_up_result,
-        render_up_section_from_parts, render_validate_success_output,
-        render_windows_uninstall_pending, run_execution_receipt, run_execution_receipt_with_shared,
-        strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
-        workspace_refresh_command, write_detected_merge,
+        build_env_report, build_up_preview, collect_validate_warnings,
+        compact_contract_file_path_relative_to, compact_path_relative_to,
+        compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
+        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
+        render_detect_comparison_section, render_execution_receipt_summary_block,
+        render_execution_receipt_text, render_report_section, render_tasks_text,
+        render_tasks_use_text, render_up_result, render_up_section_from_parts,
+        render_validate_success_output, render_windows_uninstall_pending, run_execution_receipt,
+        run_execution_receipt_with_shared, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
+        windows_uninstall_script, workspace_refresh_command, write_detected_merge,
     };
     use crate::detector::{
         Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
@@ -22238,6 +22263,56 @@ mod tests {
             dir.join("mise").display(),
         );
         write_executable_script(&dir.join("brew"), &brew_script);
+    }
+
+    #[test]
+    fn build_env_report_uses_effective_execution_env_for_task() {
+        let temp_dir = TempDir::new().unwrap();
+        let contract_path = temp_dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      env:
+        CONTEXT_CACHE: ${OTA_WORKSPACE}/context-cache
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        isolated_paths:
+          - .m2
+tasks:
+  build:
+    context: app
+    run: mvn package
+"#,
+        )
+        .unwrap();
+
+        let report = build_env_report(&contract, &contract_path, Some("build")).unwrap();
+
+        assert!(report.env.iter().any(|entry| {
+            entry.name == "OTA_WORKSPACE"
+                && entry.value.as_deref() == Some("/workspace")
+                && entry.source == "execution"
+        }));
+        assert!(report.env.iter().any(|entry| {
+            entry.name == "MAVEN_OPTS"
+                && entry.value.as_deref() == Some("-Dmaven.repo.local=/workspace/.m2/repository")
+                && entry.source == "execution"
+        }));
+        assert!(report.env.iter().any(|entry| {
+            entry.name == "CONTEXT_CACHE"
+                && entry.value.as_deref() == Some("/workspace/context-cache")
+                && entry.source == "execution"
+        }));
     }
 
     fn make_source_bootstrap_shims(dir: &Path) {
@@ -34428,10 +34503,18 @@ fn run_execution_receipt_with_shared(
         _ => effective.context_name.map(str::to_string),
     };
     let target = target.or_else(|| effective_task_execution_target(contract_path, effective));
-    let effective_task_env = contract
-        .tasks
-        .get(task_name)
-        .map(|task| task.env_for_backend(contract.execution.as_ref(), backend));
+    let effective_task_env = match (resolved_backend.as_ref(), contract.tasks.get(task_name)) {
+        (Some(resolved_backend), Some(task)) => Some(effective_task_env_for_backend(
+            contract,
+            task,
+            resolved_backend,
+            contract_working_dir(contract_path),
+        )),
+        _ => contract
+            .tasks
+            .get(task_name)
+            .map(|task| task.env_for_backend(contract.execution.as_ref(), backend)),
+    };
     let env_details =
         resolve_task_env_details(contract, contract_path, effective_task_env.as_ref())
             .unwrap_or_default();

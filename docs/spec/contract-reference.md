@@ -419,7 +419,9 @@ Current implementation:
 - named contexts can now share a base execution shape through `extends`, while shorthand remains the lean authoring path for shorthand-only repos
 - `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
+- ota injects `OTA_WORKSPACE` into task execution so backend-aware workspace-relative paths stay explicit without hardcoding `/workspace`
 - task env precedence is: resolved context env, then `tasks.<name>.env`, then selected `tasks.<name>.execution.modes.<mode>.env`
+- ota-derived cache env is fallback-only and currently covers `MAVEN_OPTS` for isolated `.m2` and `NPM_CONFIG_CACHE` for isolated `.npm`; explicit task or context env still wins
 - container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
 - `ota up` now runs the `setup` task in the task's resolved context backend
 - `ota run` supports remote execution when the resolved context or legacy `execution.backends.remote` declares `provider` and `target`

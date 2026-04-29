@@ -1327,6 +1327,166 @@ pub fn resolve_task_env(
     Ok(overrides)
 }
 
+fn expand_ota_workspace_templates(value: &str, ota_workspace: &str) -> String {
+    value
+        .replace("${OTA_WORKSPACE}", ota_workspace)
+        .replace("$OTA_WORKSPACE", ota_workspace)
+}
+
+fn ota_workspace_for_backend(working_dir: &Path, backend: &ResolvedExecutionBackend) -> String {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => working_dir.display().to_string(),
+        ResolvedExecutionBackend::Container { .. } => String::from("/workspace"),
+        ResolvedExecutionBackend::Remote { cwd, .. }
+        | ResolvedExecutionBackend::BackendProvider { cwd, .. } => {
+            cwd.clone().unwrap_or_else(|| String::from("."))
+        }
+    }
+}
+
+fn derived_attachment_env_for_backend(
+    backend: &ResolvedExecutionBackend,
+    ota_workspace: &str,
+) -> BTreeMap<String, String> {
+    let ResolvedExecutionBackend::Container {
+        dependency_isolation_paths,
+        ..
+    } = backend
+    else {
+        return BTreeMap::new();
+    };
+
+    derived_attachment_env_for_isolation_paths(dependency_isolation_paths, ota_workspace)
+}
+
+fn derived_attachment_env_for_isolation_paths(
+    dependency_isolation_paths: &[String],
+    ota_workspace: &str,
+) -> BTreeMap<String, String> {
+    let mut derived = BTreeMap::new();
+    for path in dependency_isolation_paths {
+        match path.as_str() {
+            ".m2" => {
+                derived.insert(
+                    String::from("MAVEN_OPTS"),
+                    format!("-Dmaven.repo.local={ota_workspace}/.m2/repository"),
+                );
+            }
+            ".npm" => {
+                derived.insert(
+                    String::from("NPM_CONFIG_CACHE"),
+                    format!("{ota_workspace}/.npm"),
+                );
+            }
+            _ => {}
+        }
+    }
+    derived
+}
+
+fn resolved_backend_context_name(backend: &ResolvedExecutionBackend) -> Option<&str> {
+    match backend {
+        ResolvedExecutionBackend::Native {
+            shared_local_backend,
+        } => shared_local_backend
+            .as_ref()
+            .and_then(|shared| shared.context_name.as_deref()),
+        ResolvedExecutionBackend::Container { context_name, .. } => context_name.as_deref(),
+        ResolvedExecutionBackend::Remote {
+            shared_local_backend,
+            ..
+        }
+        | ResolvedExecutionBackend::BackendProvider {
+            shared_local_backend,
+            ..
+        } => shared_local_backend
+            .as_ref()
+            .and_then(|shared| shared.context_name.as_deref()),
+    }
+}
+
+pub(crate) fn effective_task_env_for_backend(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+) -> BTreeMap<String, String> {
+    let ota_workspace = ota_workspace_for_backend(working_dir, backend);
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let mut env = derived_attachment_env_for_backend(backend, ota_workspace.as_str());
+    env.extend(
+        task.env_for_backend_with_context_name(
+            contract.execution.as_ref(),
+            backend_kind,
+            resolved_backend_context_name(backend),
+        )
+        .into_iter()
+        .map(|(name, value)| {
+            (
+                name,
+                expand_ota_workspace_templates(&value, ota_workspace.as_str()),
+            )
+        }),
+    );
+    env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
+    env
+}
+
+pub(crate) fn effective_task_env_for_selection(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    working_dir: &Path,
+) -> Option<BTreeMap<String, String>> {
+    let task = contract.tasks.get(task_name)?;
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let backend = effective.backend;
+    let shared_context_name = resolve_task_shared_local_backend(contract, task_name, backend)
+        .ok()
+        .flatten()
+        .and_then(|shared| shared.context_name);
+    let context_name = shared_context_name
+        .as_deref()
+        .or_else(|| task.context_for_backend(contract.execution.as_ref(), backend));
+    let ota_workspace = match backend {
+        Backend::Native => working_dir.display().to_string(),
+        Backend::Container => String::from("/workspace"),
+        Backend::Remote => effective
+            .remote
+            .and_then(|remote| remote.cwd.clone())
+            .unwrap_or_else(|| String::from(".")),
+    };
+    let dependency_isolation_paths = if backend == Backend::Container {
+        context_name
+            .and_then(|name| {
+                contract
+                    .execution
+                    .as_ref()
+                    .and_then(|execution| execution.contexts.get(name))
+            })
+            .map(context_dependency_isolation_paths)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let mut env = derived_attachment_env_for_isolation_paths(
+        &dependency_isolation_paths,
+        ota_workspace.as_str(),
+    );
+    env.extend(
+        task.env_for_backend_with_context_name(contract.execution.as_ref(), backend, context_name)
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    name,
+                    expand_ota_workspace_templates(&value, ota_workspace.as_str()),
+                )
+            }),
+    );
+    env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
+    Some(env)
+}
+
 pub fn resolve_task_env_details(
     contract: &Contract,
     contract_path: &Path,
@@ -3526,7 +3686,7 @@ fn execute_task_with_hooks(
                 os: current_os.to_string(),
             });
         };
-    let task_env = task.env_for_backend(contract.execution.as_ref(), backend_kind);
+    let task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
     let env_details =
         resolve_task_env_details_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
     let secret_env_names: BTreeSet<String> = env_details
@@ -14660,18 +14820,19 @@ mod tests {
     use super::{
         BackendFulfillmentStrategy, CapturedRunOutcome, ContainerPortPublication,
         EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME,
-        ProvisioningExecutionTarget, ResolvedExecutionBackend, ResolvedTaskRuntime,
-        ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost, RunError,
-        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
-        RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
-        TaskRunState, TaskTargetActivationEvidence, TaskTargetActivationStatus,
-        TaskTargetResolutionSource, activation_loader_label, backend_fulfillment_plan,
-        clean_execution, clean_execution_report, container_identity_seed, contract_working_dir,
-        current_os, effective_task_execution, ephemeral_container_stream_command,
-        execute_task_with_hooks, extract_probe_version_token, persistent_cleanup_targets,
-        persistent_container_name, persistent_container_name_for_seed, plan_task_execution,
-        preflight_container_host_publications, prepare_container_runtime_projection,
-        preparing_loader_label, ready_runtime_public_endpoint_line, resolve_execution_backend,
+        ProvisioningExecutionTarget, ResolvedExecutionBackend, ResolvedSharedLocalBackend,
+        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
+        ResolvedTaskRuntimeHost, RunError, RuntimeListenerHostPublicationFailure,
+        RuntimeListenerResolutionKind, RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode,
+        TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
+        TaskTargetActivationStatus, TaskTargetResolutionSource, activation_loader_label,
+        backend_fulfillment_plan, clean_execution, clean_execution_report, container_identity_seed,
+        contract_working_dir, current_os, effective_task_env_for_backend, effective_task_execution,
+        ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
+        persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
+        plan_task_execution, preflight_container_host_publications,
+        prepare_container_runtime_projection, preparing_loader_label,
+        ready_runtime_public_endpoint_line, resolve_execution_backend,
         resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
         resolve_task_target_binding_url, run_task, run_task_captured,
         run_task_captured_with_args_with_overrides, run_task_with_args,
@@ -14980,6 +15141,203 @@ tasks:
             Some(value) => unsafe { env::set_var("OTA_TEST_ENV", value) },
             None => unsafe { env::remove_var("OTA_TEST_ENV") },
         }
+    }
+
+    #[test]
+    fn effective_task_env_for_backend_derives_maven_cache_and_workspace_for_container() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        isolated_paths:
+          - .m2
+tasks:
+  build:
+    context: app
+    run: mvn package
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("build").unwrap(),
+            &ResolvedExecutionBackend::Container {
+                context_name: Some(String::from("app")),
+                shared_local_backend: None,
+                image: String::from("maven:3.9.14-eclipse-temurin-21-noble"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Persistent,
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                publications: Vec::new(),
+                dependency_isolation_paths: vec![String::from(".m2")],
+            },
+            Path::new("/tmp/repo"),
+        );
+
+        assert_eq!(
+            env.get("OTA_WORKSPACE").map(String::as_str),
+            Some("/workspace")
+        );
+        assert_eq!(
+            env.get("MAVEN_OPTS").map(String::as_str),
+            Some("-Dmaven.repo.local=/workspace/.m2/repository")
+        );
+    }
+
+    #[test]
+    fn effective_task_env_for_backend_expands_workspace_templates_and_preserves_override_precedence()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: tooling
+  contexts:
+    tooling:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - .npm
+tasks:
+  api:
+    context: tooling
+    env:
+      NPM_CONFIG_CACHE: ${OTA_WORKSPACE}/custom-npm
+      CUSTOM_ROOT: ${OTA_WORKSPACE}/cache
+    script: ./scripts/api/run.sh
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("api").unwrap(),
+            &ResolvedExecutionBackend::Container {
+                context_name: Some(String::from("tooling")),
+                shared_local_backend: None,
+                image: String::from("node:24-bookworm"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Ephemeral,
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                publications: Vec::new(),
+                dependency_isolation_paths: vec![String::from(".npm")],
+            },
+            Path::new("/tmp/repo"),
+        );
+
+        assert_eq!(
+            env.get("OTA_WORKSPACE").map(String::as_str),
+            Some("/workspace")
+        );
+        assert_eq!(
+            env.get("NPM_CONFIG_CACHE").map(String::as_str),
+            Some("/workspace/custom-npm")
+        );
+        assert_eq!(
+            env.get("CUSTOM_ROOT").map(String::as_str),
+            Some("/workspace/cache")
+        );
+    }
+
+    #[test]
+    fn effective_task_env_for_backend_uses_resolved_shared_context_env() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      env:
+        CACHE_ROOT: /workspace/app-cache
+      container:
+        image: node:24-bookworm
+    shared:
+      backend: container
+      lifecycle: persistent
+      env:
+        CACHE_ROOT: /workspace/shared-cache
+      container:
+        image: node:24-bookworm
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      context: shared
+      lifecycle: persistent
+tasks:
+  build:
+    context: app
+    run: npm run build
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("build").unwrap(),
+            &ResolvedExecutionBackend::Container {
+                context_name: Some(String::from("shared")),
+                shared_local_backend: Some(ResolvedSharedLocalBackend {
+                    name: String::from("workbench"),
+                    backend: Backend::Container,
+                    lifecycle: Lifecycle::Persistent,
+                    context_name: Some(String::from("shared")),
+                    publications: Vec::new(),
+                    fulfillment: None,
+                    environment: None,
+                }),
+                image: String::from("node:24-bookworm"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Persistent,
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                publications: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+            },
+            Path::new("/tmp/repo"),
+        );
+
+        assert_eq!(
+            env.get("CACHE_ROOT").map(String::as_str),
+            Some("/workspace/shared-cache")
+        );
     }
 
     #[test]

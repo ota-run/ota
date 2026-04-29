@@ -267,7 +267,8 @@ Repo-authored config stays under `.ota/`; Ota-owned runtime state such as owners
 Ota labels those volumes with a stable repo ownership token stored under `.ota/state/ownership-id`, and `ota clean` rediscovers and removes them even if the repo path, image, engine, or declared isolated paths drift later.
 Ota also records repo-used engines under `.ota/state/managed-engines` so `ota clean` can keep drift cleanup scoped to the engines that actually owned this repo's managed state.
 Execution summaries surface these paths as effective in-container paths such as `/workspace/node_modules` so operators can line up tool configuration with the durable attachment boundary.
-When the isolated path looks like a well-known cache surface such as `.m2` or `.npm` but no task configuration points the tool at `/workspace/<path>`, `ota validate` and `ota doctor` warn that the attachment is likely unused.
+Ota injects `OTA_WORKSPACE` automatically for task execution (`/workspace` in containers), and currently derives fallback cache env automatically for well-known attachment pairs such as `.m2` -> `MAVEN_OPTS` and `.npm` -> `NPM_CONFIG_CACHE`.
+If a repo explicitly points one of those well-known tool env vars somewhere else, `ota validate` and `ota doctor` warn that the attached cache path is likely unused.
 
 ### `tasks.<name>.runtime.kind: service`
 
