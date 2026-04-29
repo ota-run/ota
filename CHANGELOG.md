@@ -26,7 +26,11 @@
 
 ## Unreleased
 
-- No unreleased entries yet.
+- added context-wide execution env defaults under `execution.contexts.<name>.env`, with execution-time precedence now resolved as context env, then `tasks.<name>.env`, then selected mode env, while keeping ota-derived cache env as fallback only
+- ota now injects `OTA_WORKSPACE` for task execution and derives fallback cache wiring automatically for known attachment pairs (`.m2` -> `MAVEN_OPTS`, `.npm` -> `NPM_CONFIG_CACHE`) when the task resolves through a compatible execution context
+- added cross-boundary `depends_on` advisories to `ota validate` and `ota doctor`, calling out context/backend/lifecycle drift and explaining that only durable external side effects survive across that dependency edge
+- made execution summaries and attachment guidance more explicit by surfacing effective in-container attachment paths such as `/workspace/<path>`, and added warnings when a declared attachment is likely unused because an explicit tool env points somewhere else
+- made `ota env --task <name>` inspect the effective execution env for the selected task instead of only the raw task-local env, including context env, ota-injected `OTA_WORKSPACE`, and derived cache env when they are part of the resolved task execution
 
 ## 1.6.4
 
