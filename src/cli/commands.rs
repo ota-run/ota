@@ -98,15 +98,15 @@ use crate::provisioning::{
 };
 use crate::runner::{
     CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
-    ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
-    RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
-    RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
-    SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
-    TaskTargetResolutionEvidence, clean_execution_report, clean_stale_execution,
-    effective_execution, effective_task_env_for_backend, effective_task_env_for_selection,
-    effective_task_execution, env_resolution_source_label, ephemeral_container_name,
-    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, reported_task_context_for_backend,
+    ExecutionOverrides, LoadedDeclaredEnvSource, ResolvedEnvValue, ResolvedExecutionBackend,
+    ResolvedTaskRuntime, RunError, RuntimeListenerBindDiscoveryFailure,
+    RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, ServiceTermination,
+    ServiceTerminationCause, SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee,
+    TaskExecutionRelation, TaskTargetResolutionEvidence, clean_execution_report,
+    clean_stale_execution, effective_execution, effective_task_env_for_backend,
+    effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
+    ephemeral_container_name, load_declared_env_sources, load_policy_env_overlay,
+    named_execution_context, persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_effective_task_container_backend,
     resolve_execution_backend, resolve_execution_backend_with_contract_path,
     resolve_task_env_details, resolve_task_env_details_with_policy,
@@ -149,8 +149,7 @@ pub(crate) use self::init_starter::{
 };
 use self::init_starter::{
     apply_inferred_init_env_sources, apply_starter_contract_defaults, bootstrap_init_contract,
-    inferred_init_env_inferences, starter_pack_advisory, starter_pack_catalog,
-    starter_pack_contract,
+    starter_pack_advisory, starter_pack_catalog, starter_pack_contract,
 };
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
@@ -555,7 +554,13 @@ fn append_summary_block(out: &mut String, summary_block: Option<&str>) {
         for _ in trailing_newlines..2 {
             out.push('\n');
         }
-        out.push_str(summary_block.trim_start_matches('\n'));
+        let summary_block = summary_block
+            .trim_start_matches('\n')
+            .lines()
+            .filter(|line| !strip_ansi_codes(line).trim_start().starts_with("Next:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        out.push_str(&summary_block);
     }
 }
 
@@ -1984,34 +1989,20 @@ fn build_env_report(
     let mut source_issue_count = 0usize;
 
     for source in &declared_sources {
-        let (status, detail, next, issue_count) = match source.status {
-            DeclaredEnvSourceStatus::Loaded => (EnvSourceStatus::Loaded, None, None, 0usize),
-            DeclaredEnvSourceStatus::Missing if !source.must_exist => {
-                (EnvSourceStatus::Missing, None, None, 0usize)
+        let status = env_source_status_from_declared(source.status);
+        let detail = source.details.clone().or_else(|| match source.status {
+            DeclaredEnvSourceStatus::MissingRequired => {
+                Some(String::from("declared source missing"))
             }
-            DeclaredEnvSourceStatus::Missing => (
-                EnvSourceStatus::Missing,
-                Some(String::from("declared source missing")),
-                Some(format!(
-                    "create `{}` or remove `must_exist: true`, then rerun `ota env`",
-                    source.path
-                )),
-                1usize,
-            ),
-            DeclaredEnvSourceStatus::Invalid => (
-                EnvSourceStatus::Invalid,
-                source.details.clone(),
-                Some(format!(
-                    "fix `{}` so ota can parse it as a dotenv file, then rerun `ota env`",
-                    source.path
-                )),
-                1usize,
-            ),
-        };
+            _ => None,
+        });
+        let next = env_source_next_step(source, task_name);
+        let issue_count = usize::from(env_source_status_counts_as_issue(status));
         source_issue_count += issue_count;
         sources.push(EnvSourceEntry {
             kind: source.kind.to_string(),
             path: source.path.clone(),
+            label: source.label(),
             must_exist: source.must_exist,
             status,
             detail,
@@ -2069,6 +2060,8 @@ fn build_env_report(
                     && !requirement.allowed.iter().any(|allowed| allowed == value)
                 {
                     invalid_count += 1;
+                    let (source_kind, source_path, source_status, source_label) =
+                        env_entry_source_metadata(source.as_str(), &declared_sources);
                     env.push(EnvEntry {
                         name: name.clone(),
                         kind: EnvEntryKind::Contract,
@@ -2077,11 +2070,17 @@ fn build_env_report(
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
                         source: source.clone(),
+                        source_kind,
+                        source_path,
+                        source_status,
+                        source_label,
                         status: EnvEntryStatus::Invalid,
                         next: Some(env_next_for_invalid(name, &requirement.allowed)),
                     });
                 } else {
                     contract_resolved_count += 1;
+                    let (source_kind, source_path, source_status, source_label) =
+                        env_entry_source_metadata(source.as_str(), &declared_sources);
                     env.push(EnvEntry {
                         name: name.clone(),
                         kind: EnvEntryKind::Contract,
@@ -2090,6 +2089,10 @@ fn build_env_report(
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
                         source: source.clone(),
+                        source_kind,
+                        source_path,
+                        source_status,
+                        source_label,
                         status: EnvEntryStatus::Resolved,
                         next: None,
                     });
@@ -2105,6 +2108,10 @@ fn build_env_report(
                     allowed: requirement.allowed.clone(),
                     value: None,
                     source: String::from("missing"),
+                    source_kind: None,
+                    source_path: None,
+                    source_status: None,
+                    source_label: None,
                     status: EnvEntryStatus::Missing,
                     next: Some(env_next_for_missing(name, task_name)),
                 });
@@ -2118,6 +2125,10 @@ fn build_env_report(
                     allowed: requirement.allowed.clone(),
                     value: None,
                     source: String::from("missing"),
+                    source_kind: None,
+                    source_path: None,
+                    source_status: None,
+                    source_label: None,
                     status: EnvEntryStatus::Optional,
                     next: None,
                 });
@@ -2143,6 +2154,10 @@ fn build_env_report(
                 allowed: Vec::new(),
                 value: Some(value.clone()),
                 source,
+                source_kind: None,
+                source_path: None,
+                source_status: None,
+                source_label: None,
                 status: EnvEntryStatus::Task,
                 next: None,
             });
@@ -2170,6 +2185,76 @@ fn build_env_report(
     })
 }
 
+fn env_source_status_from_declared(status: DeclaredEnvSourceStatus) -> EnvSourceStatus {
+    match status {
+        DeclaredEnvSourceStatus::Loaded => EnvSourceStatus::Loaded,
+        DeclaredEnvSourceStatus::MissingOptional => EnvSourceStatus::MissingOptional,
+        DeclaredEnvSourceStatus::MissingRequired => EnvSourceStatus::MissingRequired,
+        DeclaredEnvSourceStatus::ParseFailed => EnvSourceStatus::ParseFailed,
+        DeclaredEnvSourceStatus::InvalidStructure => EnvSourceStatus::InvalidStructure,
+        DeclaredEnvSourceStatus::Collision => EnvSourceStatus::Collision,
+    }
+}
+
+fn env_source_status_counts_as_issue(status: EnvSourceStatus) -> bool {
+    !matches!(
+        status,
+        EnvSourceStatus::Loaded | EnvSourceStatus::MissingOptional
+    )
+}
+
+fn env_source_next_step(
+    source: &LoadedDeclaredEnvSource,
+    task_name: Option<&str>,
+) -> Option<String> {
+    match source.status {
+        DeclaredEnvSourceStatus::Loaded | DeclaredEnvSourceStatus::MissingOptional => None,
+        DeclaredEnvSourceStatus::MissingRequired => Some(format!(
+            "create `{}` or remove `must_exist: true`, then rerun {}",
+            source.path,
+            env_rerun_command(task_name)
+        )),
+        DeclaredEnvSourceStatus::ParseFailed
+        | DeclaredEnvSourceStatus::InvalidStructure
+        | DeclaredEnvSourceStatus::Collision => Some(format!(
+            "fix `{}` so ota can load declared source `{}`, then rerun {}",
+            source.path,
+            source.label(),
+            env_rerun_command(task_name)
+        )),
+    }
+}
+
+fn env_rerun_command(task_name: Option<&str>) -> String {
+    match task_name {
+        Some(task_name) => format!("`ota env --task {task_name}`"),
+        None => String::from("`ota env`"),
+    }
+}
+
+fn env_entry_source_metadata(
+    source: &str,
+    declared_sources: &[LoadedDeclaredEnvSource],
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<EnvSourceStatus>,
+    Option<String>,
+) {
+    let Some(declared) = declared_sources
+        .iter()
+        .find(|candidate| candidate.label() == source)
+    else {
+        return (None, None, None, None);
+    };
+    (
+        Some(declared.kind.to_string()),
+        Some(declared.path.clone()),
+        Some(env_source_status_from_declared(declared.status)),
+        Some(declared.label()),
+    )
+}
+
 fn build_task_overridden_env_entry(
     name: &str,
     requirement: &EnvRequirement,
@@ -2184,6 +2269,10 @@ fn build_task_overridden_env_entry(
         allowed: requirement.allowed.clone(),
         value: Some(display_env_value(value, requirement.secret)),
         source: String::from(source),
+        source_kind: None,
+        source_path: None,
+        source_status: None,
+        source_label: None,
         status: EnvEntryStatus::Resolved,
         next: None,
     }
@@ -2345,7 +2434,32 @@ fn render_env_entry_text(entry: &EnvEntry) -> String {
         paint_key("Value:"),
         entry.value.as_deref().unwrap_or("-")
     ));
-    output.push_str(&format!("\n  {} {}", paint_key("Source:"), entry.source));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Source:"),
+        render_env_entry_provenance(entry)
+    ));
+    if let Some(source_kind) = entry.source_kind.as_deref() {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Source Kind:"),
+            source_kind
+        ));
+    }
+    if let Some(source_path) = entry.source_path.as_deref() {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Source Path:"),
+            source_path
+        ));
+    }
+    if let Some(source_status) = entry.source_status {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Source Status:"),
+            render_env_source_status(source_status)
+        ));
+    }
     output.push_str(&format!(
         "\n  {} {}",
         paint_key("Status:"),
@@ -2375,6 +2489,7 @@ fn render_env_source_text(source: &EnvSourceEntry) -> String {
         paint(&source.kind, "1"),
         source.path
     ));
+    output.push_str(&format!("\n  {} {}", paint_key("Label:"), source.label));
     output.push_str(&format!(
         "\n  {} {}",
         paint_key("Must Exist:"),
@@ -2383,11 +2498,7 @@ fn render_env_source_text(source: &EnvSourceEntry) -> String {
     output.push_str(&format!(
         "\n  {} {}",
         paint_key("Status:"),
-        match source.status {
-            EnvSourceStatus::Loaded => "loaded",
-            EnvSourceStatus::Missing => "missing",
-            EnvSourceStatus::Invalid => "invalid",
-        }
+        render_env_source_status(source.status)
     ));
     if let Some(detail) = &source.detail {
         output.push_str(&format!("\n  {} {}", paint_key("Detail:"), detail));
@@ -2396,6 +2507,33 @@ fn render_env_source_text(source: &EnvSourceEntry) -> String {
         output.push_str(&format!("\n  {} {}", paint_key("Next:"), next));
     }
     output
+}
+
+fn render_env_source_status(status: EnvSourceStatus) -> &'static str {
+    match status {
+        EnvSourceStatus::Loaded => "loaded",
+        EnvSourceStatus::MissingOptional => "missing optional",
+        EnvSourceStatus::MissingRequired => "missing required",
+        EnvSourceStatus::ParseFailed => "parse failed",
+        EnvSourceStatus::InvalidStructure => "invalid structure",
+        EnvSourceStatus::Collision => "collision",
+    }
+}
+
+fn render_env_entry_provenance(entry: &EnvEntry) -> &'static str {
+    if entry.source_kind.is_some() {
+        "source file"
+    } else {
+        match entry.source.as_str() {
+            "process" => "existing env",
+            "default" => "default",
+            "task" => "task env",
+            "execution" => "execution env",
+            "missing" => "missing",
+            _ if entry.source.contains("policy") => "policy",
+            _ => "other",
+        }
+    }
 }
 
 fn render_env_kind(kind: EnvEntryKind) -> &'static str {
@@ -4510,6 +4648,28 @@ fn structured_validation_error_details(
             vec![
                 String::from("remove root shorthand and keep named contexts"),
                 String::from("or remove named contexts and keep shorthand"),
+                next_steps
+                    .iter()
+                    .find(|step| step.starts_with("rerun "))
+                    .cloned()
+                    .unwrap_or_else(|| String::from("rerun `ota validate`")),
+            ],
+        ));
+    }
+
+    if let Some(field) =
+        why.strip_suffix("` entries must be relative paths without `..` or absolute prefixes")
+    {
+        return Some((
+            vec![
+                format!("{field}` contains an invalid isolated path"),
+                String::from("`attachments.isolated_paths` must stay relative to the repo root"),
+                String::from("absolute paths and `..` segments are rejected"),
+            ],
+            vec![
+                String::from(
+                    "replace the invalid entry with a repo-relative path like `node_modules`, `.next`, `.m2`, or `.npm`",
+                ),
                 next_steps
                     .iter()
                     .find(|step| step.starts_with("rerun "))
@@ -13125,7 +13285,7 @@ fn write_detected_merge(
             {
                 return false;
             }
-            high_confidence_fields.contains(&change.field)
+            detect_change_is_high_confidence(change, &high_confidence_fields)
         })
         .collect::<Vec<_>>();
 
@@ -14945,10 +15105,7 @@ fn render_init(
     pack_advisory: Option<InitPackAdvisory>,
     format: OutputFormat,
 ) -> CommandOutput {
-    let mut init_inferences = report.inferences.clone();
-    if pack.is_none() {
-        init_inferences.extend(inferred_init_env_inferences(&report.root));
-    }
+    let init_inferences = report.inferences.clone();
     let mode = pack.map_or_else(|| init_mode(&init_inferences), |_| "pack");
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(contract_path);
@@ -17057,7 +17214,7 @@ fn selected_detect_comparison(
         .changes
         .iter()
         .filter(|change| selected_fields.contains(&change.field))
-        .filter(|change| high_confidence_fields.contains(&change.field))
+        .filter(|change| detect_change_is_high_confidence(change, &high_confidence_fields))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -17085,6 +17242,12 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
     match segments.as_slice() {
         ["project", "name"] => set_string_field(root, &segments, &change.detected),
         ["runtimes", _] | ["tools", _] => set_string_field(root, &segments, &change.detected),
+        ["env", "sources", _, "kind"] | ["env", "sources", _, "path"] => {
+            set_env_source_string_field(root, &segments, &change.detected)
+        }
+        ["env", "sources", _, "must_exist"] => {
+            set_env_source_bool_field(root, &segments, &change.detected)
+        }
         ["services", _, _] => set_string_field(root, &segments, &change.detected),
         ["tasks", _, "run"] | ["tasks", _, "description"] => {
             set_string_field(root, &segments, &change.detected)
@@ -17101,6 +17264,16 @@ fn detect_high_confidence_inference_fields(inferences: &[Inference]) -> Vec<Stri
         .filter(|inference| inference.confidence >= Confidence::High)
         .map(|inference| inference.field.clone())
         .collect()
+}
+
+fn detect_change_is_high_confidence(
+    change: &DetectComparisonChange,
+    high_confidence_fields: &BTreeSet<String>,
+) -> bool {
+    high_confidence_fields.contains(&change.field)
+        || change
+            .confidence
+            .is_some_and(|confidence| confidence >= Confidence::High)
 }
 
 fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
@@ -17266,24 +17439,25 @@ fn init_contract_provenance(
         );
     }
     for (index, source) in contract.env.sources.iter().enumerate() {
+        let env_source_label = format!("ota.init#env_source.{}", source.kind);
         push_init_field_provenance(
             &mut provenance,
             &inference_map,
             &detected_fields,
             format!("env.sources.{index}.kind"),
-            "ota.init#dotenv_source",
+            &env_source_label,
         );
         push_init_field_provenance(
             &mut provenance,
             &inference_map,
             &detected_fields,
             format!("env.sources.{index}.path"),
-            "ota.init#dotenv_source",
+            &env_source_label,
         );
         if source.must_exist {
             provenance.push(template_field_provenance(
                 format!("env.sources.{index}.must_exist"),
-                "ota.init#dotenv_source",
+                &env_source_label,
             ));
         }
     }
@@ -17709,6 +17883,74 @@ fn set_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
 
     let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
     current.insert(final_key, YamlValue::Bool(parsed));
+    true
+}
+
+fn ensure_env_sources_sequence<'a>(root: &'a mut Mapping) -> Option<&'a mut Vec<YamlValue>> {
+    let env_entry = root
+        .entry(YamlValue::String(String::from("env")))
+        .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
+    let env_mapping = env_entry.as_mapping_mut()?;
+    let sources_entry = env_mapping
+        .entry(YamlValue::String(String::from("sources")))
+        .or_insert_with(|| YamlValue::Sequence(Vec::new()));
+    sources_entry.as_sequence_mut()
+}
+
+fn ensure_env_source_mapping<'a>(root: &'a mut Mapping, index: usize) -> Option<&'a mut Mapping> {
+    let sequence = ensure_env_sources_sequence(root)?;
+    while sequence.len() <= index {
+        sequence.push(YamlValue::Mapping(Mapping::new()));
+    }
+    let entry = sequence.get_mut(index)?;
+    if !entry.is_mapping() {
+        *entry = YamlValue::Mapping(Mapping::new());
+    }
+    entry.as_mapping_mut()
+}
+
+fn set_env_source_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
+    let Some(index) = segments
+        .get(2)
+        .and_then(|segment| segment.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    let Some(field_name) = segments.get(3) else {
+        return false;
+    };
+    let Some(mapping) = ensure_env_source_mapping(root, index) else {
+        return false;
+    };
+    mapping.insert(
+        YamlValue::String((*field_name).to_string()),
+        YamlValue::String(value.to_string()),
+    );
+    true
+}
+
+fn set_env_source_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
+    let parsed = match value {
+        "true" => true,
+        "false" => false,
+        _ => return false,
+    };
+    let Some(index) = segments
+        .get(2)
+        .and_then(|segment| segment.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    let Some(field_name) = segments.get(3) else {
+        return false;
+    };
+    let Some(mapping) = ensure_env_source_mapping(root, index) else {
+        return false;
+    };
+    mapping.insert(
+        YamlValue::String((*field_name).to_string()),
+        YamlValue::Bool(parsed),
+    );
     true
 }
 
@@ -22390,23 +22632,24 @@ mod tests {
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         build_env_report, build_up_preview, collect_validate_warnings,
         compact_contract_file_path_relative_to, compact_path_relative_to,
-        compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
-        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
-        render_detect_comparison_section, render_execution_receipt_summary_block,
-        render_execution_receipt_text, render_report_section, render_tasks_text,
-        render_tasks_use_text, render_up_result, render_up_section_from_parts,
-        render_validate_success_output, render_windows_uninstall_pending, run_execution_receipt,
-        run_execution_receipt_with_shared, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
-        windows_uninstall_script, workspace_refresh_command, write_detected_merge,
+        compact_policy_path_relative_to_contract, doctor_mode_execution_overrides,
+        env as env_command, execute_repo_up, execution_receipt_step, execution_receipt_step_detail,
+        render_clean_text, render_detect_comparison_section, render_env_text,
+        render_execution_receipt_summary_block, render_execution_receipt_text,
+        render_report_section, render_tasks_text, render_tasks_use_text, render_up_result,
+        render_up_section_from_parts, render_validate_success_output,
+        render_windows_uninstall_pending, run_execution_receipt, run_execution_receipt_with_shared,
+        strip_ansi_codes, stylize_text_failure, up_doctor_mode, windows_uninstall_script,
+        workspace_refresh_command, write_detected_merge,
     };
     use crate::detector::{
         Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
-        DetectComparison, DetectComparisonRemoval, ExecutionReceipt, ExecutionReceiptLogs,
-        ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
-        ServiceReadinessSummary, ServiceSummary, TaskSummary,
+        DetectComparison, DetectComparisonRemoval, EnvSourceStatus, ExecutionReceipt,
+        ExecutionReceiptLogs, ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary,
+        ServiceManagerSummary, ServiceReadinessSummary, ServiceSummary, TaskSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -22504,6 +22747,167 @@ tasks:
                 && entry.value.as_deref() == Some("/workspace/context-cache")
                 && entry.source == "execution"
         }));
+    }
+
+    #[test]
+    fn env_text_shows_properties_source_provenance() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+        fs::write(fixture.path().join("app.properties"), "app.port=8080\n").unwrap();
+        let original = std::env::var_os("APP_PORT");
+        unsafe {
+            std::env::remove_var("APP_PORT");
+        }
+
+        let report = build_env_report(&contract, &contract_path, None).unwrap();
+        let rendered = strip_ansi_codes(&render_env_text(".", None, &report));
+
+        assert!(rendered.contains("Source: source file"), "{rendered}");
+        assert!(rendered.contains("Source Kind: properties"), "{rendered}");
+        assert!(
+            rendered.contains("Source Path: app.properties"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Source Status: loaded"), "{rendered}");
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("APP_PORT", value) },
+            None => unsafe { std::env::remove_var("APP_PORT") },
+        }
+    }
+
+    #[test]
+    fn env_json_includes_source_kind_path_status_additively() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract_contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: json
+      path: env.json
+tasks:
+  test:
+    run: echo test
+"#;
+        fs::write(&contract_path, contract_contents).unwrap();
+        fs::write(fixture.path().join("env.json"), r#"{"app.port":8080}"#).unwrap();
+        let original = std::env::var_os("APP_PORT");
+        unsafe {
+            std::env::remove_var("APP_PORT");
+        }
+
+        let output = env_command(
+            Some(contract_path.as_path()),
+            None,
+            None,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        let body: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["sources"][0]["kind"], "json");
+        assert_eq!(body["sources"][0]["path"], "env.json");
+        assert_eq!(body["sources"][0]["label"], "json:env.json");
+        assert_eq!(body["sources"][0]["status"], "loaded");
+        assert_eq!(body["env"][0]["source_kind"], "json");
+        assert_eq!(body["env"][0]["source_path"], "env.json");
+        assert_eq!(body["env"][0]["source_status"], "loaded");
+        assert_eq!(body["env"][0]["source_label"], "json:env.json");
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("APP_PORT", value) },
+            None => unsafe { std::env::remove_var("APP_PORT") },
+        }
+    }
+
+    #[test]
+    fn env_outputs_redact_secret_values_loaded_from_declared_sources() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract_contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_TOKEN:
+      required: true
+      secret: true
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  test:
+    run: echo test
+"#;
+        fs::write(&contract_path, contract_contents).unwrap();
+        fs::write(
+            fixture.path().join("app.properties"),
+            "app.token=super-secret-token\n",
+        )
+        .unwrap();
+        let original = std::env::var_os("APP_TOKEN");
+        unsafe {
+            std::env::remove_var("APP_TOKEN");
+        }
+
+        let contract = parse_contract_str(&contract_path, contract_contents).unwrap();
+        let report = build_env_report(&contract, &contract_path, None).unwrap();
+        let rendered = strip_ansi_codes(&render_env_text(".", None, &report));
+        assert!(rendered.contains("Value: <redacted>"), "{rendered}");
+        assert!(!rendered.contains("super-secret-token"), "{rendered}");
+
+        let output = env_command(
+            Some(contract_path.as_path()),
+            None,
+            None,
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        let body: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(body["env"][0]["value"], "<redacted>");
+        assert_eq!(body["env"][0]["source_kind"], "properties");
+        assert!(
+            !output.stdout.contains("super-secret-token"),
+            "{}",
+            output.stdout
+        );
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("APP_TOKEN", value) },
+            None => unsafe { std::env::remove_var("APP_TOKEN") },
+        }
     }
 
     fn make_source_bootstrap_shims(dir: &Path) {
@@ -22952,6 +23356,66 @@ tasks:
 
         let merged = fs::read_to_string(&contract_path).expect("read merged contract");
         assert!(!merged.contains("internal: true"), "{merged}");
+    }
+
+    #[test]
+    fn detect_merge_apply_appends_inferred_env_sources_without_overwriting_existing_entries() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: demo
+env:
+  sources:
+    - kind: properties
+      path: custom.properties
+"#,
+        )
+        .expect("write existing contract");
+
+        let report = DetectReport {
+            root: repo.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                project: Some(DetectProject {
+                    name: String::from("demo"),
+                }),
+                env: crate::schema::EnvConfig {
+                    vars: BTreeMap::new(),
+                    sources: vec![crate::schema::EnvSource {
+                        kind: crate::schema::EnvSourceKind::Dotenv,
+                        path: String::from(".env.local"),
+                        must_exist: false,
+                    }],
+                },
+                ..DetectContract::default()
+            },
+            inferences: vec![
+                Inference {
+                    field: String::from("env.sources.0.kind"),
+                    value: String::from("dotenv"),
+                    source: String::from(".env.local"),
+                    confidence: Confidence::High,
+                },
+                Inference {
+                    field: String::from("env.sources.0.path"),
+                    value: String::from(".env.local"),
+                    source: String::from(".env.local"),
+                    confidence: Confidence::High,
+                },
+            ],
+        };
+
+        let apply = vec![String::from(".")];
+        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
+        assert!(merged.contains("path: custom.properties"), "{merged}");
+        assert!(merged.contains("path: .env.local"), "{merged}");
     }
 
     #[test]
@@ -26587,6 +27051,36 @@ tasks:
     }
 
     #[test]
+    fn structured_validation_error_details_clarifies_invalid_isolated_path_entries() {
+        let why = String::from(
+            "`execution.contexts.development.attachments.isolated_paths` entries must be relative paths without `..` or absolute prefixes",
+        );
+        let next = vec![
+            String::from("repair `./ota.yaml`"),
+            String::from("rerun `ota validate`"),
+        ];
+
+        let (why_lines, next_steps) =
+            super::structured_validation_error_details(&[why], &next).unwrap();
+
+        assert_eq!(
+            why_lines[0],
+            "`execution.contexts.development.attachments.isolated_paths` contains an invalid isolated path"
+        );
+        assert!(why_lines.contains(&String::from(
+            "`attachments.isolated_paths` must stay relative to the repo root"
+        )));
+        assert!(why_lines.contains(&String::from(
+            "absolute paths and `..` segments are rejected"
+        )));
+        assert_eq!(
+            next_steps[0],
+            "replace the invalid entry with a repo-relative path like `node_modules`, `.next`, `.m2`, or `.npm`"
+        );
+        assert_eq!(next_steps[1], "rerun `ota validate`");
+    }
+
+    #[test]
     fn doctor_depends_on_boundary_finding_renders_compact_edge_shape() {
         let mut rendered = String::new();
         assert!(super::render_depends_on_boundary_doctor_finding(
@@ -27075,6 +27569,155 @@ tasks:
         assert!(rendered.contains("Env sources:"));
         assert!(rendered.contains("OTA_TEST_SECRET"));
         assert!(rendered.contains("(task)"));
+    }
+
+    #[test]
+    fn execution_receipt_includes_declared_env_source_metadata() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: properties
+      path: app.properties
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+        fs::write(fixture.path().join("app.properties"), "app.port=8080\n").unwrap();
+        let original = std::env::var_os("APP_PORT");
+        unsafe {
+            std::env::remove_var("APP_PORT");
+        }
+
+        let receipt = run_execution_receipt(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            "test",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.env_sources[0].source, "properties:app.properties");
+        assert_eq!(
+            receipt.env_sources[0].source_kind.as_deref(),
+            Some("properties")
+        );
+        assert_eq!(
+            receipt.env_sources[0].source_path.as_deref(),
+            Some("app.properties")
+        );
+        assert_eq!(
+            receipt.env_sources[0].source_status,
+            Some(EnvSourceStatus::Loaded)
+        );
+        assert_eq!(
+            receipt.env_sources[0].source_label.as_deref(),
+            Some("properties:app.properties")
+        );
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("APP_PORT", value) },
+            None => unsafe { std::env::remove_var("APP_PORT") },
+        }
+    }
+
+    #[test]
+    fn execution_receipt_includes_yaml_env_source_metadata() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    APP_PORT:
+      required: true
+  sources:
+    - kind: yaml
+      path: env.yaml
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+        std::fs::write(fixture.path().join("env.yaml"), "app:\n  port: 8080\n").unwrap();
+        let original = std::env::var_os("APP_PORT");
+        unsafe {
+            std::env::remove_var("APP_PORT");
+        }
+
+        let receipt = run_execution_receipt(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            "test",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.env_sources[0].source, "yaml:env.yaml");
+        assert_eq!(receipt.env_sources[0].source_kind.as_deref(), Some("yaml"));
+        assert_eq!(
+            receipt.env_sources[0].source_path.as_deref(),
+            Some("env.yaml")
+        );
+        assert_eq!(
+            receipt.env_sources[0].source_status,
+            Some(EnvSourceStatus::Loaded)
+        );
+        assert_eq!(
+            receipt.env_sources[0].source_label.as_deref(),
+            Some("yaml:env.yaml")
+        );
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("APP_PORT", value) },
+            None => unsafe { std::env::remove_var("APP_PORT") },
+        }
     }
 
     #[test]
@@ -30381,6 +31024,45 @@ execution:
         assert!(rendered.contains("`install-from-source` exited with code 101"));
         assert!(rendered.contains("Why: task `install-from-source` returned a non-zero exit code"));
         assert!(rendered.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
+    }
+
+    #[test]
+    fn run_failure_embedded_summary_omits_redundant_next_line() {
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &parse_contract_str(
+                Path::new("./ota.yaml"),
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+            )
+            .unwrap(),
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "Error starting ApplicationContext",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder\nNext:        repair task `dev` and rerun `ota run dev`; Next: run `ota tasks --use` to inspect runnable task usage",
+        ));
+
+        assert!(rendered.contains("RUN SUMMARY"), "{rendered}");
+        assert!(rendered.contains("Note:        placeholder"), "{rendered}");
+        assert!(
+            !rendered.contains("Next:        repair task `dev`"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -34547,6 +35229,25 @@ fn receipt_env_source(resolved: &ResolvedEnvValue) -> String {
     env_resolution_source_label(&resolved.source)
 }
 
+fn receipt_env_source_entry(
+    name: &str,
+    resolved: &ResolvedEnvValue,
+    declared_sources: &[LoadedDeclaredEnvSource],
+) -> ExecutionReceiptEnvSource {
+    let source = receipt_env_source(resolved);
+    let (source_kind, source_path, source_status, source_label) =
+        env_entry_source_metadata(source.as_str(), declared_sources);
+    ExecutionReceiptEnvSource {
+        name: name.to_string(),
+        value: receipt_env_value(resolved),
+        source,
+        source_kind,
+        source_path,
+        source_status,
+        source_label,
+    }
+}
+
 fn source_config_summary(
     source_config: Option<&BTreeMap<String, serde_yaml::Value>>,
 ) -> Option<String> {
@@ -34752,6 +35453,7 @@ fn run_execution_receipt_with_shared(
     let env_details =
         resolve_task_env_details(contract, contract_path, effective_task_env.as_ref())
             .unwrap_or_default();
+    let declared_sources = load_declared_env_sources(contract, contract_path);
     let steps = executed_steps
         .iter()
         .enumerate()
@@ -34820,11 +35522,7 @@ fn run_execution_receipt_with_shared(
             .collect(),
         env_sources: env_details
             .iter()
-            .map(|(name, value)| ExecutionReceiptEnvSource {
-                name: name.clone(),
-                value: receipt_env_value(value),
-                source: receipt_env_source(value),
-            })
+            .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
         runtime,
         logs: None,
@@ -39015,6 +39713,7 @@ fn repo_execution_receipt(
         .map(|task| task.env_for_backend(contract.execution.as_ref(), execution_backend));
     let env_details =
         resolve_task_env_details(contract, path, effective_task_env.as_ref()).unwrap_or_default();
+    let declared_sources = load_declared_env_sources(contract, path);
     let detail = service
         .map(|service| format!("service `{service}`"))
         .or_else(|| task.map(|task| format!("task `{task}`")));
@@ -39049,11 +39748,7 @@ fn repo_execution_receipt(
             .collect(),
         env_sources: env_details
             .iter()
-            .map(|(name, value)| ExecutionReceiptEnvSource {
-                name: name.clone(),
-                value: receipt_env_value(value),
-                source: receipt_env_source(value),
-            })
+            .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
         runtime: None,
         logs: None,
@@ -39600,6 +40295,7 @@ fn workspace_env_sources(
 ) -> Vec<ExecutionReceiptEnvSource> {
     let repo_policy = load_policy_env_overlay(contract_path).unwrap_or_default();
     let workspace_policy_env = policy_env.cloned().unwrap_or_default();
+    let declared_sources = load_declared_env_sources(contract, contract_path);
 
     resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)
         .unwrap_or_default()
@@ -39624,10 +40320,16 @@ fn workspace_env_sources(
                 }
                 EnvResolutionSource::Source(label) => label.clone(),
             };
+            let (source_kind, source_path, source_status, source_label) =
+                env_entry_source_metadata(source.as_str(), &declared_sources);
             ExecutionReceiptEnvSource {
                 name,
                 value: receipt_env_value(&value),
                 source,
+                source_kind,
+                source_path,
+                source_status,
+                source_label,
             }
         })
         .collect()
