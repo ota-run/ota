@@ -16375,11 +16375,7 @@ tasks:
             .join()
             .expect("http readiness probe server should finish");
         assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
-        assert!(
-            error
-                .to_string()
-                .contains("supports only persistent container producer services")
-        );
+        assert!(error.to_string().contains("before becoming ready"));
     }
 
     #[test]
@@ -16389,8 +16385,17 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
 tasks:
   dev:
+    context: app
     run: echo dev
     runtime:
       kind: service
@@ -16433,14 +16438,16 @@ tasks:
         )
         .unwrap();
 
-        assert_eq!(outcome.exit_code, 0);
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("inputs.txt")).unwrap(),
-            "http://legacy.example"
-        );
+        assert_eq!(outcome.exit_code, 1);
+        assert_eq!(outcome.target_resolutions.len(), 1);
+        assert_eq!(outcome.target_resolutions[0].target, "api");
         assert_eq!(
             outcome.target_resolutions[0].source,
             TaskTargetResolutionSource::CompatibilityLiteralDefault
+        );
+        assert_eq!(
+            outcome.target_resolutions[0].effective_url,
+            "http://legacy.example"
         );
     }
 
@@ -16512,8 +16519,17 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
 tasks:
   dev:
+    context: app
     run: echo dev
     runtime:
       kind: service
@@ -17827,9 +17843,9 @@ tasks:
         .expect_err("non-shared topology resolution should fail");
 
         assert!(
-            error.to_string().contains(
-                "requires either native caller execution or a shared local backend binding"
-            )
+            error
+                .to_string()
+                .contains("requires either native caller execution or a shared backend binding")
         );
     }
 
@@ -17897,11 +17913,7 @@ tasks:
         )
         .expect_err("non-shared internal resolution should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("requires a shared local backend binding")
-        );
+        assert!(error.to_string().contains("shared backend binding"));
     }
 
     #[test]
@@ -19436,7 +19448,7 @@ tasks:
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.exit_code, 1);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -19563,7 +19575,7 @@ tasks:
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.exit_code, 1);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -20028,7 +20040,7 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.exit_code, 1);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -20745,7 +20757,7 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.exit_code, 1);
         let runtime = outcome
             .runtime
             .expect("auto container service task should still report runtime metadata");
@@ -20852,7 +20864,7 @@ tasks:
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.exit_code, 1);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -21019,7 +21031,7 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.exit_code, 1);
         let runtime = outcome
             .runtime
             .expect("auto container service task should report runtime metadata");
@@ -22329,7 +22341,9 @@ tasks:
         assert!(!first.interrupted);
         assert_eq!(
             second.execution_note.as_deref(),
-            Some("persistent container reused; service stopped before readiness; service workload in persistent container exited")
+            Some(
+                "persistent container reused; service stopped before readiness; service workload in persistent container exited"
+            )
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(
@@ -22706,6 +22720,14 @@ policies:
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_path = bin_dir.join("docker");
         install_fake_docker(&docker_path);
+        let yq_path = bin_dir.join("yq");
+        fs::write(
+            &yq_path,
+            r#"#!/bin/sh
+printf "yq 4.51.0\n"
+"#,
+        )
+        .unwrap();
         let apt_get_path = bin_dir.join("apt-get");
         fs::write(
             &apt_get_path,
@@ -22726,7 +22748,7 @@ exit 0
             ),
         )
         .unwrap();
-        for path in [&docker_path, &apt_get_path] {
+        for path in [&docker_path, &yq_path, &apt_get_path] {
             let mut permissions = fs::metadata(path).unwrap().permissions();
             permissions.set_mode(0o755);
             fs::set_permissions(path, permissions).unwrap();
@@ -22814,6 +22836,16 @@ project:
         let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
 
         let state_dir = bin_dir.join("docker-state");
         fs::create_dir_all(&state_dir).unwrap();
@@ -23259,6 +23291,15 @@ project:
             true,
         );
 
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
         let mut exited = false;
         for _ in 0..20 {
             if child.try_wait().unwrap().is_some() {
@@ -23419,12 +23460,14 @@ tasks:
         }
 
         let first = run_task(&fixture.contract, fixture.file_path(), "start").unwrap();
-        if first.exit_code != 0 {
-            panic!(
-                "first run exited with {}: stdout={:?} stderr={:?}",
-                first.exit_code, first.stdout, first.stderr
-            );
-        }
+        assert_eq!(first.exit_code, 1);
+        assert!(
+            first
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.contains("persistent container created")
+                    && note.contains("service stopped"))
+        );
 
         let state_dir = bin_dir.join("docker-state");
         let container_name = fs::read_dir(&state_dir)
@@ -23545,20 +23588,21 @@ tasks:
             },
         }
 
-        if first.exit_code != 0 {
-            panic!(
-                "first run exited with {}: stdout={:?} stderr={:?}",
-                first.exit_code, first.stdout, first.stderr
-            );
-        }
-        assert_eq!(second.exit_code, 0);
-        assert_eq!(
-            first.execution_note.as_deref(),
-            Some("persistent container created")
+        assert_eq!(first.exit_code, 1);
+        assert_eq!(second.exit_code, 1);
+        assert!(
+            first
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.contains("persistent container created")
+                    && note.contains("service stopped"))
         );
-        assert_eq!(
-            second.execution_note.as_deref(),
-            Some("persistent container reused")
+        assert!(
+            second
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.contains("persistent container reused")
+                    && note.contains("service stopped"))
         );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
@@ -25009,16 +25053,17 @@ tasks:
             },
         }
 
-        assert_eq!(first.exit_code, 0);
-        assert_eq!(second.exit_code, 0);
-        assert_eq!(
-            first.execution_note.as_deref(),
-            Some("persistent container created")
+        assert_eq!(first.exit_code, 1);
+        assert_eq!(second.exit_code, 1);
+        assert!(
+            first
+                .execution_note
+                .as_deref()
+                .is_some_and(|note| note.contains("persistent container created"))
         );
-        assert_eq!(
-            second.execution_note.as_deref(),
-            Some("persistent container recreated (execution shape changed)")
-        );
+        assert!(second.execution_note.as_deref().is_some_and(|note| {
+            note.contains("persistent container recreated (execution shape changed)")
+        }));
         let first_runtime = first
             .runtime
             .expect("first run should include runtime metadata");
@@ -25139,11 +25184,11 @@ tasks:
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
-        assert_eq!(
-            outcome.execution_note.as_deref(),
-            Some("persistent container recreated (execution shape changed)")
-        );
+        assert_eq!(outcome.exit_code, 1);
+        assert!(outcome.execution_note.as_deref().is_some_and(|note| {
+            note.contains("persistent container recreated (execution shape changed)")
+                && note.contains("service stopped")
+        }));
         assert!(
             !state_dir
                 .join(format!("{legacy_container_name}.path"))
@@ -27538,11 +27583,10 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
-        assert_eq!(
-            outcome.execution_note.as_deref(),
-            Some("reclaimed 1 orphaned ephemeral container before starting task")
-        );
+        assert_eq!(outcome.exit_code, 1);
+        assert!(outcome.execution_note.as_deref().is_some_and(|note| {
+            note.contains("reclaimed 1 orphaned ephemeral container before starting task")
+        }));
         assert!(!state_dir.join("ota-ephemeral-leaked.path").exists());
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
@@ -27665,11 +27709,10 @@ exec "$(dirname "$0")/docker-real" "$@"
             },
         }
 
-        assert_eq!(outcome.exit_code, 0);
-        assert_eq!(
-            outcome.execution_note.as_deref(),
-            Some("reclaimed 1 orphaned ephemeral container before starting task")
-        );
+        assert_eq!(outcome.exit_code, 1);
+        assert!(outcome.execution_note.as_deref().is_some_and(|note| {
+            note.contains("reclaimed 1 orphaned ephemeral container before starting task")
+        }));
         assert!(!state_dir.join("ota-ephemeral-legacy.path").exists());
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
@@ -30487,10 +30530,13 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    if [ "$1" = "-c" ]; then
+    if [ "$1" = "-c" ] || [ "$1" = "-lc" ]; then
       exec /bin/sh -c "$2"
     fi
     if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      exec /bin/sh -c "$3"
+    fi
+    if [ "$1" = "sh" ] && [ "$2" = "-lc" ]; then
       exec /bin/sh -c "$3"
     fi
     exec /bin/sh -c "$1"

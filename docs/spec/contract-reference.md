@@ -324,7 +324,7 @@ execution:
       image: node:24-bookworm
 ```
 
-2. Named contexts (repos with multiple explicit execution planes):
+1. Named contexts (repos with multiple explicit execution planes):
 
 ```yaml
 execution:
@@ -342,7 +342,7 @@ execution:
         image: node:24-bookworm
 ```
 
-3. Named contexts with `extends` (multi-context repos that want less repetition):
+1. Named contexts with `extends` (multi-context repos that want less repetition):
 
 ```yaml
 execution:

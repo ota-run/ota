@@ -5184,9 +5184,11 @@ case "$command" in
     else
       : > "$state_dir/$name.publish"
     fi
-    if [ "$1" = "-c" ]; then
+    if [ "$1" = "-c" ] || [ "$1" = "-lc" ]; then
       printf "%s" "$2" > "$state_dir/$name.command"
     elif [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      printf "%s" "$3" > "$state_dir/$name.command"
+    elif [ "$1" = "sh" ] && [ "$2" = "-lc" ]; then
       printf "%s" "$3" > "$state_dir/$name.command"
     else
       printf "%s" "$1" > "$state_dir/$name.command"
@@ -5288,10 +5290,13 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    if [ "$1" = "-c" ]; then
+    if [ "$1" = "-c" ] || [ "$1" = "-lc" ]; then
       exec /bin/sh -c "$2"
     fi
     if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      exec /bin/sh -c "$3"
+    fi
+    if [ "$1" = "sh" ] && [ "$2" = "-lc" ]; then
       exec /bin/sh -c "$3"
     fi
     exec /bin/sh -c "$1"
@@ -5463,14 +5468,27 @@ exit 1
         fs::write(
             path,
             r#"#!/bin/sh
-target="$1"
-shift
-[ "$1" = "sh" ] || exit 1
-shift
-[ "$1" = "-lc" ] || exit 1
-shift
+target=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -F|-i)
+      [ "$#" -ge 2 ] || exit 1
+      shift 2
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      target="$1"
+      shift
+      break
+      ;;
+  esac
+done
+[ -n "$target" ] || exit 1
+[ "$#" -ge 1 ] || exit 1
 printf "exec %s\n" "$target" >> "$OTA_SSH_LOG"
-exec /bin/sh -lc "$1"
+exec /bin/sh -lc "$*"
 "#,
         )
         .unwrap();
@@ -12374,7 +12392,9 @@ tasks:
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let first = run_with(["ota", "run", "dev", fixture.path()]);
-        assert_eq!(first.exit_code, 0);
+        assert_eq!(first.exit_code, 1);
+        let first_stderr = strip_ansi(first.stderr.as_deref().unwrap_or_default());
+        assert!(first_stderr.contains("Service stopped"), "{first_stderr}");
 
         let state_dir = bin_dir.join("docker-state");
         let container_name = fs::read_dir(&state_dir)

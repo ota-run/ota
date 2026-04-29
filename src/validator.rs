@@ -6580,12 +6580,6 @@ tasks:
             port:
               mode: fixed
               value: 8080
-          project:
-            host:
-              address: api.devbox.internal
-              port:
-                mode: fixed
-                value: 8080
   sandbox:
     run: echo sandbox
     targets:
