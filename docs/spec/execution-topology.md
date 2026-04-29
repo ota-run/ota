@@ -88,6 +88,7 @@ Each context answers:
 - which backend it uses
 - which lifecycle it uses when relevant
 - which image or target it uses when relevant
+- which context-wide environment defaults it contributes
 - which service networks it can attach to
 - which runtimes and tools belong to that context
 - which parent context (optional) it extends from
@@ -265,6 +266,8 @@ Source still stays bind-mounted from the host at `/workspace`; only the declared
 Repo-authored config stays under `.ota/`; Ota-owned runtime state such as ownership tokens and engine tracking lives under `.ota/state/`.
 Ota labels those volumes with a stable repo ownership token stored under `.ota/state/ownership-id`, and `ota clean` rediscovers and removes them even if the repo path, image, engine, or declared isolated paths drift later.
 Ota also records repo-used engines under `.ota/state/managed-engines` so `ota clean` can keep drift cleanup scoped to the engines that actually owned this repo's managed state.
+Execution summaries surface these paths as effective in-container paths such as `/workspace/node_modules` so operators can line up tool configuration with the durable attachment boundary.
+When the isolated path looks like a well-known cache surface such as `.m2` or `.npm` but no task configuration points the tool at `/workspace/<path>`, `ota validate` and `ota doctor` warn that the attachment is likely unused.
 
 ### `tasks.<name>.runtime.kind: service`
 
