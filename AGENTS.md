@@ -135,6 +135,9 @@ Use the minimum context, tokens, tool calls, edits, and validation needed to com
 - **Treat naming, schema shape, CLI behavior, JSON output, and execution semantics as strategic product decisions, not local implementation details.**
 - **When several options are viable, recommend the one that best improves long-term reliability, maintainability, developer experience, and adoption leverage.**
 - **Proactively surface high-value improvements, risks, and next best steps without waiting to be asked.**
+- **Treat Ota as serious open infrastructure.** Protect product quality, operator trust, and adoption experience with the same care you would apply to a platform that teams and agents will rely on daily.
+- **Take responsibility for product quality while working.** When you see confusing behavior, redundant author burden, weak UX, unclear docs, or a repo-local workaround hiding an Ota platform gap, call it out and recommend the stronger platform fix.
+- **Improve the product as you go when the improvement is tightly connected to the task.** Do not silently accept weak naming, duplicated configuration, misleading docs, or unnecessary operator friction just because the immediate code path happens to work.
 
 ### Model usage limit discipline
 
