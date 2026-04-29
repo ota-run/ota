@@ -551,6 +551,8 @@ pub struct ExecutionContextAttachmentsSummary<'a> {
     pub compose: Vec<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub isolated_paths: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub isolated_effective_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -703,6 +705,10 @@ fn summarize_execution_context<'a>(
                 .isolated_paths
                 .iter()
                 .map(String::as_str)
+                .collect(),
+            isolated_effective_paths: crate::execution::context_dependency_isolation_paths(context)
+                .into_iter()
+                .map(|path| format!("/workspace/{path}"))
                 .collect(),
         }),
     }
@@ -1524,11 +1530,14 @@ pub struct ValidateSuccess<'a> {
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<ValidateSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ValidateSummary {
     pub error_count: usize,
+    pub warn_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1537,6 +1546,8 @@ pub struct ValidateFailure<'a> {
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<ValidateSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

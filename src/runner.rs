@@ -3526,7 +3526,7 @@ fn execute_task_with_hooks(
                 os: current_os.to_string(),
             });
         };
-    let task_env = task.env_for_backend(backend_kind);
+    let task_env = task.env_for_backend(contract.execution.as_ref(), backend_kind);
     let env_details =
         resolve_task_env_details_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
     let secret_env_names: BTreeSet<String> = env_details

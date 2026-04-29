@@ -233,6 +233,8 @@ struct ExecutionContextWire {
     #[serde(default)]
     fulfillment: Option<ExecutionSharedBackendFulfillment>,
     #[serde(default)]
+    env: Option<BTreeMap<String, String>>,
+    #[serde(default)]
     container: Option<ContainerBackendWire>,
     #[serde(default)]
     remote: Option<RemoteBackendWire>,
@@ -314,6 +316,7 @@ struct ExecutionContextMerged {
     backend: Option<Backend>,
     lifecycle: Option<Lifecycle>,
     fulfillment: Option<ExecutionSharedBackendFulfillment>,
+    env: BTreeMap<String, String>,
     container: Option<ContainerBackendMerged>,
     remote: Option<RemoteBackendMerged>,
     requirements: ExecutionContextRequirements,
@@ -505,6 +508,9 @@ fn merge_execution_context(target: &mut ExecutionContextMerged, source: &Executi
     if let Some(fulfillment) = source.fulfillment {
         target.fulfillment = Some(fulfillment);
     }
+    if let Some(env) = source.env.as_ref() {
+        target.env.extend(env.clone());
+    }
     if let Some(container) = source.container.as_ref() {
         let merged = target
             .container
@@ -623,6 +629,7 @@ fn finalize_execution_context(
         backend,
         lifecycle: merged.lifecycle,
         fulfillment: merged.fulfillment,
+        env: merged.env,
         container,
         remote,
         requirements: merged.requirements,
@@ -711,6 +718,8 @@ pub struct ExecutionContext {
     pub lifecycle: Option<Lifecycle>,
     #[serde(default)]
     pub fulfillment: Option<ExecutionSharedBackendFulfillment>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub container: Option<ContainerBackend>,
     #[serde(default)]
@@ -1427,8 +1436,17 @@ impl TaskSpec {
             .filter(|binding| !binding.is_empty())
     }
 
-    pub fn env_for_backend(&self, backend: Backend) -> BTreeMap<String, String> {
-        let mut merged = self.env.clone();
+    pub fn env_for_backend(
+        &self,
+        execution: Option<&Execution>,
+        backend: Backend,
+    ) -> BTreeMap<String, String> {
+        let mut merged = self
+            .context_for_backend(execution, backend)
+            .and_then(|context_name| execution.and_then(|spec| spec.contexts.get(context_name)))
+            .map(|context| context.env.clone())
+            .unwrap_or_default();
+        merged.extend(self.env.clone());
         if let Some(branch) = self.mode_execution_branch(backend) {
             merged.extend(branch.env.clone());
         }
@@ -1440,10 +1458,57 @@ impl TaskSpec {
         execution: Option<&'a Execution>,
         backend: Backend,
     ) -> Option<&'a str> {
-        self.mode_execution_branch(backend)
+        let execution = execution?;
+        let branch_context = self
+            .mode_execution_branch(backend)
             .and_then(|branch| branch.context.as_deref())
-            .or(self.context.as_deref())
-            .or_else(|| execution.and_then(|spec| spec.default_context.as_deref()))
+            .filter(|context_name| {
+                execution
+                    .contexts
+                    .get(*context_name)
+                    .is_some_and(|context| context.backend == backend)
+            });
+
+        if let Some(context_name) = branch_context {
+            return Some(context_name);
+        }
+
+        if let Some(context_name) = self.context.as_deref() {
+            if execution
+                .contexts
+                .get(context_name)
+                .is_some_and(|context| context.backend == backend)
+            {
+                return Some(context_name);
+            }
+            if let Some((name, context)) = execution.default_context()
+                && context.backend == backend
+            {
+                return Some(name);
+            }
+            return execution
+                .contexts
+                .iter()
+                .find(|(_, context)| context.backend == backend)
+                .map(|(name, _)| name.as_str());
+        }
+
+        if let Some((name, context)) = execution.default_context() {
+            if context.backend == backend {
+                return Some(name);
+            }
+            return execution
+                .contexts
+                .iter()
+                .find(|(_, context)| context.backend == backend)
+                .map(|(name, _)| name.as_str());
+        }
+
+        execution
+            .contexts
+            .iter()
+            .find(|(_, context)| context.backend == backend)
+            .map(|(name, _)| name.as_str())
     }
 
     pub fn service_runtime(&self) -> Option<&TaskRuntimeSpec> {
@@ -1864,4 +1929,100 @@ pub struct AgentConfig {
     pub bootstrap: Option<AgentBootstrapConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::parser::parse_contract_str;
+
+    use super::Backend;
+
+    #[test]
+    fn task_env_for_backend_merges_context_task_and_mode_env_in_order() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      env:
+        FOO: context
+        BAR: context
+      container:
+        image: node:24-bookworm
+tasks:
+  build:
+    context: app
+    env:
+      BAR: task
+      BAZ: task
+    execution:
+      default_mode: container
+      modes:
+        container:
+          env:
+            BAZ: mode
+            QUX: mode
+    run: npm run build
+"#,
+        )
+        .unwrap();
+
+        let env = contract.tasks["build"]
+            .env_for_backend(contract.execution.as_ref(), Backend::Container);
+
+        assert_eq!(env.get("FOO").map(String::as_str), Some("context"));
+        assert_eq!(env.get("BAR").map(String::as_str), Some("task"));
+        assert_eq!(env.get("BAZ").map(String::as_str), Some("mode"));
+        assert_eq!(env.get("QUX").map(String::as_str), Some("mode"));
+    }
+
+    #[test]
+    fn task_env_for_backend_uses_backend_matching_context_env_when_task_context_differs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      env:
+        FOO: host
+    app:
+      backend: container
+      lifecycle: persistent
+      env:
+        FOO: container
+      container:
+        image: node:24-bookworm
+tasks:
+  build:
+    context: host
+    execution:
+      default_mode: container
+      modes:
+        container:
+          run: npm run build
+    run: npm run build
+"#,
+        )
+        .unwrap();
+
+        let env = contract.tasks["build"]
+            .env_for_backend(contract.execution.as_ref(), Backend::Container);
+
+        assert_eq!(env.get("FOO").map(String::as_str), Some("container"));
+    }
 }

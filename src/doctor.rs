@@ -58,6 +58,7 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     RequirementSurface, RuntimeRequirement, ServiceSpec, ToolRequirement,
 };
+use crate::validator::{ContractAdvisory, collect_contract_advisories};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -2015,6 +2016,7 @@ fn diagnose_contract_with_scope(
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
+        diagnose_contract_advisories(contract, &mut findings);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
         diagnose_services(contract, contract_path, mode, &mut findings);
@@ -2059,6 +2061,31 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
             "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate",
         ),
     });
+}
+
+fn diagnose_contract_advisories(contract: &Contract, findings: &mut Vec<Finding>) {
+    for advisory in collect_contract_advisories(contract) {
+        findings.push(match advisory {
+            ContractAdvisory::DependsOnBoundary(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Task `{}` depends_on `{}` across different execution boundaries",
+                    advisory.parent_task, advisory.dependency_task
+                ),
+                why: ContractAdvisory::DependsOnBoundary(advisory.clone()).why(),
+                next: ContractAdvisory::DependsOnBoundary(advisory).next(),
+            },
+            ContractAdvisory::LikelyUnusedAttachment(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Attachment `{}` may be unused in context `{}`",
+                    advisory.isolated_path, advisory.context_name
+                ),
+                why: ContractAdvisory::LikelyUnusedAttachment(advisory.clone()).why(),
+                next: ContractAdvisory::LikelyUnusedAttachment(advisory).next(),
+            },
+        });
+    }
 }
 
 fn project_type_allows_no_tasks(contract: &Contract) -> bool {
@@ -5165,6 +5192,87 @@ tasks:
             report.findings[0].summary,
             "Ephemeral lifecycle is advisory in native mode"
         );
+    }
+
+    #[test]
+    fn doctor_warns_when_depends_on_crosses_execution_boundaries() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+    verify:
+      backend: native
+tasks:
+  setup:
+    context: app
+    run: npm install
+  build:
+    context: verify
+    run: npm run build
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        super::diagnose_contract_advisories(&contract, &mut findings);
+
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary
+                    == "Task `build` depends_on `setup` across different execution boundaries"
+                && finding
+                    .why
+                    .contains("only durable external side effects survive")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_attachment_path_is_likely_unused() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        isolated_paths:
+          - .m2
+tasks:
+  build:
+    context: app
+    run: mvn -q test
+"#,
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        super::diagnose_contract_advisories(&contract, &mut findings);
+
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary == "Attachment `.m2` may be unused in context `app`"
+                && finding.why.contains("point Maven at `/workspace/.m2`")
+        }));
     }
 
     #[test]
