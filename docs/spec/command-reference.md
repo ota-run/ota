@@ -332,15 +332,18 @@ Current behavior:
 - resolves values in the same precedence order as task execution
 - reports declared env source status alongside the env-variable view
 - shows the winning source for each contract env entry
+- declared source provenance applies uniformly across curated `dotenv`, `properties`, `json`, `yaml`, and `toml` env sources
 - reports missing required env and invalid allowed values
 - stays read-only
+- uses the shared declared-source loader, so parse failures, structure failures, and normalized-key
+  collisions are reported with the same source-scoped truth as execution and doctor
 
 Text output:
 
 - header: `ENV <path>`
 - includes a readiness status line, a short overview, a `Declared env sources` section when sources exist, and separate `Contract env` / `Execution env` sections when task-specific execution env is present
-- each env entry may include `kind`, `required`, `value`, `source`, `status`, `allowed`, `default`, and `Next`
-- each declared source may include `kind`, `path`, `must_exist`, `status`, `detail`, and `Next`
+- each env entry may include `kind`, `required`, `value`, `source`, `source kind`, `source path`, `source status`, `status`, `allowed`, `default`, and `Next`
+- each declared source may include `kind`, `path`, `label`, `must_exist`, `status`, `detail`, and `Next`
 - missing or invalid contract env entries point to a specific fix rather than guessing
 
 Example:
@@ -351,11 +354,11 @@ ENV ./ota.yaml
 Ready: yes
 
 Declared env sources
-- dotenv .env.local status=loaded
-- dotenv .env must_exist=true status=loaded
+- properties app.properties label=properties:app.properties status=loaded
+- json env/runtime.json label=json:env/runtime.json must_exist=true status=loaded
 
 Contract env
-- DISCORD_TOKEN required=true value=*** source=dotenv:.env status=resolved
+- DISCORD_TOKEN required=true value=*** source=properties:app.properties source_kind=properties source_path=app.properties source_status=loaded status=resolved
 - DOCS_SITE_BASE_URL required=true value=https://docs.internal.example source=org policy status=resolved
 - RELEASE_CHANNEL required=false value=stable source=default status=resolved allowed=[stable, canary]
 
@@ -800,7 +803,8 @@ Current behavior:
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
 - in `detected` mode, plain `ota init` writes the smallest valid starter contract for the repo
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
-- when repo-root `.env.local` or `.env` files already exist, detector-led init can declare them as explicit `env.sources` in the starter contract; explicit `--pack` mode does not infer env sources from repo files
+- when standard env source files already exist, detector-led init can declare them as explicit `env.sources` in the starter contract: `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, and `appsettings.Development.json`; explicit `--pack` mode does not infer env sources from repo files
+- runtime support for declared `env.sources` also includes curated `yaml` and `toml`, but detector-led init still only auto-infers the explicit standard files listed above
 - when `project.name` is still missing in bootstrap mode, ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
 - canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
@@ -810,7 +814,7 @@ Current behavior:
 Choosing an init path:
 
 - use `ota init --dry-run` when detector-led init should shape the first draft from repo signals
-- use detector-led init when you want ota to carry existing runtime dotenv sources such as `.env.local` or `.env` into `env.sources`
+- use detector-led init when you want ota to carry existing declared-source candidates such as `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, or `appsettings.Development.json` into `env.sources`
 - use plain `ota init` only after reviewing that detector-led starter
 - use `ota init --packs` when you want to compare the explicit starter catalog first
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
@@ -1595,6 +1599,7 @@ Dry-run behavior:
 - prints a candidate `ota.yaml`
 - prints per-field provenance
 - prints per-field confidence
+- when curated standard env source files exist, includes inferred `env.sources` entries for `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, and `appsettings.Development.json`
 - when `ota.yaml` already exists, text output leads with the existing-contract comparison and drift review before the inferred contract details
 - existing-contract add/update lines include the detector source and confidence for the proposed value
 - when `ota.yaml` already exists and only drift is present, text output says there are no additive detected changes and points users at merge vs rewrite review
@@ -1632,6 +1637,7 @@ Current merge-write behavior:
 - it applies only `high` confidence missing fields
 - `ota detect --merge --apply FIELD` applies only the selected high-confidence detected changes and leaves the rest of `ota.yaml` unchanged
 - `ota detect --merge --apply-all` applies all eligible high-confidence detected changes and leaves the rest of `ota.yaml` unchanged
+- inferred `env.sources` additions participate in the same high-confidence merge/apply path and are never auto-loaded at runtime unless they are declared in the contract
 - it does not overwrite conflicting existing values
 - it validates the merged contract before writing
 - it is additive only in the current implementation

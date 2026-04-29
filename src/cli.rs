@@ -41,6 +41,7 @@ use clap_complete::env::{Bash, Elvish, EnvCompleter, Fish, Powershell, Zsh};
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
 use crate::schema::parse_memory_size_bytes;
+use crate::terminal::supports_dynamic_stderr_ui;
 
 mod commands;
 pub(crate) use commands::parse_container_host_port_conflict;
@@ -2741,7 +2742,8 @@ fn spawn_update_notice() -> mpsc::Receiver<Option<String>> {
 }
 
 fn should_show_command_spinner(cli: &Cli) -> bool {
-    io::stderr().is_terminal() && command_requests_spinner_when_interactive(cli)
+    supports_dynamic_stderr_ui(io::stderr().is_terminal())
+        && command_requests_spinner_when_interactive(cli)
 }
 
 fn command_requests_spinner_when_interactive(cli: &Cli) -> bool {
@@ -17130,7 +17132,10 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
 
         assert_eq!(output.exit_code, 1);
-        assert_eq!(json["execution"]["env"][0]["source"], "invalid dotenv:.env");
+        assert_eq!(
+            json["execution"]["env"][0]["source"],
+            "parse failed dotenv:.env"
+        );
     }
 
     #[test]
@@ -19564,7 +19569,7 @@ requires-python = ">=3.12"
             entry["field"] == "env.sources.0.path"
                 && entry["value"] == ".env.local"
                 && entry["source"] == ".env.local"
-                && entry["confidence"] == "medium"
+                && entry["confidence"] == "high"
         }));
         let provenance = json["provenance"].as_array().expect("provenance array");
         let env_source = provenance
@@ -19574,7 +19579,7 @@ requires-python = ">=3.12"
         assert_eq!(env_source["provenance"], "detector-inferred");
         assert_eq!(env_source["provenance_key"], "repo_signals");
         assert_eq!(env_source["source"], ".env.local");
-        assert_eq!(env_source["confidence"], "medium");
+        assert_eq!(env_source["confidence"], "high");
 
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("env:"));
@@ -19633,7 +19638,7 @@ requires-python = ">=3.12"
         assert_eq!(env_source["provenance"], "detector-inferred");
         assert_eq!(env_source["provenance_key"], "repo_signals");
         assert_eq!(env_source["source"], ".env.local");
-        assert_eq!(env_source["confidence"], "medium");
+        assert_eq!(env_source["confidence"], "high");
     }
 
     #[test]

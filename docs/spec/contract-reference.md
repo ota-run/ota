@@ -421,7 +421,7 @@ Current implementation:
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
 - ota injects `OTA_WORKSPACE` into task execution so backend-aware workspace-relative paths stay explicit without hardcoding `/workspace`
 - task env precedence is: resolved context env, then `tasks.<name>.env`, then selected `tasks.<name>.execution.modes.<mode>.env`
-- ota-derived cache env is fallback-only and currently covers `MAVEN_OPTS` for isolated `.m2` and `NPM_CONFIG_CACHE` for isolated `.npm`; explicit task or context env still wins
+- ota-derived cache env is fallback-only and currently covers `MAVEN_OPTS` for isolated `.m2`, `NPM_CONFIG_CACHE` for isolated `.npm`, `PNPM_STORE_DIR` for isolated `.pnpm-store`, `GRADLE_USER_HOME` for isolated `.gradle`, `PIP_CACHE_DIR` for isolated `.pip-cache`, and `POETRY_CACHE_DIR` for isolated `.pypoetry-cache`; explicit task or context env still wins
 - container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
 - `ota up` now runs the `setup` task in the task's resolved context backend
 - `ota run` supports remote execution when the resolved context or legacy `execution.backends.remote` declares `provider` and `target`
@@ -665,6 +665,14 @@ env:
     - kind: dotenv
       path: .env
       must_exist: true
+    - kind: properties
+      path: config/runtime.properties
+    - kind: json
+      path: config/runtime.json
+    - kind: yaml
+      path: config/runtime.yaml
+    - kind: toml
+      path: config/runtime.toml
 ```
 
 Fields:
@@ -689,9 +697,26 @@ resolve values before `ota run` and `ota up` start a process.
 
 `env.sources[]` fields:
 
-- `kind`: source type; today ota ships `dotenv`
+- `kind`: source type; ota ships curated `dotenv`, `properties`, `json`, `yaml`, and `toml`
 - `path`: source path relative to the contract directory
 - `must_exist`: optional boolean; when `true`, the source artifact itself is part of readiness
+
+Declared source rules:
+
+- source files are loaded only when explicitly declared in `env.sources`
+- precedence is unchanged: policy values, then process env, then declared sources in order, then
+  `default`
+- `properties` is a flat key-value source
+- `json` must have an object root
+- `yaml` must have an object root
+- `toml` must have a table root
+- nested `json`, `yaml`, and `toml` objects flatten with `.` before env-key normalization
+- only scalar leaf values are allowed in structured sources: string, number, bool
+- `null`, arrays, object leaf values, and unsupported scalar classes such as TOML datetimes are rejected
+- for `properties`, `json`, `yaml`, and `toml`, ota normalizes keys by trimming, replacing `.`, `-`, whitespace,
+  `/`, and `:` with `_`, collapsing repeated separators, and uppercasing the final env key
+- if two keys in the same declared source normalize to the same env key, ota fails that source
+  load explicitly
 
 `PATH` is a standard search-path env var, so it is the one env key that supports structured
 composition. Most env vars are simple single values instead.
@@ -739,12 +764,36 @@ env:
       must_exist: true
 ```
 
-This makes dotenv loading explicit instead of magical:
+This makes declared source loading explicit instead of magical:
 
 - ota reads `.env.local`, then `.env`
 - `.env.local` is optional
 - `.env` must exist
 - process env and `policies.env.values` still outrank both files
+
+```yaml
+env:
+  vars:
+    APP_PORT:
+      required: true
+    FEATURE_FLAGS_BETA_ENABLED:
+      required: true
+  sources:
+    - kind: properties
+      path: config/runtime.properties
+    - kind: json
+      path: config/runtime.json
+```
+
+With:
+
+- `config/runtime.properties`: `app.port=8080`
+- `config/runtime.json`: `{"feature flags":{"beta-enabled":true}}`
+
+ota resolves:
+
+- `APP_PORT=8080`
+- `FEATURE_FLAGS_BETA_ENABLED=true`
 
 ```yaml
 policies:

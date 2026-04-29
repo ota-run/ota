@@ -251,6 +251,71 @@ pub(crate) fn collect_detect_changes(
         );
     }
 
+    let mut next_env_source_add_index = existing.env.sources.len();
+    for (detected_index, source) in detected.env.sources.iter().enumerate() {
+        if existing.env.sources.iter().any(|existing_source| {
+            existing_source.kind == source.kind && existing_source.path == source.path
+        }) {
+            continue;
+        }
+
+        if let Some(existing_index) = existing
+            .env
+            .sources
+            .iter()
+            .position(|existing_source| existing_source.path == source.path)
+        {
+            let existing_kind = existing.env.sources[existing_index].kind.to_string();
+            let detected_kind = source.kind.to_string();
+            let detected_field = format!("env.sources.{detected_index}.kind");
+            push_detect_change_with_inference(
+                &mut changes,
+                existing,
+                inference_index.get(detected_field.as_str()).copied(),
+                &format!("env.sources.{existing_index}.kind"),
+                Some(existing_kind.as_str()),
+                Some(detected_kind.as_str()),
+            );
+            continue;
+        }
+
+        let change_kind = format!("env.sources.{next_env_source_add_index}.kind");
+        let change_path = format!("env.sources.{next_env_source_add_index}.path");
+        let detected_kind = source.kind.to_string();
+        let detected_kind_field = format!("env.sources.{detected_index}.kind");
+        let detected_path_field = format!("env.sources.{detected_index}.path");
+        push_detect_change_with_inference(
+            &mut changes,
+            existing,
+            inference_index.get(detected_kind_field.as_str()).copied(),
+            &change_kind,
+            None,
+            Some(detected_kind.as_str()),
+        );
+        push_detect_change_with_inference(
+            &mut changes,
+            existing,
+            inference_index.get(detected_path_field.as_str()).copied(),
+            &change_path,
+            None,
+            Some(source.path.as_str()),
+        );
+        if source.must_exist {
+            let detected_must_exist_field = format!("env.sources.{detected_index}.must_exist");
+            push_detect_change_with_inference(
+                &mut changes,
+                existing,
+                inference_index
+                    .get(detected_must_exist_field.as_str())
+                    .copied(),
+                &format!("env.sources.{next_env_source_add_index}.must_exist"),
+                None,
+                Some("true"),
+            );
+        }
+        next_env_source_add_index += 1;
+    }
+
     for (name, service) in &detected.services {
         push_detect_change(
             &mut changes,
@@ -385,6 +450,33 @@ pub(crate) fn collect_detect_removals(
         }
     }
 
+    for (index, source) in existing.env.sources.iter().enumerate() {
+        if !detected.env.sources.iter().any(|detected_source| {
+            detected_source.kind == source.kind && detected_source.path == source.path
+        }) {
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("env.sources.{index}.kind"),
+                source.kind.to_string(),
+            );
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("env.sources.{index}.path"),
+                source.path.clone(),
+            );
+            if source.must_exist {
+                push_detect_removal(
+                    &mut removals,
+                    existing,
+                    format!("env.sources.{index}.must_exist"),
+                    String::from("true"),
+                );
+            }
+        }
+    }
+
     for (name, service) in &existing.services {
         let detected_service = detected.services.get(name);
         if service.provider.is_some()
@@ -494,7 +586,28 @@ fn push_detect_change(
     let Some(detected) = detected else {
         return;
     };
-    let inference = inference_index.get(field);
+    let inference = inference_index.get(field).copied();
+    push_detect_change_with_inference(
+        changes,
+        existing_contract,
+        inference,
+        field,
+        existing,
+        Some(detected),
+    );
+}
+
+fn push_detect_change_with_inference(
+    changes: &mut Vec<DetectComparisonChange>,
+    existing_contract: &Contract,
+    inference: Option<&Inference>,
+    field: &str,
+    existing: Option<&str>,
+    detected: Option<&str>,
+) {
+    let Some(detected) = detected else {
+        return;
+    };
 
     match existing {
         None => changes.push(DetectComparisonChange {
@@ -528,8 +641,11 @@ fn push_detect_change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::detector::{DetectContract, DetectProject, DetectService, DetectTask};
+    use crate::detector::{
+        Confidence, DetectContract, DetectProject, DetectService, DetectTask, Inference,
+    };
     use crate::parser::parse_contract_str;
+    use crate::schema::{EnvSource, EnvSourceKind};
     use std::collections::BTreeMap;
     use std::path::Path;
 
@@ -690,6 +806,88 @@ tools:
 
         let removals = collect_detect_removals(&existing, &detected);
         assert!(removals.is_empty());
+    }
+
+    #[test]
+    fn collect_detect_changes_skips_matching_declared_env_sources() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: dotenv
+      path: .env.local
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            env: crate::schema::EnvConfig {
+                vars: BTreeMap::new(),
+                sources: vec![EnvSource {
+                    kind: EnvSourceKind::Dotenv,
+                    path: String::from(".env.local"),
+                    must_exist: false,
+                }],
+            },
+            ..DetectContract::default()
+        };
+
+        let changes = collect_detect_changes(&existing, &detected, &[]);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn collect_detect_changes_surfaces_env_source_kind_conflicts() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: dotenv
+      path: appsettings.json
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            env: crate::schema::EnvConfig {
+                vars: BTreeMap::new(),
+                sources: vec![EnvSource {
+                    kind: EnvSourceKind::Json,
+                    path: String::from("appsettings.json"),
+                    must_exist: false,
+                }],
+            },
+            ..DetectContract::default()
+        };
+        let inferences = vec![Inference {
+            field: String::from("env.sources.0.kind"),
+            value: String::from("json"),
+            source: String::from("appsettings.json"),
+            confidence: Confidence::High,
+        }];
+
+        let changes = collect_detect_changes(&existing, &detected, &inferences);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].field, "env.sources.0.kind");
+        assert_eq!(changes[0].status, "update");
+        assert_eq!(changes[0].existing.as_deref(), Some("dotenv"));
+        assert_eq!(changes[0].detected, "json");
     }
 
     #[test]

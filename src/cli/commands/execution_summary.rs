@@ -34,6 +34,7 @@ pub(super) fn render_execution_receipt_summary_block(
     } else {
         paint(&format!("🦦 {title}"), "1")
     };
+    let omit_next_for_failed_run_summary = title.contains("RUN SUMMARY");
     let mut lines = vec![String::new(), title, String::new()];
     let mode = receipt
         .backend
@@ -209,7 +210,9 @@ pub(super) fn render_execution_receipt_summary_block(
     if let Some(note_value) = note.as_deref() {
         lines.push(summary_detail_line("Note:", note_value));
     }
-    if let Some(next_value) = receipt.next.as_deref() {
+    if let Some(next_value) = receipt.next.as_deref()
+        && !(omit_next_for_failed_run_summary && status == "failed")
+    {
         lines.push(summary_detail_line("Next:", next_value));
     }
     if let Some(log_warning) = log_capture_warning.as_deref() {

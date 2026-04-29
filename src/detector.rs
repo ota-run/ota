@@ -29,7 +29,7 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
-use crate::schema::EnvConfig;
+use crate::schema::{EnvConfig, EnvSource, EnvSourceKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -127,6 +127,17 @@ pub struct DetectReport {
     pub inferences: Vec<Inference>,
 }
 
+const DETECT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
+    (EnvSourceKind::Dotenv, ".env.local"),
+    (EnvSourceKind::Dotenv, ".env"),
+    (
+        EnvSourceKind::Properties,
+        "src/main/resources/application.properties",
+    ),
+    (EnvSourceKind::Json, "appsettings.json"),
+    (EnvSourceKind::Json, "appsettings.Development.json"),
+];
+
 fn task_notes(task_name: &str) -> Option<String> {
     if task_name.trim().is_empty() {
         return None;
@@ -217,6 +228,34 @@ impl DetectReport {
                 continue;
             }
 
+            if let Some(source_field) = inference.field.strip_prefix("env.sources.")
+                && let Some((index_text, field_name)) = source_field.split_once('.')
+                && let Ok(index) = index_text.parse::<usize>()
+            {
+                while contract.env.sources.len() <= index {
+                    contract.env.sources.push(EnvSource {
+                        kind: EnvSourceKind::Dotenv,
+                        path: String::new(),
+                        must_exist: false,
+                    });
+                }
+                let source = &mut contract.env.sources[index];
+                match field_name {
+                    "kind" => {
+                        source.kind = match inference.value.as_str() {
+                            "dotenv" => EnvSourceKind::Dotenv,
+                            "properties" => EnvSourceKind::Properties,
+                            "json" => EnvSourceKind::Json,
+                            _ => source.kind,
+                        };
+                    }
+                    "path" => source.path = inference.value.clone(),
+                    "must_exist" => source.must_exist = inference.value == "true",
+                    _ => {}
+                }
+                continue;
+            }
+
             if let Some(service_field) = inference.field.strip_prefix("services.")
                 && let Some((service_name, field_name)) = service_field.split_once('.')
             {
@@ -261,6 +300,11 @@ impl DetectReport {
                 }
             }
         }
+
+        contract
+            .env
+            .sources
+            .retain(|source| !source.path.trim().is_empty());
 
         contract
     }
@@ -338,9 +382,26 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_deno_markers(&root, &mut builder)?;
     detect_release_script(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
+    detect_env_sources(&root, &mut builder);
     detect_directory_name(&root, &mut builder);
 
     Ok(builder.finish())
+}
+
+fn detect_env_sources(root: &Path, builder: &mut DetectBuilder) {
+    for (kind, path) in DETECT_ENV_SOURCE_CANDIDATES {
+        if root.join(path).is_file() {
+            builder.add_env_source(
+                EnvSource {
+                    kind: *kind,
+                    path: (*path).to_string(),
+                    must_exist: false,
+                },
+                (*path).to_string(),
+                Confidence::High,
+            );
+        }
+    }
 }
 
 fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -3738,6 +3799,49 @@ impl DetectBuilder {
         }
     }
 
+    fn add_env_source(
+        &mut self,
+        source: EnvSource,
+        provenance_source: String,
+        confidence: Confidence,
+    ) {
+        if self
+            .contract
+            .env
+            .sources
+            .iter()
+            .any(|existing| existing.kind == source.kind && existing.path == source.path)
+        {
+            return;
+        }
+
+        let index = self.contract.env.sources.len();
+        let kind_value = source.kind.to_string();
+        let path_value = source.path.clone();
+        let must_exist = source.must_exist;
+        self.contract.env.sources.push(source);
+        self.record(
+            format!("env.sources.{index}.kind"),
+            kind_value,
+            provenance_source.clone(),
+            confidence,
+        );
+        self.record(
+            format!("env.sources.{index}.path"),
+            path_value,
+            provenance_source.clone(),
+            confidence,
+        );
+        if must_exist {
+            self.record(
+                format!("env.sources.{index}.must_exist"),
+                String::from("true"),
+                provenance_source,
+                confidence,
+            );
+        }
+    }
+
     fn set_task(&mut self, name: String, run: String, source: String, confidence: Confidence) {
         let field = format!("tasks.{name}.run");
         if self.should_replace(&field, &source, confidence) {
@@ -4146,6 +4250,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{Confidence, detect_repo};
+    use crate::schema::{EnvSource, EnvSourceKind};
 
     #[test]
     fn prefers_nvmrc_over_package_json_engines() {
@@ -4216,6 +4321,69 @@ requires-python = ">=3.12"
             report.contract.runtimes.get("go"),
             Some(&"1.24.0".to_string())
         );
+    }
+
+    #[test]
+    fn detects_curated_env_sources_in_deterministic_order() {
+        let fixture = Fixture::new();
+        fixture.write(".env.local", "APP_PORT=3000\n");
+        fixture.write(".env", "APP_PORT=3001\n");
+        fixture.write(
+            "src/main/resources/application.properties",
+            "app.port=8080\n",
+        );
+        fixture.write("appsettings.json", "{ \"App\": { \"Port\": 8081 } }");
+        fixture.write(
+            "appsettings.Development.json",
+            "{ \"App\": { \"Port\": 8082 } }",
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        let high_confidence = report.high_confidence_contract();
+
+        assert_eq!(
+            report.contract.env.sources,
+            vec![
+                EnvSource {
+                    kind: EnvSourceKind::Dotenv,
+                    path: String::from(".env.local"),
+                    must_exist: false,
+                },
+                EnvSource {
+                    kind: EnvSourceKind::Dotenv,
+                    path: String::from(".env"),
+                    must_exist: false,
+                },
+                EnvSource {
+                    kind: EnvSourceKind::Properties,
+                    path: String::from("src/main/resources/application.properties"),
+                    must_exist: false,
+                },
+                EnvSource {
+                    kind: EnvSourceKind::Json,
+                    path: String::from("appsettings.json"),
+                    must_exist: false,
+                },
+                EnvSource {
+                    kind: EnvSourceKind::Json,
+                    path: String::from("appsettings.Development.json"),
+                    must_exist: false,
+                },
+            ]
+        );
+        assert_eq!(high_confidence.env.sources, report.contract.env.sources);
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "env.sources.0.kind"
+                && inference.value == "dotenv"
+                && inference.source == ".env.local"
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "env.sources.4.path"
+                && inference.value == "appsettings.Development.json"
+                && inference.source == "appsettings.Development.json"
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]

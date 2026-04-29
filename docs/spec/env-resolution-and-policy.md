@@ -59,7 +59,7 @@ real execution.
 
 Without root `env`, ota still inherits whatever the shell already has, but ota does not know that
 those values are part of repo truth. That means no repo-level provenance, no allowed-value checks,
-no declared dotenv support, no policy-supplied shared values, and no secret-aware output.
+no declared source support, no policy-supplied shared values, and no secret-aware output.
 
 ## What ota Injects
 
@@ -140,11 +140,11 @@ This means:
 
 - `DISCORD_TOKEN` must resolve and should not be shown in plain text
 - `RELEASE_CHANNEL` falls back to `stable`
-- `RELEASE_CHANNEL=beta` is rejected even if it came from policy, the shell, or a declared dotenv file
+- `RELEASE_CHANNEL=beta` is rejected even if it came from policy, the shell, or a declared source file
 
 ### `env.sources[]`
 
-- `kind`: source type. Today ota ships `dotenv`
+- `kind`: curated source type. Today ota ships `dotenv`, `properties`, `json`, `yaml`, and `toml`
 - `path`: source path relative to the contract directory
 - `must_exist`: whether the source artifact itself is part of readiness
 
@@ -175,6 +175,15 @@ This means:
 - `.env` itself must exist
 - `DISCORD_TOKEN` still has to resolve from policy env, the shell, a declared source, or a default
 
+Detect/init onboarding inference:
+
+- `ota detect` and detector-led `ota init` may infer curated `env.sources` entries from known standard files only
+- today that curated list is `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, and `appsettings.Development.json`
+- `yaml` and `toml` are supported at runtime when declared, but this curated detect/init inference list does not yet auto-suggest standard yaml/toml paths
+- inferred entries carry the same provenance/confidence model as other detect/init fields
+- runtime commands do not auto-discover those files; `ota run`, `ota up`, `ota env`, and `ota doctor` only load sources that are already declared in `env.sources`
+- merge/apply stays explicit: inferred sources are reviewed and written through the existing detect/init flows instead of being silently loaded at execution time
+
 ## Resolution Order
 
 When a repo declares an env name in `env.vars`, repo-level commands resolve it in this order:
@@ -196,9 +205,36 @@ Workspace commands add one higher-priority shared layer:
 
 If none of those provide a value and the env is required, validation or execution fails.
 
-If a declared dotenv source is present but invalid, ota fails instead of silently skipping it.
+Execution env layers are separate from root `env.vars` resolution.
+
+- root `env.vars` decides which repo-owned values are real readiness and execution inputs
+- `execution.contexts.<name>.env` adds context-wide execution defaults
+- `tasks.<name>.env` overrides those defaults for one task
+- `tasks.<name>.execution.modes.<mode>.env` overrides the selected execution mode branch
+- ota also injects `OTA_WORKSPACE` automatically and derives fallback cache env for known
+  attachment/tool pairs such as `.m2`, `.npm`, `.pnpm-store`, `.gradle`, `.pip-cache`, and
+  `.pypoetry-cache`
+
+Execution env precedence for those injected layers is:
+
+1. selected task mode env
+2. task env
+3. context env
+4. ota-derived fallback execution env
+
+If a declared source is present but invalid, ota fails instead of silently skipping it.
 If a declared source has `must_exist: true` and is missing, ota reports that as a readiness failure
 even if another layer provides the env value.
+
+Declared source loading is strict and deterministic:
+
+- `dotenv` uses dotenv parsing
+- `properties` uses a flat Java-properties style source
+- `json` requires an object root, `yaml` requires an object root, and `toml` requires a table root
+- structured sources flatten nested maps with `.`, then normalize keys into env names
+- arrays, object leaves, and `null` values are rejected explicitly
+- unsupported structured scalar classes such as TOML datetimes are rejected explicitly
+- if two keys inside one source normalize to the same env key, ota fails that source instead of guessing
 
 Remote execution caveat:
 
@@ -209,7 +245,8 @@ Remote execution caveat:
 ## What To Put Where
 
 - use `env.vars` in `ota.yaml` to say which values the repo needs
-- use `env.sources` when the repo intentionally relies on dotenv files
+- use `env.sources` when the repo intentionally relies on declared source files such as dotenv,
+  properties, json, yaml, or toml
 - use `required: true` when a value must exist
 - use `default` when the repo has a safe fallback
 - use `allowed` when the value must stay within a fixed set
@@ -276,7 +313,7 @@ policies:
 This means:
 
 - `DOCS_SITE_BASE_URL` is a repo requirement
-- the org policy pack can satisfy it without relying on the shell or dotenv files
+- the org policy pack can satisfy it without relying on the shell or declared source files
 - `RELEASE_CHANNEL` still has to pass `allowed`, regardless of whether it came from policy, the shell, or a declared source
 
 ```yaml
@@ -319,7 +356,7 @@ This means:
 - `ota workspace ...` prefers the workspace policy values first
 - the org policy pack is still consulted after the workspace policy layer
 - the repo contract still defines which env names are real readiness requirements
-- the shell, declared dotenv files, and contract defaults remain lower-precedence fallbacks
+- the shell, declared env sources, and contract defaults remain lower-precedence fallbacks
 
 If the process `PATH` is:
 
@@ -368,14 +405,16 @@ Example `ota env` JSON shape:
   },
   "sources": [
     {
-      "kind": "dotenv",
-      "path": ".env.local",
+      "kind": "properties",
+      "path": "app.properties",
+      "label": "properties:app.properties",
       "must_exist": false,
       "status": "loaded"
     },
     {
-      "kind": "dotenv",
-      "path": ".env",
+      "kind": "json",
+      "path": "env/runtime.json",
+      "label": "json:env/runtime.json",
       "must_exist": true,
       "status": "loaded"
     }
@@ -386,7 +425,11 @@ Example `ota env` JSON shape:
       "kind": "contract",
       "required": true,
       "value": "***",
-      "source": "dotenv:.env",
+      "source": "properties:app.properties",
+      "source_kind": "properties",
+      "source_path": "app.properties",
+      "source_status": "loaded",
+      "source_label": "properties:app.properties",
       "status": "resolved"
     },
     {
@@ -408,6 +451,15 @@ Example `ota env` JSON shape:
   ]
 }
 ```
+
+Canonical declared-source status values are:
+
+- `loaded`
+- `missing_optional`
+- `missing_required`
+- `parse_failed`
+- `invalid_structure`
+- `collision`
 
 ## What Policy Is Not
 
