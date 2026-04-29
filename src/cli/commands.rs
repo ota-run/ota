@@ -948,46 +948,6 @@ fn collect_validate_warnings(contract: &Contract) -> Vec<String> {
         .collect()
 }
 
-fn validate_boundary_side_label(
-    context_name: Option<&str>,
-    backend: Backend,
-    lifecycle: Option<Lifecycle>,
-) -> String {
-    let context = context_name.unwrap_or("none");
-    let backend = match backend {
-        Backend::Native => "native",
-        Backend::Container => "container",
-        Backend::Remote => "remote",
-    };
-    let lifecycle = lifecycle.map(format_lifecycle).unwrap_or("none");
-    if plain_mode() {
-        return format!("{context} / {backend} / {lifecycle}");
-    }
-    let slash = paint("/", "1;37");
-    format!("{context} {slash} {backend} {slash} {lifecycle}")
-}
-
-fn validate_boundary_summary(
-    parent: &crate::validator::TaskExecutionBoundary,
-    dependency: &crate::validator::TaskExecutionBoundary,
-) -> String {
-    let left = validate_boundary_side_label(
-        parent.context_name.as_deref(),
-        parent.backend,
-        parent.lifecycle,
-    );
-    let right = validate_boundary_side_label(
-        dependency.context_name.as_deref(),
-        dependency.backend,
-        dependency.lifecycle,
-    );
-    if plain_mode() {
-        return format!("{left} → {right}");
-    }
-    let arrow = paint("→", "1;37");
-    format!("{left} {arrow} {right}")
-}
-
 fn validate_depends_on_why(
     parent: &crate::validator::TaskExecutionBoundary,
     dependency: &crate::validator::TaskExecutionBoundary,
@@ -1001,34 +961,60 @@ fn validate_depends_on_why(
     String::from("only durable external side effects survive this edge")
 }
 
+fn render_validate_warning_detail(value: &str) -> String {
+    if plain_mode() {
+        return value.replace(" -> ", " → ");
+    }
+
+    let arrow = paint("→", "1;37");
+    value
+        .split('`')
+        .enumerate()
+        .map(|(index, segment)| {
+            if index % 2 == 1 {
+                paint_backticked_code(segment)
+            } else {
+                segment
+                    .split(" -> ")
+                    .map(paint_group_meta)
+                    .collect::<Vec<_>>()
+                    .join(&format!(" {arrow} "))
+            }
+        })
+        .collect::<String>()
+}
+
 fn render_validate_warning(advisory: &ContractAdvisory) -> String {
     match advisory {
         ContractAdvisory::DependsOnBoundary(value) => format!(
-            "  {} `{}` → `{}`\n    {} {}\n    {} {}\n    {} {}",
+            "{} `{}` → `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
             value.parent_task,
             value.dependency_task,
-            paint_key("Boundary:"),
-            paint_group_meta(&validate_boundary_summary(&value.parent, &value.dependency)),
+            paint_key("Drift:"),
+            render_validate_warning_detail(&advisory.drift().unwrap_or_default()),
             paint_key("Why:"),
-            paint_group_meta(&validate_depends_on_why(&value.parent, &value.dependency)),
+            render_validate_warning_detail(&validate_depends_on_why(
+                &value.parent,
+                &value.dependency
+            )),
             paint_key("Next:"),
-            paint_group_meta(&advisory.next()),
+            render_validate_warning_detail(&advisory.next()),
         ),
         ContractAdvisory::LikelyUnusedAttachment(value) => format!(
-            "  {} context `{}` cache `{}`\n    {} {}\n    {} {}\n    {} {}",
+            "{} context `{}` cache `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
             value.context_name,
             value.isolated_path,
             paint_key("Boundary:"),
-            paint_group_meta(&format!(
+            render_validate_warning_detail(&format!(
                 "{} attachment → {}",
                 value.tool, value.effective_path
             )),
             paint_key("Why:"),
-            paint_group_meta(&advisory.why()),
+            render_validate_warning_detail(&advisory.why()),
             paint_key("Next:"),
-            paint_group_meta(&advisory.next()),
+            render_validate_warning_detail(&advisory.next()),
         ),
     }
 }
@@ -26484,9 +26470,8 @@ tasks:
 
         assert!(rendered.contains("Warnings"));
         assert!(rendered.contains("`build` → `setup`"));
-        assert!(
-            rendered.contains("Boundary: verify / native / none → app / container / persistent")
-        );
+        assert!(rendered.contains("Drift: context: verify → app"));
+        assert!(rendered.contains("lifecycle: none → persistent"));
         assert!(rendered.contains("Why: only durable external side effects survive this edge"));
         assert!(rendered.contains("Next:"));
     }
