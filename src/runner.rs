@@ -23062,6 +23062,15 @@ project:
         let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&docker_path, permissions).unwrap();
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
 
         let state_dir = bin_dir.join("docker-state");
         fs::create_dir_all(&state_dir).unwrap();
@@ -23309,6 +23318,15 @@ project:
         let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&docker_path, permissions).unwrap();
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
 
         let state_dir = bin_dir.join("docker-state");
         fs::create_dir_all(&state_dir).unwrap();
