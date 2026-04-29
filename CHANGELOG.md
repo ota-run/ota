@@ -35,6 +35,7 @@
 - added cross-boundary `depends_on` advisories to `ota validate` and `ota doctor`, calling out context/backend/lifecycle drift and explaining that only durable external side effects survive across that dependency edge
 - made execution summaries and attachment guidance more explicit by surfacing effective in-container attachment paths such as `/workspace/<path>`, and added warnings when a declared attachment is likely unused because an explicit tool env points somewhere else
 - made `ota env --task <name>` inspect the effective execution env for the selected task instead of only the raw task-local env, including context env, ota-injected `OTA_WORKSPACE`, and derived cache env when they are part of the resolved task execution
+- broadened shared-remote `activation.mode: ensure_ready` for built-in remote providers (`ssh`, `tsh`, `kubectl`, `daytona`): shared-remote `address_view: host` now auto-starts against fixed `project.host` endpoints, and shared-remote `runtime.readiness.kind: http` can now probe the remote plane for `address_view: topology` / `address_view: internal`, while backend-provider remote activation remains out of scope
 
 ## 1.6.4
 
@@ -44,7 +45,7 @@
 - added first-class service-task `runtime.readiness` support for `http` and `tcp` probes on projected host endpoints, and taught `activation.mode: ensure_ready` to wait for declared producer runtime readiness instead of treating an open listener socket as sufficient
 - broadened `activation.mode: ensure_ready` to include unix native producer services via an activation-owned native startup path, while keeping interrupt cleanup semantics that stop activation-started producer services and leave reused producers running
 - broadened shared-backend target resolution so `address_view: topology` and `address_view: internal` now resolve truthfully across shared `container`, shared `native`, and shared `remote` backend boundaries; remote service runtimes are now allowed when they declare fixed contract endpoints
-- broadened `activation.mode: ensure_ready` again to include built-in remote producer services (`ssh`, `tsh`, `kubectl`, `daytona`) for shared-remote `address_view: topology` / `address_view: internal` targets with TCP readiness, while leaving remote host-view activation, remote HTTP readiness, and backend-provider remote activation as later slices
+- broadened `activation.mode: ensure_ready` again to include built-in remote producer services (`ssh`, `tsh`, `kubectl`, `daytona`) for shared-remote `address_view: topology` / `address_view: internal` targets with TCP readiness, while leaving backend-provider remote activation as a later slice
 - fixed persistent container service workloads to run under a managed detached in-container wrapper with pid/status/log tracking, so long-running dev servers like Next.js `next dev` stay alive across route compilation and request handling instead of spuriously exiting after readiness when launched through the old attached `docker exec` service path
 
 ## 1.6.3

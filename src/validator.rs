@@ -30,8 +30,8 @@ use crate::schema::{
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode,
     TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeReadinessKind, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetSpec, parse_memory_size_bytes, task_target_env_name,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
+    parse_memory_size_bytes, task_target_env_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1538,7 +1538,6 @@ fn validate_task_target_activation_shape(
     let Some(listener) = runtime.listeners.get(readiness_listener_name) else {
         return;
     };
-    let remote_readiness_kind = readiness.kind;
     let remote_provider =
         resolved_task_context_for_backend(contract, service_task, Backend::Remote)
             .and_then(|context| context.remote.as_ref())
@@ -1553,9 +1552,19 @@ fn validate_task_target_activation_shape(
             });
     match target.service.address_view {
         TaskTargetAddressView::Host => {
-            if backend == Backend::Remote {
+            if backend == Backend::Remote && !shared_remote_backend {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently supports shared-backend `address_view: topology` and `address_view: internal` only"
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently requires `{task_name}` and `{service_task_name}` to share one declared remote backend binding"
+                )));
+                return;
+            }
+            if backend == Backend::Remote
+                && !remote_provider
+                    .as_deref()
+                    .is_some_and(is_builtin_remote_provider)
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently supports built-in remote providers only"
                 )));
                 return;
             }
@@ -1592,11 +1601,7 @@ fn validate_task_target_activation_shape(
                     errors,
                 );
             } else if shared_remote_backend {
-                if remote_readiness_kind == TaskRuntimeReadinessKind::Http {
-                    errors.push(ValidationError::new(format!(
-                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with shared-backend `address_view: topology`, but remote producer activation currently supports TCP readiness only"
-                    )));
-                } else if !remote_provider
+                if !remote_provider
                     .as_deref()
                     .is_some_and(is_builtin_remote_provider)
                 {
@@ -1628,12 +1633,6 @@ fn validate_task_target_activation_shape(
         }
         TaskTargetAddressView::Internal => {
             if shared_remote_backend {
-                if remote_readiness_kind == TaskRuntimeReadinessKind::Http {
-                    errors.push(ValidationError::new(format!(
-                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation currently supports TCP readiness only"
-                    )));
-                    return;
-                }
                 if !remote_provider
                     .as_deref()
                     .is_some_and(is_builtin_remote_provider)
@@ -1916,7 +1915,7 @@ fn validate_task_runtime(
     }
 
     validate_runtime_listener_env_suffix_collisions(task_name, runtime, errors);
-    validate_task_runtime_readiness(task_name, runtime, errors);
+    validate_task_runtime_readiness(contract, task_name, runtime, backend, errors);
 
     for (listener_name, listener) in &runtime.listeners {
         if listener_name.trim().is_empty() {
@@ -2009,8 +2008,10 @@ fn validate_task_runtime(
 }
 
 fn validate_task_runtime_readiness(
+    contract: &Contract,
     task_name: &str,
     runtime: &TaskRuntimeSpec,
+    backend: Backend,
     errors: &mut Vec<ValidationError>,
 ) {
     let Some(readiness) = runtime.readiness.as_ref() else {
@@ -2019,6 +2020,19 @@ fn validate_task_runtime_readiness(
 
     let listener_name = readiness.listener.as_deref().map(str::trim);
     let referenced_listener = listener_name.and_then(|name| runtime.listeners.get(name));
+    let allows_shared_remote_bind_probe = backend == Backend::Remote
+        && runtime
+            .backend_binding
+            .as_deref()
+            .map(str::trim)
+            .filter(|binding| !binding.is_empty())
+            .and_then(|binding| {
+                contract
+                    .execution
+                    .as_ref()
+                    .and_then(|execution| execution.shared_backends.get(binding))
+            })
+            .is_some_and(|shared_backend| shared_backend.backend == Backend::Remote);
 
     match readiness.kind {
         crate::schema::TaskRuntimeReadinessKind::Http => {
@@ -2054,9 +2068,16 @@ fn validate_task_runtime_readiness(
                     "task `{task_name}` runtime readiness `path` must start with `/`"
                 )));
             }
-            if listener.project.host.is_none() {
+            if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` runtime readiness listener `{listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
+                )));
+            } else if listener.project.host.is_none()
+                && (listener.bind.port.mode != TaskRuntimePortMode::Fixed
+                    || listener.bind.port.value.is_none())
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness listener `{listener_name}` must declare a fixed `bind.port.value` when shared-remote readiness probes the backend plane"
                 )));
             }
         }
@@ -2082,9 +2103,16 @@ fn validate_task_runtime_readiness(
                     "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.path`"
                 )));
             }
-            if listener.project.host.is_none() {
+            if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` runtime readiness listener `{listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
+                )));
+            } else if listener.project.host.is_none()
+                && (listener.bind.port.mode != TaskRuntimePortMode::Fixed
+                    || listener.bind.port.value.is_none())
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness listener `{listener_name}` must declare a fixed `bind.port.value` when shared-remote readiness probes the backend plane"
                 )));
             }
         }
@@ -7350,7 +7378,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_ensure_ready_host_view_for_remote_producer_activation() {
+    fn rejects_ensure_ready_host_view_for_unshared_remote_producer_activation() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -7405,13 +7433,89 @@ tasks:
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
-                "uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently supports shared-backend `address_view: topology` and `address_view: internal` only",
+                "uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently requires `sandbox` and `dev` to share one declared remote backend binding",
             )
         }));
     }
 
     #[test]
-    fn rejects_ensure_ready_internal_shared_remote_backend_with_http_readiness() {
+    fn allows_ensure_ready_host_view_shared_remote_backend_with_http_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: api.devbox.internal
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("shared remote host ensure_ready should validate for built-in providers");
+    }
+
+    #[test]
+    fn allows_ensure_ready_internal_shared_remote_backend_with_http_readiness() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -7441,6 +7545,7 @@ tasks:
       readiness:
         kind: http
         listener: http
+        path: /
       backend_binding: workbench
       listeners:
         http:
@@ -7475,12 +7580,8 @@ tasks:
         )
         .unwrap();
 
-        let errors = validate_contract(&contract).unwrap_err();
-        assert!(errors.errors().iter().any(|error| {
-            error.to_string().contains(
-                "uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation currently supports TCP readiness only",
-            )
-        }));
+        validate_contract(&contract)
+            .expect("shared remote internal ensure_ready should validate for http readiness");
     }
 
     #[test]

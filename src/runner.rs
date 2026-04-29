@@ -274,7 +274,8 @@ fn activation_loader_label(
     match readiness_target {
         RuntimeReadinessTarget::Http { .. }
         | RuntimeReadinessTarget::Tcp { .. }
-        | RuntimeReadinessTarget::RemoteTcp { .. } => {
+        | RuntimeReadinessTarget::RemoteTcp { .. }
+        | RuntimeReadinessTarget::RemoteHttp { .. } => {
             format!("Waiting for {producer_task_name} to be ready")
         }
     }
@@ -3662,6 +3663,12 @@ enum RuntimeReadinessTarget {
         probe: RemoteReadinessProbeTarget,
         port: u16,
     },
+    RemoteHttp {
+        probe: RemoteReadinessProbeTarget,
+        address: String,
+        port: u16,
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6852,12 +6859,20 @@ fn declared_target_readiness_target(
     })?;
     let (address, port) = match target_spec.service.address_view {
         TaskTargetAddressView::Host => {
-            if resolved_execution_backend_kind(producer_backend) == Backend::Remote {
+            if resolved_execution_backend_kind(producer_backend) == Backend::Remote
+                && !(caller_backend == Backend::Remote
+                    && tasks_share_backend_binding(
+                        contract,
+                        task_name,
+                        producer_task_name,
+                        Backend::Remote,
+                    ))
+            {
                 return Err(RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
                     target: target_name.to_string(),
                     details: format!(
-                        "target activation `ensure_ready` currently supports remote producer auto-start only for shared-backend `address_view: topology` and `address_view: internal`; `{producer_task_name}` target view is `host`"
+                        "target activation `ensure_ready` currently supports remote producer auto-start only when `{task_name}` and `{producer_task_name}` share one declared remote backend binding; `{producer_task_name}` target view is `host`"
                     ),
                 });
             }
@@ -6913,18 +6928,6 @@ fn declared_target_readiness_target(
                     Backend::Remote,
                 )
             {
-                if matches!(
-                    readiness.map(|probe| probe.kind),
-                    Some(TaskRuntimeReadinessKind::Http)
-                ) {
-                    return Err(RunError::TaskTargetResolutionFailed {
-                        task: task_name.to_string(),
-                        target: target_name.to_string(),
-                        details: format!(
-                            "target activation `ensure_ready` currently supports remote producer TCP readiness only for shared-backend `address_view: topology`; `{producer_task_name}` declares HTTP readiness"
-                        ),
-                    });
-                }
                 let bind_port = listener.bind.port.value.ok_or_else(|| {
                     RunError::TaskTargetResolutionFailed {
                         task: task_name.to_string(),
@@ -6944,9 +6947,21 @@ fn declared_target_readiness_target(
                         ),
                     });
                 };
-                return Ok(RuntimeReadinessTarget::RemoteTcp {
-                    probe,
-                    port: bind_port,
+                return Ok(match readiness.map(|probe| probe.kind) {
+                    Some(TaskRuntimeReadinessKind::Http) => RuntimeReadinessTarget::RemoteHttp {
+                        probe,
+                        address: colocated_topology_listener_address(listener.bind.address.as_str()),
+                        port: bind_port,
+                        path: normalized_runtime_path(
+                            readiness.and_then(|probe| probe.path.as_deref()),
+                        ),
+                    },
+                    Some(TaskRuntimeReadinessKind::Tcp) | None => {
+                        RuntimeReadinessTarget::RemoteTcp {
+                            probe,
+                            port: bind_port,
+                        }
+                    }
                 });
             } else {
                 let host_projection = listener.project.host.as_ref().ok_or_else(|| {
@@ -7006,18 +7021,6 @@ fn declared_target_readiness_target(
                 }
             })?;
             if caller_backend == Backend::Remote {
-                if matches!(
-                    readiness.map(|probe| probe.kind),
-                    Some(TaskRuntimeReadinessKind::Http)
-                ) {
-                    return Err(RunError::TaskTargetResolutionFailed {
-                        task: task_name.to_string(),
-                        target: target_name.to_string(),
-                        details: format!(
-                            "target activation `ensure_ready` currently supports remote producer TCP readiness only for `address_view: internal`; `{producer_task_name}` declares HTTP readiness"
-                        ),
-                    });
-                }
                 let Some(probe) = remote_readiness_probe_target(producer_backend, working_dir)
                 else {
                     return Err(RunError::TaskTargetResolutionFailed {
@@ -7028,9 +7031,21 @@ fn declared_target_readiness_target(
                         ),
                     });
                 };
-                return Ok(RuntimeReadinessTarget::RemoteTcp {
-                    probe,
-                    port: bind_port,
+                return Ok(match readiness.map(|probe| probe.kind) {
+                    Some(TaskRuntimeReadinessKind::Http) => RuntimeReadinessTarget::RemoteHttp {
+                        probe,
+                        address: colocated_topology_listener_address(listener.bind.address.as_str()),
+                        port: bind_port,
+                        path: normalized_runtime_path(
+                            readiness.and_then(|probe| probe.path.as_deref()),
+                        ),
+                    },
+                    Some(TaskRuntimeReadinessKind::Tcp) | None => {
+                        RuntimeReadinessTarget::RemoteTcp {
+                            probe,
+                            port: bind_port,
+                        }
+                    }
                 });
             }
             (
@@ -11401,6 +11416,12 @@ fn readiness_target_observed(target: &RuntimeReadinessTarget) -> bool {
         RuntimeReadinessTarget::RemoteTcp { probe, port } => {
             remote_target_probe_port_reachable(probe, *port)
         }
+        RuntimeReadinessTarget::RemoteHttp {
+            probe,
+            address,
+            port,
+            path,
+        } => remote_target_probe_http_reachable(probe, address.as_str(), *port, path.as_str()),
     }
 }
 
@@ -11459,6 +11480,50 @@ if command -v netstat >/dev/null 2>&1; then \
 fi; \
 hex=$(printf '%04X' \"$port\"); \
 awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if (($4 == \"0A\" || $4 == \"0a\") && toupper(a[2]) == toupper(target)) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null",
+    );
+    let output = execute_remote_task_command(
+        "__ota_remote_probe__",
+        None,
+        command.as_str(),
+        &BTreeMap::new(),
+        probe.provider.as_str(),
+        probe.target.as_str(),
+        probe.cwd.as_deref(),
+        probe.ssh.as_ref(),
+        TaskExecutionMode::Capture,
+    );
+    matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
+}
+
+fn remote_target_probe_http_reachable(
+    probe: &RemoteReadinessProbeTarget,
+    address: &str,
+    port: u16,
+    path: &str,
+) -> bool {
+    let normalized_path = normalized_runtime_path(Some(path));
+    let url = format!("http://{}:{}{}", address.trim(), port, normalized_path);
+    let command = format!(
+        "url={url}; \
+if command -v curl >/dev/null 2>&1; then \
+  curl -fsS -L --connect-timeout 1 --max-time 2 -o /dev/null \"$url\" && exit 0; \
+fi; \
+if command -v wget >/dev/null 2>&1; then \
+  wget -q -O /dev/null --timeout=2 \"$url\" && exit 0; \
+fi; \
+if command -v python3 >/dev/null 2>&1; then \
+  python3 - \"$url\" <<'PY' && exit 0 || exit 1\n\
+import sys, urllib.request\n\
+url = sys.argv[1]\n\
+try:\n\
+    with urllib.request.urlopen(url, timeout=2) as response:\n\
+        sys.exit(0 if 200 <= response.status < 400 else 1)\n\
+except Exception:\n\
+    sys.exit(1)\n\
+PY\n\
+fi; \
+exit 1",
+        url = shell_quote(&url),
     );
     let output = execute_remote_task_command(
         "__ota_remote_probe__",
@@ -17913,6 +17978,333 @@ tasks:
         )
         .expect("shared remote internal activation should succeed");
 
+        assert_eq!(status, TaskTargetActivationStatus::StartedReady);
+        let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &contract,
+            &file_path,
+            dir.path(),
+            &mut state,
+        );
+        assert!(
+            cleanup_note
+                .as_deref()
+                .is_some_and(|note| note.contains("remote service workload cleaned up")),
+            "{cleanup_note:?}"
+        );
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_SSH_LOG");
+            },
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_ready_activation_starts_and_cleans_up_shared_remote_host_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: sandbox-dev
+        cwd: {}
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: python3 -c "import socket,time; sock=socket.socket(); sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); sock.bind(('127.0.0.1', {port})); sock.listen(1); time.sleep(30)"
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+            dir.path().display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&ssh_path, permissions).unwrap();
+
+        let log_path = dir.path().join("ssh-log.txt");
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let task = contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &contract,
+            &file_path,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            None,
+            TaskExecutionMode::Capture,
+            dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("shared remote host activation should succeed");
+
+        assert_eq!(status, TaskTargetActivationStatus::StartedReady);
+        let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &contract,
+            &file_path,
+            dir.path(),
+            &mut state,
+        );
+        assert!(
+            cleanup_note
+                .as_deref()
+                .is_some_and(|note| note.contains("remote service workload cleaned up")),
+            "{cleanup_note:?}"
+        );
+
+        for _ in 0..30 {
+            if !super::target_probe_endpoint_reachable("127.0.0.1", port) {
+                match original_path {
+                    Some(path) => unsafe {
+                        env::set_var("PATH", path);
+                    },
+                    None => unsafe {
+                        env::remove_var("PATH");
+                    },
+                }
+                match original_log {
+                    Some(value) => unsafe {
+                        env::set_var("OTA_SSH_LOG", value);
+                    },
+                    None => unsafe {
+                        env::remove_var("OTA_SSH_LOG");
+                    },
+                }
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_SSH_LOG");
+            },
+        }
+        panic!("remote activation cleanup should free the producer port");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_ready_activation_starts_and_cleans_up_shared_remote_internal_http_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: sandbox-dev
+        cwd: {}
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: python3 -m http.server {port} --bind 127.0.0.1
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#,
+            dir.path().display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&ssh_path, permissions).unwrap();
+
+        let log_path = dir.path().join("ssh-log.txt");
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let task = contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &contract,
+            &file_path,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            None,
+            TaskExecutionMode::Capture,
+            dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("shared remote internal http activation should succeed");
+
         match original_path {
             Some(path) => unsafe {
                 env::set_var("PATH", path);
@@ -17943,14 +18335,6 @@ tasks:
                 .is_some_and(|note| note.contains("remote service workload cleaned up")),
             "{cleanup_note:?}"
         );
-
-        for _ in 0..30 {
-            if !super::target_probe_endpoint_reachable("127.0.0.1", port) {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        panic!("remote activation cleanup should free the producer port");
     }
 
     #[test]
