@@ -29707,8 +29707,12 @@ exit 0
             fulfilled.contains("4.52.5"),
             "fulfilled backend version output should include the expected version, got {fulfilled:?}"
         );
+        let apt_log = fs::read_to_string(fixture.dir.path().join("apt-log.txt")).unwrap();
+        assert!(
+            apt_log.contains("install -y yq"),
+            "fulfillment should install yq via apt, got {apt_log:?}"
+        );
         let docker_log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
-        assert!(docker_log.matches("exec\n").count() >= 2);
         assert!(docker_log.contains("start\n"));
         assert!(docker_log.contains("rm\n"));
     }
