@@ -19556,12 +19556,25 @@ fn render_report_section(
             let finding = group.findings[0];
             let (display_why, display_next, container_image) =
                 render_container_image_finding_text(&finding.why, &finding.next, doctor_mode);
+            let rewritten_next = rewrite_doctor_mode_command(&display_next, doctor_mode);
+            if !concise_mode() {
+                stdout.push_str("\n\n");
+                if render_depends_on_boundary_doctor_finding(
+                    &mut stdout,
+                    finding.severity,
+                    &finding.summary,
+                    &display_why,
+                    &rewritten_next,
+                    contract_path,
+                ) {
+                    continue;
+                }
+            }
             let diagnosis =
                 finding_diagnosis_text(&finding.summary, &display_why, container_image.as_deref());
             let why_lines =
                 finding_why_lines(&finding.summary, &display_why, container_image.as_deref());
-            let next_steps =
-                finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
+            let next_steps = finding_next_steps(&rewritten_next);
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
                 format!(
                     "{} {}",
@@ -19602,7 +19615,6 @@ fn render_report_section(
                     contract_path,
                 );
             } else {
-                stdout.push_str("\n\n");
                 stdout.push_str(&format!(
                     "{}  {}",
                     render_severity(finding.severity),
@@ -19958,6 +19970,70 @@ fn finding_next_steps(next: &str) -> Vec<String> {
         return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
     }
     vec![next.to_string()]
+}
+
+fn parse_depends_on_boundary_summary(summary: &str) -> Option<(&str, &str)> {
+    let summary = summary.strip_prefix("Task `")?;
+    let (parent, rest) = summary.split_once("` depends_on `")?;
+    let dependency = rest.strip_suffix("` across different execution boundaries")?;
+    Some((parent, dependency))
+}
+
+fn parse_depends_on_boundary_drift(why: &str) -> Option<&str> {
+    let (_, rest) = why.split_once("edge (")?;
+    let (drift, _) = rest.split_once(") so ")?;
+    Some(drift)
+}
+
+fn concise_depends_on_boundary_why(drift: &str) -> &'static str {
+    if drift.contains("context:") || drift.contains("backend:") {
+        return "only durable external side effects survive this edge";
+    }
+    "in-process and container-local prep does not carry across"
+}
+
+fn render_depends_on_boundary_doctor_finding(
+    output: &mut String,
+    severity: FindingSeverity,
+    summary: &str,
+    why: &str,
+    next: &str,
+    contract_path: Option<&Path>,
+) -> bool {
+    let Some((parent, dependency)) = parse_depends_on_boundary_summary(summary) else {
+        return false;
+    };
+    let Some(drift) = parse_depends_on_boundary_drift(why) else {
+        return false;
+    };
+
+    output.push_str(&format!(
+        "{}  {}",
+        render_severity(severity),
+        render_finding_summary_with_count(severity, &format!("`{parent}` → `{dependency}`"), 1),
+    ));
+    append_finding_section(
+        output,
+        "Why:",
+        &[concise_depends_on_boundary_why(drift).to_string()],
+        severity,
+        contract_path,
+    );
+    append_finding_section(
+        output,
+        "Drift:",
+        &[drift.replace(" -> ", " → ")],
+        severity,
+        contract_path,
+    );
+    append_finding_section(
+        output,
+        "Next:",
+        &[next.to_string()],
+        severity,
+        contract_path,
+    );
+    true
 }
 
 fn append_error_detail_section(
@@ -21377,13 +21453,14 @@ fn render_doctor_execution_summary_text(
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Contexts:"),
-            &execution
-                .contexts
-                .iter()
-                .map(format_execution_context_brief)
-                .collect::<Vec<_>>()
-                .join(", "),
+            "",
         ));
+        for context in &execution.contexts {
+            lines.push(format!(
+                "    {}",
+                format_doctor_execution_context_line(context)
+            ));
+        }
     }
     if !execution.env.is_empty() {
         lines.push(section_list_row(
@@ -21416,6 +21493,37 @@ fn render_doctor_execution_summary_text(
     }
 
     lines.join("\n")
+}
+
+fn format_doctor_execution_context_line(context: &ExecutionContextSummary<'_>) -> String {
+    let mut details = vec![context.backend.to_string()];
+    if let Some(lifecycle) = context.lifecycle {
+        details.push(lifecycle.to_string());
+    }
+    if let Some(container) = context.container.as_ref() {
+        details.push(container.image.to_string());
+    }
+    if let Some(remote) = context.remote.as_ref() {
+        details.push(format!("provider={}", remote.provider));
+        if let Some(target) = remote.target {
+            details.push(format!("target={target}"));
+        }
+    }
+    if let Some(attachments) = context.attachments.as_ref()
+        && !attachments.compose.is_empty()
+    {
+        details.push(format!("compose={}", attachments.compose.join("+")));
+    }
+    if let Some(attachments) = context.attachments.as_ref()
+        && !attachments.isolated_paths.is_empty()
+    {
+        details.push(format!(
+            "isolated={}",
+            attachments.isolated_effective_paths.join("+")
+        ));
+    }
+
+    format!("{}: {}", paint(context.name, "1;37"), details.join(" / "))
 }
 
 fn render_agent_summary_line(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
@@ -26396,9 +26504,11 @@ policies:
         assert!(rendered.contains("\n »  Default Context: `app`"));
         assert!(rendered.contains("\n »  Preferred: `container`"));
         assert!(rendered.contains("\n »  Image: `maven:3.9.14-eclipse-temurin-21-noble`"));
+        assert!(rendered.contains("\n »  Contexts:"));
         assert!(rendered.contains(
-            "\n »  Contexts: app (container, persistent, image=maven:3.9.14-eclipse-temurin-21-noble, compose=local, isolated=/workspace/node_modules), host (native)"
+            "\n    app: container / persistent / maven:3.9.14-eclipse-temurin-21-noble / compose=local / isolated=/workspace/node_modules"
         ));
+        assert!(rendered.contains("\n    host: native"));
     }
 
     #[test]
@@ -26474,6 +26584,27 @@ tasks:
         assert!(rendered.contains("lifecycle: none → persistent"));
         assert!(rendered.contains("Why: only durable external side effects survive this edge"));
         assert!(rendered.contains("Next:"));
+    }
+
+    #[test]
+    fn doctor_depends_on_boundary_finding_renders_compact_edge_shape() {
+        let mut rendered = String::new();
+        assert!(super::render_depends_on_boundary_doctor_finding(
+            &mut rendered,
+            FindingSeverity::Warn,
+            "Task `build` depends_on `setup` across different execution boundaries",
+            "execution differs across the dependency edge (context: verify -> app, lifecycle: none -> persistent) so only durable external side effects survive; in-process, session-local, and container-local prep does not carry across",
+            "align both tasks to one execution boundary, or make the shared state durable",
+            None,
+        ));
+
+        let rendered = strip_ansi_codes(&rendered);
+        assert!(rendered.contains("`build` → `setup`"));
+        assert!(rendered.contains("Why: only durable external side effects survive this edge"));
+        assert!(rendered.contains("Drift: context: verify → app, lifecycle: none → persistent"));
+        assert!(rendered.contains(
+            "Next: align both tasks to one execution boundary, or make the shared state durable"
+        ));
     }
 
     #[test]
@@ -36966,12 +37097,20 @@ fn render_up_section_from_parts(
     for group in group_doctor_findings(report.findings.iter()) {
         if group.findings.len() == 1 {
             let finding = group.findings[0];
-            let why = render_backticked_text(&finding.why, contract_path);
-            let next = render_backticked_text(
-                &rewrite_doctor_mode_command(&finding.next, doctor_mode),
-                contract_path,
-            );
             stdout.push_str("\n\n");
+            let rewritten_next = rewrite_doctor_mode_command(&finding.next, doctor_mode);
+            if render_depends_on_boundary_doctor_finding(
+                &mut stdout,
+                finding.severity,
+                &finding.summary,
+                &finding.why,
+                &rewritten_next,
+                contract_path,
+            ) {
+                continue;
+            }
+            let why = render_backticked_text(&finding.why, contract_path);
+            let next = render_backticked_text(&rewritten_next, contract_path);
             stdout.push_str(&format!(
                 "{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
