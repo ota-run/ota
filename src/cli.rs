@@ -12948,7 +12948,7 @@ agent:
         let run_stderr = strip_ansi(run.stderr.as_deref().unwrap_or_default());
         assert!(run_stderr.contains("RUN SUMMARY"));
         assert!(run_stderr.contains(&format!(
-            "Next: run `ota tasks --use {repo_path}` to inspect runnable task usage"
+            "Next:        run `ota tasks --use {repo_path}` to inspect runnable task usage"
         )));
         assert!(!run_stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
 

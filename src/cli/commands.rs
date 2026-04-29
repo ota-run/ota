@@ -31782,8 +31782,11 @@ fn run_single_contract_target_streaming(
                 outcome.target.clone(),
                 outcome.runtime.clone(),
                 {
-                    let repo_dir = target.contract_path.parent()
-                        .and_then(|p| std::fs::canonicalize(p).ok())
+                    let repo_dir = std::fs::canonicalize(&target.contract_path)
+                        .ok()
+                        .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
+                        .or_else(|| target.contract_path.parent()
+                            .and_then(|p| std::fs::canonicalize(p).ok()))
                         .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
                         .map(|p| p.display().to_string());
                     Some(format!(
@@ -32015,8 +32018,11 @@ fn run_single_contract_target_captured(
                 outcome.target.clone(),
                 outcome.runtime.clone(),
                 {
-                    let repo_dir = target.contract_path.parent()
-                        .and_then(|p| std::fs::canonicalize(p).ok())
+                    let repo_dir = std::fs::canonicalize(&target.contract_path)
+                        .ok()
+                        .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
+                        .or_else(|| target.contract_path.parent()
+                            .and_then(|p| std::fs::canonicalize(p).ok()))
                         .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
                         .map(|p| p.display().to_string());
                     Some(format!(
