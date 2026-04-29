@@ -14686,6 +14686,46 @@ mod tests {
         TaskRuntimeSpec, TaskTargetActivationMode, parse_memory_size_bytes,
     };
 
+    struct PathEnvGuard(Option<std::ffi::OsString>);
+
+    impl Drop for PathEnvGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => unsafe {
+                    env::set_var("PATH", path);
+                },
+                None => unsafe {
+                    env::remove_var("PATH");
+                },
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn install_fake_docker_on_path(base_dir: &Path) -> PathEnvGuard {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bin_dir = base_dir.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        PathEnvGuard(original_path)
+    }
+
     #[test]
     fn plans_dependencies_once_in_deterministic_order() {
         let contract = parse_contract_str(
@@ -15750,6 +15790,7 @@ tasks:
 
     #[test]
     fn ensure_ready_activation_reuses_reachable_shared_backend_internal_target() {
+        let _guard = env_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener
             .local_addr()
@@ -15820,6 +15861,8 @@ tasks:
             )
             .as_str(),
         );
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
 
         let task = fixture
             .contract
@@ -16104,6 +16147,7 @@ tasks:
 
     #[test]
     fn ensure_ready_activation_reuses_reachable_shared_backend_topology_target() {
+        let _guard = env_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener
             .local_addr()
@@ -16174,6 +16218,8 @@ tasks:
             )
             .as_str(),
         );
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
 
         let task = fixture
             .contract
@@ -16205,6 +16251,7 @@ tasks:
 
     #[test]
     fn ensure_ready_activation_internal_readiness_does_not_require_project_host() {
+        let _guard = env_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener
             .local_addr()
@@ -16271,6 +16318,8 @@ tasks:
             )
             .as_str(),
         );
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
 
         let task = fixture
             .contract
@@ -16380,6 +16429,7 @@ tasks:
 
     #[test]
     fn task_target_binding_falls_back_to_literal_default_when_resolution_is_unavailable() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -16428,6 +16478,8 @@ tasks:
       printf '%s' "$OTA_INPUT_BASE_URL" > inputs.txt
 "#,
         );
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
 
         let outcome = run_task_captured_with_args_with_overrides(
             &fixture.contract,
@@ -16438,7 +16490,7 @@ tasks:
         )
         .unwrap();
 
-        assert_eq!(outcome.exit_code, 1);
+        assert_eq!(outcome.exit_code, 0);
         assert_eq!(outcome.target_resolutions.len(), 1);
         assert_eq!(outcome.target_resolutions[0].target, "api");
         assert_eq!(
@@ -16514,6 +16566,7 @@ tasks:
 
     #[test]
     fn ensure_ready_activation_fails_for_non_persistent_container_producers() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -16560,6 +16613,8 @@ tasks:
       printf '%s' "$OTA_TARGET_API" > target.txt
 "#,
         );
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
 
         let error = run_task_captured_with_args_with_overrides(
             &fixture.contract,
@@ -29740,6 +29795,7 @@ exit 0
     #[test]
     fn backend_fulfillment_plan_uses_effective_persistent_container_identity_for_host_port_override()
      {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -29779,6 +29835,8 @@ tasks:
                 value: 3000
 "#,
         );
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
 
         let backend =
             resolve_execution_backend(&fixture.contract, "test", ExecutionOverrides::default())
@@ -29872,6 +29930,7 @@ tasks:
 
     #[test]
     fn shared_ephemeral_backend_fulfillment_uses_deferred_strategy() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -29912,6 +29971,8 @@ tasks:
               value: 3000
 "#,
         );
+        #[cfg(unix)]
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
 
         let backend =
             resolve_execution_backend(&fixture.contract, "test", ExecutionOverrides::default())
