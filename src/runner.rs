@@ -29692,11 +29692,12 @@ exit 0
         }
 
         assert_eq!(outcome.exit_code, 0);
+        let fulfillment_result = outcome
+            .backend_fulfillment
+            .as_ref()
+            .map(|evidence| evidence.result);
         assert!(matches!(
-            outcome
-                .backend_fulfillment
-                .as_ref()
-                .map(|evidence| evidence.result),
+            fulfillment_result,
             Some(
                 super::BackendFulfillmentResult::Fulfilled
                     | super::BackendFulfillmentResult::RequirementsSatisfied
@@ -29707,11 +29708,21 @@ exit 0
             fulfilled.contains("4.52.5"),
             "fulfilled backend version output should include the expected version, got {fulfilled:?}"
         );
-        let apt_log = fs::read_to_string(fixture.dir.path().join("apt-log.txt")).unwrap();
-        assert!(
-            apt_log.contains("install -y yq"),
-            "fulfillment should install yq via apt, got {apt_log:?}"
-        );
+        if matches!(
+            fulfillment_result,
+            Some(super::BackendFulfillmentResult::Fulfilled)
+        ) {
+            let apt_log = fs::read_to_string(fixture.dir.path().join("apt-log.txt")).unwrap();
+            assert!(
+                apt_log.contains("install -y yq"),
+                "fulfilled run path should install yq via apt, got {apt_log:?}"
+            );
+        } else {
+            assert!(
+                !fixture.dir.path().join("apt-log.txt").exists(),
+                "requirements-satisfied path should not invoke apt-get"
+            );
+        }
         let docker_log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert!(docker_log.contains("start\n"));
         assert!(docker_log.contains("rm\n"));
