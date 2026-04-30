@@ -14111,7 +14111,9 @@ fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, St
                     .unwrap_or_else(|| String::from("unknown")),
                 ok: archive.payload.ok,
                 contract: archive.payload.receipt.contract,
+                status: archive.payload.receipt.status,
                 backend: archive.payload.receipt.backend,
+                target: archive.payload.receipt.target,
                 provider: archive.payload.receipt.provider,
                 context: archive.payload.receipt.context,
                 lifecycle: archive.payload.receipt.lifecycle,
@@ -14453,9 +14455,13 @@ fn build_repo_receipt_diff_report(
         contract_identity_details: baseline.record.payload.receipt.contract_identity,
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
+        status: baseline.record.payload.receipt.status,
         backend: baseline.record.payload.receipt.backend,
+        target: baseline.record.payload.receipt.target,
+        provider: baseline.record.payload.receipt.provider,
         context: baseline.record.payload.receipt.context,
         lifecycle: baseline.record.payload.receipt.lifecycle,
+        cwd: baseline.record.payload.receipt.cwd,
         summary: baseline.record.payload.summary.into(),
     };
     let current = ReceiptDiffSide {
@@ -14463,9 +14469,13 @@ fn build_repo_receipt_diff_report(
         contract: current_receipt.contract.clone(),
         contract_identity: Some(current_contract_identity),
         contract_identity_details: current_receipt.contract_identity.clone(),
+        status: current_receipt.status.clone(),
         backend: current_receipt.backend.clone(),
+        target: current_receipt.target.clone(),
+        provider: current_receipt.provider.clone(),
         context: current_receipt.context.clone(),
         lifecycle: current_receipt.lifecycle.clone(),
+        cwd: current_receipt.cwd.clone(),
         summary: current_receipt.summary,
     };
     let identity_changed = receipt_diff_identity_changed(
@@ -14645,9 +14655,13 @@ fn append_receipt_diff_side_section(
     stdout: &mut String,
     title: &str,
     contract: &str,
+    status: Option<&str>,
     backend: Option<&str>,
+    target: Option<&str>,
+    provider: Option<&str>,
     context: Option<&str>,
     lifecycle: Option<&str>,
+    cwd: Option<&str>,
     summary: &ExecutionReceiptSummary,
 ) {
     stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
@@ -14657,12 +14671,36 @@ fn append_receipt_diff_side_section(
         paint_key("Contract:"),
         compact_path(Path::new(contract), ".")
     ));
+    if let Some(status) = status {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Status:"),
+            status
+        ));
+    }
     if let Some(backend) = backend {
         stdout.push_str(&format!(
             "\n {}  {} {}",
             summary_bullet(),
             paint_key("Backend:"),
             backend
+        ));
+    }
+    if let Some(target) = target {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Target:"),
+            target
+        ));
+    }
+    if let Some(provider) = provider {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Provider:"),
+            provider
         ));
     }
     if let Some(context) = context {
@@ -14679,6 +14717,14 @@ fn append_receipt_diff_side_section(
             summary_bullet(),
             paint_key("Lifecycle:"),
             lifecycle
+        ));
+    }
+    if let Some(cwd) = cwd {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Cwd:"),
+            cwd
         ));
     }
     stdout.push_str(&format!(
@@ -14907,18 +14953,26 @@ fn render_repo_receipt_diff(
                 &mut stdout,
                 "Baseline",
                 &report.baseline.contract,
+                report.baseline.status.as_deref(),
                 report.baseline.backend.as_deref(),
+                report.baseline.target.as_deref(),
+                report.baseline.provider.as_deref(),
                 report.baseline.context.as_deref(),
                 report.baseline.lifecycle.as_deref(),
+                report.baseline.cwd.as_deref(),
                 &report.baseline.summary,
             );
             append_receipt_diff_side_section(
                 &mut stdout,
                 "Current",
                 &report.current.contract,
+                report.current.status.as_deref(),
                 report.current.backend.as_deref(),
+                report.current.target.as_deref(),
+                report.current.provider.as_deref(),
                 report.current.context.as_deref(),
                 report.current.lifecycle.as_deref(),
+                report.current.cwd.as_deref(),
                 &report.current.summary,
             );
             append_receipt_diff_grouped_section(
@@ -40395,7 +40449,11 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     contract_identity: Option<ContractIdentity>,
     #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
     backend: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
     #[serde(default)]
     context: Option<String>,
     #[serde(default)]
@@ -41165,11 +41223,10 @@ fn render_repo_receipt_history(
                     stdout.push_str(&format!(
                         "\n\n{}. {} {}",
                         index + 1,
-                        render_execution_receipt_status(if archive.ok {
-                            "READY"
-                        } else {
-                            "NOT READY"
-                        }),
+                        render_execution_receipt_status(receipt_history_status_label(
+                            archive.status.as_deref(),
+                            archive.ok,
+                        )),
                         archive.archived_at
                     ));
                     stdout.push_str(&format!(
@@ -41177,8 +41234,14 @@ fn render_repo_receipt_history(
                         paint_key("Contract:"),
                         compact_path(Path::new(&archive.contract), ".")
                     ));
+                    if let Some(context) = archive.context.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Context:"), context));
+                    }
                     if let Some(backend) = archive.backend.as_deref() {
                         stdout.push_str(&format!("\n   {} {}", paint_key("Backend:"), backend));
+                    }
+                    if let Some(target) = archive.target.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Target:"), target));
                     }
                     if let Some(provider) = archive.provider.as_deref() {
                         stdout.push_str(&format!("\n   {} {}", paint_key("Provider:"), provider));
@@ -41238,6 +41301,25 @@ fn render_repo_receipt_history(
             stderr: None,
             exit_code: 0,
         },
+    }
+}
+
+fn receipt_history_status_label<'a>(status: Option<&'a str>, ok: bool) -> &'a str {
+    match status.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("success") => "READY",
+        Some("interrupted") => "INTERRUPTED",
+        Some("blocked") => "BLOCKED",
+        Some("preview") => "PREVIEW",
+        Some("skipped") => "SKIPPED",
+        Some("failed") => "FAILED",
+        Some(other) => other,
+        None => {
+            if ok {
+                "READY"
+            } else {
+                "NOT READY"
+            }
+        }
     }
 }
 
