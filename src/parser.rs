@@ -62,6 +62,12 @@ pub enum LoadContractError {
     MemberDeclaresWorkspace { path: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonorepoContractOrigin {
+    pub root_path: PathBuf,
+    pub member: Option<String>,
+}
+
 pub fn load_contract(path: &Path) -> Result<Contract, LoadContractError> {
     let contents = read_contract_contents(path)?;
     let key = contract_cache_key(path, &contents);
@@ -130,6 +136,24 @@ pub fn load_contract_for_member(
         })?;
 
     Ok((contract, member_path))
+}
+
+pub fn monorepo_contract_origin_for_path(
+    path: &Path,
+) -> Result<Option<MonorepoContractOrigin>, LoadContractError> {
+    let normalized = normalized_path_identity(path);
+    if let Some((root_path, member)) = find_monorepo_root_for_member(&normalized)? {
+        return Ok(Some(MonorepoContractOrigin {
+            root_path,
+            member: Some(member),
+        }));
+    }
+
+    let contract = load_contract(&normalized)?;
+    Ok(contract.workspace.map(|_| MonorepoContractOrigin {
+        root_path: normalized,
+        member: None,
+    }))
 }
 
 pub fn parse_contract_str(path: &Path, contents: &str) -> Result<Contract, LoadContractError> {

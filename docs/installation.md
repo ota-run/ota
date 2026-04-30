@@ -24,7 +24,12 @@
 
 # ota Installation
 
-ota ships prebuilt release binaries for macOS/Linux and Windows.
+ota ships prebuilt release binaries for the mainstream GitHub-hosted target matrix:
+
+- Linux: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+- macOS: `x86_64-apple-darwin`, `aarch64-apple-darwin`
+- Windows: `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+
 Use source install only when developing ota from a cloned checkout.
 The installers include a branded otter banner and a compact success receipt so the install path feels intentionally ota-native.
 The hosted install scripts are intentionally stable root URLs:
@@ -51,6 +56,7 @@ From a cloned ota repository:
 ```
 
 The shell installer also supports `OTA_RELEASE_BASE` if you host the release assets on a mirror or CDN.
+If a prebuilt release is not published for the detected target, the installer now says so explicitly before trying the cargo fallback.
 
 ## Windows (PowerShell)
 
@@ -74,6 +80,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
 ```
 
 The PowerShell installer also supports `OTA_RELEASE_BASE` for a mirror or CDN.
+If a prebuilt release is not published for the detected target, the installer now says so explicitly before trying the cargo fallback.
 
 ## Windows (Git Bash / MSYS / MinGW / Cygwin)
 

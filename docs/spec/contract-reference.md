@@ -101,7 +101,7 @@ metadata:
 
 Top-level `extensions` is now recognized as adapter contract data.
 Each entry is a typed adapter descriptor with `kind`, `command`, and `api_version`, plus optional
-`description` and `config`.
+`description`, `activation`, and `config`.
 Supported kinds today are `check_provider`, `export_provider`, and `backend_provider`.
 `check_provider` is runnable with `ota extensions --run <name>` when `api_version: 1` is declared.
 `export_provider` is runnable with `ota extensions --publish <name>` when `api_version: 1` is declared.
@@ -111,6 +111,10 @@ backend. Runtime backend providers receive a structured JSON request on stdin an
 `OTA_BACKEND_PROVIDER_REQUEST_JSON`, then return a structured JSON response on stdout. The
 request includes the extension id, kind, api version, command context, repo context path, working
 directory, task name, task command, execution mode, target, cwd, and resolved environment values.
+When a backend provider should participate in non-manual target activation, declare
+`activation.provider_managed_cleanup: true`; that tells ota the provider can also handle the
+follow-up `activation_probe` and `activation_cleanup` command contexts for activation-started
+producer services.
 The validator requires `kind` to be one of the supported kinds, `command` to be non-empty, and
 `api_version` to be greater than zero.
 
@@ -1043,13 +1047,27 @@ Task target binding semantics:
 - `<target>` is the consumer-local target name
   - use a short stable name such as `api`, `admin`, or `billing`
   - ota uses that name for evidence and, when `override_input` is omitted, for runtime export as `OTA_TARGET_<TARGET>`
-- each target binding declares `service.task`, `service.listener`, and optional `service.address_view` (`topology`, `host`, `internal`)
+- each target binding declares exactly one identity shape:
+  - `service`
+  - `url`
+- `url` is a fixed declared URL target
+  - use it when the target is explicit and should not resolve through repo-managed service topology
+  - value must be non-empty
+- `service.member`, `service.task`, `service.listener`, and optional `service.address_view` (`topology`, `host`, `internal`) declare a repo-managed service target
+- `service.member` is an optional monorepo member selector
+  - use it when the producer lives in another member declared under `workspace.members`
+  - value must name an existing declared monorepo member
+  - current shipped cross-member slice is intentionally narrow:
+    - `address_view: host` always works when the producer declares a fixed `project.host` endpoint and remains `activation.mode: manual` only
+    - `address_view: topology` / `address_view: internal` work only when consumer and producer share one declared backend binding on the active plane
+    - non-manual activation (`ensure_started`, `restart_ready`, `ensure_running`, `ensure_ready`) is shipped only for those shared-backend `topology` / `internal` member targets
 - `service.task` is the producing task name
   - use it when the target should follow a repo-managed service task instead of a guessed literal URL
-  - value must name an existing service task in the same contract
+  - value must name an existing service task in the same contract, or in `service.member` when that selector is present
 - `service.listener` is the named listener exposed by the producing task runtime
   - use it when the producer exposes more than one endpoint and the consumer must target one specific listener
   - value must name an existing listener under `tasks.<producer>.runtime.listeners`
+  - it may be omitted only when the producing service task exposes exactly one declared listener name across its service runtime shapes
 - `service.address_view` tells ota which reachable address shape to resolve for the consumer
   - `host`: use the producer's published host URL
   - `topology`: use the current local topology address when ota can resolve it truthfully
@@ -1058,9 +1076,13 @@ Task target binding semantics:
 - optional `override_input` points at a declared task input used as an explicit operator override channel
   - use it when an operator may intentionally point the consumer at another target such as staging, preview, or a separately started local app
   - value must name an input declared on the same consuming task
-- optional `activation.mode` controls whether ota should ensure the local producer service is ready before the consumer task runs
+- optional `activation.mode` controls whether ota should auto-start and observe the local producer service before the consumer task runs
   - `manual` = resolve target only; never auto-start the producer
+  - `ensure_started` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if it already appears reachable or start it without waiting for listener reachability or deeper readiness
+  - `restart_ready` = when ota resolves a local target binding and no explicit override input wins, restart a currently reachable producer and wait for readiness before continuing
+  - `ensure_running` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if the declared target listener is already reachable or start it and wait until that listener becomes reachable
   - `ensure_ready` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if already reachable or start it and wait until ready
+- `url` targets support `activation.mode: manual` only
 - service runtimes may declare `runtime.readiness` when “ready” must mean more than “the socket is accepting connections”
 - resolution precedence is:
   - explicit `override_input` value supplied by the operator
@@ -1071,6 +1093,11 @@ Task target binding semantics:
 - `ota run` records target-resolution evidence in run receipts JSON under `receipt.steps[*].target_resolutions`
 - target-activation evidence is recorded alongside target resolution under `receipt.steps[*].target_resolutions[*].activation`
   - human meaning:
+    - `started_started` = ota started the producer without waiting for listener reachability or deeper readiness
+    - `reused_started` = ota reused a producer that already appeared started enough for the target edge
+    - `started_running` = ota started the producer and waited for the declared listener to become reachable
+    - `reused_running` = ota found the declared listener already reachable and reused the producer
+    - `restarted_ready` = ota found the producer already reachable, restarted it deliberately, and waited for readiness again
     - `started_ready` = ota started the producer and waited for readiness
     - `reused_ready` = ota found the producer already ready and reused it
 - topology resolution rules are:
@@ -1082,14 +1109,28 @@ Task target binding semantics:
   - native caller: resolves only when caller and producer share one declared native `runtime.backend_binding`; ota resolves to the producer fixed bind endpoint inside that shared boundary
   - remote caller: resolves only when caller and producer share one declared remote `runtime.backend_binding`; ota resolves to the producer fixed bind endpoint inside that shared boundary
   - unresolved topology and unresolved `internal` views fail clearly at run time without host/bridge guessing
-- current `activation.mode: ensure_ready` constraints:
+- current non-manual activation constraints:
+  - only `service` targets participate in activation; `url` targets are always manual
   - explicit operator override inputs skip producer auto-start and preserve the override value
-  - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_ready` was requested
+  - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_started`, `restart_ready`, `ensure_running`, or `ensure_ready` was requested
+  - `ensure_started` launches the producer and returns immediately after startup is handed off; it does not wait for listener reachability or deeper readiness
+  - `restart_ready` stops a currently reachable producer through ota's owned cleanup path, then starts it again and waits for readiness
+  - `ensure_running` waits only for the declared target listener plane, even when the producer also declares a deeper `runtime.readiness` contract
   - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract instead of treating an open listener socket as sufficient
   - the current shipped slice supports actual producer auto-start only when ota can own the producer honestly:
     - persistent container producer services
     - unix native producer services started through the activation-owned native path
-    - built-in remote producer services (`ssh`, `tsh`, `kubectl`, `daytona`) only when the caller and producer share one declared remote backend binding, the target view is `address_view: topology` or `address_view: internal`, and readiness is TCP-based
+    - built-in remote producer services (`ssh`, `tsh`, `kubectl`, `daytona`) only when the caller and producer share one declared remote backend binding:
+      - `address_view: host` requires a fixed `project.host` endpoint
+      - `address_view: topology` and `address_view: internal` may probe the fixed remote-plane bind endpoint
+      - readiness may be `tcp` or `http`
+    - backend-provider remote producer services only when the caller and producer share one declared remote backend binding and the matching `backend_provider` extension declares `activation.provider_managed_cleanup: true`:
+      - `address_view: host` uses the listener fixed `project.host` endpoint
+      - shared-remote `address_view: topology` / `address_view: internal` use the listener fixed `bind.port.value` on the remote plane through provider-owned `activation_probe`
+      - `ensure_started` hands startup off immediately
+      - `restart_ready` cleans up the currently reachable provider-owned producer, then restarts it and waits for readiness again
+      - `ensure_running` waits for the declared reachable endpoint on the selected plane
+      - `ensure_ready` may wait for deeper declared `runtime.readiness`
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
   - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
   - on interrupt, ota cleans up producer services that this consumer run activation-started; reused producers are left running intentionally
@@ -1099,8 +1140,10 @@ Current `runtime.readiness` support for service tasks:
 - `kind: http`
   - requires `listener`
   - requires `path`
-  - requires the referenced listener to declare `project.host`
-  - ota waits for a `2xx` or `3xx` response from that projected host endpoint
+  - requires the referenced listener to declare `project.host`, except for shared-remote
+    `ensure_ready` on built-in remote providers where ota may instead probe the declared
+    remote-plane listener address and fixed `bind.port.value`
+  - ota waits for a `2xx` or `3xx` response from the selected probe endpoint
 - `kind: tcp`
   - requires `listener`
   - for local host-projected readiness, requires the referenced listener to declare `project.host`
@@ -1159,10 +1202,14 @@ Shared local backend semantics:
   - bound workloads may differ in commands, listeners, readiness, and publications
   - ota rejects real workload-local conflicts inside that shared boundary, including conflicting in-backend bind endpoints and conflicting fixed host publications
   - persistent shared backend reconciliation uses the shared union of declared workload publications, while per-task runtime evidence and listener resolution remain task-scoped
-  - `activation.mode: ensure_ready` currently auto-starts:
+  - non-manual target activation currently auto-starts:
     - persistent container producer services
     - unix native producer services
-    - built-in remote producer services only for shared-remote `address_view: topology` / `address_view: internal` with TCP readiness
+    - built-in remote producer services for shared-remote `address_view: host` / `address_view: topology` / `address_view: internal`
+      - `address_view: host` uses the listener fixed `project.host` endpoint
+      - shared-remote `address_view: topology` / `address_view: internal` use the listener fixed `bind.port.value` on the remote plane
+      - `ensure_started` hands startup off immediately; `restart_ready` bounces a reachable producer and waits for readiness; `ensure_running` observes listener reachability; `ensure_ready` may observe `tcp` or `http` runtime readiness
+      - backend-provider remote activation now covers shared-remote `address_view: host` / `address_view: topology` / `address_view: internal` when `activation.provider_managed_cleanup: true`
       - built-in remote providers:
         - `ssh`: `user@host`
         - `tsh`: `user@host`
