@@ -392,6 +392,9 @@ Current `runtime.readiness` support for service tasks:
 - stream-mode endpoint banners such as `External:` and `Internal:` are confirmation-only output:
   ota prints them only after it has itself confirmed the projected endpoint, not merely because
   the workload logged that it is ready internally
+- under Colima, published ports can be reachable inside the Colima VM while still failing on
+  macOS localhost; ota treats that as unconfirmed host reachability and keeps the confirmation
+  banner withheld
 
 Override precedence:
 

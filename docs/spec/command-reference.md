@@ -684,6 +684,9 @@ ota run dev --memory 4GiB
 - stream-mode endpoint banners such as `External:` and `Internal:` are printed only after ota
   itself confirms the projected endpoint; workload logs like `ready` or framework-local URLs are
   not treated as authoritative host-reachability proof
+- if Docker is running through Colima, published ports may be reachable inside the Colima VM but
+  not on macOS localhost; when this happens, ota keeps the endpoint banner withheld and the
+  interrupted pre-confirmation path calls out the Colima boundary explicitly
 - `--memory <size>` overrides one run's requested container memory (examples: `512MiB`, `2GiB`, `4TiB`)
 - `--memory` is valid only when the selected task resolves to container execution
 - when the selected container context declares `container.resources.memory.minimum`, ota rejects `--memory` values below that minimum before task execution starts

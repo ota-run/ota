@@ -736,3 +736,138 @@ pub(super) fn render_execution_summary_status_value(status: &str) -> String {
         other => paint(other, "1;37"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::{ExecutionReceipt, ExecutionReceiptSummary};
+    use crate::runner::{
+        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
+        ResolvedTaskRuntimeHost, ServiceTermination, ServiceTerminationCause,
+        ServiceTerminationKind,
+    };
+
+    fn sample_service_runtime(external_port: u16) -> ResolvedTaskRuntime {
+        ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: external_port,
+                    url: Some(format!("http://127.0.0.1:{external_port}/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        }
+    }
+
+    fn sample_receipt() -> ExecutionReceipt {
+        ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("development")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24-bookworm")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: Vec::new(),
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        }
+    }
+
+    #[test]
+    fn run_summary_never_includes_next_lines() {
+        let mut receipt = sample_receipt();
+        receipt.ok = true;
+        receipt.next = Some(String::from(
+            "inspect task `dev` output and rerun `ota run dev`; log capture failed: permission denied",
+        ));
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+
+        assert!(!rendered.contains("\nNext:"), "{rendered}");
+        assert!(rendered.contains("Warning:"), "{rendered}");
+    }
+
+    #[test]
+    fn interrupted_pre_confirmation_summary_keeps_projected_endpoints() {
+        let mut receipt = sample_receipt();
+        receipt.runtime = Some(sample_service_runtime(3001));
+        receipt.service_termination = Some(ServiceTermination {
+            kind: ServiceTerminationKind::ServiceStopped,
+            cause: ServiceTerminationCause::Interrupted,
+            after_readiness: false,
+            target: String::from("container"),
+            container: String::from("ota-ephemeral-deadbeef"),
+            exit_code: Some(130),
+        });
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+
+        assert!(
+            rendered.contains("External:    http://127.0.0.1:3001/"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Internal:    http://0.0.0.0:3000/"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn execution_receipt_next_steps_filters_log_capture_warning() {
+        let mut receipt = sample_receipt();
+        receipt.next = Some(String::from(
+            "repair task `dev` and rerun `ota run dev`; run `ota tasks --use`; log capture failed: permission denied",
+        ));
+
+        let next_steps = execution_receipt_next_steps(&receipt);
+
+        assert_eq!(
+            next_steps,
+            vec![
+                String::from("repair task `dev` and rerun `ota run dev`"),
+                String::from("run `ota tasks --use`"),
+            ]
+        );
+    }
+}

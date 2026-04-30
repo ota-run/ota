@@ -9043,6 +9043,107 @@ fn runtime_public_env_from_resolved_runtime(
     env
 }
 
+fn runtime_bind_env(runtime: Option<&TaskRuntimeSpec>) -> BTreeMap<String, String> {
+    let Some(runtime) = runtime else {
+        return BTreeMap::new();
+    };
+
+    let mut env = BTreeMap::new();
+    let primary_listener = runtime_primary_bind_listener_name(runtime);
+    for (listener_name, listener) in &runtime.listeners {
+        let bind_address = listener.bind.address.trim();
+        if bind_address.is_empty() {
+            continue;
+        }
+        let suffix = runtime_listener_env_suffix(listener_name.as_str());
+        env.insert(
+            format!("OTA_BIND_ADDRESS_{suffix}"),
+            bind_address.to_string(),
+        );
+        if let Some(bind_port) = listener.bind.port.value {
+            env.insert(format!("OTA_BIND_PORT_{suffix}"), bind_port.to_string());
+            if primary_listener == Some(listener_name.as_str()) {
+                env.insert(String::from("OTA_BIND_ADDRESS"), bind_address.to_string());
+                env.insert(String::from("OTA_BIND_PORT"), bind_port.to_string());
+                env.insert(String::from("HOST"), bind_address.to_string());
+                env.insert(String::from("HOSTNAME"), bind_address.to_string());
+                env.insert(String::from("PORT"), bind_port.to_string());
+                env.insert(String::from("BIND_ADDRESS"), bind_address.to_string());
+                env.insert(String::from("BIND_PORT"), bind_port.to_string());
+                env.insert(String::from("SERVER_ADDRESS"), bind_address.to_string());
+                env.insert(String::from("SERVER_PORT"), bind_port.to_string());
+            }
+        }
+    }
+
+    env
+}
+
+fn runtime_bind_env_from_resolved_runtime(
+    runtime: &ResolvedTaskRuntime,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    let primary_listener = runtime
+        .primary_listener
+        .as_deref()
+        .or_else(|| runtime.listeners.keys().next().map(String::as_str));
+    for (listener_name, listener) in &runtime.listeners {
+        let bind_address = listener.bind.address.trim();
+        if bind_address.is_empty() {
+            continue;
+        }
+        let suffix = runtime_listener_env_suffix(listener_name.as_str());
+        env.insert(
+            format!("OTA_BIND_ADDRESS_{suffix}"),
+            bind_address.to_string(),
+        );
+        env.insert(
+            format!("OTA_BIND_PORT_{suffix}"),
+            listener.bind.port.to_string(),
+        );
+        if primary_listener == Some(listener_name.as_str()) {
+            env.insert(String::from("OTA_BIND_ADDRESS"), bind_address.to_string());
+            env.insert(
+                String::from("OTA_BIND_PORT"),
+                listener.bind.port.to_string(),
+            );
+            env.insert(String::from("HOST"), bind_address.to_string());
+            env.insert(String::from("HOSTNAME"), bind_address.to_string());
+            env.insert(String::from("PORT"), listener.bind.port.to_string());
+            env.insert(String::from("BIND_ADDRESS"), bind_address.to_string());
+            env.insert(String::from("BIND_PORT"), listener.bind.port.to_string());
+            env.insert(String::from("SERVER_ADDRESS"), bind_address.to_string());
+            env.insert(String::from("SERVER_PORT"), listener.bind.port.to_string());
+        }
+    }
+
+    env
+}
+
+fn runtime_primary_bind_listener_name(runtime: &TaskRuntimeSpec) -> Option<&str> {
+    if let Some((listener_name, _)) = runtime.listeners.iter().find(|(_, listener)| {
+        listener
+            .project
+            .host
+            .as_ref()
+            .is_some_and(|host| host.primary)
+    }) {
+        return Some(listener_name.as_str());
+    }
+
+    if runtime.listeners.len() == 1 {
+        return runtime.listeners.keys().next().map(String::as_str);
+    }
+
+    runtime.listeners.keys().next().map(String::as_str)
+}
+
+fn extend_missing_env(target: &mut BTreeMap<String, String>, fallback: BTreeMap<String, String>) {
+    for (key, value) in fallback {
+        target.entry(key).or_insert(value);
+    }
+}
+
 fn ready_runtime_public_endpoint_line(runtime: &ResolvedTaskRuntime) -> Option<String> {
     runtime
         .primary_endpoint
@@ -9052,10 +9153,10 @@ fn ready_runtime_public_endpoint_line(runtime: &ResolvedTaskRuntime) -> Option<S
             let external = resolved_runtime_host_endpoint_text(&endpoint.host);
             let internal = resolved_runtime_internal_endpoint_text(endpoint);
             if external == internal {
-                format!("\n\n🟢 External: {}\n\n", external)
+                format!("\n\n🟢 External:  {}\n\n", external)
             } else {
                 format!(
-                    "\n\n🟢 External: {}\n🔵 Internal: {}\n\n",
+                    "\n\n🟢 External:  {}\n🔵 Internal:  {}\n\n",
                     external, internal
                 )
             }
@@ -11628,6 +11729,7 @@ fn execute_container_task_command(
                 )?;
                 let mut resolved_env = env_overrides.clone();
                 resolved_env.extend(projection.env.clone());
+                extend_missing_env(&mut resolved_env, runtime_bind_env(runtime));
                 if let Some(deferred_backend_fulfillment) = deferred_backend_fulfillment {
                     return execute_fulfilled_ephemeral_container_task_command(
                         task_name,
@@ -13231,6 +13333,10 @@ fn persistent_container_runtime_projection(
     let mut resolved_env = env_overrides.clone();
     if let Some(runtime) = resolved_runtime.as_ref() {
         resolved_env.extend(runtime_public_env_from_resolved_runtime(runtime));
+        extend_missing_env(
+            &mut resolved_env,
+            runtime_bind_env_from_resolved_runtime(runtime),
+        );
     }
     Ok((resolved_runtime, resolved_env))
 }
@@ -22920,7 +23026,9 @@ tasks:
 
         assert_eq!(
             ready_runtime_public_endpoint_line(&runtime).as_deref(),
-            Some("\n\n🟢 External: http://127.0.0.1:49153/\n🔵 Internal: http://0.0.0.0:3000/\n\n")
+            Some(
+                "\n\n🟢 External:  http://127.0.0.1:49153/\n🔵 Internal:  http://0.0.0.0:3000/\n\n"
+            )
         );
     }
 
@@ -23193,8 +23301,7 @@ tasks:
             host:
               address: 127.0.0.1
               port:
-                mode: fixed
-                value: 53123
+                mode: auto
               path: /
 "#,
         );
@@ -23267,6 +23374,183 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
             format!("{expected_url}|127.0.0.1|4000|{expected_url}")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_injects_primary_service_bind_alias_env_for_container_runtime() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: |
+      printf '%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+        "$PORT" "$HOST" "$HOSTNAME" "$SERVER_PORT" "$SERVER_ADDRESS" \
+        "$OTA_BIND_PORT" "$OTA_BIND_ADDRESS" "$OTA_BIND_PORT_HTTP" "$OTA_BIND_ADDRESS_HTTP" > runtime-env.txt
+      printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 1);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            "3000|0.0.0.0|0.0.0.0|3000|0.0.0.0|3000|0.0.0.0|3000|0.0.0.0"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_preserves_explicit_bind_alias_env_over_fallbacks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    env:
+      PORT: "9999"
+      HOSTNAME: 127.0.0.1
+      SERVER_PORT: "8888"
+    run: |
+      printf '%s|%s|%s|%s|%s' "$PORT" "$HOSTNAME" "$SERVER_PORT" "$OTA_BIND_PORT" "$OTA_BIND_ADDRESS" > runtime-env.txt
+      printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 53123
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 1);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            "9999|127.0.0.1|8888|3000|0.0.0.0"
         );
     }
 
