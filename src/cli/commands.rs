@@ -28,7 +28,7 @@ use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
@@ -29524,6 +29524,289 @@ tasks:
         );
     }
 
+    fn run_output_regression_service_contract() -> crate::schema::Contract {
+        parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse")
+    }
+
+    fn run_output_regression_service_runtime(
+        external_port: u16,
+    ) -> crate::runner::ResolvedTaskRuntime {
+        crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: external_port,
+                    url: Some(format!("http://127.0.0.1:{external_port}/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn run_output_regression_service_stopped_after_readiness_surfaces_ready_endpoint() {
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3000);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            137,
+            "",
+            "",
+            Some(&runtime),
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::OomKilled,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(137),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(
+            rendered.contains("became ready at `http://127.0.0.1:3000/` and then stopped"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:      failed"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_service_interrupt_after_readiness_uses_info_banner() {
+        let contract = run_output_regression_service_contract();
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+        assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_service_interrupt_before_confirmation_surfaces_projected_endpoint() {
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3001);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            Some(&runtime),
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(
+            rendered.contains("INFO  Service interrupted before Ota confirmed readiness"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "projected host endpoint `http://127.0.0.1:3001/` was not yet reachable from the host when the run ended"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_service_interrupt_before_confirmation_surfaces_colima_hint() {
+        let _guard = env_mutex_lock();
+        unsafe {
+            env::set_var("OTA_TEST_DOCKER_CONTEXT", "colima");
+        }
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3001);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            Some(&runtime),
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+        unsafe {
+            env::remove_var("OTA_TEST_DOCKER_CONTEXT");
+        }
+
+        assert!(
+            rendered.contains("docker is running through Colima; in this setup published ports may be reachable inside the Colima VM but not on macOS localhost"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("colima ssh -- curl http://127.0.0.1:3001/"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_output_regression_service_startup_failure_stays_task_failed() {
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3000);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "startup failed",
+            Some(&runtime),
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
+        assert!(
+            !rendered.contains("INFO  Service interrupted"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:      failed"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_non_service_interrupt_keeps_task_interrupted_banner() {
+        let contract = run_output_regression_service_contract();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("./ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 130,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: Some(String::from(
+                    "task interrupted by user; ephemeral container cleanup failed for `ota-ephemeral-deadbeef`: engine unavailable",
+                )),
+            }],
+            &[],
+            &[],
+            130,
+            false,
+            Some(String::from("container")),
+            None,
+            Some(String::from(
+                "task interrupted by user; ephemeral container cleanup failed for `ota-ephemeral-deadbeef`: engine unavailable",
+            )),
+        );
+        let summary = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            None,
+            None,
+            true,
+            None,
+            &summary,
+        ));
+
+        assert!(rendered.contains("INFO  Task interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+        assert!(
+            rendered.contains("task interrupted by user; ephemeral container cleanup failed"),
+            "{rendered}"
+        );
+    }
+
     #[test]
     fn run_failure_text_surfaces_service_stopped_classification() {
         let contract = parse_contract_str(
@@ -34226,13 +34509,20 @@ fn render_service_interrupted_text(
     if !service_termination.after_readiness
         && let Some(endpoint) = runtime.and_then(primary_runtime_endpoint)
     {
-        why_lines.push(format!("external endpoint was projected as `{endpoint}`"));
+        why_lines.push(format!(
+            "projected host endpoint `{endpoint}` was not yet reachable from the host when the run ended"
+        ));
+        if current_docker_context_is_colima() {
+            why_lines.push(String::from(
+                "docker is running through Colima; in this setup published ports may be reachable inside the Colima VM but not on macOS localhost",
+            ));
+        }
     }
     append_error_detail_section(&mut out, "Why:", &why_lines, None);
-    let next_steps = vec![if !service_termination.after_readiness {
+    let mut next_steps = vec![if !service_termination.after_readiness {
         match runtime.and_then(primary_runtime_endpoint) {
             Some(endpoint) => format!(
-                "rerun `{}` and wait for Ota to confirm readiness at `{endpoint}`",
+                "rerun `{}` and wait for Ota to confirm the projected host endpoint at `{endpoint}`",
                 repo_run_stream_command(requested_task_name, member)
             ),
             None => format!(
@@ -34246,6 +34536,14 @@ fn render_service_interrupted_text(
             repo_run_stream_command(requested_task_name, member)
         )
     }];
+    if !service_termination.after_readiness
+        && current_docker_context_is_colima()
+        && let Some(endpoint) = runtime.and_then(primary_runtime_endpoint)
+    {
+        next_steps.push(format!(
+            "if you are using Colima, check `colima ssh -- curl {endpoint}` or enable host-reachable port forwarding in Colima"
+        ));
+    }
     append_error_detail_section(&mut out, "Next:", &next_steps, None);
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
@@ -34267,6 +34565,33 @@ fn render_service_interrupted_text(
         summary_override.as_deref().or(Some(summary_block)),
     );
     out
+}
+
+fn current_docker_context_is_colima() -> bool {
+    if let Ok(value) = env::var("OTA_TEST_DOCKER_CONTEXT") {
+        return value.trim().eq_ignore_ascii_case("colima");
+    }
+    if env::var_os("DOCKER_HOST")
+        .and_then(|value| value.into_string().ok())
+        .is_some_and(|value| value.contains(".colima/"))
+    {
+        return true;
+    }
+
+    static DETECTED: OnceLock<bool> = OnceLock::new();
+    *DETECTED.get_or_init(|| {
+        Command::new("docker")
+            .args(["context", "show"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .eq_ignore_ascii_case("colima")
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn service_interrupted_summary_note(service_termination: &ServiceTermination) -> String {
