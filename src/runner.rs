@@ -228,7 +228,7 @@ fn should_show_stream_phase_loader() -> bool {
 
 fn clear_stream_phase_line() {
     let mut stderr = io::stderr();
-    let _ = write!(stderr, "\r\x1b[2K\r\n");
+    let _ = write!(stderr, "\r\x1b[2K\r");
     let _ = stderr.flush();
 }
 
@@ -3713,6 +3713,8 @@ struct RemoteReadinessProbeTarget {
     target: String,
     cwd: Option<String>,
     ssh: Option<crate::schema::RemoteSshOptions>,
+    provider_command: Option<String>,
+    working_dir: String,
 }
 
 struct RuntimeReadinessProbe {
@@ -6692,16 +6694,6 @@ fn ensure_target_producer_state(
         ResolvedExecutionBackend::BackendProvider { provider, .. } => {
             if let Some(loader) = loader.take() {
                 loader.stop();
-            }
-            if service.address_view != TaskTargetAddressView::Host {
-                return Err(RunError::TaskTargetResolutionFailed {
-                    task: task_name.to_string(),
-                    target: target_name.to_string(),
-                    details: format!(
-                        "target activation `{}` currently supports backend provider `{provider}` only for `address_view: host`",
-                        activation_mode.as_str()
-                    ),
-                });
             }
             let Some(extension) = backend_provider_extension(&producer_contract, provider) else {
                 return Err(RunError::TaskTargetResolutionFailed {
@@ -10777,6 +10769,22 @@ fn remote_readiness_probe_target(
                 .clone()
                 .or_else(|| Some(working_dir.display().to_string())),
             ssh: ssh.clone(),
+            provider_command: None,
+            working_dir: working_dir.display().to_string(),
+        }),
+        ResolvedExecutionBackend::BackendProvider {
+            provider,
+            command,
+            target,
+            cwd,
+            ..
+        } => Some(RemoteReadinessProbeTarget {
+            provider: provider.clone(),
+            target: target.clone(),
+            cwd: cwd.clone(),
+            ssh: None,
+            provider_command: Some(command.clone()),
+            working_dir: working_dir.display().to_string(),
         }),
         _ => None,
     }
@@ -11232,6 +11240,7 @@ struct BackendProviderResult {
 enum BackendProviderCommandContext {
     Run,
     Activation,
+    ActivationProbe,
     ActivationCleanup,
 }
 
@@ -11240,6 +11249,7 @@ impl BackendProviderCommandContext {
         match self {
             Self::Run => "run",
             Self::Activation => "activation",
+            Self::ActivationProbe => "activation_probe",
             Self::ActivationCleanup => "activation_cleanup",
         }
     }
@@ -12433,17 +12443,32 @@ fi; \
 hex=$(printf '%04X' \"$port\"); \
 awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if (($4 == \"0A\" || $4 == \"0a\") && toupper(a[2]) == toupper(target)) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null",
     );
-    let output = execute_remote_task_command(
-        "__ota_remote_probe__",
-        None,
-        command.as_str(),
-        &BTreeMap::new(),
-        probe.provider.as_str(),
-        probe.target.as_str(),
-        probe.cwd.as_deref(),
-        probe.ssh.as_ref(),
-        TaskExecutionMode::Capture,
-    );
+    let output = if let Some(provider_command) = probe.provider_command.as_deref() {
+        execute_backend_provider_task_command(
+            "__ota_remote_probe__",
+            command.as_str(),
+            Path::new(probe.working_dir.as_str()),
+            &BTreeMap::new(),
+            probe.provider.as_str(),
+            provider_command,
+            probe.target.as_str(),
+            probe.cwd.as_deref(),
+            BackendProviderCommandContext::ActivationProbe,
+            TaskExecutionMode::Capture,
+        )
+    } else {
+        execute_remote_task_command(
+            "__ota_remote_probe__",
+            None,
+            command.as_str(),
+            &BTreeMap::new(),
+            probe.provider.as_str(),
+            probe.target.as_str(),
+            probe.cwd.as_deref(),
+            probe.ssh.as_ref(),
+            TaskExecutionMode::Capture,
+        )
+    };
     matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
 }
 
@@ -12477,17 +12502,32 @@ fi; \
 exit 1",
         url = shell_quote(&url),
     );
-    let output = execute_remote_task_command(
-        "__ota_remote_probe__",
-        None,
-        command.as_str(),
-        &BTreeMap::new(),
-        probe.provider.as_str(),
-        probe.target.as_str(),
-        probe.cwd.as_deref(),
-        probe.ssh.as_ref(),
-        TaskExecutionMode::Capture,
-    );
+    let output = if let Some(provider_command) = probe.provider_command.as_deref() {
+        execute_backend_provider_task_command(
+            "__ota_remote_probe__",
+            command.as_str(),
+            Path::new(probe.working_dir.as_str()),
+            &BTreeMap::new(),
+            probe.provider.as_str(),
+            provider_command,
+            probe.target.as_str(),
+            probe.cwd.as_deref(),
+            BackendProviderCommandContext::ActivationProbe,
+            TaskExecutionMode::Capture,
+        )
+    } else {
+        execute_remote_task_command(
+            "__ota_remote_probe__",
+            None,
+            command.as_str(),
+            &BTreeMap::new(),
+            probe.provider.as_str(),
+            probe.target.as_str(),
+            probe.cwd.as_deref(),
+            probe.ssh.as_ref(),
+            TaskExecutionMode::Capture,
+        )
+    };
     matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
 }
 
@@ -12819,6 +12859,7 @@ fn execute_ephemeral_container_task_command(
         ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
     let prepared_runtime =
         resolve_container_task_runtime_from_publications(runtime, listener_publications);
+    let workspace_mount_source = container_workspace_mount_source(working_dir);
     let mut create = Command::new(engine);
     create
         .arg("create")
@@ -12841,7 +12882,7 @@ fn execute_ephemeral_container_task_command(
         .arg("--entrypoint")
         .arg("sh")
         .arg("-v")
-        .arg(format!("{}:/workspace", working_dir.display()))
+        .arg(format!("{}:/workspace", workspace_mount_source.display()))
         .arg("-w")
         .arg("/workspace");
     if let Some(network) = compose_networks.first() {
@@ -12913,7 +12954,7 @@ fn execute_ephemeral_container_task_command(
             let output_result = run_streaming_command_with_capture_with_loader_hook_options(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
-                false,
+                true,
                 capture_output,
                 live_log.as_ref(),
                 |notifier| {
@@ -13270,6 +13311,7 @@ fn create_idle_ephemeral_container(
     env_overrides: &BTreeMap<String, String>,
     secret_env_names: &BTreeSet<String>,
 ) -> Result<ContainerCommandOutput, RunError> {
+    let workspace_mount_source = container_workspace_mount_source(working_dir);
     let mut create = Command::new(engine);
     create
         .arg("create")
@@ -13292,7 +13334,7 @@ fn create_idle_ephemeral_container(
         .arg("--entrypoint")
         .arg("sh")
         .arg("-v")
-        .arg(format!("{}:/workspace", working_dir.display()))
+        .arg(format!("{}:/workspace", workspace_mount_source.display()))
         .arg("-w")
         .arg("/workspace");
     if let Some(network) = compose_networks.first() {
@@ -14230,6 +14272,7 @@ fn create_persistent_container(
 ) -> Result<ContainerCommandOutput, RunError> {
     preflight_container_host_publications(task_name, listener_publications)?;
     record_repo_managed_engine(task_name, working_dir, engine)?;
+    let workspace_mount_source = container_workspace_mount_source(working_dir);
     let mut args = vec![
         "run".to_string(),
         "-d".to_string(),
@@ -14248,7 +14291,7 @@ fn create_persistent_container(
         "--entrypoint".to_string(),
         "sh".to_string(),
         "-v".to_string(),
-        format!("{}:/workspace", working_dir.display()),
+        format!("{}:/workspace", workspace_mount_source.display()),
         "-w".to_string(),
         "/workspace".to_string(),
     ];
@@ -15064,6 +15107,11 @@ exit 1",
             ResolvedExecutionBackend::Remote { ssh, .. } => ssh.clone(),
             _ => None,
         },
+        provider_command: match backend {
+            ResolvedExecutionBackend::BackendProvider { command, .. } => Some(command.clone()),
+            _ => None,
+        },
+        working_dir: cwd.clone().unwrap_or_default(),
     };
     let ports_cleared = || {
         fixed_bind_ports
@@ -16243,6 +16291,18 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
+fn container_workspace_mount_source(working_dir: &Path) -> PathBuf {
+    fs::canonicalize(working_dir).unwrap_or_else(|_| {
+        if working_dir.is_absolute() {
+            working_dir.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(working_dir))
+                .unwrap_or_else(|_| working_dir.to_path_buf())
+        }
+    })
+}
+
 fn repo_ota_dir(working_dir: &Path) -> PathBuf {
     working_dir.join(".ota")
 }
@@ -16475,7 +16535,7 @@ mod tests {
 
     use crate::parser::{load_contract_for_member, parse_contract_str};
     use crate::policy_pack::{ProvisioningAction, ProvisioningActionKind, ProvisioningTargetKind};
-    use crate::test_support::env_mutex_lock;
+    use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
         BackendFulfillmentStrategy, CapturedRunOutcome, ContainerPortPublication,
@@ -19101,6 +19161,390 @@ tasks:
             .expect("provider contexts should be recorded");
         assert!(contexts.contains("activation_cleanup"));
         assert!(contexts.contains("activation"));
+
+        let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_ready_activation_starts_and_cleans_up_backend_provider_internal_target() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      log_file="${{PWD}}/backend-provider-contexts.log"
+      printf '%s\n' "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" >> "$log_file"
+      case "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" in
+        activation)
+          python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 &
+          printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        activation_probe)
+          sh -lc "$OTA_BACKEND_PROVIDER_COMMAND" >/dev/null 2>&1
+          status=$?
+          printf '{{"ok":true,"result":{{"exit_code":%s,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}' "$status"
+          ;;
+        activation_cleanup)
+          if [ -f "${{PWD}}/backend-provider.pid" ]; then
+            kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
+            rm -f "${{PWD}}/backend-provider.pid"
+          fi
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        *)
+          printf '{{"ok":false,"errors":["unexpected command context"]}}'
+          ;;
+      esac
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("backend-provider internal ensure_ready activation should succeed");
+
+        assert_eq!(status, TaskTargetActivationStatus::StartedReady);
+
+        let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
+        assert!(
+            cleanup_note
+                .as_deref()
+                .is_some_and(|note| note.contains("backend-provider service workload cleaned up")),
+            "{cleanup_note:?}"
+        );
+
+        let contexts = fs::read_to_string(fixture.dir.path().join("backend-provider-contexts.log"))
+            .expect("provider contexts should be recorded");
+        assert!(contexts.contains("activation"));
+        assert!(contexts.contains("activation_probe"));
+        assert!(contexts.contains("activation_cleanup"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_ready_activation_restarts_reachable_backend_provider_topology_target() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let script_dir = tempfile::tempdir().expect("script dir should exist");
+        let server_script = script_dir.path().join("server.py");
+        fs::write(
+            &server_script,
+            r#"import signal
+import socket
+import sys
+
+port = int(sys.argv[1])
+body = sys.argv[2].encode()
+sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("127.0.0.1", port))
+sock.listen(5)
+
+def shutdown(_signum, _frame):
+    try:
+        sock.close()
+    finally:
+        sys.exit(0)
+
+signal.signal(signal.SIGTERM, shutdown)
+signal.signal(signal.SIGINT, shutdown)
+
+while True:
+    conn, _ = sock.accept()
+    try:
+        conn.recv(4096)
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\nConnection: close\r\n\r\n"
+            + body
+        )
+    finally:
+        conn.close()
+"#,
+        )
+        .expect("server script should be written");
+        let server_script_quoted = shell_quote(&server_script.display().to_string());
+        let mut old_server = Command::new("python3")
+            .arg(&server_script)
+            .arg(port.to_string())
+            .arg("OLD")
+            .spawn()
+            .expect("old producer should spawn");
+        for _ in 0..30 {
+            if super::target_probe_endpoint_reachable("127.0.0.1", port) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            super::target_probe_endpoint_reachable("127.0.0.1", port),
+            "old producer should become reachable before restart"
+        );
+
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      log_file="${{PWD}}/backend-provider-contexts.log"
+      printf '%s\n' "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" >> "$log_file"
+      case "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" in
+        activation)
+          python3 {server_script} {port} NEW >/dev/null 2>&1 &
+          printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        activation_probe)
+          sh -lc "$OTA_BACKEND_PROVIDER_COMMAND" >/dev/null 2>&1
+          status=$?
+          printf '{{"ok":true,"result":{{"exit_code":%s,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}' "$status"
+          ;;
+        activation_cleanup)
+          if [ -f "${{PWD}}/backend-provider.pid" ]; then
+            kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
+            rm -f "${{PWD}}/backend-provider.pid"
+          fi
+          for pid in $(lsof -ti TCP:{port} -sTCP:LISTEN 2>/dev/null || true); do
+            kill "$pid" 2>/dev/null || true
+          done
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        *)
+          printf '{{"ok":false,"errors":["unexpected command context"]}}'
+          ;;
+      esac
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        activation:
+          mode: restart_ready
+"#,
+                server_script = server_script_quoted,
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("restart_ready should restart the reachable backend-provider topology producer");
+
+        assert_eq!(status, TaskTargetActivationStatus::RestartedReady);
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .expect("restarted producer should accept connections");
+        stream
+            .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .expect("request should be written");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("response should be readable");
+        assert!(
+            response.ends_with("NEW"),
+            "restart_ready should replace the reachable backend-provider topology producer before readiness confirmation"
+        );
+
+        let old_server_status = old_server
+            .try_wait()
+            .expect("old producer status should be readable");
+        assert!(
+            old_server_status.is_some(),
+            "restart_ready should stop the previously reachable backend-provider topology producer"
+        );
+
+        let contexts = fs::read_to_string(fixture.dir.path().join("backend-provider-contexts.log"))
+            .expect("provider contexts should be recorded");
+        assert!(contexts.contains("activation"));
+        assert!(contexts.contains("activation_probe"));
+        assert!(contexts.contains("activation_cleanup"));
 
         let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
             &fixture.contract,
@@ -31338,6 +31782,8 @@ tasks:
             target: String::from("sandbox-dev"),
             cwd: Some(dir.path().display().to_string()),
             ssh: None,
+            provider_command: None,
+            working_dir: dir.path().display().to_string(),
         };
         let observed = super::remote_target_probe_port_reachable(&probe, port);
 
@@ -31936,6 +32382,82 @@ tasks:
 
         assert!(cleaned);
         assert!(!volume_marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_runs_use_absolute_workspace_mounts_for_relative_contract_paths() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _cwd_guard = cwd_mutex_lock();
+        let _env_guard = env_mutex_lock();
+        let root = TempDir::new().unwrap();
+        let repo_dir = root.path().join("ota");
+        fs::create_dir_all(&repo_dir).unwrap();
+        let contract_path = repo_dir.join("ota.yaml");
+        let contract_contents = r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#;
+        fs::write(&contract_path, contract_contents.trim_start()).unwrap();
+        let contract = parse_contract_str(Path::new("ota/ota.yaml"), contract_contents.trim_start())
+            .unwrap();
+
+        let bin_dir = root.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        let original_cwd = env::current_dir().unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+        env::set_current_dir(root.path()).unwrap();
+
+        let result = run_task(&contract, Path::new("ota/ota.yaml"), "build");
+
+        env::set_current_dir(original_cwd).unwrap();
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        result.unwrap();
+
+        let mounts = fs::read_to_string(repo_dir.join("docker-mounts.txt")).unwrap();
+        let repo_dir = fs::canonicalize(&repo_dir).unwrap();
+        assert!(
+            mounts
+                .lines()
+                .any(|line| line == format!("{}:/workspace", repo_dir.display())),
+            "{mounts}"
+        );
     }
 
     #[cfg(unix)]

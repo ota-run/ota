@@ -1931,6 +1931,18 @@ fn validate_task_target_activation_shape(
         return;
     };
     let remote_provider = remote_provider_for_task(contract, service_task).map(str::to_string);
+    let backend_provider_cleanup_supported = || {
+        remote_provider
+            .as_deref()
+            .and_then(|provider| {
+                contract
+                    .extensions
+                    .get(provider)
+                    .filter(|extension| extension.kind == ExtensionKind::BackendProvider)
+                    .and_then(|extension| extension.activation.as_ref())
+            })
+            .is_some_and(|activation| activation.provider_managed_cleanup)
+    };
     match service.address_view {
         TaskTargetAddressView::Host => {
             if backend == Backend::Remote && !shared_remote_backend {
@@ -1944,12 +1956,7 @@ fn validate_task_target_activation_shape(
                 if let Some(provider) = remote_provider.as_deref()
                     && !is_builtin_remote_provider(provider)
                 {
-                    let cleanup_supported = contract
-                        .extensions
-                        .get(provider)
-                        .filter(|extension| extension.kind == ExtensionKind::BackendProvider)
-                        .and_then(|extension| extension.activation.as_ref())
-                        .is_some_and(|activation| activation.provider_managed_cleanup);
+                    let cleanup_supported = backend_provider_cleanup_supported();
                     if !cleanup_supported {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: host`, but backend provider `{provider}` must declare `activation.provider_managed_cleanup: true`",
@@ -1998,14 +2005,28 @@ fn validate_task_target_activation_shape(
                     errors,
                 );
             } else if shared_remote_backend {
-                if !remote_provider
-                    .as_deref()
-                    .is_some_and(is_builtin_remote_provider)
-                {
-                    errors.push(ValidationError::new(format!(
-                        "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with shared-backend `address_view: topology`, but remote producer activation currently supports built-in remote providers only",
-                        activation_mode.as_str()
-                    )));
+                if let Some(provider) = remote_provider.as_deref() {
+                    if !is_builtin_remote_provider(provider)
+                        && !backend_provider_cleanup_supported()
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with shared-backend `address_view: topology`, but backend provider `{provider}` must declare `activation.provider_managed_cleanup: true`",
+                            activation_mode.as_str()
+                        )));
+                    } else {
+                        validate_target_activation_bind_port(
+                            task_name,
+                            target_name,
+                            service_task_name,
+                            probe_listener_name,
+                            activation_mode,
+                            listener_label,
+                            listener.bind.port.mode,
+                            listener.bind.port.value,
+                            "shared-backend `address_view: topology`",
+                            errors,
+                        );
+                    }
                 } else {
                     validate_target_activation_bind_port(
                         task_name,
@@ -2034,17 +2055,16 @@ fn validate_task_target_activation_shape(
             }
         }
         TaskTargetAddressView::Internal => {
-            if shared_remote_backend {
-                if !remote_provider
-                    .as_deref()
-                    .is_some_and(is_builtin_remote_provider)
-                {
-                    errors.push(ValidationError::new(format!(
-                        "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: internal`, but remote producer activation currently supports built-in remote providers only",
-                        activation_mode.as_str()
-                    )));
-                    return;
-                }
+            if shared_remote_backend
+                && let Some(provider) = remote_provider.as_deref()
+                && !is_builtin_remote_provider(provider)
+                && !backend_provider_cleanup_supported()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: internal`, but backend provider `{provider}` must declare `activation.provider_managed_cleanup: true`",
+                    activation_mode.as_str()
+                )));
+                return;
             }
             if !shared_container_backend && !shared_native_backend && !shared_remote_backend {
                 errors.push(ValidationError::new(format!(
@@ -9120,6 +9140,162 @@ tasks:
     }
 
     #[test]
+    fn allows_ensure_ready_topology_view_for_backend_provider_with_managed_cleanup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: topology
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect(
+            "shared remote topology ensure_ready should validate for backend providers with managed cleanup",
+        );
+    }
+
+    #[test]
+    fn allows_ensure_ready_internal_view_for_backend_provider_with_managed_cleanup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect(
+            "shared remote internal ensure_ready should validate for backend providers with managed cleanup",
+        );
+    }
+
+    #[test]
     fn rejects_ensure_ready_host_view_for_backend_provider_without_managed_cleanup() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -9190,6 +9366,85 @@ tasks:
           task: dev
           listener: http
           address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "backend provider `backend-demo` must declare `activation.provider_managed_cleanup: true`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_ensure_ready_internal_for_backend_provider_without_managed_cleanup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: internal
         activation:
           mode: ensure_ready
 "#,

@@ -113,7 +113,8 @@ request includes the extension id, kind, api version, command context, repo cont
 directory, task name, task command, execution mode, target, cwd, and resolved environment values.
 When a backend provider should participate in non-manual target activation, declare
 `activation.provider_managed_cleanup: true`; that tells ota the provider can also handle the
-follow-up `activation_cleanup` command context for activation-started producer services.
+follow-up `activation_probe` and `activation_cleanup` command contexts for activation-started
+producer services.
 The validator requires `kind` to be one of the supported kinds, `command` to be non-empty, and
 `api_version` to be greater than zero.
 
@@ -1123,10 +1124,12 @@ Task target binding semantics:
       - `address_view: host` requires a fixed `project.host` endpoint
       - `address_view: topology` and `address_view: internal` may probe the fixed remote-plane bind endpoint
       - readiness may be `tcp` or `http`
-    - backend-provider remote producer services only when the caller and producer share one declared remote backend binding, the target uses one fixed `address_view: host` endpoint, and the matching `backend_provider` extension declares `activation.provider_managed_cleanup: true`:
+    - backend-provider remote producer services only when the caller and producer share one declared remote backend binding and the matching `backend_provider` extension declares `activation.provider_managed_cleanup: true`:
+      - `address_view: host` uses the listener fixed `project.host` endpoint
+      - shared-remote `address_view: topology` / `address_view: internal` use the listener fixed `bind.port.value` on the remote plane through provider-owned `activation_probe`
       - `ensure_started` hands startup off immediately
       - `restart_ready` cleans up the currently reachable provider-owned producer, then restarts it and waits for readiness again
-      - `ensure_running` waits for the declared host endpoint to become reachable
+      - `ensure_running` waits for the declared reachable endpoint on the selected plane
       - `ensure_ready` may wait for deeper declared `runtime.readiness`
   - unsupported producer backend shapes fail clearly instead of guessing orchestration
   - stream-mode runs show an explicit activation wait phase while ota is starting or waiting on the producer readiness contract
@@ -1206,7 +1209,7 @@ Shared local backend semantics:
       - `address_view: host` uses the listener fixed `project.host` endpoint
       - shared-remote `address_view: topology` / `address_view: internal` use the listener fixed `bind.port.value` on the remote plane
       - `ensure_started` hands startup off immediately; `restart_ready` bounces a reachable producer and waits for readiness; `ensure_running` observes listener reachability; `ensure_ready` may observe `tcp` or `http` runtime readiness
-      - backend-provider remote activation is narrower: it is host-view only today and requires `activation.provider_managed_cleanup: true`
+      - backend-provider remote activation now covers shared-remote `address_view: host` / `address_view: topology` / `address_view: internal` when `activation.provider_managed_cleanup: true`
       - built-in remote providers:
         - `ssh`: `user@host`
         - `tsh`: `user@host`

@@ -485,11 +485,12 @@ Important status:
   `address_view: internal` targets; `ensure_started` hands startup off immediately,
   `ensure_running` observes listener reachability, `ensure_ready` supports deeper shipped `tcp` /
   `http` readiness
-- backend-provider remote activation is also now shipped narrowly on shared-remote
-  `address_view: host` targets only when the matching `backend_provider` extension declares
-  `activation.provider_managed_cleanup: true`; `ensure_started`, `restart_ready`,
-  `ensure_running`, and `ensure_ready` are supported there, while `address_view: topology` and
-  `address_view: internal` remain later work
+- backend-provider remote activation is also now shipped on shared-remote
+  `address_view: host` / `address_view: topology` / `address_view: internal` targets when the
+  matching `backend_provider` extension declares `activation.provider_managed_cleanup: true`;
+  `ensure_started`, `restart_ready`, `ensure_running`, and `ensure_ready` are supported there,
+  with shared-remote `topology` / `internal` readiness probing routed through provider-owned
+  `activation_probe`
 
 Why this is the intended long-term direction:
 
