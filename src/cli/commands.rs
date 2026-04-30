@@ -121,7 +121,7 @@ use crate::schema::{
 };
 use crate::update;
 use crate::validator::{
-    ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract,
+    ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract_with_path,
 };
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceContract, WorkspaceExecutionSummary, WorkspaceRepoRef,
@@ -5003,7 +5003,7 @@ pub fn policy_review(
             );
         }
     };
-    if let Err(error) = validate_contract(&contract) {
+    if let Err(error) = validate_contract_with_path(&contract, Some(&contract_path)) {
         return finalize_debug(
             invalid_repo_contract_output(
                 "POLICY REVIEW",
@@ -9861,7 +9861,10 @@ fn render_detect_contract_preview(
 
     if let Err(error) = parse_contract_str(contract_path, &review_yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         return CommandOutput::failure(command_message_failure_text(
             "DETECT CONTRACT PREVIEW",
@@ -11439,7 +11442,9 @@ pub fn workspace_tasks(
                         }
                     };
 
-                    if let Err(errors) = validate_contract(&contract) {
+                    if let Err(errors) =
+                        validate_contract_with_path(&contract, Some(&repo.contract_path))
+                    {
                         return match format {
                             OutputFormat::Text => {
                                 CommandOutput::failure(workspace_repo_contract_invalid_text(
@@ -11665,7 +11670,12 @@ pub fn workspace_list(
                         } else {
                             match load_contract(&repo.contract_path) {
                                 Ok(contract) => {
-                                    if validate_contract(&contract).is_err() {
+                                    if validate_contract_with_path(
+                                        &contract,
+                                        Some(&repo.contract_path),
+                                    )
+                                    .is_err()
+                                    {
                                         (String::from("INVALID CONTRACT"), None)
                                     } else {
                                         let ready =
@@ -13052,7 +13062,10 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
 
     match parse_contract_str(&contract_path, &yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(&contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         Ok(()) => {}
         Err(_) => {
@@ -13424,7 +13437,10 @@ fn write_detected_merge(
 
     if let Err(error) = parse_contract_str(&contract_path, &yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(&contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -13595,7 +13611,10 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
 
     if let Err(error) = parse_contract_str(&contract_path, &yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(&contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -14075,8 +14094,10 @@ fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, St
                 ok: archive.payload.ok,
                 contract: archive.payload.receipt.contract,
                 backend: archive.payload.receipt.backend,
+                provider: archive.payload.receipt.provider,
                 context: archive.payload.receipt.context,
                 lifecycle: archive.payload.receipt.lifecycle,
+                cwd: archive.payload.receipt.cwd,
                 summary: archive.payload.summary.into(),
             })
             .collect(),
@@ -15131,7 +15152,10 @@ fn render_init(
 
     if let Err(error) = parse_contract_str(contract_path, &review_yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         let error = if write && bootstrap && error.contains("missing field `project`") {
             format!(
@@ -15205,7 +15229,10 @@ fn render_init(
 
         if let Err(validation_error) = parse_contract_str(contract_path, &write_yaml)
             .map_err(|error| error.to_string())
-            .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+            .and_then(|contract| {
+                validate_contract_with_path(&contract, Some(contract_path))
+                    .map_err(|error| error.to_string())
+            })
         {
             let error = if bootstrap && validation_error.contains("missing field `project`") {
                 format!(
@@ -23492,6 +23519,8 @@ env:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -24838,6 +24867,8 @@ tasks:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -24957,6 +24988,8 @@ tasks:
             image: Some(String::from("node:24-bookworm")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -25043,6 +25076,8 @@ tasks:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-3ff7e125cddff1a4")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -25151,6 +25186,8 @@ tasks:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-3ff7e125cddff1a4")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -26128,6 +26165,106 @@ policies:
         assert!(native_lines[0].contains("tool docker (package: docker.io)"));
         assert_eq!(container_lines.len(), 1);
         assert!(container_lines[0].contains("tool node 22 via mise"));
+    }
+
+    fn write_cross_member_target_root_contract(root: &Path) -> crate::workspace::WorkspaceRepoRef {
+        fs::write(
+            root.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          member: api
+          task: dev
+          listener: http
+          address_view: host
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("api")).unwrap();
+        fs::write(
+            root.join("api").join("ota.yaml"),
+            r#"
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        crate::workspace::WorkspaceRepoRef {
+            name: String::from("monorepo"),
+            path: root.to_path_buf(),
+            contract_path: root.join("ota.yaml"),
+            required: true,
+            depends_on: Vec::new(),
+            present: true,
+            source_url: None,
+            source_ref: None,
+            policy_env: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn workspace_execution_plan_accepts_cross_member_service_member_targets() {
+        let fixture = TempDir::new().unwrap();
+        let repo = write_cross_member_target_root_contract(fixture.path());
+
+        let report = super::run_workspace_repo_execution_plan(
+            repo,
+            ExecutionOverrides::default(),
+            fixture.path(),
+        );
+
+        assert_eq!(report.status, "RESOLVED");
+        assert!(report.error.is_none(), "unexpected error: {:?}", report.error);
+    }
+
+    #[test]
+    fn workspace_check_accepts_cross_member_service_member_targets() {
+        let fixture = TempDir::new().unwrap();
+        let repo = write_cross_member_target_root_contract(fixture.path());
+
+        let report = super::check_workspace_repo(repo, fixture.path());
+
+        assert!(report.ok, "unexpected findings: {:?}", report.findings);
+        assert!(!report.findings.iter().any(|finding| {
+            finding.summary.contains("Invalid repo contract")
+                || finding.why.contains("service.member: api")
+        }));
     }
 
     #[test]
@@ -27150,6 +27287,8 @@ execution:
             DoctorMode::Remote,
         );
         assert_eq!(doctor_remote.context.as_deref(), Some("remote-db"));
+        assert_eq!(doctor_remote.provider.as_deref(), Some("ssh"));
+        assert_eq!(doctor_remote.cwd.as_deref(), Some("/tmp"));
 
         let provisioning_container = super::provisioning_phase_execution_context(
             &contract,
@@ -27180,6 +27319,8 @@ execution:
             },
         );
         assert_eq!(provisioning_remote.context.as_deref(), Some("remote-db"));
+        assert_eq!(provisioning_remote.provider.as_deref(), Some("ssh"));
+        assert_eq!(provisioning_remote.cwd.as_deref(), Some("/tmp"));
     }
 
     #[test]
@@ -27448,6 +27589,8 @@ execution:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-3ff7e125cddff1a4")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -27894,6 +28037,66 @@ tasks:
     }
 
     #[test]
+    fn run_execution_receipt_surfaces_remote_provider_target_and_cwd() {
+        let contract = parse_contract_str(
+            Path::new("/tmp/ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote-db
+  contexts:
+    remote-db:
+      backend: remote
+      remote:
+        provider: ssh
+        target: sandbox-dev
+        cwd: /workspace
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.backend.as_deref(), Some("remote"));
+        assert_eq!(receipt.provider.as_deref(), Some("ssh"));
+        assert_eq!(receipt.target.as_deref(), Some("sandbox-dev"));
+        assert_eq!(receipt.cwd.as_deref(), Some("/workspace"));
+
+        let rendered =
+            render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        assert!(rendered.contains("Provider:"));
+        assert!(rendered.contains("ssh"));
+        assert!(rendered.contains("Target:"));
+        assert!(rendered.contains("sandbox-dev"));
+        assert!(rendered.contains("Cwd:"));
+        assert!(rendered.contains("/workspace"));
+    }
+
+    #[test]
     fn run_execution_receipt_summary_omits_requested_task_placeholder_note() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -27974,11 +28177,13 @@ tasks:
                     mode: crate::schema::TaskTargetActivationMode::EnsureReady,
                     status: crate::runner::TaskTargetActivationStatus::StartedReady,
                 }),
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }],
             0,
@@ -28046,11 +28251,13 @@ tasks:
                     mode: crate::schema::TaskTargetActivationMode::EnsureReady,
                     status: crate::runner::TaskTargetActivationStatus::StartedReady,
                 }),
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }],
             0,
@@ -28206,11 +28413,13 @@ tasks:
                 override_input: Some(String::from("base_url")),
                 source: TaskTargetResolutionSource::TargetBinding,
                 activation: None,
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }]],
             &[],
@@ -28766,11 +28975,13 @@ tasks:
                 override_input: Some(String::from("base_url")),
                 source: TaskTargetResolutionSource::TargetBinding,
                 activation: None,
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }]],
             &[],
@@ -28804,6 +29015,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -28853,6 +29066,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -28902,6 +29117,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -28947,6 +29164,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29050,6 +29269,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29100,6 +29321,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-persistent-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29775,6 +29998,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29847,6 +30072,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29905,6 +30132,8 @@ tasks:
             image: Some(String::from("oven/bun:1.3.12-slim")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29966,6 +30195,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30021,6 +30252,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30076,6 +30309,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30136,6 +30371,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30478,6 +30715,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-container")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30613,6 +30852,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-container")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30708,6 +30949,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-test")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -32430,7 +32673,9 @@ fn rewrite_workspace_repo_contracts(
 fn contract_yaml_valid(path: &Path, yaml: &str) -> bool {
     parse_contract_str(path, yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(path)).map_err(|error| error.to_string())
+        })
         .is_ok()
 }
 
@@ -35437,6 +35682,20 @@ fn run_execution_receipt_with_shared(
         Some(ResolvedExecutionBackend::Container { context_name, .. }) => context_name.clone(),
         _ => effective.context_name.map(str::to_string),
     };
+    let provider = resolved_backend.as_ref().and_then(|backend| match backend {
+        ResolvedExecutionBackend::Remote { provider, .. }
+        | ResolvedExecutionBackend::BackendProvider { provider, .. } => Some(provider.clone()),
+        ResolvedExecutionBackend::Native { .. } | ResolvedExecutionBackend::Container { .. } => {
+            None
+        }
+    });
+    let cwd = resolved_backend.as_ref().and_then(|backend| match backend {
+        ResolvedExecutionBackend::Remote { cwd, .. }
+        | ResolvedExecutionBackend::BackendProvider { cwd, .. } => cwd.clone(),
+        ResolvedExecutionBackend::Native { .. } | ResolvedExecutionBackend::Container { .. } => {
+            None
+        }
+    });
     let target = target.or_else(|| effective_task_execution_target(contract_path, effective));
     let effective_task_env = match (resolved_backend.as_ref(), contract.tasks.get(task_name)) {
         (Some(resolved_backend), Some(task)) => Some(effective_task_env_for_backend(
@@ -35515,6 +35774,8 @@ fn run_execution_receipt_with_shared(
         image,
         container_memory_bytes,
         target,
+        provider,
+        cwd,
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -36936,8 +37197,10 @@ fn validate_declared_monorepo_members(path: &Path) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     for member in &workspace.members {
         match load_contract_for_member(path, member) {
-            Ok((contract, _)) => {
-                if let Err(validation_errors) = validate_contract(&contract) {
+            Ok((contract, contract_path)) => {
+                if let Err(validation_errors) =
+                    validate_contract_with_path(&contract, Some(&contract_path))
+                {
                     for error in validation_errors.errors() {
                         errors.push(format!("monorepo member `{member}`: {error}"));
                     }
@@ -39432,6 +39695,8 @@ struct PhaseExecutionContext {
     image: Option<String>,
     container_memory_bytes: Option<u64>,
     target: Option<String>,
+    provider: Option<String>,
+    cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -39480,6 +39745,10 @@ struct ArchivedRepoReceiptData {
     context: Option<String>,
     #[serde(default)]
     lifecycle: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39741,6 +40010,8 @@ fn repo_execution_receipt(
         image: context.image,
         container_memory_bytes: context.container_memory_bytes,
         target: context.target,
+        provider: context.provider,
+        cwd: context.cwd,
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -39872,6 +40143,14 @@ fn phase_execution_target(
     }
 }
 
+fn phase_execution_provider(contract: &Contract, context_name: Option<&str>) -> Option<String> {
+    execution_context_remote_backend(contract, context_name).map(|remote| remote.provider.clone())
+}
+
+fn phase_execution_cwd(contract: &Contract, context_name: Option<&str>) -> Option<String> {
+    execution_context_remote_backend(contract, context_name).and_then(|remote| remote.cwd.clone())
+}
+
 fn effective_phase_container_backend<'a>(
     contract: &'a Contract,
     backend: Backend,
@@ -39913,6 +40192,8 @@ fn selected_phase_execution_context(
             overrides.memory,
         ),
         target: phase_execution_target(contract, path, backend, lifecycle, context.as_deref()),
+        provider: phase_execution_provider(contract, context.as_deref()),
+        cwd: phase_execution_cwd(contract, context.as_deref()),
     }
 }
 
@@ -39949,6 +40230,8 @@ fn task_phase_execution_context(
     target: Option<String>,
 ) -> PhaseExecutionContext {
     let effective = effective_task_execution(contract, task_name, overrides);
+    let provider = effective.remote.map(|remote| remote.provider.clone());
+    let cwd = effective.remote.and_then(|remote| remote.cwd.clone());
     let mut context = PhaseExecutionContext {
         backend: Some(format_backend(effective.backend).to_string()),
         context: reported_task_context_for_backend(contract, task_name, effective.backend)
@@ -39968,6 +40251,8 @@ fn task_phase_execution_context(
             Backend::Native | Backend::Remote => None,
         },
         target: effective_task_execution_target(path, effective),
+        provider,
+        cwd,
     };
     if target.is_some() {
         context.target = target;
@@ -40012,6 +40297,8 @@ fn doctor_phase_execution_context(
                     Some(Lifecycle::Ephemeral),
                     context.as_deref(),
                 ),
+                provider: None,
+                cwd: None,
             }
         }
         DoctorMode::Remote => {
@@ -40026,6 +40313,8 @@ fn doctor_phase_execution_context(
                     None,
                     context.as_deref(),
                 ),
+                provider: phase_execution_provider(contract, context.as_deref()),
+                cwd: phase_execution_cwd(contract, context.as_deref()),
                 ..PhaseExecutionContext::default()
             }
         }
@@ -40098,6 +40387,8 @@ fn provisioning_phase_execution_context(
                         None
                     }
                 }),
+                provider: None,
+                cwd: None,
             }
         }
         ProvisioningExecutionTarget::Remote { context_name, .. } => {
@@ -40114,6 +40405,8 @@ fn provisioning_phase_execution_context(
                     None,
                     context.as_deref(),
                 ),
+                provider: phase_execution_provider(contract, context.as_deref()),
+                cwd: phase_execution_cwd(contract, context.as_deref()),
                 ..PhaseExecutionContext::default()
             }
         }
@@ -40232,8 +40525,14 @@ fn render_repo_receipt_history(
                     if let Some(backend) = archive.backend.as_deref() {
                         stdout.push_str(&format!("\n   {} {}", paint_key("Backend:"), backend));
                     }
+                    if let Some(provider) = archive.provider.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Provider:"), provider));
+                    }
                     if let Some(lifecycle) = archive.lifecycle.as_deref() {
                         stdout.push_str(&format!("\n   {} {}", paint_key("Lifecycle:"), lifecycle));
+                    }
+                    if let Some(cwd) = archive.cwd.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Cwd:"), cwd));
                     }
                     stdout.push_str(&format!(
                         "\n   {} errors={}, warnings={}, info={}",
@@ -40401,6 +40700,8 @@ fn workspace_up_receipt(
         image: None,
         container_memory_bytes: None,
         target: None,
+        provider: None,
+        cwd: None,
         acquired: Vec::new(),
         env: env_sources
             .iter()
@@ -40479,6 +40780,8 @@ fn workspace_status_receipt(
         image: None,
         container_memory_bytes: None,
         target: None,
+        provider: None,
+        cwd: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
@@ -40560,6 +40863,8 @@ fn workspace_run_receipt(
         image: None,
         container_memory_bytes: None,
         target: None,
+        provider: None,
+        cwd: None,
         acquired: Vec::new(),
         env: env_sources
             .iter()
@@ -43683,7 +43988,8 @@ fn run_workspace_repo_execution_plan(
                 Some(&repo.policy_env),
             );
 
-            if let Err(errors) = validate_contract(&contract) {
+            if let Err(errors) = validate_contract_with_path(&contract, Some(&repo.contract_path))
+            {
                 let error = errors
                     .errors()
                     .iter()
@@ -44269,7 +44575,8 @@ fn run_workspace_repo_task(
     match load_contract(&repo.contract_path) {
         Ok(contract) => {
             let task_command = contract.tasks.get(task).and_then(task_command_preview);
-            if let Err(error) = validate_contract(&contract) {
+            if let Err(error) = validate_contract_with_path(&contract, Some(&repo.contract_path))
+            {
                 return WorkspaceRepoRunReport {
                     name: repo.name,
                     path: path_display,
@@ -44642,7 +44949,8 @@ fn check_workspace_repo(
 
     match load_contract(&repo.contract_path) {
         Ok(contract) => {
-            if let Err(error) = validate_contract(&contract) {
+            if let Err(error) = validate_contract_with_path(&contract, Some(&repo.contract_path))
+            {
                 return crate::workspace::WorkspaceRepoDoctorReport {
                     name: repo.name,
                     path: repo.path.display().to_string(),
@@ -44960,7 +45268,8 @@ fn load_and_validate_target(
         Some(member) => load_contract_for_member(path, member).map_err(ContractProblem::Load)?,
         None => load_contract_auto(path).map_err(ContractProblem::Load)?,
     };
-    validate_contract(&contract).map_err(ContractProblem::Validation)?;
+    validate_contract_with_path(&contract, Some(&contract_path))
+        .map_err(ContractProblem::Validation)?;
     Ok(LoadedContractTarget {
         contract,
         contract_path,

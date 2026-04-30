@@ -161,6 +161,7 @@ Meaning:
 - `targets.api` is the topology truth
 - `service.task` identifies the service task
 - `service.listener` identifies the listener on that task
+  - it may be omitted only when the producer exposes exactly one declared listener name across its service runtime shapes
 - `address_view: topology` asks Ota for the correct reachable URL for the current local topology
 - `override_input: base_url` keeps an explicit operator override hook without making the input the
   primary topology abstraction
@@ -279,16 +280,36 @@ targets:
     override_input: base_url
 ```
 
-Required fields:
+Target identity kinds:
 
-- `task`
-- `listener`
+- `service`
+  - required fields:
+    - `task`
+  - optional fields:
+    - `member`
+    - `listener`
+    - `address_view`
+    - `override_input`
+    - `activation`
+- `url`
+  - required field:
+    - `url`
+  - optional field:
+    - `override_input`
 
-Optional fields:
+Use `url` when the target is one explicit declared URL and should not resolve through repo-managed
+service topology. `url` targets still participate in override precedence and `OTA_TARGET_<TARGET>`
+export, but they support `activation.mode: manual` only.
 
-- `address_view`
-- `override_input`
-- `activation`
+`service.member` is optional:
+
+- omit it for same-contract producer task references
+- set it only for monorepo member producers declared under `workspace.members`
+- the current shipped cross-member slice is intentionally narrow:
+  - `address_view: host` works through the producer fixed `project.host` endpoint and remains `activation.mode: manual` only
+  - `address_view: topology` / `address_view: internal` work only when consumer and producer share one declared backend binding on the active plane
+  - non-manual activation (`ensure_running`, `ensure_ready`) is shipped only for those shared-backend `topology` / `internal` member targets
+  - receipts still record the member, producer task, and listener explicitly
 
 Allowed `address_view` values:
 
@@ -305,14 +326,26 @@ different environment explicitly.
 `activation.mode` is optional:
 
 - `manual` = resolve the target only
+- `ensure_running` = if no explicit override input wins, ota may ensure the local producer service
+  has the declared target listener reachable before the consumer runs
 - `ensure_ready` = if no explicit override input wins, ota may ensure the local producer service is
   already reachable before the consumer runs
 - service runtimes may declare `runtime.readiness` when “ready” must mean more than “the listener socket is open”
 
-Current `ensure_ready` constraints:
+Only `service` targets participate in activation. `url` targets are always manual.
+
+`ensure_running` is intentionally narrower than `ensure_ready`:
+
+- it probes the declared target listener plane only
+- when the producer also declares `runtime.readiness`, ota does not wait for that deeper readiness contract under `ensure_running`
+
+Current non-manual activation constraints:
 
 - explicit operator override inputs skip producer auto-start
-- compatibility literal defaults do not satisfy `ensure_ready`
+- compatibility literal defaults do not satisfy `ensure_running` or `ensure_ready`
+- run receipts summarize producer activation plainly as:
+  - `started_running` = ota started the producer and waited until the declared listener was reachable
+  - `reused_running` = ota found the declared listener already reachable and reused the producer
 - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract before starting the consumer
 - run receipts summarize producer activation plainly as:
   - `started_ready` = ota started the producer and waited for readiness
@@ -434,10 +467,11 @@ Important status:
 - `execution.shared_backends` is the shipped contract surface now
 - `scope: local` is the shipped slice
 - `scope: remote` is now shipped for `backend: remote`
-- remote producer auto-start through `activation.mode: ensure_ready` is now shipped for built-in
+- remote producer auto-start through non-manual target activation is now shipped for built-in
   remote providers on shared-remote `address_view: host` / `address_view: topology` /
-  `address_view: internal` targets, with `tcp` and `http` readiness supported on the shipped
-  built-in remote path; backend-provider remote activation remains later work
+  `address_view: internal` targets; `ensure_running` observes listener reachability, `ensure_ready`
+  supports deeper shipped `tcp` / `http` readiness, and backend-provider remote activation remains
+  later work
 
 Why this is the intended long-term direction:
 

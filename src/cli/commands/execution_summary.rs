@@ -98,6 +98,12 @@ pub(super) fn render_execution_receipt_summary_block(
             lines.push(summary_detail_line("Target:", target));
         }
     }
+    if let Some(provider) = receipt.provider.as_deref() {
+        lines.push(summary_detail_line("Provider:", provider));
+    }
+    if let Some(cwd) = receipt.cwd.as_deref() {
+        lines.push(summary_detail_line("Cwd:", cwd));
+    }
     if let Some(endpoint) = primary_receipt_endpoint(receipt) {
         lines.push(summary_detail_line("External:", &endpoint));
         if let Some(internal) = primary_receipt_internal_endpoint(receipt)
@@ -430,6 +436,21 @@ fn requested_task_backend_fulfillment<'a>(
 }
 
 fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) -> String {
+    let service_task = resolution
+        .service_ref
+        .as_ref()
+        .map(|service_ref| match service_ref.member.as_deref() {
+            Some(member) => format!("{member}:{}", service_ref.task),
+            None => service_ref.task.clone(),
+        })
+        .unwrap_or_else(|| String::from("producer"));
+    let service_edge = resolution
+        .service_ref
+        .as_ref()
+        .map(|service_ref| match service_ref.member.as_deref() {
+            Some(member) => format!("{member}:{}.{}", service_ref.task, service_ref.listener),
+            None => format!("{}.{}", service_ref.task, service_ref.listener),
+        });
     match resolution
         .activation
         .as_ref()
@@ -437,20 +458,35 @@ fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) ->
     {
         Some(crate::runner::TaskTargetActivationStatus::StartedReady) => format!(
             "started producer `{}` and waited for readiness",
-            resolution.service_ref.task
+            service_task.as_str()
         ),
         Some(crate::runner::TaskTargetActivationStatus::ReusedReady) => {
-            format!("reused ready producer `{}`", resolution.service_ref.task)
+            format!("reused ready producer `{}`", service_task.as_str())
+        }
+        Some(crate::runner::TaskTargetActivationStatus::StartedRunning) => format!(
+            "started producer `{}` and waited for the declared listener",
+            service_task.as_str()
+        ),
+        Some(crate::runner::TaskTargetActivationStatus::ReusedRunning) => {
+            format!(
+                "reused producer `{}` because the declared listener was already reachable",
+                service_task.as_str()
+            )
         }
         Some(crate::runner::TaskTargetActivationStatus::SkippedExplicitOverride) => {
             String::from("skipped activation because an explicit override was provided")
         }
         _ => match resolution.source {
             TaskTargetResolutionSource::ExplicitOverride => String::from("used explicit override"),
-            TaskTargetResolutionSource::TargetBinding => format!(
-                "resolved from producer `{}.{}`",
-                resolution.service_ref.task, resolution.service_ref.listener
-            ),
+            TaskTargetResolutionSource::TargetBinding => {
+                if let Some(service_edge) = service_edge {
+                    format!("resolved from producer `{service_edge}`")
+                } else if let Some(url_ref) = resolution.url_ref.as_ref() {
+                    format!("resolved from declared url `{}`", url_ref.url)
+                } else {
+                    String::from("resolved from declared target")
+                }
+            }
             TaskTargetResolutionSource::CompatibilityLiteralDefault => {
                 String::from("used compatibility literal default")
             }

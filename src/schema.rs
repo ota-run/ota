@@ -1774,18 +1774,34 @@ pub struct TaskInputSpec {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskTargetSpec {
-    pub service: TaskTargetServiceRefSpec,
+    #[serde(default)]
+    pub service: Option<TaskTargetServiceRefSpec>,
+    #[serde(default)]
+    pub url: Option<String>,
     #[serde(default)]
     pub override_input: Option<String>,
     #[serde(default)]
     pub activation: TaskTargetActivationSpec,
 }
 
+impl TaskTargetSpec {
+    pub const fn kind(&self) -> TaskTargetKind {
+        if self.service.is_some() {
+            TaskTargetKind::Service
+        } else {
+            TaskTargetKind::Url
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskTargetServiceRefSpec {
+    #[serde(default)]
+    pub member: Option<String>,
     pub task: String,
-    pub listener: String,
+    #[serde(default)]
+    pub listener: Option<String>,
     #[serde(default)]
     pub address_view: TaskTargetAddressView,
 }
@@ -1803,6 +1819,17 @@ pub enum TaskTargetActivationMode {
     #[default]
     Manual,
     EnsureReady,
+    EnsureRunning,
+}
+
+impl TaskTargetActivationMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::EnsureReady => "ensure_ready",
+            Self::EnsureRunning => "ensure_running",
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -1812,6 +1839,13 @@ pub enum TaskTargetAddressView {
     Topology,
     Host,
     Internal,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTargetKind {
+    Service,
+    Url,
 }
 
 pub(crate) fn task_target_env_name(name: &str) -> String {

@@ -21,10 +21,12 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use crate::execution::{
     format_lifecycle, matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
+use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
@@ -77,6 +79,13 @@ impl ValidationErrors {
 }
 
 pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
+    validate_contract_with_path(contract, None)
+}
+
+pub fn validate_contract_with_path(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+) -> Result<(), ValidationErrors> {
     let mut errors = Vec::new();
 
     validate_version(contract, &mut errors);
@@ -95,7 +104,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
     validate_services(contract, &mut errors);
-    validate_tasks(contract, &mut errors);
+    validate_tasks(contract, contract_path, &mut errors);
     validate_checks(contract, &mut errors);
     validate_agent(contract.agent.as_ref(), &contract.tasks, &mut errors);
 
@@ -1085,7 +1094,11 @@ fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
     }
 }
 
-fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
+fn validate_tasks(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    errors: &mut Vec<ValidationError>,
+) {
     let tasks = &contract.tasks;
     let execution = contract.execution.as_ref();
 
@@ -1147,42 +1160,101 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
             }
 
-            if target.service.task.trim().is_empty() {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` target `{target_name}` must not declare an empty `service.task`"
-                )));
-            }
-            if target.service.listener.trim().is_empty() {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` target `{target_name}` must not declare an empty `service.listener`"
-                )));
-            }
-            let service_task_name = target.service.task.as_str();
-            if let Some(service_task) = tasks.get(service_task_name) {
-                if !task_declares_service_runtime(service_task) {
-                    errors.push(ValidationError::new(format!(
-                        "task `{name}` target `{target_name}` references `service.task: {service_task_name}`, but task `{service_task_name}` is not a service task"
-                    )));
-                } else if !task_declares_listener(service_task, target.service.listener.as_str()) {
-                    errors.push(ValidationError::new(format!(
-                        "task `{name}` target `{target_name}` references unknown listener `{}` on service task `{service_task_name}`",
-                        target.service.listener
-                    )));
-                } else {
-                    validate_task_target_activation_shape(
-                        contract,
-                        name,
-                        target_name,
-                        target,
-                        service_task_name,
-                        service_task,
-                        errors,
-                    );
+            match (target.service.as_ref(), target.url.as_deref()) {
+                (Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                    "task `{name}` target `{target_name}` must declare exactly one of `service` or `url`"
+                ))),
+                (None, None) => errors.push(ValidationError::new(format!(
+                    "task `{name}` target `{target_name}` must declare exactly one of `service` or `url`"
+                ))),
+                (Some(service), None) => {
+                    let service_member_name = service
+                        .member
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if service.member.as_deref().is_some_and(|value| value.trim().is_empty()) {
+                        errors.push(ValidationError::new(format!(
+                            "task `{name}` target `{target_name}` must not declare an empty `service.member`"
+                        )));
+                    }
+                    if service.task.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{name}` target `{target_name}` must not declare an empty `service.task`"
+                        )));
+                    }
+                    let service_task_name = service.task.as_str();
+                    if let Some(service_task) =
+                        resolve_target_service_validation_task(
+                            contract,
+                            contract_path,
+                            service_member_name,
+                            service_task_name,
+                            name,
+                            target_name,
+                            errors,
+                        )
+                    {
+                        let listener_name = resolve_declared_service_listener_name(
+                            name,
+                            target_name,
+                            service_task_name,
+                            &service_task,
+                            service.listener.as_deref(),
+                            errors,
+                        );
+                        if !task_declares_service_runtime(&service_task) {
+                            errors.push(ValidationError::new(format!(
+                                "task `{name}` target `{target_name}` references `{}`, but task `{service_task_name}` is not a service task",
+                                service_target_label(service_member_name, service_task_name),
+                            )));
+                        } else if let Some(listener_name) = listener_name.as_deref()
+                            && !task_declares_listener(&service_task, listener_name)
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "task `{name}` target `{target_name}` references unknown listener `{}` on {}",
+                                listener_name,
+                                service_target_label(service_member_name, service_task_name),
+                            )));
+                        } else if listener_name.is_some() {
+                            if service_member_name.is_none() {
+                                validate_task_target_activation_shape(
+                                    contract,
+                                    name,
+                                    target_name,
+                                    target,
+                                    service_task_name,
+                                    &service_task,
+                                    errors,
+                                );
+                            } else if let Some(listener_name) = listener_name.as_deref() {
+                                validate_cross_member_target_shape(
+                                    name,
+                                    target_name,
+                                    task,
+                                    target,
+                                    service_task_name,
+                                    listener_name,
+                                    &service_task,
+                                    errors,
+                                );
+                            }
+                        }
+                    }
                 }
-            } else {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` target `{target_name}` references unknown `service.task: {service_task_name}`"
-                )));
+                (None, Some(url)) => {
+                    if url.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{name}` target `{target_name}` must not declare an empty `url`"
+                        )));
+                    }
+                    if target.activation.mode != TaskTargetActivationMode::Manual {
+                        errors.push(ValidationError::new(format!(
+                            "task `{name}` target `{target_name}` uses `activation.mode: {}`, but `url` targets only support `manual`",
+                            target.activation.mode.as_str()
+                        )));
+                    }
+                }
             }
 
             if let Some(override_input) = target.override_input.as_deref() {
@@ -1213,17 +1285,15 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 }
             }
 
-            match target.service.address_view {
-                TaskTargetAddressView::Topology
-                | TaskTargetAddressView::Host
-                | TaskTargetAddressView::Internal => {}
-            }
-
-            if target.activation.mode == TaskTargetActivationMode::EnsureReady
-                && target.service.task.trim() == name
+            if target.activation.mode != TaskTargetActivationMode::Manual
+                && target
+                    .service
+                    .as_ref()
+                    .is_some_and(|service| service.task.trim() == name)
             {
                 errors.push(ValidationError::new(format!(
-                    "task `{name}` target `{target_name}` cannot declare `activation.mode: ensure_ready` for `service.task: {name}`"
+                    "task `{name}` target `{target_name}` cannot declare `activation.mode: {}` for `service.task: {name}`",
+                    target.activation.mode.as_str()
                 )));
             }
         }
@@ -1492,6 +1562,293 @@ fn task_declares_listener(task: &TaskSpec, listener_name: &str) -> bool {
     })
 }
 
+fn task_declared_service_listener_names(task: &TaskSpec) -> BTreeSet<String> {
+    let mut listeners = BTreeSet::new();
+    if let Some(runtime) = task
+        .runtime
+        .as_ref()
+        .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+    {
+        listeners.extend(runtime.listeners.keys().cloned());
+    }
+    if let Some(execution) = task.execution.as_ref() {
+        for (_, branch) in execution.modes.iter() {
+            if let Some(runtime) = branch
+                .runtime
+                .as_ref()
+                .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+            {
+                listeners.extend(runtime.listeners.keys().cloned());
+            }
+        }
+    }
+    listeners
+}
+
+fn resolve_declared_service_listener_name(
+    task_name: &str,
+    target_name: &str,
+    service_task_name: &str,
+    service_task: &TaskSpec,
+    listener: Option<&str>,
+    errors: &mut Vec<ValidationError>,
+) -> Option<String> {
+    if let Some(listener_name) = listener {
+        let trimmed = listener_name.trim();
+        if trimmed.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` must not declare an empty `service.listener`"
+            )));
+            return None;
+        }
+        return Some(trimmed.to_string());
+    }
+
+    let listeners = task_declared_service_listener_names(service_task);
+    match listeners.len() {
+        1 => listeners.iter().next().cloned(),
+        0 => None,
+        _ => {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` references `service.task: {service_task_name}`, which exposes multiple listeners; declare `service.listener` explicitly"
+            )));
+            None
+        }
+    }
+}
+
+fn service_target_label(service_member: Option<&str>, service_task_name: &str) -> String {
+    match service_member {
+        Some(member) => format!("member `{member}` task `{service_task_name}`"),
+        None => format!("service task `{service_task_name}`"),
+    }
+}
+
+fn resolve_target_service_validation_task(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    service_member: Option<&str>,
+    service_task_name: &str,
+    task_name: &str,
+    target_name: &str,
+    errors: &mut Vec<ValidationError>,
+) -> Option<TaskSpec> {
+    let Some(member) = service_member else {
+        return contract.tasks.get(service_task_name).cloned().or_else(|| {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` references unknown `service.task: {service_task_name}`"
+            )));
+            None
+        });
+    };
+
+    let Some(contract_path) = contract_path else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` target `{target_name}` uses `service.member: {member}`, but member targets require validating from a monorepo contract path"
+        )));
+        return None;
+    };
+    let origin = match monorepo_contract_origin_for_path(contract_path) {
+        Ok(Some(origin)) => origin,
+        Ok(None) => {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` uses `service.member: {member}`, but `{}` is not a monorepo root or member contract",
+                contract_path.display()
+            )));
+            return None;
+        }
+        Err(error) => {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` could not resolve monorepo member `{member}`: {error}"
+            )));
+            return None;
+        }
+    };
+    let producer_contract = match load_contract_for_member(origin.root_path.as_path(), member) {
+        Ok((contract, _)) => contract,
+        Err(error) => {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` could not load `service.member: {member}`: {error}"
+            )));
+            return None;
+        }
+    };
+    producer_contract.tasks.get(service_task_name).cloned().or_else(|| {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` target `{target_name}` references unknown `service.task: {service_task_name}` in member `{member}`"
+        )));
+        None
+    })
+}
+
+fn validate_cross_member_target_shape(
+    task_name: &str,
+    target_name: &str,
+    caller_task: &TaskSpec,
+    target: &TaskTargetSpec,
+    service_task_name: &str,
+    listener_name: &str,
+    service_task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(service) = target.service.as_ref() else {
+        return;
+    };
+    let Ok(Some(listener)) = select_target_listener_for_host_view(service_task, listener_name) else {
+        if service.address_view == TaskTargetAddressView::Host {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` uses cross-member `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare one consistent `project.host` endpoint"
+            )));
+        }
+        return;
+    };
+
+    let shared_container =
+        caller_task.backend_binding_for_backend(Backend::Container)
+            == service_task.backend_binding_for_backend(Backend::Container)
+            && caller_task.backend_binding_for_backend(Backend::Container).is_some();
+    let shared_native = caller_task.backend_binding_for_backend(Backend::Native)
+        == service_task.backend_binding_for_backend(Backend::Native)
+        && caller_task.backend_binding_for_backend(Backend::Native).is_some();
+    let shared_remote = caller_task.backend_binding_for_backend(Backend::Remote)
+        == service_task.backend_binding_for_backend(Backend::Remote)
+        && caller_task.backend_binding_for_backend(Backend::Remote).is_some();
+    let shared_any = shared_container || shared_native || shared_remote;
+
+    match service.address_view {
+        TaskTargetAddressView::Host => {
+            if target.activation.mode != TaskTargetActivationMode::Manual {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: host`, but `activation.mode: {}` is not supported; use `manual`",
+                    target.activation.mode.as_str()
+                )));
+                return;
+            }
+            let Some(host) = listener.project.host.as_ref() else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare `project.host`"
+                )));
+                return;
+            };
+            if host.port.mode != TaskRuntimeHostPortMode::Fixed || host.port.value.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare a fixed `project.host.port.value`"
+                )));
+            }
+        }
+        TaskTargetAddressView::Topology => {
+            if target.activation.mode != TaskTargetActivationMode::Manual && !shared_any {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: topology` with `activation.mode: {}`, but producer task `{service_task_name}` does not share one declared backend binding with the consumer",
+                    target.activation.mode.as_str()
+                )));
+                return;
+            }
+            let has_fixed_host = listener
+                .project
+                .host
+                .as_ref()
+                .is_some_and(|host| {
+                    host.port.mode == TaskRuntimeHostPortMode::Fixed && host.port.value.is_some()
+                });
+            let has_shared_bind = listener.bind.port.mode == TaskRuntimePortMode::Fixed
+                && listener.bind.port.value.is_some()
+                && shared_any;
+            if !has_fixed_host && !has_shared_bind {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: topology`, but producer task `{service_task_name}` listener `{listener_name}` does not declare a fixed host projection and does not share one declared backend binding with the consumer"
+                )));
+            }
+        }
+        TaskTargetAddressView::Internal => {
+            if target.activation.mode != TaskTargetActivationMode::Manual && !shared_any {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: internal` with `activation.mode: {}`, but producer task `{service_task_name}` does not share one declared backend binding with the consumer",
+                    target.activation.mode.as_str()
+                )));
+                return;
+            }
+            if !shared_any {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: internal`, but producer task `{service_task_name}` does not share one declared backend binding with the consumer"
+                )));
+                return;
+            }
+            if listener.bind.port.mode != TaskRuntimePortMode::Fixed || listener.bind.port.value.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` uses cross-member `address_view: internal`, but producer task `{service_task_name}` listener `{listener_name}` does not declare a fixed `bind.port.value`"
+                )));
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostViewListenerSignature {
+    protocol: TaskRuntimeProtocol,
+    host: Option<TaskRuntimeHostProjectionSpec>,
+}
+
+fn host_view_listener_signature(
+    listener: &crate::schema::TaskRuntimeListenerSpec,
+) -> HostViewListenerSignature {
+    HostViewListenerSignature {
+        protocol: listener.protocol,
+        host: listener.project.host.clone(),
+    }
+}
+
+fn select_target_listener_for_host_view<'a>(
+    service_task: &'a TaskSpec,
+    listener_name: &str,
+) -> Result<Option<&'a crate::schema::TaskRuntimeListenerSpec>, String> {
+    let mut matches = Vec::<(&'static str, &'a crate::schema::TaskRuntimeListenerSpec)>::new();
+    if let Some(listener) = service_task
+        .service_runtime()
+        .and_then(|runtime| runtime.listeners.get(listener_name))
+    {
+        matches.push(("runtime.listeners", listener));
+    }
+    if let Some(execution) = service_task.execution.as_ref() {
+        for (backend, branch) in execution.modes.iter() {
+            let Some(listener) = branch
+                .runtime
+                .as_ref()
+                .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+                .and_then(|runtime| runtime.listeners.get(listener_name))
+            else {
+                continue;
+            };
+            let origin = match backend {
+                Backend::Native => "execution.modes.native.runtime.listeners",
+                Backend::Container => "execution.modes.container.runtime.listeners",
+                Backend::Remote => "execution.modes.remote.runtime.listeners",
+            };
+            matches.push((origin, listener));
+        }
+    }
+
+    let Some((_, selected)) = matches.first().copied() else {
+        return Ok(None);
+    };
+    let selected_signature = host_view_listener_signature(selected);
+    if matches
+        .iter()
+        .all(|(_, listener)| host_view_listener_signature(listener) == selected_signature)
+    {
+        return Ok(Some(selected));
+    }
+
+    let origins = matches
+        .iter()
+        .map(|(origin, _)| format!("`{origin}.{listener_name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "listener `{listener_name}` has conflicting host-view declarations across {origins}; declare one canonical host projection for this listener"
+    ))
+}
+
 fn validate_task_target_activation_shape(
     contract: &Contract,
     task_name: &str,
@@ -1501,11 +1858,24 @@ fn validate_task_target_activation_shape(
     service_task: &TaskSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if target.activation.mode != TaskTargetActivationMode::EnsureReady {
+    if target.activation.mode == TaskTargetActivationMode::Manual {
         return;
     }
+    let Some(service) = target.service.as_ref() else {
+        return;
+    };
 
     let Some(caller_task) = contract.tasks.get(task_name) else {
+        return;
+    };
+    let Some(service_listener_name) = resolve_declared_service_listener_name(
+        task_name,
+        target_name,
+        service_task_name,
+        service_task,
+        service.listener.as_deref(),
+        errors,
+    ) else {
         return;
     };
     let shared_container_backend =
@@ -1526,16 +1896,24 @@ fn validate_task_target_activation_shape(
     let Some(runtime) = service_task.service_runtime_for_backend(backend) else {
         return;
     };
-    let Some(readiness) = runtime.readiness.as_ref() else {
-        return;
+    let activation_mode = target.activation.mode;
+    let readiness = runtime.readiness.as_ref();
+    let use_runtime_readiness = activation_mode == TaskTargetActivationMode::EnsureReady;
+    let listener_label = if use_runtime_readiness {
+        "runtime readiness listener"
+    } else {
+        "listener"
     };
-    let readiness_listener_name = readiness
-        .listener
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or(target.service.listener.as_str());
-    let Some(listener) = runtime.listeners.get(readiness_listener_name) else {
+    let probe_listener_name = if use_runtime_readiness {
+        readiness
+            .and_then(|probe| probe.listener.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(service_listener_name.as_str())
+    } else {
+        service_listener_name.as_str()
+    };
+    let Some(listener) = runtime.listeners.get(probe_listener_name) else {
         return;
     };
     let remote_provider =
@@ -1550,11 +1928,12 @@ fn validate_task_target_activation_shape(
                     .and_then(|backends| backends.remote.as_ref())
                     .map(|remote| remote.provider.trim().to_string())
             });
-    match target.service.address_view {
+    match service.address_view {
         TaskTargetAddressView::Host => {
             if backend == Backend::Remote && !shared_remote_backend {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently requires `{task_name}` and `{service_task_name}` to share one declared remote backend binding"
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: host`, but remote producer activation currently requires `{task_name}` and `{service_task_name}` to share one declared remote backend binding",
+                    activation_mode.as_str()
                 )));
                 return;
             }
@@ -1564,37 +1943,44 @@ fn validate_task_target_activation_shape(
                     .is_some_and(is_builtin_remote_provider)
             {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: host`, but remote producer activation currently supports built-in remote providers only"
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: host`, but remote producer activation currently supports built-in remote providers only",
+                    activation_mode.as_str()
                 )));
                 return;
             }
-            validate_ensure_ready_host_projection(
+            validate_target_activation_host_projection(
                 task_name,
                 target_name,
                 service_task_name,
-                readiness_listener_name,
+                probe_listener_name,
+                activation_mode,
+                listener_label,
                 listener.project.host.as_ref(),
                 errors,
             )
         }
         TaskTargetAddressView::Topology => {
             if shared_container_backend {
-                validate_ensure_ready_bind_port(
+                validate_target_activation_bind_port(
                     task_name,
                     target_name,
                     service_task_name,
-                    readiness_listener_name,
+                    probe_listener_name,
+                    activation_mode,
+                    listener_label,
                     listener.bind.port.mode,
                     listener.bind.port.value,
                     "shared-backend `address_view: topology`",
                     errors,
                 );
             } else if shared_native_backend {
-                validate_ensure_ready_bind_port(
+                validate_target_activation_bind_port(
                     task_name,
                     target_name,
                     service_task_name,
-                    readiness_listener_name,
+                    probe_listener_name,
+                    activation_mode,
+                    listener_label,
                     listener.bind.port.mode,
                     listener.bind.port.value,
                     "shared-backend `address_view: topology`",
@@ -1606,14 +1992,17 @@ fn validate_task_target_activation_shape(
                     .is_some_and(is_builtin_remote_provider)
                 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with shared-backend `address_view: topology`, but remote producer activation currently supports built-in remote providers only"
+                        "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with shared-backend `address_view: topology`, but remote producer activation currently supports built-in remote providers only",
+                        activation_mode.as_str()
                     )));
                 } else {
-                    validate_ensure_ready_bind_port(
+                    validate_target_activation_bind_port(
                         task_name,
                         target_name,
                         service_task_name,
-                        readiness_listener_name,
+                        probe_listener_name,
+                        activation_mode,
+                        listener_label,
                         listener.bind.port.mode,
                         listener.bind.port.value,
                         "shared-backend `address_view: topology`",
@@ -1621,11 +2010,13 @@ fn validate_task_target_activation_shape(
                     );
                 }
             } else {
-                validate_ensure_ready_host_projection(
+                validate_target_activation_host_projection(
                     task_name,
                     target_name,
                     service_task_name,
-                    readiness_listener_name,
+                    probe_listener_name,
+                    activation_mode,
+                    listener_label,
                     listener.project.host.as_ref(),
                     errors,
                 );
@@ -1638,22 +2029,26 @@ fn validate_task_target_activation_shape(
                     .is_some_and(is_builtin_remote_provider)
                 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but remote producer activation currently supports built-in remote providers only"
+                        "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: internal`, but remote producer activation currently supports built-in remote providers only",
+                        activation_mode.as_str()
                     )));
                     return;
                 }
             }
             if !shared_container_backend && !shared_native_backend && !shared_remote_backend {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready` with `address_view: internal`, but `{task_name}` and `{service_task_name}` do not share one declared backend binding on a supported execution plane"
+                    "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: internal`, but `{task_name}` and `{service_task_name}` do not share one declared backend binding on a supported execution plane",
+                    activation_mode.as_str()
                 )));
                 return;
             }
-            validate_ensure_ready_bind_port(
+            validate_target_activation_bind_port(
                 task_name,
                 target_name,
                 service_task_name,
-                readiness_listener_name,
+                probe_listener_name,
+                activation_mode,
+                listener_label,
                 listener.bind.port.mode,
                 listener.bind.port.value,
                 "`address_view: internal`",
@@ -1663,32 +2058,38 @@ fn validate_task_target_activation_shape(
     }
 }
 
-fn validate_ensure_ready_host_projection(
+fn validate_target_activation_host_projection(
     task_name: &str,
     target_name: &str,
     service_task_name: &str,
-    readiness_listener_name: &str,
+    listener_name: &str,
+    activation_mode: TaskTargetActivationMode,
+    listener_label: &str,
     host: Option<&TaskRuntimeHostProjectionSpec>,
     errors: &mut Vec<ValidationError>,
 ) {
     let Some(host) = host else {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready`, but producer task `{service_task_name}` runtime readiness listener `{readiness_listener_name}` does not declare `project.host`"
+            "task `{task_name}` target `{target_name}` uses `activation.mode: {}`, but producer task `{service_task_name}` {listener_label} `{listener_name}` does not declare `project.host`",
+            activation_mode.as_str(),
         )));
         return;
     };
     if host.port.mode != TaskRuntimeHostPortMode::Fixed || host.port.value.is_none() {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready`, but producer task `{service_task_name}` runtime readiness listener `{readiness_listener_name}` does not declare a fixed `project.host.port.value`"
+            "task `{task_name}` target `{target_name}` uses `activation.mode: {}`, but producer task `{service_task_name}` {listener_label} `{listener_name}` does not declare a fixed `project.host.port.value`",
+            activation_mode.as_str(),
         )));
     }
 }
 
-fn validate_ensure_ready_bind_port(
+fn validate_target_activation_bind_port(
     task_name: &str,
     target_name: &str,
     service_task_name: &str,
-    readiness_listener_name: &str,
+    listener_name: &str,
+    activation_mode: TaskTargetActivationMode,
+    listener_label: &str,
     bind_port_mode: TaskRuntimePortMode,
     bind_port_value: Option<u16>,
     view_label: &str,
@@ -1696,7 +2097,8 @@ fn validate_ensure_ready_bind_port(
 ) {
     if bind_port_mode != TaskRuntimePortMode::Fixed || bind_port_value.is_none() {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` target `{target_name}` uses `activation.mode: ensure_ready`, but producer task `{service_task_name}` runtime readiness listener `{readiness_listener_name}` does not declare a fixed `bind.port.value` for {view_label}"
+            "task `{task_name}` target `{target_name}` uses `activation.mode: {}`, but producer task `{service_task_name}` {listener_label} `{listener_name}` does not declare a fixed `bind.port.value` for {view_label}",
+            activation_mode.as_str(),
         )));
     }
 }
@@ -3327,8 +3729,9 @@ fn detect_task_target_activation_cycles(
 
     for (name, task) in tasks {
         for dependency in task.targets.values().filter_map(|target| {
-            (target.activation.mode == TaskTargetActivationMode::EnsureReady)
-                .then_some(target.service.task.as_str())
+            (target.activation.mode != TaskTargetActivationMode::Manual)
+                .then(|| target.service.as_ref().map(|service| service.task.as_str()))
+                .flatten()
         }) {
             if !tasks.contains_key(dependency) {
                 continue;
@@ -3451,8 +3854,9 @@ fn visit_task_target_activation(
     }
 
     for dependency in task.targets.values().filter_map(|target| {
-        (target.activation.mode == TaskTargetActivationMode::EnsureReady)
-            .then_some(target.service.task.as_str())
+        (target.activation.mode != TaskTargetActivationMode::Manual)
+            .then(|| target.service.as_ref().map(|service| service.task.as_str()))
+            .flatten()
     }) {
         if tasks.contains_key(dependency) {
             visit_task_target_activation(dependency, tasks, visited, active, cycle_roots, errors);
@@ -3645,13 +4049,15 @@ fn format_backend(backend: crate::schema::Backend) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
     use crate::parser::parse_contract_str;
+    use tempfile::TempDir;
 
     use super::{
         ContractAdvisory, collect_contract_advisories, task_shared_container_backend_shape,
-        validate_contract,
+        validate_contract, validate_contract_with_path,
     };
 
     #[test]
@@ -5857,6 +6263,206 @@ tasks:
     }
 
     #[test]
+    fn allows_task_target_binding_without_service_listener_when_producer_has_one_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          address_view: topology
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_task_target_binding_without_service_listener_when_producer_has_many_listeners() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+        metrics:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          address_view: topology
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("which exposes multiple listeners; declare `service.listener` explicitly")
+        }));
+    }
+
+    #[test]
+    fn allows_task_target_binding_with_declared_url_and_override_input() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  sandbox:
+    run: echo sandbox
+    inputs:
+      base_url:
+        required: true
+    targets:
+      api:
+        url: https://api.example.com
+        override_input: base_url
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_task_target_binding_when_service_and_url_are_both_declared() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+        url: https://api.example.com
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("must declare exactly one of `service` or `url`")
+        }));
+    }
+
+    #[test]
+    fn rejects_non_manual_activation_for_url_targets() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        url: https://api.example.com
+        activation:
+          mode: ensure_running
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("`url` targets only support `manual`")
+        }));
+    }
+
+    #[test]
     fn rejects_task_target_activation_ensure_ready_for_self_target() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -5900,6 +6506,53 @@ tasks:
             error
                 .to_string()
                 .contains("cannot declare `activation.mode: ensure_ready` for `service.task: dev`")
+        }));
+    }
+
+    #[test]
+    fn rejects_task_target_activation_ensure_running_for_self_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    targets:
+      self_api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_running
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("cannot declare `activation.mode: ensure_running` for `service.task: dev`")
         }));
     }
 
@@ -5964,6 +6617,79 @@ tasks:
           address_view: host
         activation:
           mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("task target activation cycle detected")
+        }));
+    }
+
+    #[test]
+    fn rejects_task_target_activation_ensure_running_cycles() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    targets:
+      sandbox_api:
+        service:
+          task: sandbox
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_running
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+    targets:
+      dev_api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_running
 "#,
         )
         .unwrap();
@@ -6739,6 +7465,13 @@ version: 1
 project:
   name: ota
 execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
   shared_backends:
     workbench:
       scope: local
@@ -6770,6 +7503,13 @@ version: 1
 project:
   name: ota
 execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
   shared_backends:
     workbench:
       scope: local
@@ -6796,6 +7536,13 @@ version: 1
 project:
   name: ota
 execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
   shared_backends:
     workbench:
       scope: local
@@ -7030,6 +7777,463 @@ tasks:
     }
 
     #[test]
+    fn validates_monorepo_cross_member_service_target_for_manual_host_view() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+tasks:
+  root:
+    run: echo root
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+tasks:
+  sandbox:
+    run: echo web
+    targets:
+      api:
+        service:
+          member: api
+          task: dev
+          listener: http
+          address_view: host
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let (contract, contract_path) =
+            crate::parser::load_contract_for_member(&fixture.path().join("ota.yaml"), "web")
+                .unwrap();
+        validate_contract_with_path(&contract, Some(&contract_path))
+            .expect("manual host-view cross-member target should validate");
+    }
+
+    #[test]
+    fn rejects_monorepo_cross_member_host_target_activation() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+tasks:
+  sandbox:
+    run: echo web
+    targets:
+      api:
+        service:
+          member: api
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_running
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let (contract, contract_path) =
+            crate::parser::load_contract_for_member(&fixture.path().join("ota.yaml"), "web")
+                .unwrap();
+        let errors = validate_contract_with_path(&contract, Some(&contract_path)).unwrap_err();
+        assert!(errors.errors().iter().any(|error| error.to_string().contains(
+            "uses cross-member `address_view: host`, but `activation.mode: ensure_running` is not supported; use `manual`"
+        )));
+    }
+
+    #[test]
+    fn validates_monorepo_cross_member_internal_target_with_shared_backend() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+tasks:
+  dev:
+    run: echo api
+    context: app
+    execution:
+      default_mode: container
+      modes:
+        container:
+          runtime:
+            kind: service
+            backend_binding: workbench
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+tasks:
+  sandbox:
+    run: echo web
+    context: app
+    execution:
+      default_mode: container
+      modes:
+        container:
+          runtime:
+            kind: service
+            backend_binding: workbench
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 9090
+    targets:
+      api:
+        service:
+          member: api
+          task: dev
+          listener: http
+          address_view: internal
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let (contract, contract_path) =
+            crate::parser::load_contract_for_member(&fixture.path().join("ota.yaml"), "web")
+                .unwrap();
+        validate_contract_with_path(&contract, Some(&contract_path))
+            .expect("cross-member internal target should validate when backend binding is shared");
+    }
+
+    #[test]
+    fn validates_monorepo_cross_member_internal_target_activation_with_shared_backend() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+tasks:
+  dev:
+    run: echo api
+    context: app
+    execution:
+      default_mode: container
+      modes:
+        container:
+          runtime:
+            kind: service
+            backend_binding: workbench
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+tasks:
+  sandbox:
+    run: echo web
+    context: app
+    execution:
+      default_mode: container
+      modes:
+        container:
+          runtime:
+            kind: service
+            backend_binding: workbench
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 9090
+    targets:
+      api:
+        service:
+          member: api
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_running
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let (contract, contract_path) =
+            crate::parser::load_contract_for_member(&fixture.path().join("ota.yaml"), "web")
+                .unwrap();
+        validate_contract_with_path(&contract, Some(&contract_path)).expect(
+            "cross-member internal target activation should validate when backend binding is shared",
+        );
+    }
+
+    #[test]
+    fn validates_monorepo_cross_member_internal_target_ensure_ready_with_shared_backend() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+tasks:
+  dev:
+    run: echo api
+    context: app
+    execution:
+      default_mode: container
+      modes:
+        container:
+          runtime:
+            kind: service
+            readiness:
+              kind: tcp
+              listener: http
+            backend_binding: workbench
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+tasks:
+  sandbox:
+    run: echo web
+    context: app
+    execution:
+      default_mode: container
+      modes:
+        container:
+          runtime:
+            kind: service
+            backend_binding: workbench
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 9090
+    targets:
+      api:
+        service:
+          member: api
+          task: dev
+          listener: http
+          address_view: internal
+        activation:
+          mode: ensure_ready
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let (contract, contract_path) =
+            crate::parser::load_contract_for_member(&fixture.path().join("ota.yaml"), "web")
+                .unwrap();
+        validate_contract_with_path(&contract, Some(&contract_path))
+            .expect("cross-member internal ensure_ready should validate when backend binding is shared");
+    }
+
+    #[test]
     fn rejects_task_target_binding_with_unknown_listener() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -7169,6 +8373,49 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
                 "uses `activation.mode: ensure_ready`, but producer task `dev` runtime readiness listener `http` does not declare `project.host`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_ensure_running_when_producer_listener_lacks_project_host() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_running
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "uses `activation.mode: ensure_running`, but producer task `dev` listener `http` does not declare `project.host`",
             )
         }));
     }
