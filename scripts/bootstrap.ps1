@@ -303,6 +303,7 @@ exit 1
 function Install-FromSource {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Write-OtaError "cargo is required for source install"
+        Write-OtaError "install Rust/cargo or use a published prebuilt ota release for your target"
         exit 1
     }
 
@@ -316,6 +317,7 @@ function Install-FromSource {
 function Install-FromGit {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Write-OtaError "cargo is required for git install fallback"
+        Write-OtaError "install Rust/cargo or use a published prebuilt ota release for your target"
         exit 1
     }
 
@@ -351,7 +353,7 @@ function Install-FromGit {
 function Install-ReleaseBinary {
     $target = Get-OtaTarget
     if (-not $target) {
-        Write-OtaWarn "warning: unsupported architecture for release binaries; trying cargo fallback"
+        Write-OtaWarn "warning: no published prebuilt ota release is configured for this OS/arch; trying cargo fallback"
         return $false
     }
 
@@ -369,12 +371,17 @@ function Install-ReleaseBinary {
     try {
         Write-OtaInfo "installing ota $version for $target..."
         if (-not (Download-OtaFile "$downloadPrefix/$asset" $archive)) {
-            Write-OtaWarn "warning: release artifact not available ($asset); trying cargo fallback"
+            Write-OtaWarn "warning: prebuilt ota release asset is not published for $target at $version ($asset); trying cargo fallback"
             return $false
         }
 
         if (Download-OtaFile "$downloadPrefix/$checksumAsset" $checksums) {
-            $checksumLine = Get-Content $checksums | Where-Object { $_ -match " $([regex]::Escape($asset))$" } | Select-Object -First 1
+            $checksumLine = Get-Content $checksums | Where-Object {
+                $parts = $_ -split "\s+", 2
+                if ($parts.Count -lt 2) { return $false }
+                $name = $parts[1].Trim()
+                $name -eq $asset -or $name -eq "dist/$asset"
+            } | Select-Object -First 1
             if ($checksumLine) {
                 $expected = ($checksumLine -split "\s+")[0].ToLowerInvariant()
                 $actual = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()

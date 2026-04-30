@@ -140,10 +140,18 @@ resolve_target() {
   esac
 }
 
+checksum_expected_value() {
+  checksums_path="$1"
+  asset_name="$2"
+  awk -v asset="${asset_name}" '
+    $2 == asset || $2 == ("dist/" asset) { print $1; exit }
+  ' "${checksums_path}"
+}
+
 install_release_binary() {
   target="$(resolve_target || true)"
   if [ -z "${target}" ]; then
-    ota_warn "warning: unsupported OS/arch for release binaries; trying cargo fallback"
+    ota_warn "warning: no published prebuilt ota release is configured for this OS/arch; trying cargo fallback"
     return 1
   fi
 
@@ -165,13 +173,13 @@ install_release_binary() {
 
   ota_info "installing ota ${version} for ${target}..."
   if ! download_to "${download_prefix}/${asset}" "${archive}"; then
-    ota_warn "warning: release artifact not available (${asset}); trying cargo fallback"
+    ota_warn "warning: prebuilt ota release asset is not published for ${target} at ${version} (${asset}); trying cargo fallback"
     return 1
   fi
 
   if download_to "${download_prefix}/${checksum_asset}" "${checksums}"; then
     if command -v shasum >/dev/null 2>&1; then
-      expected="$(grep " ${asset}\$" "${checksums}" | awk '{print $1}' || true)"
+      expected="$(checksum_expected_value "${checksums}" "${asset}" || true)"
       if [ -n "${expected}" ]; then
         actual="$(shasum -a 256 "${archive}" | awk '{print $1}')"
         if [ "${actual}" != "${expected}" ]; then
@@ -180,7 +188,7 @@ install_release_binary() {
         fi
       fi
     elif command -v sha256sum >/dev/null 2>&1; then
-      expected="$(grep " ${asset}\$" "${checksums}" | awk '{print $1}' || true)"
+      expected="$(checksum_expected_value "${checksums}" "${asset}" || true)"
       if [ -n "${expected}" ]; then
         actual="$(sha256sum "${archive}" | awk '{print $1}')"
         if [ "${actual}" != "${expected}" ]; then
@@ -227,6 +235,7 @@ install_release_binary() {
 install_from_cargo() {
   if ! command -v cargo >/dev/null 2>&1; then
     ota_error "error: cargo is required for source/git install fallback"
+    ota_error "install Rust/cargo or use a published prebuilt ota release for your target"
     return 1
   fi
 
