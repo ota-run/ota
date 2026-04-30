@@ -275,6 +275,7 @@ fn activation_loader_label(
 ) -> String {
     let state = match mode {
         TaskTargetActivationMode::Manual => "active",
+        TaskTargetActivationMode::EnsureStarted => "started",
         TaskTargetActivationMode::EnsureReady => "ready",
         TaskTargetActivationMode::EnsureRunning => "running",
     };
@@ -1213,6 +1214,8 @@ pub enum TaskTargetResolutionSource {
 pub enum TaskTargetActivationStatus {
     Manual,
     SkippedExplicitOverride,
+    ReusedStarted,
+    StartedStarted,
     ReusedReady,
     StartedReady,
     ReusedRunning,
@@ -6426,7 +6429,9 @@ fn apply_task_target_activations(
                 mode: TaskTargetActivationMode::Manual,
                 status: TaskTargetActivationStatus::Manual,
             },
-            TaskTargetActivationMode::EnsureReady | TaskTargetActivationMode::EnsureRunning => {
+            TaskTargetActivationMode::EnsureStarted
+            | TaskTargetActivationMode::EnsureReady
+            | TaskTargetActivationMode::EnsureRunning => {
                 let status = match resolution.source {
                     TaskTargetResolutionSource::ExplicitOverride => {
                         TaskTargetActivationStatus::SkippedExplicitOverride
@@ -6619,6 +6624,7 @@ fn ensure_target_producer_state(
         }
         let reused_status = match activation_mode {
             TaskTargetActivationMode::Manual => TaskTargetActivationStatus::Manual,
+            TaskTargetActivationMode::EnsureStarted => TaskTargetActivationStatus::ReusedStarted,
             TaskTargetActivationMode::EnsureReady => TaskTargetActivationStatus::ReusedReady,
             TaskTargetActivationMode::EnsureRunning => TaskTargetActivationStatus::ReusedRunning,
         };
@@ -6748,6 +6754,36 @@ fn ensure_target_producer_state(
             },
         );
 
+    if activation_mode == TaskTargetActivationMode::EnsureStarted {
+        if let Ok((result, producer_state)) = result_rx.try_recv() {
+            if let Some(loader) = loader.take() {
+                loader.stop();
+            }
+            state
+                .activation_started_producers
+                .remove(&(service_member.clone(), producer_task_name.to_string()));
+            let producer_label = match service_member.as_deref() {
+                Some(member) => format!("{member}:{producer_task_name}"),
+                None => producer_task_name.to_string(),
+            };
+            return Err(target_activation_producer_failure(
+                task_name,
+                target_name,
+                activation_mode,
+                producer_label.as_str(),
+                result,
+                producer_state,
+            ));
+        }
+        if let Some(loader) = loader.take() {
+            loader.stop();
+        }
+        state
+            .ensured_target_producers
+            .insert(producer_key, TaskTargetActivationStatus::StartedStarted);
+        return Ok(TaskTargetActivationStatus::StartedStarted);
+    }
+
     loop {
         if readiness_target_observed(&readiness_target) {
             if let Some(loader) = loader.take() {
@@ -6755,6 +6791,9 @@ fn ensure_target_producer_state(
             }
             let started_status = match activation_mode {
                 TaskTargetActivationMode::Manual => TaskTargetActivationStatus::Manual,
+                TaskTargetActivationMode::EnsureStarted => {
+                    TaskTargetActivationStatus::StartedStarted
+                }
                 TaskTargetActivationMode::EnsureReady => TaskTargetActivationStatus::StartedReady,
                 TaskTargetActivationMode::EnsureRunning => {
                     TaskTargetActivationStatus::StartedRunning
@@ -7249,6 +7288,7 @@ fn target_activation_producer_failure(
 fn activation_expected_state(mode: TaskTargetActivationMode) -> &'static str {
     match mode {
         TaskTargetActivationMode::Manual => "available",
+        TaskTargetActivationMode::EnsureStarted => "started",
         TaskTargetActivationMode::EnsureReady => "ready",
         TaskTargetActivationMode::EnsureRunning => "running",
     }
@@ -8118,6 +8158,21 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
             "activation manual"
         }
         (
+            TaskTargetActivationMode::EnsureStarted,
+            TaskTargetActivationStatus::SkippedExplicitOverride,
+        ) => "activation ensure_started skipped_override",
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::Manual) => {
+            "activation ensure_started manual"
+        }
+        (
+            TaskTargetActivationMode::EnsureStarted,
+            TaskTargetActivationStatus::ReusedStarted,
+        ) => "activation ensure_started reused_started",
+        (
+            TaskTargetActivationMode::EnsureStarted,
+            TaskTargetActivationStatus::StartedStarted,
+        ) => "activation ensure_started started_started",
+        (
             TaskTargetActivationMode::EnsureReady,
             TaskTargetActivationStatus::SkippedExplicitOverride,
         ) => "activation ensure_ready skipped_override",
@@ -8149,23 +8204,49 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
             TaskTargetActivationStatus::SkippedExplicitOverride => {
                 "activation manual skipped_override"
             }
+            TaskTargetActivationStatus::ReusedStarted => "activation manual reused_started",
+            TaskTargetActivationStatus::StartedStarted => "activation manual started_started",
             TaskTargetActivationStatus::ReusedReady => "activation manual reused_ready",
             TaskTargetActivationStatus::StartedReady => "activation manual started_ready",
             TaskTargetActivationStatus::ReusedRunning => "activation manual reused_running",
             TaskTargetActivationStatus::StartedRunning => "activation manual started_running",
             TaskTargetActivationStatus::Manual => "activation manual",
         },
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::ReusedReady) => {
+            "activation ensure_started reused_ready"
+        }
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::StartedReady) => {
+            "activation ensure_started started_ready"
+        }
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::ReusedRunning) => {
+            "activation ensure_started reused_running"
+        }
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::StartedRunning) => {
+            "activation ensure_started started_running"
+        }
         (TaskTargetActivationMode::EnsureReady, TaskTargetActivationStatus::ReusedRunning) => {
             "activation ensure_ready reused_running"
         }
         (TaskTargetActivationMode::EnsureReady, TaskTargetActivationStatus::StartedRunning) => {
             "activation ensure_ready started_running"
         }
+        (TaskTargetActivationMode::EnsureReady, TaskTargetActivationStatus::ReusedStarted) => {
+            "activation ensure_ready reused_started"
+        }
+        (TaskTargetActivationMode::EnsureReady, TaskTargetActivationStatus::StartedStarted) => {
+            "activation ensure_ready started_started"
+        }
         (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::ReusedReady) => {
             "activation ensure_running reused_ready"
         }
         (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::StartedReady) => {
             "activation ensure_running started_ready"
+        }
+        (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::ReusedStarted) => {
+            "activation ensure_running reused_started"
+        }
+        (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::StartedStarted) => {
+            "activation ensure_running started_started"
         }
     };
     format!("{source}; {activation_label}")
@@ -19106,6 +19187,107 @@ tasks:
             .join()
             .expect("ensure_running probe server should finish");
         assert_eq!(status, TaskTargetActivationStatus::ReusedRunning);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_started_activation_returns_before_listener_becomes_reachable() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: python3 -c "import socket,time; time.sleep(2); sock=socket.socket(); sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); sock.bind(('127.0.0.1', {port})); sock.listen(1); time.sleep(30)"
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_started
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let started_at = std::time::Instant::now();
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("ensure_started should return after startup launch");
+
+        assert_eq!(status, TaskTargetActivationStatus::StartedStarted);
+        assert!(
+            started_at.elapsed() < std::time::Duration::from_secs(2),
+            "ensure_started should not wait for listener reachability"
+        );
+        assert!(
+            !super::target_probe_endpoint_reachable("127.0.0.1", port),
+            "ensure_started should return before the delayed listener is reachable"
+        );
+
+        let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
     }
 
     #[test]
