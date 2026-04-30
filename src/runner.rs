@@ -6524,7 +6524,8 @@ fn ensure_target_producer_state(
         return Ok(status);
     }
 
-    let (producer_contract, producer_contract_path) = if let Some(member) = service_member.as_deref()
+    let (producer_contract, producer_contract_path) = if let Some(member) =
+        service_member.as_deref()
     {
         load_contract_for_member(
             monorepo_contract_origin_for_path(contract_path)
@@ -6600,7 +6601,10 @@ fn ensure_target_producer_state(
         caller_backend,
         producer_working_dir.as_path(),
         &producer_backend,
-        contract.tasks.get(task_name).expect("validated task execution should only reference known tasks"),
+        contract
+            .tasks
+            .get(task_name)
+            .expect("validated task execution should only reference known tasks"),
         producer_task,
         producer_task_name,
         producer_listener_name.as_str(),
@@ -6741,18 +6745,16 @@ fn ensure_target_producer_state(
         );
         let _ = result_tx.send((result, producer_state));
     });
-    state
-        .activation_started_producers
-        .insert(
-            (service_member.clone(), producer_task_name.to_string()),
-            ActivationStartedProducerCleanup {
-                task_name: producer_task_name.to_string(),
-                backend: producer_backend.clone(),
-                runtime: Some(producer_runtime_spec.clone()),
-                working_dir: producer_working_dir.clone(),
-                remove_backend_on_interrupt,
-            },
-        );
+    state.activation_started_producers.insert(
+        (service_member.clone(), producer_task_name.to_string()),
+        ActivationStartedProducerCleanup {
+            task_name: producer_task_name.to_string(),
+            backend: producer_backend.clone(),
+            runtime: Some(producer_runtime_spec.clone()),
+            working_dir: producer_working_dir.clone(),
+            remove_backend_on_interrupt,
+        },
+    );
 
     if activation_mode == TaskTargetActivationMode::EnsureStarted {
         if let Ok((result, producer_state)) = result_rx.try_recv() {
@@ -6945,13 +6947,19 @@ fn declared_target_probe_target(
     let activation_mode = target_spec.activation.mode;
     let shared_container_binding = caller_task.backend_binding_for_backend(Backend::Container)
         == producer_task.backend_binding_for_backend(Backend::Container)
-        && caller_task.backend_binding_for_backend(Backend::Container).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Container)
+            .is_some();
     let shared_native_binding = caller_task.backend_binding_for_backend(Backend::Native)
         == producer_task.backend_binding_for_backend(Backend::Native)
-        && caller_task.backend_binding_for_backend(Backend::Native).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Native)
+            .is_some();
     let shared_remote_binding = caller_task.backend_binding_for_backend(Backend::Remote)
         == producer_task.backend_binding_for_backend(Backend::Remote)
-        && caller_task.backend_binding_for_backend(Backend::Remote).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Remote)
+            .is_some();
     let readiness = producer_runtime_spec.readiness.as_ref();
     let use_runtime_readiness = activation_mode == TaskTargetActivationMode::EnsureReady;
     let probe_listener_name = if use_runtime_readiness {
@@ -7061,8 +7069,7 @@ fn declared_target_probe_target(
                     colocated_topology_listener_address(listener.bind.address.as_str()),
                     bind_port,
                 )
-            } else if caller_backend == Backend::Remote && shared_remote_binding
-            {
+            } else if caller_backend == Backend::Remote && shared_remote_binding {
                 let bind_port = listener.bind.port.value.ok_or_else(|| {
                     RunError::TaskTargetResolutionFailed {
                         task: task_name.to_string(),
@@ -7084,22 +7091,31 @@ fn declared_target_probe_target(
                         ),
                     });
                 };
-                return Ok(match readiness.filter(|_| use_runtime_readiness).map(|probe| probe.kind) {
-                    Some(TaskRuntimeReadinessKind::Http) => RuntimeReadinessTarget::RemoteHttp {
-                        probe,
-                        address: colocated_topology_listener_address(listener.bind.address.as_str()),
-                        port: bind_port,
-                        path: normalized_runtime_path(
-                            readiness.and_then(|probe| probe.path.as_deref()),
-                        ),
-                    },
-                    Some(TaskRuntimeReadinessKind::Tcp) | None => {
-                        RuntimeReadinessTarget::RemoteTcp {
-                            probe,
-                            port: bind_port,
+                return Ok(
+                    match readiness
+                        .filter(|_| use_runtime_readiness)
+                        .map(|probe| probe.kind)
+                    {
+                        Some(TaskRuntimeReadinessKind::Http) => {
+                            RuntimeReadinessTarget::RemoteHttp {
+                                probe,
+                                address: colocated_topology_listener_address(
+                                    listener.bind.address.as_str(),
+                                ),
+                                port: bind_port,
+                                path: normalized_runtime_path(
+                                    readiness.and_then(|probe| probe.path.as_deref()),
+                                ),
+                            }
                         }
-                    }
-                });
+                        Some(TaskRuntimeReadinessKind::Tcp) | None => {
+                            RuntimeReadinessTarget::RemoteTcp {
+                                probe,
+                                port: bind_port,
+                            }
+                        }
+                    },
+                );
             } else {
                 let host_projection = listener.project.host.as_ref().ok_or_else(|| {
                     RunError::TaskTargetResolutionFailed {
@@ -7160,22 +7176,31 @@ fn declared_target_probe_target(
                         ),
                     });
                 };
-                return Ok(match readiness.filter(|_| use_runtime_readiness).map(|probe| probe.kind) {
-                    Some(TaskRuntimeReadinessKind::Http) => RuntimeReadinessTarget::RemoteHttp {
-                        probe,
-                        address: colocated_topology_listener_address(listener.bind.address.as_str()),
-                        port: bind_port,
-                        path: normalized_runtime_path(
-                            readiness.and_then(|probe| probe.path.as_deref()),
-                        ),
-                    },
-                    Some(TaskRuntimeReadinessKind::Tcp) | None => {
-                        RuntimeReadinessTarget::RemoteTcp {
-                            probe,
-                            port: bind_port,
+                return Ok(
+                    match readiness
+                        .filter(|_| use_runtime_readiness)
+                        .map(|probe| probe.kind)
+                    {
+                        Some(TaskRuntimeReadinessKind::Http) => {
+                            RuntimeReadinessTarget::RemoteHttp {
+                                probe,
+                                address: colocated_topology_listener_address(
+                                    listener.bind.address.as_str(),
+                                ),
+                                port: bind_port,
+                                path: normalized_runtime_path(
+                                    readiness.and_then(|probe| probe.path.as_deref()),
+                                ),
+                            }
                         }
-                    }
-                });
+                        Some(TaskRuntimeReadinessKind::Tcp) | None => {
+                            RuntimeReadinessTarget::RemoteTcp {
+                                probe,
+                                port: bind_port,
+                            }
+                        }
+                    },
+                );
             }
             (
                 colocated_topology_listener_address(listener.bind.address.as_str()),
@@ -7183,7 +7208,10 @@ fn declared_target_probe_target(
             )
         }
     };
-    match readiness.filter(|_| use_runtime_readiness).map(|probe| probe.kind) {
+    match readiness
+        .filter(|_| use_runtime_readiness)
+        .map(|probe| probe.kind)
+    {
         Some(TaskRuntimeReadinessKind::Http) => Ok(RuntimeReadinessTarget::Http {
             address,
             port,
@@ -7515,21 +7543,25 @@ fn resolve_task_target_binding_url_with_contract_path(
         return Ok(url.trim().to_string());
     }
 
-    let service = target_spec.service.as_ref().ok_or_else(|| {
-        RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: String::from("target must declare one of `service` or `url`"),
-        }
-    })?;
+    let service =
+        target_spec
+            .service
+            .as_ref()
+            .ok_or_else(|| RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details: String::from("target must declare one of `service` or `url`"),
+            })?;
     let service_task_name = service.task.trim();
-    let caller_task = contract.tasks.get(task_name).ok_or_else(|| {
-        RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: format!("consumer task `{task_name}` is not defined in ota.yaml"),
-        }
-    })?;
+    let caller_task =
+        contract
+            .tasks
+            .get(task_name)
+            .ok_or_else(|| RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details: format!("consumer task `{task_name}` is not defined in ota.yaml"),
+            })?;
     let service_member = service
         .member
         .as_deref()
@@ -7560,13 +7592,19 @@ fn resolve_task_target_binding_url_with_contract_path(
     })?;
     let shared_container_binding = caller_task.backend_binding_for_backend(Backend::Container)
         == service_task.backend_binding_for_backend(Backend::Container)
-        && caller_task.backend_binding_for_backend(Backend::Container).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Container)
+            .is_some();
     let shared_native_binding = caller_task.backend_binding_for_backend(Backend::Native)
         == service_task.backend_binding_for_backend(Backend::Native)
-        && caller_task.backend_binding_for_backend(Backend::Native).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Native)
+            .is_some();
     let shared_remote_binding = caller_task.backend_binding_for_backend(Backend::Remote)
         == service_task.backend_binding_for_backend(Backend::Remote)
-        && caller_task.backend_binding_for_backend(Backend::Remote).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Remote)
+            .is_some();
 
     let listener_name = resolve_service_target_listener_name(
         &service_contract,
@@ -7580,12 +7618,10 @@ fn resolve_task_target_binding_url_with_contract_path(
     let listener = match service.address_view {
         TaskTargetAddressView::Host => {
             select_target_listener_for_host_view(service_task, listener_name.as_str()).map_err(
-                |details| {
-                    RunError::TaskTargetResolutionFailed {
-                        task: task_name.to_string(),
-                        target: target_name.to_string(),
-                        details,
-                    }
+                |details| RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details,
                 },
             )?
         }
@@ -7954,16 +7990,18 @@ fn resolve_service_target_listener_name(
     })?;
     let listeners = declared_service_listener_names(service_task);
     match listeners.len() {
-        1 => listeners.iter().next().cloned().ok_or_else(|| {
-            RunError::TaskTargetResolutionFailed {
+        1 => listeners
+            .iter()
+            .next()
+            .cloned()
+            .ok_or_else(|| RunError::TaskTargetResolutionFailed {
                 task: task_name.to_string(),
                 target: target_name.to_string(),
                 details: format!(
                     "target `{target_name}` could not resolve the sole listener for {}",
                     service_target_reference_label(service_member, service_task_name)
                 ),
-            }
-        }),
+            }),
         0 => Err(RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
             target: target_name.to_string(),
@@ -8117,7 +8155,10 @@ fn render_target_resolution_note(resolution: &TaskTargetResolutionEvidence) -> S
     let declared = if let Some(service_ref) = resolution.service_ref.as_ref() {
         match service_ref.member.as_deref() {
             Some(member) => {
-                format!("service({member}:{}.{})", service_ref.task, service_ref.listener)
+                format!(
+                    "service({member}:{}.{})",
+                    service_ref.task, service_ref.listener
+                )
             }
             None => format!("service({}.{})", service_ref.task, service_ref.listener),
         }
@@ -8164,14 +8205,12 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
         (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::Manual) => {
             "activation ensure_started manual"
         }
-        (
-            TaskTargetActivationMode::EnsureStarted,
-            TaskTargetActivationStatus::ReusedStarted,
-        ) => "activation ensure_started reused_started",
-        (
-            TaskTargetActivationMode::EnsureStarted,
-            TaskTargetActivationStatus::StartedStarted,
-        ) => "activation ensure_started started_started",
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::ReusedStarted) => {
+            "activation ensure_started reused_started"
+        }
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::StartedStarted) => {
+            "activation ensure_started started_started"
+        }
         (
             TaskTargetActivationMode::EnsureReady,
             TaskTargetActivationStatus::SkippedExplicitOverride,
@@ -8192,14 +8231,12 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
         (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::Manual) => {
             "activation ensure_running manual"
         }
-        (
-            TaskTargetActivationMode::EnsureRunning,
-            TaskTargetActivationStatus::ReusedRunning,
-        ) => "activation ensure_running reused_running",
-        (
-            TaskTargetActivationMode::EnsureRunning,
-            TaskTargetActivationStatus::StartedRunning,
-        ) => "activation ensure_running started_running",
+        (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::ReusedRunning) => {
+            "activation ensure_running reused_running"
+        }
+        (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::StartedRunning) => {
+            "activation ensure_running started_running"
+        }
         (TaskTargetActivationMode::Manual, other) => match other {
             TaskTargetActivationStatus::SkippedExplicitOverride => {
                 "activation manual skipped_override"
@@ -12026,6 +12063,7 @@ fn start_runtime_readiness_probe(
     runtime: Option<&ResolvedTaskRuntime>,
     announce_ready_endpoint: bool,
     notifier: Option<StreamPhaseNotifier>,
+    interrupt_epoch: u64,
 ) -> Option<RuntimeReadinessProbe> {
     let runtime_spec = runtime_spec?;
     let runtime = runtime?;
@@ -12044,9 +12082,11 @@ fn start_runtime_readiness_probe(
     // ever became reachable while the workload was running; it must not tear the
     // workload down or impose a fixed startup deadline on service execution.
     let probe_notifier = notifier;
+    let thread_target = readiness_target.clone();
     let handle = thread::spawn(move || {
+        let mut interrupt_grace_applied = false;
         while !thread_stop.load(Ordering::Relaxed) {
-            if readiness_target_observed(&readiness_target) {
+            if readiness_target_observed(&thread_target) {
                 thread_observed.store(true, Ordering::Relaxed);
                 if let Some(line) = ready_line.as_deref() {
                     if let Some(notifier) = probe_notifier.as_ref() {
@@ -12063,7 +12103,41 @@ fn start_runtime_readiness_probe(
                 }
                 break;
             }
-            thread::sleep(Duration::from_millis(150));
+            if !interrupt_grace_applied && interruption_observed_since(interrupt_epoch) {
+                let grace_deadline = std::time::Instant::now() + Duration::from_millis(300);
+                while std::time::Instant::now() < grace_deadline
+                    && !thread_stop.load(Ordering::Relaxed)
+                {
+                    if readiness_target_observed(&thread_target) {
+                        thread_observed.store(true, Ordering::Relaxed);
+                        if let Some(line) = ready_line.as_deref() {
+                            if let Some(notifier) = probe_notifier.as_ref() {
+                                notifier.wait_for_quiet_output(
+                                    Duration::from_millis(300),
+                                    thread_stop.as_ref(),
+                                );
+                                let _guard = notifier.begin_output();
+                                eprintln!("{line}");
+                            } else {
+                                clear_stream_phase_line();
+                                eprintln!("{line}");
+                            }
+                        }
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(30));
+                }
+                interrupt_grace_applied = true;
+                continue;
+            }
+            for _ in 0..5 {
+                if thread_stop.load(Ordering::Relaxed)
+                    || (!interrupt_grace_applied && interruption_observed_since(interrupt_epoch))
+                {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(30));
+            }
         }
     });
     Some(RuntimeReadinessProbe {
@@ -12415,6 +12489,7 @@ fn execute_ephemeral_container_task_command(
                         prepared_runtime.as_ref(),
                         true,
                         notifier,
+                        interrupt_epoch,
                     );
                 },
             );
@@ -12490,8 +12565,13 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
-            let readiness_probe =
-                start_runtime_readiness_probe(runtime, prepared_runtime.as_ref(), false, None);
+            let readiness_probe = start_runtime_readiness_probe(
+                runtime,
+                prepared_runtime.as_ref(),
+                false,
+                None,
+                interrupt_epoch,
+            );
             let output = child.wait_with_output().map_err(|source| {
                 let _ = remove_persistent_container(engine, &container_name, task_name);
                 RunError::SpawnFailed {
@@ -12950,6 +13030,7 @@ fn execute_persistent_container_task_command(
         resolved_runtime.as_ref(),
         matches!(mode, TaskExecutionMode::Stream { .. }),
         None,
+        current_run_interrupt_epoch(),
     );
     let mut output = exec_persistent_container_task_command(
         task_name,
@@ -13042,6 +13123,7 @@ fn execute_persistent_container_task_command(
             resolved_runtime.as_ref(),
             matches!(mode, TaskExecutionMode::Stream { .. }),
             None,
+            current_run_interrupt_epoch(),
         );
         let mut output = exec_persistent_container_task_command(
             task_name,
@@ -15922,11 +16004,10 @@ mod tests {
         ready_runtime_public_endpoint_line, resolve_execution_backend,
         resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
         resolve_task_target_binding_url, resolve_task_target_binding_url_with_contract_path,
-        run_task, run_task_captured,
-        run_task_captured_with_args_with_overrides, run_task_with_args,
-        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
-        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
-        version_matches_requirement,
+        run_task, run_task_captured, run_task_captured_with_args_with_overrides,
+        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
+        run_task_with_overrides, run_task_with_progress, running_loader_label,
+        running_loader_label_for_backend, version_matches_requirement,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -20314,7 +20395,10 @@ tasks:
             .get("sandbox")
             .and_then(|task| task.targets.get("api"))
             .expect("target binding should be declared");
-        let task = contract.tasks.get("sandbox").expect("sandbox task should exist");
+        let task = contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
 
         let resolutions = super::resolve_task_target_bindings(
             &contract,
@@ -22838,6 +22922,88 @@ tasks:
             ready_runtime_public_endpoint_line(&runtime).as_deref(),
             Some("\n\n🟢 External: http://127.0.0.1:49153/\n🔵 Internal: http://0.0.0.0:3000/\n\n")
         );
+    }
+
+    #[test]
+    fn readiness_probe_confirms_reachability_during_interrupt_grace_window() {
+        let reserved = TcpListener::bind(("127.0.0.1", 0)).expect("reserve a local port");
+        let port = reserved
+            .local_addr()
+            .expect("reserved listener should have a local addr")
+            .port();
+        drop(reserved);
+
+        let runtime_spec = TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            backend_binding: None,
+            readiness: None,
+            listeners: BTreeMap::from([(
+                String::from("http"),
+                TaskRuntimeListenerSpec {
+                    protocol: TaskRuntimeProtocol::Http,
+                    bind: TaskRuntimeBindSpec {
+                        address: String::from("0.0.0.0"),
+                        port: TaskRuntimePortSpec {
+                            mode: TaskRuntimePortMode::Fixed,
+                            value: Some(3000),
+                        },
+                    },
+                    project: TaskRuntimeProjectionSpec {
+                        host: Some(TaskRuntimeHostProjectionSpec {
+                            address: String::from("127.0.0.1"),
+                            port: TaskRuntimeHostPortSpec {
+                                mode: TaskRuntimeHostPortMode::Fixed,
+                                value: Some(port),
+                            },
+                            primary: true,
+                            path: Some(String::from("/")),
+                        }),
+                    },
+                },
+            )]),
+        };
+        let runtime = ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port,
+                    url: Some(format!("http://127.0.0.1:{port}/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let interrupt_epoch = super::current_run_interrupt_epoch();
+        let probe = super::start_runtime_readiness_probe(
+            Some(&runtime_spec),
+            Some(&runtime),
+            false,
+            None,
+            interrupt_epoch,
+        )
+        .expect("probe should start");
+
+        thread::sleep(std::time::Duration::from_millis(25));
+        super::simulate_run_interrupt_for_test();
+        thread::sleep(std::time::Duration::from_millis(75));
+        let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind listener");
+        let observed = {
+            let _listener = listener;
+            thread::sleep(std::time::Duration::from_millis(120));
+            probe.stop_and_collect()
+        };
+
+        assert!(observed, "interrupt grace window should confirm readiness");
     }
 
     #[cfg(unix)]
