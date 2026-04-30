@@ -681,6 +681,9 @@ ota run dev --memory 4GiB
 - `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
 - `--host-port` is valid only when the selected task resolves to container execution and that selected primary listener uses `project.host.port.mode: fixed`
 - `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, and ambiguous multi-listener projections without one primary listener
+- stream-mode endpoint banners such as `External:` and `Internal:` are printed only after ota
+  itself confirms the projected endpoint; workload logs like `ready` or framework-local URLs are
+  not treated as authoritative host-reachability proof
 - `--memory <size>` overrides one run's requested container memory (examples: `512MiB`, `2GiB`, `4TiB`)
 - `--memory` is valid only when the selected task resolves to container execution
 - when the selected container context declares `container.resources.memory.minimum`, ota rejects `--memory` values below that minimum before task execution starts

@@ -34,7 +34,6 @@ pub(super) fn render_execution_receipt_summary_block(
     } else {
         paint(&format!("🦦 {title}"), "1")
     };
-    let omit_next_for_failed_run_summary = title.contains("RUN SUMMARY");
     let mut lines = vec![String::new(), title, String::new()];
     let mode = receipt
         .backend
@@ -216,11 +215,6 @@ pub(super) fn render_execution_receipt_summary_block(
     if let Some(note_value) = note.as_deref() {
         lines.push(summary_detail_line("Note:", note_value));
     }
-    if let Some(next_value) = receipt.next.as_deref()
-        && !(omit_next_for_failed_run_summary && status == "failed")
-    {
-        lines.push(summary_detail_line("Next:", next_value));
-    }
     if let Some(log_warning) = log_capture_warning.as_deref() {
         lines.push(summary_detail_line("Warning:", log_warning));
     }
@@ -370,6 +364,20 @@ fn receipt_log_capture_warning(receipt: &ExecutionReceipt) -> Option<&str> {
     })
 }
 
+pub(super) fn execution_receipt_next_steps(receipt: &ExecutionReceipt) -> Vec<String> {
+    receipt
+        .next
+        .as_deref()
+        .map(|next| {
+            next.split("; ")
+                .map(str::trim)
+                .filter(|part| !part.is_empty() && !part.starts_with("log capture failed:"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 pub(super) fn summary_detail_line(label: &str, value: &str) -> String {
     const SUMMARY_LABEL_WIDTH: usize = 12;
     format!("{label:<width$} {value}", width = SUMMARY_LABEL_WIDTH)
@@ -444,13 +452,14 @@ fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) ->
             None => service_ref.task.clone(),
         })
         .unwrap_or_else(|| String::from("producer"));
-    let service_edge = resolution
-        .service_ref
-        .as_ref()
-        .map(|service_ref| match service_ref.member.as_deref() {
-            Some(member) => format!("{member}:{}.{}", service_ref.task, service_ref.listener),
-            None => format!("{}.{}", service_ref.task, service_ref.listener),
-        });
+    let service_edge =
+        resolution
+            .service_ref
+            .as_ref()
+            .map(|service_ref| match service_ref.member.as_deref() {
+                Some(member) => format!("{member}:{}.{}", service_ref.task, service_ref.listener),
+                None => format!("{}.{}", service_ref.task, service_ref.listener),
+            });
     match resolution
         .activation
         .as_ref()
@@ -461,7 +470,10 @@ fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) ->
             service_task.as_str()
         ),
         Some(crate::runner::TaskTargetActivationStatus::ReusedStarted) => {
-            format!("reused already-started producer `{}`", service_task.as_str())
+            format!(
+                "reused already-started producer `{}`",
+                service_task.as_str()
+            )
         }
         Some(crate::runner::TaskTargetActivationStatus::StartedReady) => format!(
             "started producer `{}` and waited for readiness",
@@ -649,12 +661,7 @@ fn primary_runtime_internal_endpoint(
 }
 
 fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
-    if !receipt.ok
-        && !receipt
-            .service_termination
-            .as_ref()
-            .is_some_and(|termination| termination.after_readiness)
-    {
+    if !receipt_allows_endpoint_summary(receipt) {
         return None;
     }
 
@@ -671,12 +678,7 @@ fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
 }
 
 fn primary_receipt_internal_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
-    if !receipt.ok
-        && !receipt
-            .service_termination
-            .as_ref()
-            .is_some_and(|termination| termination.after_readiness)
-    {
+    if !receipt_allows_endpoint_summary(receipt) {
         return None;
     }
 
@@ -690,6 +692,20 @@ fn primary_receipt_internal_endpoint(receipt: &ExecutionReceipt) -> Option<Strin
                 .values()
                 .find_map(primary_runtime_internal_endpoint)
         })
+}
+
+fn receipt_allows_endpoint_summary(receipt: &ExecutionReceipt) -> bool {
+    if receipt.ok {
+        return true;
+    }
+
+    matches!(
+        receipt
+            .service_termination
+            .as_ref()
+            .map(|termination| (termination.after_readiness, &termination.cause)),
+        Some((true, _)) | Some((false, crate::runner::ServiceTerminationCause::Interrupted))
+    )
 }
 
 fn secondary_receipt_endpoint_count(receipt: &ExecutionReceipt) -> usize {

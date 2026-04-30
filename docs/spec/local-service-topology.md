@@ -389,6 +389,9 @@ Current `runtime.readiness` support for service tasks:
     connections
   - for shared-remote `ensure_ready`, built-in remote providers may instead probe the fixed
     `bind.port.value` on the remote plane
+- stream-mode endpoint banners such as `External:` and `Internal:` are confirmation-only output:
+  ota prints them only after it has itself confirmed the projected endpoint, not merely because
+  the workload logged that it is ready internally
 
 Override precedence:
 
