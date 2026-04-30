@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- No unreleased entries yet.
+
+## 1.6.5
+
 - expanded prebuilt release publishing to the full mainstream target matrix: Linux `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`, macOS `x86_64-apple-darwin` and `aarch64-apple-darwin`, and Windows `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`
 - made release checksum manifests and installers agree on asset names, while keeping installers backward-compatible with older `dist/<asset>` checksum entries during the transition
 - improved shell and PowerShell installer fallback messaging so unsupported or unpublished prebuilt targets are reported explicitly before cargo fallback is attempted
