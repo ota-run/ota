@@ -6557,6 +6557,53 @@ tasks:
     }
 
     #[test]
+    fn rejects_task_target_activation_ensure_started_for_self_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    targets:
+      self_api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_started
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("cannot declare `activation.mode: ensure_started` for `service.task: dev`")
+        }));
+    }
+
+    #[test]
     fn rejects_task_target_activation_cycles() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

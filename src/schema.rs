@@ -1818,6 +1818,7 @@ pub struct TaskTargetActivationSpec {
 pub enum TaskTargetActivationMode {
     #[default]
     Manual,
+    EnsureStarted,
     EnsureReady,
     EnsureRunning,
 }
@@ -1826,6 +1827,7 @@ impl TaskTargetActivationMode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Manual => "manual",
+            Self::EnsureStarted => "ensure_started",
             Self::EnsureReady => "ensure_ready",
             Self::EnsureRunning => "ensure_running",
         }

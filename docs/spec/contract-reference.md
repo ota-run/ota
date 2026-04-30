@@ -1056,7 +1056,7 @@ Task target binding semantics:
   - current shipped cross-member slice is intentionally narrow:
     - `address_view: host` always works when the producer declares a fixed `project.host` endpoint and remains `activation.mode: manual` only
     - `address_view: topology` / `address_view: internal` work only when consumer and producer share one declared backend binding on the active plane
-    - non-manual activation (`ensure_running`, `ensure_ready`) is shipped only for those shared-backend `topology` / `internal` member targets
+    - non-manual activation (`ensure_started`, `ensure_running`, `ensure_ready`) is shipped only for those shared-backend `topology` / `internal` member targets
 - `service.task` is the producing task name
   - use it when the target should follow a repo-managed service task instead of a guessed literal URL
   - value must name an existing service task in the same contract, or in `service.member` when that selector is present
@@ -1074,6 +1074,7 @@ Task target binding semantics:
   - value must name an input declared on the same consuming task
 - optional `activation.mode` controls whether ota should auto-start and observe the local producer service before the consumer task runs
   - `manual` = resolve target only; never auto-start the producer
+  - `ensure_started` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if it already appears reachable or start it without waiting for listener reachability or deeper readiness
   - `ensure_running` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if the declared target listener is already reachable or start it and wait until that listener becomes reachable
   - `ensure_ready` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if already reachable or start it and wait until ready
 - `url` targets support `activation.mode: manual` only
@@ -1087,6 +1088,8 @@ Task target binding semantics:
 - `ota run` records target-resolution evidence in run receipts JSON under `receipt.steps[*].target_resolutions`
 - target-activation evidence is recorded alongside target resolution under `receipt.steps[*].target_resolutions[*].activation`
   - human meaning:
+    - `started_started` = ota started the producer without waiting for listener reachability or deeper readiness
+    - `reused_started` = ota reused a producer that already appeared started enough for the target edge
     - `started_running` = ota started the producer and waited for the declared listener to become reachable
     - `reused_running` = ota found the declared listener already reachable and reused the producer
     - `started_ready` = ota started the producer and waited for readiness
@@ -1103,7 +1106,8 @@ Task target binding semantics:
 - current non-manual activation constraints:
   - only `service` targets participate in activation; `url` targets are always manual
   - explicit operator override inputs skip producer auto-start and preserve the override value
-  - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_running` or `ensure_ready` was requested
+  - compatibility literal default fallbacks do not auto-start and fail clearly if `ensure_started`, `ensure_running`, or `ensure_ready` was requested
+  - `ensure_started` launches the producer and returns immediately after startup is handed off; it does not wait for listener reachability or deeper readiness
   - `ensure_running` waits only for the declared target listener plane, even when the producer also declares a deeper `runtime.readiness` contract
   - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract instead of treating an open listener socket as sufficient
   - the current shipped slice supports actual producer auto-start only when ota can own the producer honestly:
@@ -1190,7 +1194,7 @@ Shared local backend semantics:
     - built-in remote producer services for shared-remote `address_view: host` / `address_view: topology` / `address_view: internal`
       - `address_view: host` uses the listener fixed `project.host` endpoint
       - shared-remote `address_view: topology` / `address_view: internal` use the listener fixed `bind.port.value` on the remote plane
-      - `ensure_running` observes listener reachability; `ensure_ready` may observe `tcp` or `http` runtime readiness
+      - `ensure_started` hands startup off immediately; `ensure_running` observes listener reachability; `ensure_ready` may observe `tcp` or `http` runtime readiness
       - built-in remote providers:
         - `ssh`: `user@host`
         - `tsh`: `user@host`

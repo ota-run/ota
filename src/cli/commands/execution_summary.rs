@@ -456,6 +456,13 @@ fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) ->
         .as_ref()
         .map(|activation| activation.status)
     {
+        Some(crate::runner::TaskTargetActivationStatus::StartedStarted) => format!(
+            "started producer `{}` without waiting for reachability or readiness",
+            service_task.as_str()
+        ),
+        Some(crate::runner::TaskTargetActivationStatus::ReusedStarted) => {
+            format!("reused already-started producer `{}`", service_task.as_str())
+        }
         Some(crate::runner::TaskTargetActivationStatus::StartedReady) => format!(
             "started producer `{}` and waited for readiness",
             service_task.as_str()
