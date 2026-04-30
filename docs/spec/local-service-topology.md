@@ -308,7 +308,7 @@ export, but they support `activation.mode: manual` only.
 - the current shipped cross-member slice is intentionally narrow:
   - `address_view: host` works through the producer fixed `project.host` endpoint and remains `activation.mode: manual` only
   - `address_view: topology` / `address_view: internal` work only when consumer and producer share one declared backend binding on the active plane
-  - non-manual activation (`ensure_started`, `ensure_running`, `ensure_ready`) is shipped only for those shared-backend `topology` / `internal` member targets
+  - non-manual activation (`ensure_started`, `restart_ready`, `ensure_running`, `ensure_ready`) is shipped only for those shared-backend `topology` / `internal` member targets
   - receipts still record the member, producer task, and listener explicitly
 
 Allowed `address_view` values:
@@ -343,8 +343,9 @@ Only `service` targets participate in activation. `url` targets are always manua
 Current non-manual activation constraints:
 
 - explicit operator override inputs skip producer auto-start
-- compatibility literal defaults do not satisfy `ensure_started`, `ensure_running`, or `ensure_ready`
+- compatibility literal defaults do not satisfy `ensure_started`, `restart_ready`, `ensure_running`, or `ensure_ready`
 - `ensure_started` launches the producer and returns once startup is handed off
+- `restart_ready` stops a currently reachable producer through ota's owned cleanup path, then starts it again and waits for readiness
 - run receipts summarize producer activation plainly as:
   - `started_started` = ota started the producer without waiting for listener reachability or deeper readiness
   - `reused_started` = ota reused a producer that already appeared started enough for the target edge
@@ -353,6 +354,7 @@ Current non-manual activation constraints:
   - `reused_running` = ota found the declared listener already reachable and reused the producer
 - when the producer service task declares `runtime.readiness`, ota waits for that readiness contract before starting the consumer
 - run receipts summarize producer activation plainly as:
+  - `restarted_ready` = ota found the producer already reachable, restarted it deliberately, and waited for readiness again
   - `started_ready` = ota started the producer and waited for readiness
   - `reused_ready` = ota found the producer already ready and reused it
 - the current shipped slice auto-starts producer services only when ota can own them honestly:
@@ -482,7 +484,12 @@ Important status:
   remote providers on shared-remote `address_view: host` / `address_view: topology` /
   `address_view: internal` targets; `ensure_started` hands startup off immediately,
   `ensure_running` observes listener reachability, `ensure_ready` supports deeper shipped `tcp` /
-  `http` readiness, and backend-provider remote activation remains later work
+  `http` readiness
+- backend-provider remote activation is also now shipped narrowly on shared-remote
+  `address_view: host` targets only when the matching `backend_provider` extension declares
+  `activation.provider_managed_cleanup: true`; `ensure_started`, `restart_ready`,
+  `ensure_running`, and `ensure_ready` are supported there, while `address_view: topology` and
+  `address_view: internal` remain later work
 
 Why this is the intended long-term direction:
 

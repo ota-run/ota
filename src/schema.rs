@@ -797,8 +797,17 @@ pub struct ExtensionSpec {
     pub api_version: u32,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<ExtensionActivationSpec>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub config: BTreeMap<String, serde_yaml::Value>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionActivationSpec {
+    #[serde(default)]
+    pub provider_managed_cleanup: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -1819,6 +1828,7 @@ pub enum TaskTargetActivationMode {
     #[default]
     Manual,
     EnsureStarted,
+    RestartReady,
     EnsureReady,
     EnsureRunning,
 }
@@ -1828,6 +1838,7 @@ impl TaskTargetActivationMode {
         match self {
             Self::Manual => "manual",
             Self::EnsureStarted => "ensure_started",
+            Self::RestartReady => "restart_ready",
             Self::EnsureReady => "ensure_ready",
             Self::EnsureRunning => "ensure_running",
         }
