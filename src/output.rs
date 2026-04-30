@@ -332,6 +332,10 @@ pub struct ExecutionReceipt {
     pub container_memory_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub acquired: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -1047,9 +1051,13 @@ pub struct ReceiptHistoryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     pub summary: ExecutionReceiptSummary,
 }
 
