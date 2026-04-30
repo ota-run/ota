@@ -1977,7 +1977,9 @@ Current receipt history JSON fields:
 - `archives[].ok`
 - `archives[].contract`
 - `archives[].backend` (when the archived receipt recorded one)
+- `archives[].provider` (when the archived receipt recorded one)
 - `archives[].lifecycle` (when the archived receipt recorded one)
+- `archives[].cwd` (when the archived receipt recorded one)
 - `archives[].summary`
 - `invalid_archives[]` when malformed archive files were skipped
 - `invalid_archives[].archive_path`
@@ -1985,6 +1987,10 @@ Current receipt history JSON fields:
 
 When `--member <name>` is set against a monorepo root, `receipt.contract` points at the selected
 member contract path while the readiness findings reflect the merged member target.
+
+When the receipt comes from remote execution, `receipt.provider` names the remote transport,
+`receipt.target` names the resolved remote boundary, and `receipt.cwd` carries the declared remote
+working directory when one exists.
 
 Use `ota receipt --json` when you need a deterministic repo-local artifact for the current
 readiness state without provisioning, starting services, or writing repo files.

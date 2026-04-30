@@ -681,6 +681,12 @@ ota run dev --memory 4GiB
 - `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
 - `--host-port` is valid only when the selected task resolves to container execution and that selected primary listener uses `project.host.port.mode: fixed`
 - `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, and ambiguous multi-listener projections without one primary listener
+- stream-mode endpoint banners such as `External:` and `Internal:` are printed only after ota
+  itself confirms the projected endpoint; workload logs like `ready` or framework-local URLs are
+  not treated as authoritative host-reachability proof
+- if Docker is running through Colima, published ports may be reachable inside the Colima VM but
+  not on macOS localhost; when this happens, ota keeps the endpoint banner withheld and the
+  interrupted pre-confirmation path calls out the Colima boundary explicitly
 - `--memory <size>` overrides one run's requested container memory (examples: `512MiB`, `2GiB`, `4TiB`)
 - `--memory` is valid only when the selected task resolves to container execution
 - when the selected container context declares `container.resources.memory.minimum`, ota rejects `--memory` values below that minimum before task execution starts
@@ -688,7 +694,7 @@ ota run dev --memory 4GiB
 - for container-backed `runtime.kind: service` tasks, ota now captures container termination state before ephemeral teardown and reports post-readiness service stops as first-class failures (including explicit OOM classification when the engine reports it)
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
-- execution receipts include backend, lifecycle, container image when relevant, resolved container memory when requested, remote target when set, acquired paths, env sources, step summary data, resolved runtime listener endpoints, and optional `service_termination` details for post-readiness service stops; text receipts also print the winning env source for each resolved value
+- execution receipts include backend, remote `provider` / `target` / optional `cwd` when relevant, lifecycle, container image when relevant, resolved container memory when requested, acquired paths, env sources, step summary data, resolved runtime listener endpoints, and optional `service_termination` details for post-readiness service stops; text receipts also print the winning env source for each resolved value
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.
@@ -1009,8 +1015,9 @@ Text output:
 - header: `RECEIPT <path>`
 - prints the receipt steps, compact contract identity, summary, env sources, policy lines, and blocked items when present
 - `--archive --promote-baseline` adds `Baseline:` and `Promoted:` summary lines so the operator can see which archive became the explicit repo baseline
-- `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, readiness result, and summary counts; malformed archived files are skipped and surfaced under `Skipped Archives`
+- `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, archived status, contract path, and any preserved execution identity fields such as context, backend, target, provider, lifecycle, and cwd; malformed archived files are skipped and surfaced under `Skipped Archives`
 - `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source plus provenance such as the selection path, promoted time, contract identity, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
+- `--baseline` also preserves execution identity on both sides when present, including archived/current `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd`
 - `--fail-on-new-blockers` adds a `Gate:` overview line showing whether the current diff passed or was blocked by newly introduced blockers
 
 JSON output:
@@ -1024,6 +1031,7 @@ JSON output:
 - `receipt`, including additive `receipt.contract_identity` with declared project, selected metadata, execution intent, and compact contract counts
 - `findings`
 - `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
+- each history archive may preserve `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd` when that execution identity existed in the archived receipt
 - `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`, with additive provenance fields on `baseline`
 - diff `summary` also carries a compact `comparison` block so wrappers can show baseline/current identity labels plus readiness drift without reconstructing it from the full baseline/current sections
 - `--fail-on-new-blockers` adds `gate.rule`, `gate.passed`, and `gate.new_blocker_count` to diff JSON when the compare gate is active

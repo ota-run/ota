@@ -130,7 +130,17 @@ jobs:
     name: Build Release Asset (Linux)
     needs: release-tag
     if: needs.release-tag.outputs.created == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: ota-release-x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact_name: ota-release-aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -139,24 +149,25 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --locked --release
+        run: cargo build --locked --release --target "${{ matrix.target }}"
 
       - name: Package release asset
         run: |
-          target="$(rustc -vV | awk '/host:/{print $2; exit}')"
+          target="${{ matrix.target }}"
           asset="ota-${target}.tar.gz"
           mkdir -p dist
-          tar -czf "dist/${asset}" -C target/release ota
+          tar -czf "dist/${asset}" -C "target/${target}/release" ota
 
       - name: Upload release asset
         uses: actions/upload-artifact@v4
         with:
-          name: ota-release-linux
+          name: ${{ matrix.artifact_name }}
           path: dist/*.tar.gz
           if-no-files-found: error
 
@@ -164,7 +175,17 @@ jobs:
     name: Build Release Asset (macOS)
     needs: release-tag
     if: needs.release-tag.outputs.created == 'true'
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            artifact_name: ota-release-x86_64-apple-darwin
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: ota-release-aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -173,24 +194,25 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --locked --release
+        run: cargo build --locked --release --target "${{ matrix.target }}"
 
       - name: Package release asset
         run: |
-          target="$(rustc -vV | awk '/host:/{print $2; exit}')"
+          target="${{ matrix.target }}"
           asset="ota-${target}.tar.gz"
           mkdir -p dist
-          tar -czf "dist/${asset}" -C target/release ota
+          tar -czf "dist/${asset}" -C "target/${target}/release" ota
 
       - name: Upload release asset
         uses: actions/upload-artifact@v4
         with:
-          name: ota-release-macos
+          name: ${{ matrix.artifact_name }}
           path: dist/*.tar.gz
           if-no-files-found: error
 
@@ -198,7 +220,17 @@ jobs:
     name: Build Release Asset (Windows)
     needs: release-tag
     if: needs.release-tag.outputs.created == 'true'
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: ota-release-x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            artifact_name: ota-release-aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -207,30 +239,31 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --locked --release
+        run: cargo build --locked --release --target "${{ matrix.target }}"
 
       - name: Package release assets
         shell: pwsh
         run: |
-          $target = (& rustc -vV | Select-String '^host:' | ForEach-Object { ($_ -split '\s+')[1] })
+          $target = "${{ matrix.target }}"
           $dist = Join-Path $PWD 'dist'
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
 
           $tarAsset = Join-Path $dist "ota-$target.tar.gz"
           $zipAsset = Join-Path $dist "ota-$target.zip"
 
-          tar -czf $tarAsset -C target/release ota.exe
-          Compress-Archive -Path target/release/ota.exe -DestinationPath $zipAsset -Force
+          tar -czf $tarAsset -C "target/$target/release" ota.exe
+          Compress-Archive -Path "target/$target/release/ota.exe" -DestinationPath $zipAsset -Force
 
       - name: Upload release asset
         uses: actions/upload-artifact@v4
         with:
-          name: ota-release-windows
+          name: ${{ matrix.artifact_name }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -315,10 +348,11 @@ jobs:
       - name: Generate release checksums
         run: |
           find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort | while read -r file; do
+            asset="$(basename "$file")"
             if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "$file"
+              sha256sum "$file" | awk -v asset="$asset" '{print $1 "  " asset}'
             else
-              shasum -a 256 "$file"
+              shasum -a 256 "$file" | awk -v asset="$asset" '{print $1 "  " asset}'
             fi
           done > dist/ota-checksums.txt
 

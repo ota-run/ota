@@ -34,7 +34,6 @@ pub(super) fn render_execution_receipt_summary_block(
     } else {
         paint(&format!("🦦 {title}"), "1")
     };
-    let omit_next_for_failed_run_summary = title.contains("RUN SUMMARY");
     let mut lines = vec![String::new(), title, String::new()];
     let mode = receipt
         .backend
@@ -97,6 +96,12 @@ pub(super) fn render_execution_receipt_summary_block(
         ) {
             lines.push(summary_detail_line("Target:", target));
         }
+    }
+    if let Some(provider) = receipt.provider.as_deref() {
+        lines.push(summary_detail_line("Provider:", provider));
+    }
+    if let Some(cwd) = receipt.cwd.as_deref() {
+        lines.push(summary_detail_line("Cwd:", cwd));
     }
     if let Some(endpoint) = primary_receipt_endpoint(receipt) {
         lines.push(summary_detail_line("External:", &endpoint));
@@ -209,11 +214,6 @@ pub(super) fn render_execution_receipt_summary_block(
     ));
     if let Some(note_value) = note.as_deref() {
         lines.push(summary_detail_line("Note:", note_value));
-    }
-    if let Some(next_value) = receipt.next.as_deref()
-        && !(omit_next_for_failed_run_summary && status == "failed")
-    {
-        lines.push(summary_detail_line("Next:", next_value));
     }
     if let Some(log_warning) = log_capture_warning.as_deref() {
         lines.push(summary_detail_line("Warning:", log_warning));
@@ -364,6 +364,20 @@ fn receipt_log_capture_warning(receipt: &ExecutionReceipt) -> Option<&str> {
     })
 }
 
+pub(super) fn execution_receipt_next_steps(receipt: &ExecutionReceipt) -> Vec<String> {
+    receipt
+        .next
+        .as_deref()
+        .map(|next| {
+            next.split("; ")
+                .map(str::trim)
+                .filter(|part| !part.is_empty() && !part.starts_with("log capture failed:"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 pub(super) fn summary_detail_line(label: &str, value: &str) -> String {
     const SUMMARY_LABEL_WIDTH: usize = 12;
     format!("{label:<width$} {value}", width = SUMMARY_LABEL_WIDTH)
@@ -430,27 +444,72 @@ fn requested_task_backend_fulfillment<'a>(
 }
 
 fn human_target_resolution_summary(resolution: &TaskTargetResolutionEvidence) -> String {
+    let service_task = resolution
+        .service_ref
+        .as_ref()
+        .map(|service_ref| match service_ref.member.as_deref() {
+            Some(member) => format!("{member}:{}", service_ref.task),
+            None => service_ref.task.clone(),
+        })
+        .unwrap_or_else(|| String::from("producer"));
+    let service_edge =
+        resolution
+            .service_ref
+            .as_ref()
+            .map(|service_ref| match service_ref.member.as_deref() {
+                Some(member) => format!("{member}:{}.{}", service_ref.task, service_ref.listener),
+                None => format!("{}.{}", service_ref.task, service_ref.listener),
+            });
     match resolution
         .activation
         .as_ref()
         .map(|activation| activation.status)
     {
+        Some(crate::runner::TaskTargetActivationStatus::StartedStarted) => format!(
+            "started producer `{}` without waiting for reachability or readiness",
+            service_task.as_str()
+        ),
+        Some(crate::runner::TaskTargetActivationStatus::RestartedReady) => format!(
+            "restarted producer `{}` and waited for readiness",
+            service_task.as_str()
+        ),
+        Some(crate::runner::TaskTargetActivationStatus::ReusedStarted) => {
+            format!(
+                "reused already-started producer `{}`",
+                service_task.as_str()
+            )
+        }
         Some(crate::runner::TaskTargetActivationStatus::StartedReady) => format!(
             "started producer `{}` and waited for readiness",
-            resolution.service_ref.task
+            service_task.as_str()
         ),
         Some(crate::runner::TaskTargetActivationStatus::ReusedReady) => {
-            format!("reused ready producer `{}`", resolution.service_ref.task)
+            format!("reused ready producer `{}`", service_task.as_str())
+        }
+        Some(crate::runner::TaskTargetActivationStatus::StartedRunning) => format!(
+            "started producer `{}` and waited for the declared listener",
+            service_task.as_str()
+        ),
+        Some(crate::runner::TaskTargetActivationStatus::ReusedRunning) => {
+            format!(
+                "reused producer `{}` because the declared listener was already reachable",
+                service_task.as_str()
+            )
         }
         Some(crate::runner::TaskTargetActivationStatus::SkippedExplicitOverride) => {
             String::from("skipped activation because an explicit override was provided")
         }
         _ => match resolution.source {
             TaskTargetResolutionSource::ExplicitOverride => String::from("used explicit override"),
-            TaskTargetResolutionSource::TargetBinding => format!(
-                "resolved from producer `{}.{}`",
-                resolution.service_ref.task, resolution.service_ref.listener
-            ),
+            TaskTargetResolutionSource::TargetBinding => {
+                if let Some(service_edge) = service_edge {
+                    format!("resolved from producer `{service_edge}`")
+                } else if let Some(url_ref) = resolution.url_ref.as_ref() {
+                    format!("resolved from declared url `{}`", url_ref.url)
+                } else {
+                    String::from("resolved from declared target")
+                }
+            }
             TaskTargetResolutionSource::CompatibilityLiteralDefault => {
                 String::from("used compatibility literal default")
             }
@@ -606,12 +665,7 @@ fn primary_runtime_internal_endpoint(
 }
 
 fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
-    if !receipt.ok
-        && !receipt
-            .service_termination
-            .as_ref()
-            .is_some_and(|termination| termination.after_readiness)
-    {
+    if !receipt_allows_endpoint_summary(receipt) {
         return None;
     }
 
@@ -628,12 +682,7 @@ fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
 }
 
 fn primary_receipt_internal_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
-    if !receipt.ok
-        && !receipt
-            .service_termination
-            .as_ref()
-            .is_some_and(|termination| termination.after_readiness)
-    {
+    if !receipt_allows_endpoint_summary(receipt) {
         return None;
     }
 
@@ -647,6 +696,20 @@ fn primary_receipt_internal_endpoint(receipt: &ExecutionReceipt) -> Option<Strin
                 .values()
                 .find_map(primary_runtime_internal_endpoint)
         })
+}
+
+fn receipt_allows_endpoint_summary(receipt: &ExecutionReceipt) -> bool {
+    if receipt.ok {
+        return true;
+    }
+
+    matches!(
+        receipt
+            .service_termination
+            .as_ref()
+            .map(|termination| (termination.after_readiness, &termination.cause)),
+        Some((true, _)) | Some((false, crate::runner::ServiceTerminationCause::Interrupted))
+    )
 }
 
 fn secondary_receipt_endpoint_count(receipt: &ExecutionReceipt) -> usize {
@@ -675,5 +738,140 @@ pub(super) fn render_execution_summary_status_value(status: &str) -> String {
         "preview" => paint("preview", "1;38;2;0;255;255"),
         "failed" => paint("failed", "1;31"),
         other => paint(other, "1;37"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::{ExecutionReceipt, ExecutionReceiptSummary};
+    use crate::runner::{
+        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
+        ResolvedTaskRuntimeHost, ServiceTermination, ServiceTerminationCause,
+        ServiceTerminationKind,
+    };
+
+    fn sample_service_runtime(external_port: u16) -> ResolvedTaskRuntime {
+        ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: external_port,
+                    url: Some(format!("http://127.0.0.1:{external_port}/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        }
+    }
+
+    fn sample_receipt() -> ExecutionReceipt {
+        ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("development")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24-bookworm")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: Vec::new(),
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        }
+    }
+
+    #[test]
+    fn run_summary_never_includes_next_lines() {
+        let mut receipt = sample_receipt();
+        receipt.ok = true;
+        receipt.next = Some(String::from(
+            "inspect task `dev` output and rerun `ota run dev`; log capture failed: permission denied",
+        ));
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+
+        assert!(!rendered.contains("\nNext:"), "{rendered}");
+        assert!(rendered.contains("Warning:"), "{rendered}");
+    }
+
+    #[test]
+    fn interrupted_pre_confirmation_summary_keeps_projected_endpoints() {
+        let mut receipt = sample_receipt();
+        receipt.runtime = Some(sample_service_runtime(3001));
+        receipt.service_termination = Some(ServiceTermination {
+            kind: ServiceTerminationKind::ServiceStopped,
+            cause: ServiceTerminationCause::Interrupted,
+            after_readiness: false,
+            target: String::from("container"),
+            container: String::from("ota-ephemeral-deadbeef"),
+            exit_code: Some(130),
+        });
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+
+        assert!(
+            rendered.contains("External:    http://127.0.0.1:3001/"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Internal:    http://0.0.0.0:3000/"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn execution_receipt_next_steps_filters_log_capture_warning() {
+        let mut receipt = sample_receipt();
+        receipt.next = Some(String::from(
+            "repair task `dev` and rerun `ota run dev`; run `ota tasks --use`; log capture failed: permission denied",
+        ));
+
+        let next_steps = execution_receipt_next_steps(&receipt);
+
+        assert_eq!(
+            next_steps,
+            vec![
+                String::from("repair task `dev` and rerun `ota run dev`"),
+                String::from("run `ota tasks --use`"),
+            ]
+        );
     }
 }

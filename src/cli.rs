@@ -7452,6 +7452,94 @@ tasks:
     }
 
     #[test]
+    fn receipt_history_json_preserves_status_and_remote_execution_fields() {
+        let fixture = ContractFixture::new_dir();
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
+            r#"
+{
+  "ok": false,
+  "mode": "receipt",
+  "summary": {
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 2
+  },
+  "receipt": {
+    "scope": "repo",
+    "contract": "./ota.yaml",
+    "status": "interrupted",
+    "backend": "remote",
+    "target": "sandbox-dev",
+    "provider": "daytona",
+    "context": "remote_app",
+    "lifecycle": "persistent",
+    "cwd": "/workspace/app"
+  },
+  "findings": []
+}
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", "--history", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["archives"][0]["status"], "interrupted");
+        assert_eq!(json["archives"][0]["backend"], "remote");
+        assert_eq!(json["archives"][0]["target"], "sandbox-dev");
+        assert_eq!(json["archives"][0]["provider"], "daytona");
+        assert_eq!(json["archives"][0]["context"], "remote_app");
+        assert_eq!(json["archives"][0]["lifecycle"], "persistent");
+        assert_eq!(json["archives"][0]["cwd"], "/workspace/app");
+    }
+
+    #[test]
+    fn receipt_history_text_reports_status_context_and_target() {
+        let fixture = ContractFixture::new_dir();
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
+            r#"
+{
+  "ok": false,
+  "mode": "receipt",
+  "summary": {
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 2
+  },
+  "receipt": {
+    "scope": "repo",
+    "contract": "./ota.yaml",
+    "status": "interrupted",
+    "backend": "remote",
+    "target": "sandbox-dev",
+    "provider": "daytona",
+    "context": "remote_app",
+    "lifecycle": "persistent",
+    "cwd": "/workspace/app"
+  },
+  "findings": []
+}
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--history", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("INTERRUPTED"), "{stdout}");
+        assert!(stdout.contains("Context: remote_app"), "{stdout}");
+        assert!(stdout.contains("Target: sandbox-dev"), "{stdout}");
+        assert!(stdout.contains("Provider: daytona"), "{stdout}");
+        assert!(stdout.contains("Cwd: /workspace/app"), "{stdout}");
+    }
+
+    #[test]
     fn receipt_diff_accepts_baselines_missing_supported_execution_field() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -8454,6 +8542,83 @@ project:
     }
 
     #[test]
+    fn receipt_json_diff_preserves_remote_execution_identity_fields() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "status": "interrupted",
+                    "backend": "remote",
+                    "context": "remote_app",
+                    "lifecycle": "persistent",
+                    "target": "sandbox-dev",
+                    "provider": "daytona",
+                    "cwd": "/workspace/app",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "INTERRUPTED"
+                        }
+                    ]
+                },
+                "findings": []
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            "latest",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["baseline"]["status"], "interrupted");
+        assert_eq!(json["baseline"]["backend"], "remote");
+        assert_eq!(json["baseline"]["context"], "remote_app");
+        assert_eq!(json["baseline"]["lifecycle"], "persistent");
+        assert_eq!(json["baseline"]["target"], "sandbox-dev");
+        assert_eq!(json["baseline"]["provider"], "daytona");
+        assert_eq!(json["baseline"]["cwd"], "/workspace/app");
+    }
+
+    #[test]
     fn receipt_text_diff_reports_change_sections() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -8536,6 +8701,78 @@ env:
         assert!(stdout.contains("Resolved Findings"));
         assert!(stdout.contains("Missing environment variable: OTA_BASELINE_REQUIRED"));
         assert!(stdout.contains("Missing tool: old-tool"));
+    }
+
+    #[test]
+    fn receipt_text_diff_reports_remote_execution_identity_fields() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "status": "interrupted",
+                    "backend": "remote",
+                    "context": "remote_app",
+                    "lifecycle": "persistent",
+                    "target": "sandbox-dev",
+                    "provider": "daytona",
+                    "cwd": "/workspace/app",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "INTERRUPTED"
+                        }
+                    ]
+                },
+                "findings": []
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Baseline:"), "{stdout}");
+        assert!(stdout.contains("Current:"), "{stdout}");
+        assert!(stdout.contains("Status: interrupted"), "{stdout}");
+        assert!(stdout.contains("Backend: remote"), "{stdout}");
+        assert!(stdout.contains("Context: remote_app"), "{stdout}");
+        assert!(stdout.contains("Lifecycle: persistent"), "{stdout}");
+        assert!(stdout.contains("Target: sandbox-dev"), "{stdout}");
+        assert!(stdout.contains("Provider: daytona"), "{stdout}");
+        assert!(stdout.contains("Cwd: /workspace/app"), "{stdout}");
     }
 
     #[test]

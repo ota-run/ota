@@ -28,7 +28,7 @@ use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
@@ -121,7 +121,7 @@ use crate::schema::{
 };
 use crate::update;
 use crate::validator::{
-    ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract,
+    ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract_with_path,
 };
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceContract, WorkspaceExecutionSummary, WorkspaceRepoRef,
@@ -136,9 +136,9 @@ mod init_starter;
 mod workspace_diagnostics;
 mod workspace_output;
 use self::execution_summary::{
-    append_runtime_listener_lines, primary_runtime_endpoint, render_execution_receipt_status,
-    render_execution_receipt_summary_block, render_execution_summary_status_value,
-    summary_detail_line, summary_has_status,
+    append_runtime_listener_lines, execution_receipt_next_steps, primary_runtime_endpoint,
+    render_execution_receipt_status, render_execution_receipt_summary_block,
+    render_execution_summary_status_value, summary_detail_line, summary_has_status,
 };
 use self::explain_output::{
     explain_action_count, explain_steps, explain_summary, render_explain_steps_text,
@@ -448,15 +448,13 @@ fn render_task_exit_failure_text(
     if let Some(excerpt) = excerpt {
         append_output_excerpt_section(&mut out, excerpt);
     }
-    if !next_steps.is_empty() {
-        append_error_detail_section(&mut out, "Next:", next_steps, None);
-    }
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
     {
         out.push_str(receipt_text);
     }
     append_summary_block(&mut out, summary_block);
+    append_post_summary_next_block(&mut out, next_steps);
     out
 }
 
@@ -562,6 +560,27 @@ fn append_summary_block(out: &mut String, summary_block: Option<&str>) {
             .join("\n");
         out.push_str(&summary_block);
     }
+}
+
+fn append_receipt_next_block(out: &mut String, receipt: &ExecutionReceipt) {
+    let next_steps = execution_receipt_next_steps(receipt);
+    if next_steps.is_empty() {
+        return;
+    }
+
+    append_post_summary_next_block(out, &next_steps);
+}
+
+fn append_post_summary_next_block(out: &mut String, next_steps: &[String]) {
+    if next_steps.is_empty() {
+        return;
+    }
+
+    let trailing_newlines = out.chars().rev().take_while(|ch| *ch == '\n').count();
+    for _ in trailing_newlines..2 {
+        out.push('\n');
+    }
+    append_error_detail_section(out, "Next:", next_steps, None);
 }
 
 fn split_embedded_next_block(message: &str) -> Option<(String, Vec<String>)> {
@@ -5003,7 +5022,7 @@ pub fn policy_review(
             );
         }
     };
-    if let Err(error) = validate_contract(&contract) {
+    if let Err(error) = validate_contract_with_path(&contract, Some(&contract_path)) {
         return finalize_debug(
             invalid_repo_contract_output(
                 "POLICY REVIEW",
@@ -9861,7 +9880,10 @@ fn render_detect_contract_preview(
 
     if let Err(error) = parse_contract_str(contract_path, &review_yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         return CommandOutput::failure(command_message_failure_text(
             "DETECT CONTRACT PREVIEW",
@@ -11439,7 +11461,9 @@ pub fn workspace_tasks(
                         }
                     };
 
-                    if let Err(errors) = validate_contract(&contract) {
+                    if let Err(errors) =
+                        validate_contract_with_path(&contract, Some(&repo.contract_path))
+                    {
                         return match format {
                             OutputFormat::Text => {
                                 CommandOutput::failure(workspace_repo_contract_invalid_text(
@@ -11665,7 +11689,12 @@ pub fn workspace_list(
                         } else {
                             match load_contract(&repo.contract_path) {
                                 Ok(contract) => {
-                                    if validate_contract(&contract).is_err() {
+                                    if validate_contract_with_path(
+                                        &contract,
+                                        Some(&repo.contract_path),
+                                    )
+                                    .is_err()
+                                    {
                                         (String::from("INVALID CONTRACT"), None)
                                     } else {
                                         let ready =
@@ -13052,8 +13081,10 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
 
     match parse_contract_str(&contract_path, &yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
-    {
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(&contract_path))
+                .map_err(|error| error.to_string())
+        }) {
         Ok(()) => {}
         Err(_) => {
             let mut stderr = format!(
@@ -13424,7 +13455,10 @@ fn write_detected_merge(
 
     if let Err(error) = parse_contract_str(&contract_path, &yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(&contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -13595,7 +13629,10 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
 
     if let Err(error) = parse_contract_str(&contract_path, &yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(&contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -14074,9 +14111,13 @@ fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, St
                     .unwrap_or_else(|| String::from("unknown")),
                 ok: archive.payload.ok,
                 contract: archive.payload.receipt.contract,
+                status: archive.payload.receipt.status,
                 backend: archive.payload.receipt.backend,
+                target: archive.payload.receipt.target,
+                provider: archive.payload.receipt.provider,
                 context: archive.payload.receipt.context,
                 lifecycle: archive.payload.receipt.lifecycle,
+                cwd: archive.payload.receipt.cwd,
                 summary: archive.payload.summary.into(),
             })
             .collect(),
@@ -14414,9 +14455,13 @@ fn build_repo_receipt_diff_report(
         contract_identity_details: baseline.record.payload.receipt.contract_identity,
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
+        status: baseline.record.payload.receipt.status,
         backend: baseline.record.payload.receipt.backend,
+        target: baseline.record.payload.receipt.target,
+        provider: baseline.record.payload.receipt.provider,
         context: baseline.record.payload.receipt.context,
         lifecycle: baseline.record.payload.receipt.lifecycle,
+        cwd: baseline.record.payload.receipt.cwd,
         summary: baseline.record.payload.summary.into(),
     };
     let current = ReceiptDiffSide {
@@ -14424,9 +14469,13 @@ fn build_repo_receipt_diff_report(
         contract: current_receipt.contract.clone(),
         contract_identity: Some(current_contract_identity),
         contract_identity_details: current_receipt.contract_identity.clone(),
+        status: current_receipt.status.clone(),
         backend: current_receipt.backend.clone(),
+        target: current_receipt.target.clone(),
+        provider: current_receipt.provider.clone(),
         context: current_receipt.context.clone(),
         lifecycle: current_receipt.lifecycle.clone(),
+        cwd: current_receipt.cwd.clone(),
         summary: current_receipt.summary,
     };
     let identity_changed = receipt_diff_identity_changed(
@@ -14606,9 +14655,13 @@ fn append_receipt_diff_side_section(
     stdout: &mut String,
     title: &str,
     contract: &str,
+    status: Option<&str>,
     backend: Option<&str>,
+    target: Option<&str>,
+    provider: Option<&str>,
     context: Option<&str>,
     lifecycle: Option<&str>,
+    cwd: Option<&str>,
     summary: &ExecutionReceiptSummary,
 ) {
     stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
@@ -14618,12 +14671,36 @@ fn append_receipt_diff_side_section(
         paint_key("Contract:"),
         compact_path(Path::new(contract), ".")
     ));
+    if let Some(status) = status {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Status:"),
+            status
+        ));
+    }
     if let Some(backend) = backend {
         stdout.push_str(&format!(
             "\n {}  {} {}",
             summary_bullet(),
             paint_key("Backend:"),
             backend
+        ));
+    }
+    if let Some(target) = target {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Target:"),
+            target
+        ));
+    }
+    if let Some(provider) = provider {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Provider:"),
+            provider
         ));
     }
     if let Some(context) = context {
@@ -14640,6 +14717,14 @@ fn append_receipt_diff_side_section(
             summary_bullet(),
             paint_key("Lifecycle:"),
             lifecycle
+        ));
+    }
+    if let Some(cwd) = cwd {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Cwd:"),
+            cwd
         ));
     }
     stdout.push_str(&format!(
@@ -14868,18 +14953,26 @@ fn render_repo_receipt_diff(
                 &mut stdout,
                 "Baseline",
                 &report.baseline.contract,
+                report.baseline.status.as_deref(),
                 report.baseline.backend.as_deref(),
+                report.baseline.target.as_deref(),
+                report.baseline.provider.as_deref(),
                 report.baseline.context.as_deref(),
                 report.baseline.lifecycle.as_deref(),
+                report.baseline.cwd.as_deref(),
                 &report.baseline.summary,
             );
             append_receipt_diff_side_section(
                 &mut stdout,
                 "Current",
                 &report.current.contract,
+                report.current.status.as_deref(),
                 report.current.backend.as_deref(),
+                report.current.target.as_deref(),
+                report.current.provider.as_deref(),
                 report.current.context.as_deref(),
                 report.current.lifecycle.as_deref(),
+                report.current.cwd.as_deref(),
                 &report.current.summary,
             );
             append_receipt_diff_grouped_section(
@@ -15131,7 +15224,10 @@ fn render_init(
 
     if let Err(error) = parse_contract_str(contract_path, &review_yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(contract_path))
+                .map_err(|error| error.to_string())
+        })
     {
         let error = if write && bootstrap && error.contains("missing field `project`") {
             format!(
@@ -15205,7 +15301,10 @@ fn render_init(
 
         if let Err(validation_error) = parse_contract_str(contract_path, &write_yaml)
             .map_err(|error| error.to_string())
-            .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+            .and_then(|contract| {
+                validate_contract_with_path(&contract, Some(contract_path))
+                    .map_err(|error| error.to_string())
+            })
         {
             let error = if bootstrap && validation_error.contains("missing field `project`") {
                 format!(
@@ -23492,6 +23591,8 @@ env:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -24838,6 +24939,8 @@ tasks:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -24957,6 +25060,8 @@ tasks:
             image: Some(String::from("node:24-bookworm")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -25043,6 +25148,8 @@ tasks:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-3ff7e125cddff1a4")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -25151,6 +25258,8 @@ tasks:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-3ff7e125cddff1a4")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -26128,6 +26237,110 @@ policies:
         assert!(native_lines[0].contains("tool docker (package: docker.io)"));
         assert_eq!(container_lines.len(), 1);
         assert!(container_lines[0].contains("tool node 22 via mise"));
+    }
+
+    fn write_cross_member_target_root_contract(root: &Path) -> crate::workspace::WorkspaceRepoRef {
+        fs::write(
+            root.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          member: api
+          task: dev
+          listener: http
+          address_view: host
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("api")).unwrap();
+        fs::write(
+            root.join("api").join("ota.yaml"),
+            r#"
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        crate::workspace::WorkspaceRepoRef {
+            name: String::from("monorepo"),
+            path: root.to_path_buf(),
+            contract_path: root.join("ota.yaml"),
+            required: true,
+            depends_on: Vec::new(),
+            present: true,
+            source_url: None,
+            source_ref: None,
+            policy_env: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn workspace_execution_plan_accepts_cross_member_service_member_targets() {
+        let fixture = TempDir::new().unwrap();
+        let repo = write_cross_member_target_root_contract(fixture.path());
+
+        let report = super::run_workspace_repo_execution_plan(
+            repo,
+            ExecutionOverrides::default(),
+            fixture.path(),
+        );
+
+        assert_eq!(report.status, "RESOLVED");
+        assert!(
+            report.error.is_none(),
+            "unexpected error: {:?}",
+            report.error
+        );
+    }
+
+    #[test]
+    fn workspace_check_accepts_cross_member_service_member_targets() {
+        let fixture = TempDir::new().unwrap();
+        let repo = write_cross_member_target_root_contract(fixture.path());
+
+        let report = super::check_workspace_repo(repo, fixture.path());
+
+        assert!(report.ok, "unexpected findings: {:?}", report.findings);
+        assert!(!report.findings.iter().any(|finding| {
+            finding.summary.contains("Invalid repo contract")
+                || finding.why.contains("service.member: api")
+        }));
     }
 
     #[test]
@@ -27150,6 +27363,8 @@ execution:
             DoctorMode::Remote,
         );
         assert_eq!(doctor_remote.context.as_deref(), Some("remote-db"));
+        assert_eq!(doctor_remote.provider.as_deref(), Some("ssh"));
+        assert_eq!(doctor_remote.cwd.as_deref(), Some("/tmp"));
 
         let provisioning_container = super::provisioning_phase_execution_context(
             &contract,
@@ -27180,6 +27395,8 @@ execution:
             },
         );
         assert_eq!(provisioning_remote.context.as_deref(), Some("remote-db"));
+        assert_eq!(provisioning_remote.provider.as_deref(), Some("ssh"));
+        assert_eq!(provisioning_remote.cwd.as_deref(), Some("/tmp"));
     }
 
     #[test]
@@ -27448,6 +27665,8 @@ execution:
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             container_memory_bytes: None,
             target: Some(String::from("ota-3ff7e125cddff1a4")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -27894,6 +28113,65 @@ tasks:
     }
 
     #[test]
+    fn run_execution_receipt_surfaces_remote_provider_target_and_cwd() {
+        let contract = parse_contract_str(
+            Path::new("/tmp/ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote-db
+  contexts:
+    remote-db:
+      backend: remote
+      remote:
+        provider: ssh
+        target: sandbox-dev
+        cwd: /workspace
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.backend.as_deref(), Some("remote"));
+        assert_eq!(receipt.provider.as_deref(), Some("ssh"));
+        assert_eq!(receipt.target.as_deref(), Some("sandbox-dev"));
+        assert_eq!(receipt.cwd.as_deref(), Some("/workspace"));
+
+        let rendered = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        assert!(rendered.contains("Provider:"));
+        assert!(rendered.contains("ssh"));
+        assert!(rendered.contains("Target:"));
+        assert!(rendered.contains("sandbox-dev"));
+        assert!(rendered.contains("Cwd:"));
+        assert!(rendered.contains("/workspace"));
+    }
+
+    #[test]
     fn run_execution_receipt_summary_omits_requested_task_placeholder_note() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -27974,11 +28252,13 @@ tasks:
                     mode: crate::schema::TaskTargetActivationMode::EnsureReady,
                     status: crate::runner::TaskTargetActivationStatus::StartedReady,
                 }),
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }],
             0,
@@ -28046,11 +28326,13 @@ tasks:
                     mode: crate::schema::TaskTargetActivationMode::EnsureReady,
                     status: crate::runner::TaskTargetActivationStatus::StartedReady,
                 }),
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }],
             0,
@@ -28206,11 +28488,13 @@ tasks:
                 override_input: Some(String::from("base_url")),
                 source: TaskTargetResolutionSource::TargetBinding,
                 activation: None,
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }]],
             &[],
@@ -28766,11 +29050,13 @@ tasks:
                 override_input: Some(String::from("base_url")),
                 source: TaskTargetResolutionSource::TargetBinding,
                 activation: None,
-                service_ref: crate::runner::TaskTargetResolutionServiceRef {
+                service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
+                    member: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
-                },
+                }),
+                url_ref: None,
                 effective_url: String::from("http://127.0.0.1:8080"),
             }]],
             &[],
@@ -28804,6 +29090,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -28853,6 +29141,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -28902,6 +29192,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -28930,6 +29222,282 @@ tasks:
         ));
         assert!(rendered.contains("Warning:"));
         assert!(rendered.contains("log capture failed: failed to create log directory"));
+        assert!(!rendered.contains("\nNext:"), "{rendered}");
+    }
+
+    #[test]
+    fn interrupted_pre_readiness_summary_surfaces_external_endpoint_without_summary_next() {
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3001,
+                    url: Some(String::from("http://127.0.0.1:3001/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("development")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:24-bookworm")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: Some(runtime),
+            logs: None,
+            service_termination: Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "dev",
+                "INTERRUPTED",
+                None,
+                Some(130),
+            )],
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: Some(String::from(
+                "inspect task `dev` output and rerun `ota run dev`",
+            )),
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("dev"),
+            "RUN SUMMARY",
+        ));
+        assert!(
+            rendered.contains("External:    http://127.0.0.1:3001/"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Note:        using a fresh container image for this run; service interrupted by user before Ota confirmed readiness"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("\nNext:"), "{rendered}");
+    }
+
+    #[test]
+    fn receipt_next_renders_after_summary_block() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "OK", None, Some(0))],
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: Some(String::from(
+                "run `ota tasks --use` to inspect runnable task usage",
+            )),
+        };
+
+        let mut rendered =
+            render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        super::append_receipt_next_block(&mut rendered, &receipt);
+        let rendered = strip_ansi_codes(&rendered);
+
+        assert!(rendered.contains("RUN SUMMARY"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "Status:      success\nNote:        running on the host environment\n\n\nNext: run `ota tasks --use` to inspect runnable task usage"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_task_failure_next_renders_after_summary_block() {
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &parse_contract_str(
+                Path::new("./ota.yaml"),
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo fetch
+  build:
+    run: cargo build
+    depends_on:
+      - setup
+"#,
+            )
+            .unwrap(),
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "setup",
+            "build",
+            None,
+            ExecutionOverrides::default(),
+            101,
+            "",
+            "error: could not find `Cargo.toml` in `/workspace` or any parent directory",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        depends_on task `setup` failed for requested task `build`",
+        ));
+
+        let summary = rendered.find("RUN SUMMARY").expect("summary");
+        let next = rendered.rfind("\nNext:").expect("next");
+        assert!(next > summary, "{rendered}");
+    }
+
+    #[test]
+    fn receipt_next_uses_shared_next_key_styling() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "dev", "OK", None, Some(0))],
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: Some(String::from(
+                "run `ota tasks --use` to inspect runnable task usage",
+            )),
+        };
+
+        let mut rendered =
+            render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        super::append_receipt_next_block(&mut rendered, &receipt);
+
+        assert!(rendered.contains(&super::paint_next_key()), "{rendered}");
+    }
+
+    #[test]
+    fn run_receipt_omits_legacy_container_context_name() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: rust:1.94-bookworm
+tasks:
+  build:
+    run: cargo build
+"#,
+        )
+        .unwrap();
+
+        let receipt = super::run_execution_receipt_with_shared(
+            &contract,
+            Path::new("./ota.yaml"),
+            ExecutionOverrides::default(),
+            "build",
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            &[],
+            None,
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("build"),
+            "RUN SUMMARY",
+        ));
+
+        assert!(!rendered.contains("Context:     app"), "{rendered}");
+        assert!(!rendered.contains("\nContext:"), "{rendered}");
     }
 
     #[test]
@@ -28947,6 +29515,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29050,6 +29620,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29100,6 +29672,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-persistent-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29142,6 +29716,289 @@ tasks:
         assert!(rendered.contains("Status:      failed"), "{rendered}");
         assert!(
             rendered.contains("persistent container recreated (execution shape changed); service stopped after readiness; container exited with status 1"),
+            "{rendered}"
+        );
+    }
+
+    fn run_output_regression_service_contract() -> crate::schema::Contract {
+        parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        )
+        .expect("contract should parse")
+    }
+
+    fn run_output_regression_service_runtime(
+        external_port: u16,
+    ) -> crate::runner::ResolvedTaskRuntime {
+        crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: external_port,
+                    url: Some(format!("http://127.0.0.1:{external_port}/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn run_output_regression_service_stopped_after_readiness_surfaces_ready_endpoint() {
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3000);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            137,
+            "",
+            "",
+            Some(&runtime),
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::OomKilled,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(137),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(
+            rendered.contains("became ready at `http://127.0.0.1:3000/` and then stopped"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:      failed"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_service_interrupt_after_readiness_uses_info_banner() {
+        let contract = run_output_regression_service_contract();
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("INFO  Service interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+        assert!(!rendered.contains("ERROR  Service stopped"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_service_interrupt_before_confirmation_surfaces_projected_endpoint() {
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3001);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            Some(&runtime),
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(
+            rendered.contains("INFO  Service interrupted before Ota confirmed readiness"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "projected host endpoint `http://127.0.0.1:3001/` was not yet reachable from the host when the run ended"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_service_interrupt_before_confirmation_surfaces_colima_hint() {
+        let _guard = env_mutex_lock();
+        unsafe {
+            env::set_var("OTA_TEST_DOCKER_CONTEXT", "colima");
+        }
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3001);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            Some(&runtime),
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Interrupted,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(130),
+            }),
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+        unsafe {
+            env::remove_var("OTA_TEST_DOCKER_CONTEXT");
+        }
+
+        assert!(
+            rendered.contains("docker is running through Colima; in this setup published ports may be reachable inside the Colima VM but not on macOS localhost"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("colima ssh -- curl http://127.0.0.1:3001/"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_output_regression_service_startup_failure_stays_task_failed() {
+        let contract = run_output_regression_service_contract();
+        let runtime = run_output_regression_service_runtime(3000);
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "startup failed",
+            Some(&runtime),
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
+        assert!(
+            !rendered.contains("INFO  Service interrupted"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Status:      failed"), "{rendered}");
+    }
+
+    #[test]
+    fn run_output_regression_non_service_interrupt_keeps_task_interrupted_banner() {
+        let contract = run_output_regression_service_contract();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("./ota.yaml"),
+            ExecutionOverrides::default(),
+            "dev",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("dev"),
+                exit_code: 130,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: Some(String::from(
+                    "task interrupted by user; ephemeral container cleanup failed for `ota-ephemeral-deadbeef`: engine unavailable",
+                )),
+            }],
+            &[],
+            &[],
+            130,
+            false,
+            Some(String::from("container")),
+            None,
+            Some(String::from(
+                "task interrupted by user; ephemeral container cleanup failed for `ota-ephemeral-deadbeef`: engine unavailable",
+            )),
+        );
+        let summary = render_execution_receipt_summary_block(&receipt, Some("dev"), "RUN SUMMARY");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            130,
+            "",
+            "",
+            None,
+            None,
+            true,
+            None,
+            &summary,
+        ));
+
+        assert!(rendered.contains("INFO  Task interrupted"), "{rendered}");
+        assert!(rendered.contains("Status:      interrupted"), "{rendered}");
+        assert!(
+            rendered.contains("task interrupted by user; ephemeral container cleanup failed"),
             "{rendered}"
         );
     }
@@ -29310,6 +30167,26 @@ tasks:
 "#,
         )
         .expect("contract should parse");
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(crate::runner::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: crate::schema::TaskRuntimeProtocol::Http,
+                bind: crate::runner::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: crate::runner::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3001,
+                    url: Some(String::from("http://127.0.0.1:3001/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
         let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
             &contract,
             Path::new("./ota.yaml"),
@@ -29321,7 +30198,7 @@ tasks:
             130,
             "",
             "",
-            None,
+            Some(&runtime),
             Some(&ServiceTermination {
                 kind: ServiceTerminationKind::ServiceStopped,
                 cause: ServiceTerminationCause::Interrupted,
@@ -29336,11 +30213,17 @@ tasks:
         ));
 
         assert!(
-            rendered.contains("INFO  Task interrupted before readiness"),
+            rendered.contains("INFO  Service interrupted before Ota confirmed readiness"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("service task `dev` was interrupted by user before it became ready"),
+            rendered.contains(
+                "service task `dev` was interrupted by user before Ota confirmed readiness"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("external endpoint was projected as `http://127.0.0.1:3001/`"),
             "{rendered}"
         );
         assert!(rendered.contains("Status:      interrupted"), "{rendered}");
@@ -29775,6 +30658,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29847,6 +30732,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29905,6 +30792,8 @@ tasks:
             image: Some(String::from("oven/bun:1.3.12-slim")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -29966,6 +30855,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30021,6 +30912,8 @@ tasks:
             image: None,
             container_memory_bytes: None,
             target: None,
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30076,6 +30969,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30136,6 +31031,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30478,6 +31375,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-container")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30613,6 +31512,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-container")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -30708,6 +31609,8 @@ tasks:
             image: Some(String::from("node:24")),
             container_memory_bytes: None,
             target: Some(String::from("ota-ephemeral-test")),
+            provider: None,
+            cwd: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
@@ -31100,6 +32003,37 @@ tasks:
             super::paint_code("ota up --mode container")
         )));
         assert!(strip_ansi_codes(&rendered).contains("Next: rerun `ota up --mode container`"));
+    }
+
+    #[test]
+    fn task_use_details_footer_styles_next_key() {
+        let rendered = super::task_use_details_footer(None, None);
+        assert!(rendered.contains(&super::paint_next_key()), "{rendered}");
+    }
+
+    #[test]
+    fn task_use_details_step_omits_repo_path_when_running_from_contract_root() {
+        let _guard = cwd_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .expect("write contract");
+
+        let cwd = env::current_dir().expect("current dir");
+        env::set_current_dir(repo.path()).expect("set current dir");
+
+        let step = super::task_use_details_step(Some(&contract_path), None);
+
+        env::set_current_dir(cwd).expect("restore current dir");
+
+        assert_eq!(step, "run `ota tasks --use` to inspect runnable task usage");
     }
 
     #[test]
@@ -31882,11 +32816,13 @@ fn command_for_repo_contract_target(command: &str, contract_path: &Path) -> Stri
 
 fn command_for_repo(command: &str, repo_path: &Path) -> String {
     if std::env::current_dir().ok().is_some_and(|current_dir| {
+        let current_dir = fs::canonicalize(&current_dir).unwrap_or(current_dir);
         let target = if repo_path.is_absolute() {
             repo_path.to_path_buf()
         } else {
             current_dir.join(repo_path)
         };
+        let target = fs::canonicalize(&target).unwrap_or(target);
         target == current_dir
     }) {
         command.to_string()
@@ -32430,7 +33366,9 @@ fn rewrite_workspace_repo_contracts(
 fn contract_yaml_valid(path: &Path, yaml: &str) -> bool {
     parse_contract_str(path, yaml)
         .map_err(|error| error.to_string())
-        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(path)).map_err(|error| error.to_string())
+        })
         .is_ok()
 }
 
@@ -32964,26 +33902,7 @@ fn run_single_contract_target_streaming(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                {
-                    let repo_dir = std::fs::canonicalize(&target.contract_path)
-                        .ok()
-                        .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
-                        .or_else(|| {
-                            target
-                                .contract_path
-                                .parent()
-                                .and_then(|p| std::fs::canonicalize(p).ok())
-                        })
-                        .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
-                        .map(|p| p.display().to_string());
-                    Some(format!(
-                        "run `ota tasks --use{}` to inspect runnable task usage",
-                        repo_dir
-                            .as_ref()
-                            .map(|d| format!(" {d}"))
-                            .unwrap_or_default()
-                    ))
-                },
+                Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
@@ -33007,6 +33926,7 @@ fn run_single_contract_target_streaming(
                 Some(task_name.as_str()),
                 "RUN SUMMARY",
             ));
+            append_receipt_next_block(&mut output, &receipt);
             Ok(output)
         }
         Ok(outcome) => {
@@ -33207,26 +34127,7 @@ fn run_single_contract_target_captured(
                 true,
                 outcome.target.clone(),
                 outcome.runtime.clone(),
-                {
-                    let repo_dir = std::fs::canonicalize(&target.contract_path)
-                        .ok()
-                        .and_then(|p| p.parent().map(|parent| parent.to_path_buf()))
-                        .or_else(|| {
-                            target
-                                .contract_path
-                                .parent()
-                                .and_then(|p| std::fs::canonicalize(p).ok())
-                        })
-                        .or_else(|| target.contract_path.parent().map(|p| p.to_path_buf()))
-                        .map(|p| p.display().to_string());
-                    Some(format!(
-                        "run `ota tasks --use{}` to inspect runnable task usage",
-                        repo_dir
-                            .as_ref()
-                            .map(|d| format!(" {d}"))
-                            .unwrap_or_default()
-                    ))
-                },
+                Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             receipt.service_termination = outcome.service_termination.clone();
             apply_interrupted_run_classification(
@@ -33250,6 +34151,7 @@ fn run_single_contract_target_captured(
                 Some(task_name.as_str()),
                 "RUN SUMMARY",
             ));
+            append_receipt_next_block(&mut output, &receipt);
             Ok(output)
         }
         Ok(outcome) => {
@@ -33626,6 +34528,7 @@ fn render_run_captured_failure_text(
                 requested_task_name,
                 member,
                 service_termination,
+                runtime,
                 summary,
                 receipt_text,
             );
@@ -33733,15 +34636,10 @@ fn render_task_interrupted_text(
         &[format!("task `{task_name}` was interrupted by user")],
         None,
     );
-    append_error_detail_section(
-        &mut out,
-        "Next:",
-        &[format!(
-            "rerun `{}` when ready",
-            repo_run_stream_command(requested_task_name, member)
-        )],
-        None,
-    );
+    let next_steps = [format!(
+        "rerun `{}` when ready",
+        repo_run_stream_command(requested_task_name, member)
+    )];
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
     {
@@ -33750,6 +34648,7 @@ fn render_task_interrupted_text(
     }
     let summary_override = summary_with_status_override(Some(summary_block), "interrupted");
     append_summary_block(&mut out, summary_override.as_deref());
+    append_post_summary_next_block(&mut out, &next_steps);
     out
 }
 
@@ -33759,13 +34658,14 @@ fn render_service_interrupted_text(
     requested_task_name: &str,
     member: Option<&str>,
     service_termination: &ServiceTermination,
+    runtime: Option<&ResolvedTaskRuntime>,
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> String {
     let title = if service_termination.after_readiness {
         "Service interrupted"
     } else {
-        "Task interrupted before readiness"
+        "Service interrupted before Ota confirmed readiness"
     };
     let mut out = format!(
         "{}  {}",
@@ -33783,8 +34683,8 @@ fn render_service_interrupted_text(
         paint_code(task_name)
     ));
     let subject = service_termination_subject(service_termination);
-    let why_lines = vec![if !service_termination.after_readiness {
-        format!("service task `{task_name}` was interrupted by user before it became ready")
+    let mut why_lines = vec![if !service_termination.after_readiness {
+        format!("service task `{task_name}` was interrupted by user before Ota confirmed readiness")
     } else if service_termination.exit_code == Some(0) {
         format!("{subject} was interrupted by user")
     } else {
@@ -33793,12 +34693,44 @@ fn render_service_interrupted_text(
             service_termination.exit_code.unwrap_or(130)
         )
     }];
+    if !service_termination.after_readiness
+        && let Some(endpoint) = runtime.and_then(primary_runtime_endpoint)
+    {
+        why_lines.push(format!(
+            "projected host endpoint `{endpoint}` was not yet reachable from the host when the run ended"
+        ));
+        if current_docker_context_is_colima() {
+            why_lines.push(String::from(
+                "docker is running through Colima; in this setup published ports may be reachable inside the Colima VM but not on macOS localhost",
+            ));
+        }
+    }
     append_error_detail_section(&mut out, "Why:", &why_lines, None);
-    let next_steps = vec![format!(
-        "rerun `{}` when ready",
-        repo_run_stream_command(requested_task_name, member)
-    )];
-    append_error_detail_section(&mut out, "Next:", &next_steps, None);
+    let mut next_steps = vec![if !service_termination.after_readiness {
+        match runtime.and_then(primary_runtime_endpoint) {
+            Some(endpoint) => format!(
+                "rerun `{}` and wait for Ota to confirm the projected host endpoint at `{endpoint}`",
+                repo_run_stream_command(requested_task_name, member)
+            ),
+            None => format!(
+                "rerun `{}` and wait for Ota to confirm readiness",
+                repo_run_stream_command(requested_task_name, member)
+            ),
+        }
+    } else {
+        format!(
+            "rerun `{}` for live service output",
+            repo_run_stream_command(requested_task_name, member)
+        )
+    }];
+    if !service_termination.after_readiness
+        && current_docker_context_is_colima()
+        && let Some(endpoint) = runtime.and_then(primary_runtime_endpoint)
+    {
+        next_steps.push(format!(
+            "if you are using Colima, check `colima ssh -- curl {endpoint}` or enable host-reachable port forwarding in Colima"
+        ));
+    }
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
     {
@@ -33814,21 +34746,46 @@ fn render_service_interrupted_text(
         .as_deref(),
         &service_termination.container,
     );
-    if let Some(summary_override) = summary_override {
-        out.push('\n');
-        out.push_str(&summary_override);
-    } else {
-        out.push('\n');
-        out.push_str(summary_block);
-    }
+    append_summary_block(
+        &mut out,
+        summary_override.as_deref().or(Some(summary_block)),
+    );
+    append_post_summary_next_block(&mut out, &next_steps);
     out
+}
+
+fn current_docker_context_is_colima() -> bool {
+    if let Ok(value) = env::var("OTA_TEST_DOCKER_CONTEXT") {
+        return value.trim().eq_ignore_ascii_case("colima");
+    }
+    if env::var_os("DOCKER_HOST")
+        .and_then(|value| value.into_string().ok())
+        .is_some_and(|value| value.contains(".colima/"))
+    {
+        return true;
+    }
+
+    static DETECTED: OnceLock<bool> = OnceLock::new();
+    *DETECTED.get_or_init(|| {
+        Command::new("docker")
+            .args(["context", "show"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .eq_ignore_ascii_case("colima")
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn service_interrupted_summary_note(service_termination: &ServiceTermination) -> String {
     if service_termination.after_readiness {
         String::from("service interrupted by user")
     } else {
-        String::from("service interrupted by user before readiness")
+        String::from("service interrupted by user before Ota confirmed readiness")
     }
 }
 
@@ -33917,7 +34874,6 @@ fn render_service_stopped_failure_text(
     next_steps.push(format!(
         "or run `ota run {requested_task_name} --mode native` if native execution is supported"
     ));
-    append_error_detail_section(&mut out, "Next:", &next_steps, None);
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
     {
@@ -33932,13 +34888,11 @@ fn render_service_stopped_failure_text(
         .as_deref(),
         &service_termination.container,
     );
-    if let Some(summary_override) = summary_override {
-        out.push('\n');
-        out.push_str(&summary_override);
-    } else {
-        out.push('\n');
-        out.push_str(summary_block);
-    }
+    append_summary_block(
+        &mut out,
+        summary_override.as_deref().or(Some(summary_block)),
+    );
+    append_post_summary_next_block(&mut out, &next_steps);
     out
 }
 
@@ -33955,7 +34909,7 @@ fn service_termination_summary_note(service_termination: &ServiceTermination) ->
             if service_termination.after_readiness {
                 String::from("service interrupted by user")
             } else {
-                String::from("service interrupted by user before readiness")
+                String::from("service interrupted by user before Ota confirmed readiness")
             }
         }
         ServiceTerminationCause::ExitedNonZero => {
@@ -34258,7 +35212,6 @@ fn render_host_publication_failure_text(
         }
     }
     next_steps.push(format!("or free host port `{}`", conflict.port));
-    append_error_detail_section(&mut out, "Next:", &next_steps, None);
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
     {
@@ -34276,6 +35229,7 @@ fn render_host_publication_failure_text(
     };
     let summary_override = summary_with_note_override(summary_block, &summary_note);
     append_summary_block(&mut out, summary_override.as_deref());
+    append_post_summary_next_block(&mut out, &next_steps);
     out
 }
 
@@ -34391,7 +35345,8 @@ fn task_use_details_step(contract_path: Option<&Path>, member: Option<&str>) -> 
 
 fn task_use_details_footer(contract_path: Option<&Path>, member: Option<&str>) -> String {
     format!(
-        "\nNext: {}",
+        "\n{} {}",
+        paint_next_key(),
         stylize_inline_text(&task_use_details_step(contract_path, member))
     )
 }
@@ -35433,10 +36388,21 @@ fn run_execution_receipt_with_shared(
             Backend::Native | Backend::Remote => None,
         },
     };
-    let context = match resolved_backend.as_ref() {
-        Some(ResolvedExecutionBackend::Container { context_name, .. }) => context_name.clone(),
-        _ => effective.context_name.map(str::to_string),
-    };
+    let context = reported_task_context_for_backend(contract, task_name, backend).map(str::to_string);
+    let provider = resolved_backend.as_ref().and_then(|backend| match backend {
+        ResolvedExecutionBackend::Remote { provider, .. }
+        | ResolvedExecutionBackend::BackendProvider { provider, .. } => Some(provider.clone()),
+        ResolvedExecutionBackend::Native { .. } | ResolvedExecutionBackend::Container { .. } => {
+            None
+        }
+    });
+    let cwd = resolved_backend.as_ref().and_then(|backend| match backend {
+        ResolvedExecutionBackend::Remote { cwd, .. }
+        | ResolvedExecutionBackend::BackendProvider { cwd, .. } => cwd.clone(),
+        ResolvedExecutionBackend::Native { .. } | ResolvedExecutionBackend::Container { .. } => {
+            None
+        }
+    });
     let target = target.or_else(|| effective_task_execution_target(contract_path, effective));
     let effective_task_env = match (resolved_backend.as_ref(), contract.tasks.get(task_name)) {
         (Some(resolved_backend), Some(task)) => Some(effective_task_env_for_backend(
@@ -35515,6 +36481,8 @@ fn run_execution_receipt_with_shared(
         image,
         container_memory_bytes,
         target,
+        provider,
+        cwd,
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -36936,8 +37904,10 @@ fn validate_declared_monorepo_members(path: &Path) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     for member in &workspace.members {
         match load_contract_for_member(path, member) {
-            Ok((contract, _)) => {
-                if let Err(validation_errors) = validate_contract(&contract) {
+            Ok((contract, contract_path)) => {
+                if let Err(validation_errors) =
+                    validate_contract_with_path(&contract, Some(&contract_path))
+                {
                     for error in validation_errors.errors() {
                         errors.push(format!("monorepo member `{member}`: {error}"));
                     }
@@ -37476,6 +38446,7 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
         result.task.as_deref().or(Some(result.phase)),
         "UP SUMMARY",
     ));
+    append_receipt_next_block(&mut stdout, &result.receipt);
     stdout
 }
 
@@ -38834,6 +39805,7 @@ fn backup_label() -> String {
 fn error_key(key: &str) -> String {
     match key {
         "Why:" => paint_why_key(),
+        "Next:" => paint_next_key(),
         _ => paint(key, "1;38;2;255;150;150"),
     }
 }
@@ -39432,6 +40404,8 @@ struct PhaseExecutionContext {
     image: Option<String>,
     container_memory_bytes: Option<u64>,
     target: Option<String>,
+    provider: Option<String>,
+    cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -39475,11 +40449,19 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     contract_identity: Option<ContractIdentity>,
     #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
     backend: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
     #[serde(default)]
     context: Option<String>,
     #[serde(default)]
     lifecycle: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39741,6 +40723,8 @@ fn repo_execution_receipt(
         image: context.image,
         container_memory_bytes: context.container_memory_bytes,
         target: context.target,
+        provider: context.provider,
+        cwd: context.cwd,
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -39872,6 +40856,14 @@ fn phase_execution_target(
     }
 }
 
+fn phase_execution_provider(contract: &Contract, context_name: Option<&str>) -> Option<String> {
+    execution_context_remote_backend(contract, context_name).map(|remote| remote.provider.clone())
+}
+
+fn phase_execution_cwd(contract: &Contract, context_name: Option<&str>) -> Option<String> {
+    execution_context_remote_backend(contract, context_name).and_then(|remote| remote.cwd.clone())
+}
+
 fn effective_phase_container_backend<'a>(
     contract: &'a Contract,
     backend: Backend,
@@ -39913,6 +40905,8 @@ fn selected_phase_execution_context(
             overrides.memory,
         ),
         target: phase_execution_target(contract, path, backend, lifecycle, context.as_deref()),
+        provider: phase_execution_provider(contract, context.as_deref()),
+        cwd: phase_execution_cwd(contract, context.as_deref()),
     }
 }
 
@@ -39949,6 +40943,8 @@ fn task_phase_execution_context(
     target: Option<String>,
 ) -> PhaseExecutionContext {
     let effective = effective_task_execution(contract, task_name, overrides);
+    let provider = effective.remote.map(|remote| remote.provider.clone());
+    let cwd = effective.remote.and_then(|remote| remote.cwd.clone());
     let mut context = PhaseExecutionContext {
         backend: Some(format_backend(effective.backend).to_string()),
         context: reported_task_context_for_backend(contract, task_name, effective.backend)
@@ -39968,6 +40964,8 @@ fn task_phase_execution_context(
             Backend::Native | Backend::Remote => None,
         },
         target: effective_task_execution_target(path, effective),
+        provider,
+        cwd,
     };
     if target.is_some() {
         context.target = target;
@@ -40012,6 +41010,8 @@ fn doctor_phase_execution_context(
                     Some(Lifecycle::Ephemeral),
                     context.as_deref(),
                 ),
+                provider: None,
+                cwd: None,
             }
         }
         DoctorMode::Remote => {
@@ -40026,6 +41026,8 @@ fn doctor_phase_execution_context(
                     None,
                     context.as_deref(),
                 ),
+                provider: phase_execution_provider(contract, context.as_deref()),
+                cwd: phase_execution_cwd(contract, context.as_deref()),
                 ..PhaseExecutionContext::default()
             }
         }
@@ -40098,6 +41100,8 @@ fn provisioning_phase_execution_context(
                         None
                     }
                 }),
+                provider: None,
+                cwd: None,
             }
         }
         ProvisioningExecutionTarget::Remote { context_name, .. } => {
@@ -40114,6 +41118,8 @@ fn provisioning_phase_execution_context(
                     None,
                     context.as_deref(),
                 ),
+                provider: phase_execution_provider(contract, context.as_deref()),
+                cwd: phase_execution_cwd(contract, context.as_deref()),
                 ..PhaseExecutionContext::default()
             }
         }
@@ -40217,11 +41223,10 @@ fn render_repo_receipt_history(
                     stdout.push_str(&format!(
                         "\n\n{}. {} {}",
                         index + 1,
-                        render_execution_receipt_status(if archive.ok {
-                            "READY"
-                        } else {
-                            "NOT READY"
-                        }),
+                        render_execution_receipt_status(receipt_history_status_label(
+                            archive.status.as_deref(),
+                            archive.ok,
+                        )),
                         archive.archived_at
                     ));
                     stdout.push_str(&format!(
@@ -40229,11 +41234,23 @@ fn render_repo_receipt_history(
                         paint_key("Contract:"),
                         compact_path(Path::new(&archive.contract), ".")
                     ));
+                    if let Some(context) = archive.context.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Context:"), context));
+                    }
                     if let Some(backend) = archive.backend.as_deref() {
                         stdout.push_str(&format!("\n   {} {}", paint_key("Backend:"), backend));
                     }
+                    if let Some(target) = archive.target.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Target:"), target));
+                    }
+                    if let Some(provider) = archive.provider.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Provider:"), provider));
+                    }
                     if let Some(lifecycle) = archive.lifecycle.as_deref() {
                         stdout.push_str(&format!("\n   {} {}", paint_key("Lifecycle:"), lifecycle));
+                    }
+                    if let Some(cwd) = archive.cwd.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Cwd:"), cwd));
                     }
                     stdout.push_str(&format!(
                         "\n   {} errors={}, warnings={}, info={}",
@@ -40284,6 +41301,25 @@ fn render_repo_receipt_history(
             stderr: None,
             exit_code: 0,
         },
+    }
+}
+
+fn receipt_history_status_label<'a>(status: Option<&'a str>, ok: bool) -> &'a str {
+    match status.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("success") => "READY",
+        Some("interrupted") => "INTERRUPTED",
+        Some("blocked") => "BLOCKED",
+        Some("preview") => "PREVIEW",
+        Some("skipped") => "SKIPPED",
+        Some("failed") => "FAILED",
+        Some(other) => other,
+        None => {
+            if ok {
+                "READY"
+            } else {
+                "NOT READY"
+            }
+        }
     }
 }
 
@@ -40401,6 +41437,8 @@ fn workspace_up_receipt(
         image: None,
         container_memory_bytes: None,
         target: None,
+        provider: None,
+        cwd: None,
         acquired: Vec::new(),
         env: env_sources
             .iter()
@@ -40479,6 +41517,8 @@ fn workspace_status_receipt(
         image: None,
         container_memory_bytes: None,
         target: None,
+        provider: None,
+        cwd: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
@@ -40560,6 +41600,8 @@ fn workspace_run_receipt(
         image: None,
         container_memory_bytes: None,
         target: None,
+        provider: None,
+        cwd: None,
         acquired: Vec::new(),
         env: env_sources
             .iter()
@@ -43683,7 +44725,7 @@ fn run_workspace_repo_execution_plan(
                 Some(&repo.policy_env),
             );
 
-            if let Err(errors) = validate_contract(&contract) {
+            if let Err(errors) = validate_contract_with_path(&contract, Some(&repo.contract_path)) {
                 let error = errors
                     .errors()
                     .iter()
@@ -44269,7 +45311,7 @@ fn run_workspace_repo_task(
     match load_contract(&repo.contract_path) {
         Ok(contract) => {
             let task_command = contract.tasks.get(task).and_then(task_command_preview);
-            if let Err(error) = validate_contract(&contract) {
+            if let Err(error) = validate_contract_with_path(&contract, Some(&repo.contract_path)) {
                 return WorkspaceRepoRunReport {
                     name: repo.name,
                     path: path_display,
@@ -44642,7 +45684,7 @@ fn check_workspace_repo(
 
     match load_contract(&repo.contract_path) {
         Ok(contract) => {
-            if let Err(error) = validate_contract(&contract) {
+            if let Err(error) = validate_contract_with_path(&contract, Some(&repo.contract_path)) {
                 return crate::workspace::WorkspaceRepoDoctorReport {
                     name: repo.name,
                     path: repo.path.display().to_string(),
@@ -44960,7 +46002,8 @@ fn load_and_validate_target(
         Some(member) => load_contract_for_member(path, member).map_err(ContractProblem::Load)?,
         None => load_contract_auto(path).map_err(ContractProblem::Load)?,
     };
-    validate_contract(&contract).map_err(ContractProblem::Validation)?;
+    validate_contract_with_path(&contract, Some(&contract_path))
+        .map_err(ContractProblem::Validation)?;
     Ok(LoadedContractTarget {
         contract,
         contract_path,

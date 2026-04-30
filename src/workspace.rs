@@ -42,7 +42,7 @@ use crate::runner::{
     load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{Contract, ExtensionSpec};
-use crate::validator::validate_contract;
+use crate::validator::validate_contract_with_path;
 
 pub const DEFAULT_WORKSPACE_FILE: &str = "ota.workspace.yaml";
 
@@ -416,7 +416,9 @@ pub fn validate_workspace_contract(
 
         match load_contract(&repo.contract_path) {
             Ok(repo_contract) => {
-                if let Err(error) = validate_contract(&repo_contract) {
+                if let Err(error) =
+                    validate_contract_with_path(&repo_contract, Some(&repo.contract_path))
+                {
                     for validation_error in error.errors() {
                         errors.push(WorkspaceValidationError::new(format!(
                             "workspace repo `{}` contract `{}` is invalid: {}",
@@ -770,7 +772,7 @@ pub(crate) fn diagnose_workspace_repo(
     let mut provisioning = None;
     let mut adapter_bootstrap = None;
     let findings = match load_contract(&repo.contract_path) {
-        Ok(contract) => match validate_contract(&contract) {
+        Ok(contract) => match validate_contract_with_path(&contract, Some(&repo.contract_path)) {
             Ok(()) => {
                 execution = WorkspaceExecutionSummary::from_contract_with_policy(
                     &contract,
