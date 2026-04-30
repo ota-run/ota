@@ -276,6 +276,7 @@ fn activation_loader_label(
     let state = match mode {
         TaskTargetActivationMode::Manual => "active",
         TaskTargetActivationMode::EnsureStarted => "started",
+        TaskTargetActivationMode::RestartReady => "ready after restart",
         TaskTargetActivationMode::EnsureReady => "ready",
         TaskTargetActivationMode::EnsureRunning => "running",
     };
@@ -1216,6 +1217,7 @@ pub enum TaskTargetActivationStatus {
     SkippedExplicitOverride,
     ReusedStarted,
     StartedStarted,
+    RestartedReady,
     ReusedReady,
     StartedReady,
     ReusedRunning,
@@ -3671,6 +3673,7 @@ struct ActivationStartedProducerCleanup {
     task_name: String,
     backend: ResolvedExecutionBackend,
     runtime: Option<TaskRuntimeSpec>,
+    command: Option<String>,
     working_dir: PathBuf,
     remove_backend_on_interrupt: bool,
 }
@@ -4742,6 +4745,11 @@ fn execute_task_command(
             provider_command,
             target,
             cwd.as_deref(),
+            if matches!(mode, TaskExecutionMode::CaptureActivation) {
+                BackendProviderCommandContext::Activation
+            } else {
+                BackendProviderCommandContext::Run
+            },
             mode,
         ),
     }
@@ -6430,6 +6438,7 @@ fn apply_task_target_activations(
                 status: TaskTargetActivationStatus::Manual,
             },
             TaskTargetActivationMode::EnsureStarted
+            | TaskTargetActivationMode::RestartReady
             | TaskTargetActivationMode::EnsureReady
             | TaskTargetActivationMode::EnsureRunning => {
                 let status = match resolution.source {
@@ -6558,6 +6567,7 @@ fn ensure_target_producer_state(
         ExecutionOverrides::default(),
         Some(producer_contract_path.as_path()),
     )?;
+    let producer_backend_kind = resolved_execution_backend_kind(&producer_backend);
     let producer_task = producer_contract.tasks.get(producer_task_name).ok_or_else(|| {
         RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
@@ -6570,8 +6580,24 @@ fn ensure_target_producer_state(
             },
         }
     })?;
+    let producer_task_command = producer_task
+        .resolved_execution_for_backend(producer_backend_kind, current_os)
+        .map(|execution| execution.body.to_string())
+        .ok_or_else(|| RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!(
+                "target activation `{}` requires producer task `{producer_task_name}` to declare one execution body for backend `{}`",
+                activation_mode.as_str(),
+                match producer_backend_kind {
+                    Backend::Native => "native",
+                    Backend::Container => "container",
+                    Backend::Remote => "remote",
+                }
+            ),
+        })?;
     let producer_runtime_spec = producer_task
-        .service_runtime_for_backend(resolved_execution_backend_kind(&producer_backend))
+        .service_runtime_for_backend(producer_backend_kind)
         .ok_or_else(|| RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
             target: target_name.to_string(),
@@ -6622,13 +6648,15 @@ fn ensure_target_producer_state(
         _ => None,
     };
 
-    if readiness_target_observed(&readiness_target) {
+    let producer_initially_observed = readiness_target_observed(&readiness_target);
+    if producer_initially_observed && activation_mode != TaskTargetActivationMode::RestartReady {
         if let Some(loader) = loader.take() {
             loader.stop();
         }
         let reused_status = match activation_mode {
             TaskTargetActivationMode::Manual => TaskTargetActivationStatus::Manual,
             TaskTargetActivationMode::EnsureStarted => TaskTargetActivationStatus::ReusedStarted,
+            TaskTargetActivationMode::RestartReady => TaskTargetActivationStatus::RestartedReady,
             TaskTargetActivationMode::EnsureReady => TaskTargetActivationStatus::ReusedReady,
             TaskTargetActivationMode::EnsureRunning => TaskTargetActivationStatus::ReusedRunning,
         };
@@ -6638,7 +6666,6 @@ fn ensure_target_producer_state(
         return Ok(reused_status);
     }
 
-    let producer_backend_kind = resolved_execution_backend_kind(&producer_backend);
     let producer_activation_mode = match &producer_backend {
         ResolvedExecutionBackend::Native { .. } => {
             #[cfg(not(unix))]
@@ -6666,14 +6693,41 @@ fn ensure_target_producer_state(
             if let Some(loader) = loader.take() {
                 loader.stop();
             }
-            return Err(RunError::TaskTargetResolutionFailed {
-                task: task_name.to_string(),
-                target: target_name.to_string(),
-                details: format!(
-                    "target activation `{}` currently supports built-in remote providers only; `{producer_task_name}` resolves through backend provider `{provider}`",
-                    activation_mode.as_str()
-                ),
-            });
+            if service.address_view != TaskTargetAddressView::Host {
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `{}` currently supports backend provider `{provider}` only for `address_view: host`",
+                        activation_mode.as_str()
+                    ),
+                });
+            }
+            let Some(extension) = backend_provider_extension(&producer_contract, provider) else {
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `{}` cannot use backend provider `{provider}` because it is not declared in ota.yaml",
+                        activation_mode.as_str()
+                    ),
+                });
+            };
+            if !extension
+                .activation
+                .as_ref()
+                .is_some_and(|activation| activation.provider_managed_cleanup)
+            {
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `{}` requires backend provider `{provider}` to declare `activation.provider_managed_cleanup: true`",
+                        activation_mode.as_str()
+                    ),
+                });
+            }
+            TaskExecutionMode::CaptureActivation
         }
         ResolvedExecutionBackend::Container { .. } => {
             if let Some(loader) = loader.take() {
@@ -6709,6 +6763,18 @@ fn ensure_target_producer_state(
                 activation_mode.as_str()
             ),
         });
+    }
+    if activation_mode == TaskTargetActivationMode::RestartReady && producer_initially_observed {
+        restart_target_producer(
+            task_name,
+            target_name,
+            producer_task_name,
+            &producer_backend,
+            producer_runtime_spec,
+            Some(producer_task_command.as_str()),
+            producer_working_dir.as_path(),
+            &readiness_target,
+        )?;
     }
     let remove_backend_on_interrupt =
         activation_started_producer_requires_backend_cleanup_on_interrupt(
@@ -6751,13 +6817,31 @@ fn ensure_target_producer_state(
             task_name: producer_task_name.to_string(),
             backend: producer_backend.clone(),
             runtime: Some(producer_runtime_spec.clone()),
+            command: matches!(
+                producer_backend,
+                ResolvedExecutionBackend::BackendProvider { .. }
+            )
+            .then_some(producer_task_command.clone()),
             working_dir: producer_working_dir.clone(),
             remove_backend_on_interrupt,
         },
     );
+    let backend_provider_handoff = matches!(
+        producer_backend,
+        ResolvedExecutionBackend::BackendProvider { .. }
+    );
 
     if activation_mode == TaskTargetActivationMode::EnsureStarted {
         if let Ok((result, producer_state)) = result_rx.try_recv() {
+            if backend_provider_handoff && matches!(result, Ok(0)) {
+                if let Some(loader) = loader.take() {
+                    loader.stop();
+                }
+                state
+                    .ensured_target_producers
+                    .insert(producer_key, TaskTargetActivationStatus::StartedStarted);
+                return Ok(TaskTargetActivationStatus::StartedStarted);
+            }
             if let Some(loader) = loader.take() {
                 loader.stop();
             }
@@ -6786,6 +6870,7 @@ fn ensure_target_producer_state(
         return Ok(TaskTargetActivationStatus::StartedStarted);
     }
 
+    let mut result_rx = Some(result_rx);
     loop {
         if readiness_target_observed(&readiness_target) {
             if let Some(loader) = loader.take() {
@@ -6795,6 +6880,9 @@ fn ensure_target_producer_state(
                 TaskTargetActivationMode::Manual => TaskTargetActivationStatus::Manual,
                 TaskTargetActivationMode::EnsureStarted => {
                     TaskTargetActivationStatus::StartedStarted
+                }
+                TaskTargetActivationMode::RestartReady => {
+                    TaskTargetActivationStatus::RestartedReady
                 }
                 TaskTargetActivationMode::EnsureReady => TaskTargetActivationStatus::StartedReady,
                 TaskTargetActivationMode::EnsureRunning => {
@@ -6807,25 +6895,31 @@ fn ensure_target_producer_state(
             return Ok(started_status);
         }
 
-        if let Ok((result, producer_state)) = result_rx.try_recv() {
-            if let Some(loader) = loader.take() {
-                loader.stop();
+        if let Some(receiver) = result_rx.as_ref()
+            && let Ok((result, producer_state)) = receiver.try_recv()
+        {
+            if backend_provider_handoff && matches!(result, Ok(0)) {
+                result_rx = None;
+            } else {
+                if let Some(loader) = loader.take() {
+                    loader.stop();
+                }
+                state
+                    .activation_started_producers
+                    .remove(&(service_member.clone(), producer_task_name.to_string()));
+                let producer_label = match service_member.as_deref() {
+                    Some(member) => format!("{member}:{producer_task_name}"),
+                    None => producer_task_name.to_string(),
+                };
+                return Err(target_activation_producer_failure(
+                    task_name,
+                    target_name,
+                    activation_mode,
+                    producer_label.as_str(),
+                    result,
+                    producer_state,
+                ));
             }
-            state
-                .activation_started_producers
-                .remove(&(service_member.clone(), producer_task_name.to_string()));
-            let producer_label = match service_member.as_deref() {
-                Some(member) => format!("{member}:{producer_task_name}"),
-                None => producer_task_name.to_string(),
-            };
-            return Err(target_activation_producer_failure(
-                task_name,
-                target_name,
-                activation_mode,
-                producer_label.as_str(),
-                result,
-                producer_state,
-            ));
         }
 
         if RUN_INTERRUPT_REQUESTED.load(Ordering::Relaxed) {
@@ -6833,27 +6927,51 @@ fn ensure_target_producer_state(
                 loader.stop();
             }
             state.interrupted = true;
-            let cleanup_note = match result_rx.recv_timeout(Duration::from_secs(5)) {
-                Ok((_result, producer_state)) => {
-                    state
-                        .activation_started_producers
-                        .remove(&(service_member.clone(), producer_task_name.to_string()));
-                    merge_execution_note(
-                        producer_state.execution_note,
-                        cleanup_activation_started_producer_and_note(
+            let cleanup_note = match result_rx.take() {
+                Some(receiver) => match receiver.recv_timeout(Duration::from_secs(5)) {
+                    Ok((_result, producer_state)) => {
+                        state
+                            .activation_started_producers
+                            .remove(&(service_member.clone(), producer_task_name.to_string()));
+                        merge_execution_note(
+                            producer_state.execution_note,
+                            cleanup_activation_started_producer_and_note(
+                                producer_task_name,
+                                &producer_backend,
+                                Some(producer_runtime_spec),
+                                Some(producer_task_command.as_str()),
+                                producer_working_dir.as_path(),
+                                remove_backend_on_interrupt,
+                            ),
+                        )
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        let note = cleanup_activation_started_producer_and_note(
                             producer_task_name,
                             &producer_backend,
                             Some(producer_runtime_spec),
+                            Some(producer_task_command.as_str()),
                             producer_working_dir.as_path(),
                             remove_backend_on_interrupt,
-                        ),
-                    )
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
+                        );
+                        state
+                            .activation_started_producers
+                            .remove(&(service_member.clone(), producer_task_name.to_string()));
+                        note
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        state
+                            .activation_started_producers
+                            .remove(&(service_member.clone(), producer_task_name.to_string()));
+                        None
+                    }
+                },
+                None => {
                     let note = cleanup_activation_started_producer_and_note(
                         producer_task_name,
                         &producer_backend,
                         Some(producer_runtime_spec),
+                        Some(producer_task_command.as_str()),
                         producer_working_dir.as_path(),
                         remove_backend_on_interrupt,
                     );
@@ -6861,12 +6979,6 @@ fn ensure_target_producer_state(
                         .activation_started_producers
                         .remove(&(service_member.clone(), producer_task_name.to_string()));
                     note
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    state
-                        .activation_started_producers
-                        .remove(&(service_member.clone(), producer_task_name.to_string()));
-                    None
                 }
             };
             return Err(RunError::TaskTargetResolutionFailed {
@@ -6904,6 +7016,7 @@ fn cleanup_interrupted_activation_started_producers_and_note(
             cleanup.task_name.as_str(),
             &cleanup.backend,
             cleanup.runtime.as_ref(),
+            cleanup.command.as_deref(),
             cleanup.working_dir.as_path(),
             cleanup.remove_backend_on_interrupt,
         ) {
@@ -6920,8 +7033,82 @@ fn cleanup_interrupted_activation_started_producers_and_note(
     }
 }
 
+fn wait_for_readiness_target_to_clear(target: &RuntimeReadinessTarget) -> bool {
+    for _ in 0..30 {
+        if !readiness_target_observed(target) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    !readiness_target_observed(target)
+}
+
+fn restart_target_producer(
+    task_name: &str,
+    target_name: &str,
+    producer_task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    runtime: &TaskRuntimeSpec,
+    task_command: Option<&str>,
+    working_dir: &Path,
+    readiness_target: &RuntimeReadinessTarget,
+) -> Result<(), RunError> {
+    let cleanup_note = if resolved_execution_backend_kind(backend) == Backend::Native {
+        cleanup_interrupted_native_service_workload_and_note(producer_task_name, Some(runtime))
+    } else if resolved_execution_backend_kind(backend) == Backend::Remote {
+        if matches!(backend, ResolvedExecutionBackend::BackendProvider { .. }) {
+            cleanup_interrupted_backend_provider_service_workload_and_note(
+                producer_task_name,
+                backend,
+                task_command,
+                working_dir,
+            )
+        } else {
+            cleanup_interrupted_remote_service_workload_and_note(
+                producer_task_name,
+                backend,
+                Some(runtime),
+            )
+        }
+    } else {
+        let Some((engine, container_name)) =
+            persistent_container_target_for_backend(backend, working_dir)
+        else {
+            return Err(RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details: format!(
+                    "target activation `restart_ready` could not restart producer task `{producer_task_name}` because ota could not resolve its persistent backend target"
+                ),
+            });
+        };
+        cleanup_interrupted_persistent_service_workload_and_note(
+            producer_task_name,
+            engine.as_str(),
+            &container_name,
+            Some(runtime),
+        )
+    };
+
+    if !wait_for_readiness_target_to_clear(readiness_target) {
+        return Err(RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!(
+                "target activation `restart_ready` could not stop producer task `{producer_task_name}` before restart{}",
+                cleanup_note
+                    .as_deref()
+                    .map(|note| format!("; {note}"))
+                    .unwrap_or_default()
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 fn declared_target_probe_target(
-    _contract: &Contract,
+    contract: &Contract,
     task_name: &str,
     target_name: &str,
     target_spec: &TaskTargetSpec,
@@ -6945,23 +7132,17 @@ fn declared_target_probe_target(
         }
     })?;
     let activation_mode = target_spec.activation.mode;
-    let shared_container_binding = caller_task.backend_binding_for_backend(Backend::Container)
-        == producer_task.backend_binding_for_backend(Backend::Container)
-        && caller_task
-            .backend_binding_for_backend(Backend::Container)
-            .is_some();
-    let shared_native_binding = caller_task.backend_binding_for_backend(Backend::Native)
-        == producer_task.backend_binding_for_backend(Backend::Native)
-        && caller_task
-            .backend_binding_for_backend(Backend::Native)
-            .is_some();
-    let shared_remote_binding = caller_task.backend_binding_for_backend(Backend::Remote)
-        == producer_task.backend_binding_for_backend(Backend::Remote)
-        && caller_task
-            .backend_binding_for_backend(Backend::Remote)
-            .is_some();
+    let shared_container_binding =
+        task_specs_share_container_local_backend(contract, caller_task, producer_task);
+    let shared_native_binding =
+        task_specs_share_backend_binding(contract, caller_task, producer_task, Backend::Native);
+    let shared_remote_binding =
+        task_specs_share_backend_binding(contract, caller_task, producer_task, Backend::Remote);
     let readiness = producer_runtime_spec.readiness.as_ref();
-    let use_runtime_readiness = activation_mode == TaskTargetActivationMode::EnsureReady;
+    let use_runtime_readiness = matches!(
+        activation_mode,
+        TaskTargetActivationMode::EnsureReady | TaskTargetActivationMode::RestartReady
+    );
     let probe_listener_name = if use_runtime_readiness {
         readiness
             .and_then(|probe| probe.listener.as_deref())
@@ -7317,6 +7498,7 @@ fn activation_expected_state(mode: TaskTargetActivationMode) -> &'static str {
     match mode {
         TaskTargetActivationMode::Manual => "available",
         TaskTargetActivationMode::EnsureStarted => "started",
+        TaskTargetActivationMode::RestartReady => "ready after restart",
         TaskTargetActivationMode::EnsureReady => "ready",
         TaskTargetActivationMode::EnsureRunning => "running",
     }
@@ -7590,21 +7772,12 @@ fn resolve_task_target_binding_url_with_contract_path(
             },
         }
     })?;
-    let shared_container_binding = caller_task.backend_binding_for_backend(Backend::Container)
-        == service_task.backend_binding_for_backend(Backend::Container)
-        && caller_task
-            .backend_binding_for_backend(Backend::Container)
-            .is_some();
-    let shared_native_binding = caller_task.backend_binding_for_backend(Backend::Native)
-        == service_task.backend_binding_for_backend(Backend::Native)
-        && caller_task
-            .backend_binding_for_backend(Backend::Native)
-            .is_some();
-    let shared_remote_binding = caller_task.backend_binding_for_backend(Backend::Remote)
-        == service_task.backend_binding_for_backend(Backend::Remote)
-        && caller_task
-            .backend_binding_for_backend(Backend::Remote)
-            .is_some();
+    let shared_container_binding =
+        task_specs_share_container_local_backend(contract, caller_task, service_task);
+    let shared_native_binding =
+        task_specs_share_backend_binding(contract, caller_task, service_task, Backend::Native);
+    let shared_remote_binding =
+        task_specs_share_backend_binding(contract, caller_task, service_task, Backend::Remote);
 
     let listener_name = resolve_service_target_listener_name(
         &service_contract,
@@ -8108,21 +8281,63 @@ fn tasks_share_container_local_backend(
     )
 }
 
+fn task_specs_share_container_local_backend(
+    contract: &Contract,
+    caller_task: &TaskSpec,
+    service_task: &TaskSpec,
+) -> bool {
+    let Some(execution) = contract.execution.as_ref() else {
+        return false;
+    };
+    let Some(binding) = caller_task.backend_binding_for_backend(Backend::Container) else {
+        return false;
+    };
+    if Some(binding) != service_task.backend_binding_for_backend(Backend::Container) {
+        return false;
+    }
+    execution
+        .shared_backends
+        .get(binding)
+        .is_some_and(|shared| {
+            shared.backend == Backend::Container
+                && shared.scope == crate::schema::ExecutionSharedBackendScope::Local
+        })
+}
+
 fn tasks_share_backend_binding(
     contract: &Contract,
     caller_task_name: &str,
     service_task_name: &str,
     backend: Backend,
 ) -> bool {
-    let caller_binding = contract
-        .tasks
-        .get(caller_task_name)
-        .and_then(|task| task.backend_binding_for_backend(backend));
-    let service_binding = contract
-        .tasks
-        .get(service_task_name)
-        .and_then(|task| task.backend_binding_for_backend(backend));
-    matches!((caller_binding, service_binding), (Some(a), Some(b)) if a == b)
+    let Some(caller_task) = contract.tasks.get(caller_task_name) else {
+        return false;
+    };
+    let Some(service_task) = contract.tasks.get(service_task_name) else {
+        return false;
+    };
+    task_specs_share_backend_binding(contract, caller_task, service_task, backend)
+}
+
+fn task_specs_share_backend_binding(
+    contract: &Contract,
+    caller_task: &TaskSpec,
+    service_task: &TaskSpec,
+    backend: Backend,
+) -> bool {
+    let Some(execution) = contract.execution.as_ref() else {
+        return false;
+    };
+    let Some(binding) = caller_task.backend_binding_for_backend(backend) else {
+        return false;
+    };
+    if Some(binding) != service_task.backend_binding_for_backend(backend) {
+        return false;
+    }
+    execution
+        .shared_backends
+        .get(binding)
+        .is_some_and(|shared| shared.backend == backend)
 }
 
 fn colocated_topology_listener_address(bind_address: &str) -> String {
@@ -8202,14 +8417,24 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
             TaskTargetActivationMode::EnsureStarted,
             TaskTargetActivationStatus::SkippedExplicitOverride,
         ) => "activation ensure_started skipped_override",
+        (
+            TaskTargetActivationMode::RestartReady,
+            TaskTargetActivationStatus::SkippedExplicitOverride,
+        ) => "activation restart_ready skipped_override",
         (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::Manual) => {
             "activation ensure_started manual"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::Manual) => {
+            "activation restart_ready manual"
         }
         (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::ReusedStarted) => {
             "activation ensure_started reused_started"
         }
         (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::StartedStarted) => {
             "activation ensure_started started_started"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::RestartedReady) => {
+            "activation restart_ready restarted_ready"
         }
         (
             TaskTargetActivationMode::EnsureReady,
@@ -8243,6 +8468,7 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
             }
             TaskTargetActivationStatus::ReusedStarted => "activation manual reused_started",
             TaskTargetActivationStatus::StartedStarted => "activation manual started_started",
+            TaskTargetActivationStatus::RestartedReady => "activation manual restarted_ready",
             TaskTargetActivationStatus::ReusedReady => "activation manual reused_ready",
             TaskTargetActivationStatus::StartedReady => "activation manual started_ready",
             TaskTargetActivationStatus::ReusedRunning => "activation manual reused_running",
@@ -8260,6 +8486,24 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
         }
         (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::StartedRunning) => {
             "activation ensure_started started_running"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::ReusedRunning) => {
+            "activation restart_ready reused_running"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::StartedRunning) => {
+            "activation restart_ready started_running"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::ReusedStarted) => {
+            "activation restart_ready reused_started"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::StartedStarted) => {
+            "activation restart_ready started_started"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::ReusedReady) => {
+            "activation restart_ready reused_ready"
+        }
+        (TaskTargetActivationMode::RestartReady, TaskTargetActivationStatus::StartedReady) => {
+            "activation restart_ready started_ready"
         }
         (TaskTargetActivationMode::EnsureReady, TaskTargetActivationStatus::ReusedRunning) => {
             "activation ensure_ready reused_running"
@@ -8284,6 +8528,15 @@ pub(crate) fn render_target_resolution_source_and_activation_label(
         }
         (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::StartedStarted) => {
             "activation ensure_running started_started"
+        }
+        (TaskTargetActivationMode::EnsureStarted, TaskTargetActivationStatus::RestartedReady) => {
+            "activation ensure_started restarted_ready"
+        }
+        (TaskTargetActivationMode::EnsureReady, TaskTargetActivationStatus::RestartedReady) => {
+            "activation ensure_ready restarted_ready"
+        }
+        (TaskTargetActivationMode::EnsureRunning, TaskTargetActivationStatus::RestartedReady) => {
+            "activation ensure_running restarted_ready"
         }
     };
     format!("{source}; {activation_label}")
@@ -9153,14 +9406,68 @@ fn ready_runtime_public_endpoint_line(runtime: &ResolvedTaskRuntime) -> Option<S
             let external = resolved_runtime_host_endpoint_text(&endpoint.host);
             let internal = resolved_runtime_internal_endpoint_text(endpoint);
             if external == internal {
-                format!("\n\n🟢 External:  {}\n\n", external)
+                format!(
+                    "\n\n{} {}  {}\n\n",
+                    endpoint_banner_symbol(true),
+                    endpoint_banner_label("External:", true),
+                    endpoint_banner_url(external.as_str())
+                )
             } else {
                 format!(
-                    "\n\n🟢 External:  {}\n🔵 Internal:  {}\n\n",
-                    external, internal
+                    "\n\n{} {}  {}\n{} {}  {}\n\n",
+                    endpoint_banner_symbol(true),
+                    endpoint_banner_label("External:", true),
+                    endpoint_banner_url(external.as_str()),
+                    endpoint_banner_symbol(false),
+                    endpoint_banner_label("Internal:", false),
+                    endpoint_banner_url(internal.as_str())
                 )
             }
         })
+}
+
+fn endpoint_banner_symbol(external: bool) -> String {
+    if supports_dynamic_stderr_ui(io::stderr().is_terminal()) {
+        endpoint_banner_paint(
+            if external { "⚈" } else { "⦾" },
+            if external {
+                "1;38;2;0;255;120"
+            } else {
+                "1;38;2;94;168;214"
+            },
+        )
+    } else if external {
+        String::from("⚈")
+    } else {
+        String::from("⦾")
+    }
+}
+
+fn endpoint_banner_label(label: &str, external: bool) -> String {
+    if supports_dynamic_stderr_ui(io::stderr().is_terminal()) {
+        endpoint_banner_paint(
+            label,
+            if external {
+                "1;38;2;0;255;120"
+            } else {
+                "1;38;2;94;168;214"
+            },
+        )
+    } else {
+        label.to_string()
+    }
+}
+
+fn endpoint_banner_url(url: &str) -> String {
+    if supports_dynamic_stderr_ui(io::stderr().is_terminal()) {
+        endpoint_banner_paint(url, "1;37")
+    } else {
+        url.to_string()
+    }
+}
+
+fn endpoint_banner_paint(value: &str, code: &str) -> String {
+    format!("\u{1b}[{code}m{value}\u{1b}[0m")
 }
 
 fn resolved_runtime_host_endpoint_text(host: &ResolvedTaskRuntimeHost) -> String {
@@ -10678,6 +10985,7 @@ fn execute_backend_provider_task_command(
     provider_command: &str,
     target: &str,
     cwd: Option<&str>,
+    command_context: BackendProviderCommandContext,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let mut provider_env = env_overrides.clone();
@@ -10702,6 +11010,10 @@ fn execute_backend_provider_task_command(
         task_command.to_string(),
     );
     provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_COMMAND_CONTEXT"),
+        command_context.as_str().to_string(),
+    );
+    provider_env.insert(
         String::from("OTA_BACKEND_PROVIDER_WORKDIR"),
         working_dir.display().to_string(),
     );
@@ -10716,6 +11028,7 @@ fn execute_backend_provider_task_command(
         working_dir,
         target,
         cwd,
+        command_context,
         mode.clone(),
         &provider_env,
     );
@@ -10915,6 +11228,23 @@ struct BackendProviderResult {
     target: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackendProviderCommandContext {
+    Run,
+    Activation,
+    ActivationCleanup,
+}
+
+impl BackendProviderCommandContext {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Run => "run",
+            Self::Activation => "activation",
+            Self::ActivationCleanup => "activation_cleanup",
+        }
+    }
+}
+
 fn backend_provider_request<'a>(
     provider: &'a str,
     task_name: &'a str,
@@ -10922,6 +11252,7 @@ fn backend_provider_request<'a>(
     working_dir: &Path,
     target: &'a str,
     cwd: Option<&'a str>,
+    command_context: BackendProviderCommandContext,
     mode: TaskExecutionMode,
     environment: &'a BTreeMap<String, String>,
 ) -> BackendProviderRequest<'a> {
@@ -10929,7 +11260,7 @@ fn backend_provider_request<'a>(
         extension_id: provider,
         extension_kind: "backend_provider",
         api_version: 1,
-        command_context: "run",
+        command_context: command_context.as_str(),
         repo_context_path: working_dir.display().to_string(),
         working_dir: working_dir.display().to_string(),
         task: BackendProviderTaskRequest {
@@ -14772,10 +15103,53 @@ exit 1",
     }
 }
 
+fn cleanup_interrupted_backend_provider_service_workload_and_note(
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    task_command: Option<&str>,
+    working_dir: &Path,
+) -> Option<String> {
+    let ResolvedExecutionBackend::BackendProvider {
+        provider,
+        command: provider_command,
+        target,
+        cwd,
+        ..
+    } = backend
+    else {
+        return None;
+    };
+    let task_command = task_command?;
+    match execute_backend_provider_task_command(
+        task_name,
+        task_command,
+        working_dir,
+        &BTreeMap::new(),
+        provider.as_str(),
+        provider_command.as_str(),
+        target.as_str(),
+        cwd.as_deref(),
+        BackendProviderCommandContext::ActivationCleanup,
+        TaskExecutionMode::Capture,
+    ) {
+        Ok(output) if output.exit_code == 0 => Some(String::from(
+            "activation-started backend-provider service workload cleaned up after interrupt",
+        )),
+        Ok(output) => Some(format!(
+            "activation-started backend-provider service cleanup exited with status {}",
+            output.exit_code
+        )),
+        Err(error) => Some(format!(
+            "activation-started backend-provider service cleanup failed: {error}"
+        )),
+    }
+}
+
 fn cleanup_activation_started_producer_and_note(
     producer_task_name: &str,
     backend: &ResolvedExecutionBackend,
     runtime: Option<&TaskRuntimeSpec>,
+    task_command: Option<&str>,
     working_dir: &Path,
     remove_backend_on_interrupt: bool,
 ) -> Option<String> {
@@ -14784,6 +15158,15 @@ fn cleanup_activation_started_producer_and_note(
             .map(|note| format!("activation-started producer `{producer_task_name}`: {note}"));
     }
     if resolved_execution_backend_kind(backend) == Backend::Remote {
+        if matches!(backend, ResolvedExecutionBackend::BackendProvider { .. }) {
+            return cleanup_interrupted_backend_provider_service_workload_and_note(
+                producer_task_name,
+                backend,
+                task_command,
+                working_dir,
+            )
+            .map(|note| format!("activation-started producer `{producer_task_name}`: {note}"));
+        }
         return cleanup_interrupted_remote_service_workload_and_note(
             producer_task_name,
             backend,
@@ -16081,10 +16464,12 @@ mod tests {
     use std::env;
     use std::fs::{self, File};
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::path::Path;
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::thread;
+    use std::time::Duration;
 
     use tempfile::{TempDir, tempdir};
 
@@ -16113,7 +16498,7 @@ mod tests {
         run_task, run_task_captured, run_task_captured_with_args_with_overrides,
         run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
         run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend, version_matches_requirement,
+        running_loader_label_for_backend, shell_quote, version_matches_requirement,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -18331,6 +18716,400 @@ tasks:
         panic!("native activation cleanup should free the producer port");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ensure_ready_activation_starts_and_cleans_up_backend_provider_host_producer() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      log_file="${{PWD}}/backend-provider-contexts.log"
+      printf '%s\n' "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" >> "$log_file"
+        case "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" in
+        activation)
+          python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 &
+          printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        activation_cleanup)
+          if [ -f "${{PWD}}/backend-provider.pid" ]; then
+            kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
+            rm -f "${{PWD}}/backend-provider.pid"
+          fi
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        *)
+          printf '{{"ok":false,"errors":["unexpected command context"]}}'
+          ;;
+      esac
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("backend-provider ensure_ready activation should succeed");
+
+        assert_eq!(status, TaskTargetActivationStatus::StartedReady);
+
+        let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
+        assert!(
+            cleanup_note
+                .as_deref()
+                .is_some_and(|note| note.contains("backend-provider service workload cleaned up")),
+            "{cleanup_note:?}"
+        );
+
+        let contexts = fs::read_to_string(fixture.dir.path().join("backend-provider-contexts.log"))
+            .expect("provider contexts should be recorded");
+        assert!(contexts.contains("activation"));
+        assert!(contexts.contains("activation_cleanup"));
+
+        for _ in 0..30 {
+            if !super::target_probe_endpoint_reachable("127.0.0.1", port) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        panic!("backend-provider activation cleanup should free the producer port");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_ready_activation_restarts_reachable_backend_provider_host_producer() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let script_dir = tempfile::tempdir().expect("script dir should exist");
+        let server_script = script_dir.path().join("server.py");
+        fs::write(
+            &server_script,
+            r#"import signal
+import socket
+import sys
+
+port = int(sys.argv[1])
+body = sys.argv[2].encode()
+sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("127.0.0.1", port))
+sock.listen(5)
+
+def shutdown(_signum, _frame):
+    try:
+        sock.close()
+    finally:
+        sys.exit(0)
+
+signal.signal(signal.SIGTERM, shutdown)
+signal.signal(signal.SIGINT, shutdown)
+
+while True:
+    conn, _ = sock.accept()
+    try:
+        conn.recv(4096)
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\nConnection: close\r\n\r\n"
+            + body
+        )
+    finally:
+        conn.close()
+"#,
+        )
+        .expect("server script should be written");
+        let server_script_quoted = shell_quote(&server_script.display().to_string());
+        let mut old_server = Command::new("python3")
+            .arg(&server_script)
+            .arg(port.to_string())
+            .arg("OLD")
+            .spawn()
+            .expect("old producer should spawn");
+        for _ in 0..30 {
+            if super::target_probe_endpoint_reachable("127.0.0.1", port) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            super::target_probe_endpoint_reachable("127.0.0.1", port),
+            "old producer should become reachable before restart"
+        );
+
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      log_file="${{PWD}}/backend-provider-contexts.log"
+      printf '%s\n' "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" >> "$log_file"
+      case "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" in
+        activation)
+          python3 {server_script} {port} NEW >/dev/null 2>&1 &
+          printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        activation_cleanup)
+          if [ -f "${{PWD}}/backend-provider.pid" ]; then
+            kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
+            rm -f "${{PWD}}/backend-provider.pid"
+          fi
+          for pid in $(lsof -ti TCP:{port} -sTCP:LISTEN 2>/dev/null || true); do
+            kill "$pid" 2>/dev/null || true
+          done
+          printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+          ;;
+        *)
+          printf '{{"ok":false,"errors":["unexpected command context"]}}'
+          ;;
+      esac
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: restart_ready
+"#,
+                server_script = server_script_quoted,
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Remote,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("restart_ready should restart the reachable backend-provider producer");
+
+        assert_eq!(status, TaskTargetActivationStatus::RestartedReady);
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .expect("restarted producer should accept connections");
+        stream
+            .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .expect("request should be written");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("response should be readable");
+        assert!(
+            response.ends_with("NEW"),
+            "restart_ready should replace the reachable backend-provider producer before readiness confirmation"
+        );
+
+        let old_server_status = old_server
+            .try_wait()
+            .expect("old producer status should be readable");
+        assert!(
+            old_server_status.is_some(),
+            "restart_ready should stop the previously reachable backend-provider producer"
+        );
+
+        let contexts = fs::read_to_string(fixture.dir.path().join("backend-provider-contexts.log"))
+            .expect("provider contexts should be recorded");
+        assert!(contexts.contains("activation_cleanup"));
+        assert!(contexts.contains("activation"));
+
+        let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
+    }
+
     #[test]
     fn ensure_ready_activation_reuses_reachable_shared_backend_internal_target() {
         let _guard = env_mutex_lock();
@@ -19467,6 +20246,177 @@ tasks:
         assert!(
             !super::target_probe_endpoint_reachable("127.0.0.1", port),
             "ensure_started should return before the delayed listener is reachable"
+        );
+
+        let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_ready_activation_restarts_reachable_native_producer() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
+
+        let script_dir = tempfile::tempdir().expect("script dir should exist");
+        let server_script = script_dir.path().join("server.py");
+        fs::write(
+            &server_script,
+            r#"import signal
+import socket
+import sys
+
+port = int(sys.argv[1])
+body = sys.argv[2].encode()
+sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+sock.bind(("127.0.0.1", port))
+sock.listen(5)
+
+def shutdown(_signum, _frame):
+    try:
+        sock.close()
+    finally:
+        sys.exit(0)
+
+signal.signal(signal.SIGTERM, shutdown)
+signal.signal(signal.SIGINT, shutdown)
+
+while True:
+    conn, _ = sock.accept()
+    try:
+        conn.recv(4096)
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\nConnection: close\r\n\r\n"
+            + body
+        )
+    finally:
+        conn.close()
+"#,
+        )
+        .expect("server script should be written");
+        let server_script_quoted = shell_quote(&server_script.display().to_string());
+        let mut old_server = Command::new("python3")
+            .arg(&server_script)
+            .arg(port.to_string())
+            .arg("OLD")
+            .spawn()
+            .expect("old producer should spawn");
+        for _ in 0..30 {
+            if super::target_probe_endpoint_reachable("127.0.0.1", port) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            super::target_probe_endpoint_reachable("127.0.0.1", port),
+            "old producer should become reachable before restart"
+        );
+
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: python3 {server_script} {port} NEW
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: restart_ready
+"#,
+                server_script = server_script_quoted,
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .expect("restart_ready should restart the reachable producer");
+
+        assert_eq!(status, TaskTargetActivationStatus::RestartedReady);
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .expect("restarted producer should accept connections");
+        stream
+            .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .expect("request should be written");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("response should be readable");
+        assert!(
+            response.ends_with("NEW"),
+            "restart_ready should replace the reachable producer before readiness confirmation"
+        );
+
+        let old_server_status = old_server
+            .try_wait()
+            .expect("old producer status should be readable");
+        assert!(
+            old_server_status.is_some(),
+            "restart_ready should stop the previously reachable producer"
         );
 
         let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
@@ -21574,6 +22524,76 @@ tasks:
     }
 
     #[test]
+    fn shared_backend_binding_requires_matching_declared_backend_family() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+  shared_backends:
+    dev_stack:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: dev_stack
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: dev_stack
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        assert!(!super::tasks_share_container_local_backend(
+            &contract, "sandbox", "dev"
+        ));
+        assert!(!super::tasks_share_backend_binding(
+            &contract,
+            "sandbox",
+            "dev",
+            Backend::Container,
+        ));
+        assert!(super::tasks_share_backend_binding(
+            &contract,
+            "sandbox",
+            "dev",
+            Backend::Remote,
+        ));
+    }
+
+    #[test]
     fn shared_local_backend_resolution_keeps_publications_task_scoped() {
         if crate::execution::available_container_engines().is_empty() {
             return;
@@ -23024,11 +24044,14 @@ tasks:
             exposed_endpoints: Vec::new(),
         };
 
+        let rendered = strip_test_ansi(
+            ready_runtime_public_endpoint_line(&runtime)
+                .as_deref()
+                .expect("line should render"),
+        );
         assert_eq!(
-            ready_runtime_public_endpoint_line(&runtime).as_deref(),
-            Some(
-                "\n\n🟢 External:  http://127.0.0.1:49153/\n🔵 Internal:  http://0.0.0.0:3000/\n\n"
-            )
+            rendered,
+            "\n\n⚈ External:  http://127.0.0.1:49153/\n⦾ Internal:  http://0.0.0.0:3000/\n\n"
         );
     }
 
@@ -25309,6 +26332,24 @@ exec "$(dirname "$0")/docker-real" "$@"
         assert!(super::buffer_contains_visible_output(b"$ cargo test\n"));
     }
 
+    fn strip_test_ansi(value: &str) -> String {
+        let mut out = String::new();
+        let mut chars = value.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+                let _ = chars.next();
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
     #[cfg(unix)]
     #[test]
     fn resolves_task_backend_from_bound_execution_context() {
@@ -27262,6 +28303,7 @@ project:
                 publications: Vec::new(),
                 dependency_isolation_paths: Vec::new(),
             },
+            None,
             None,
             fixture.dir.path(),
             true,

@@ -794,6 +794,13 @@ fn validate_extensions(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 name
             )));
         }
+
+        if extension.activation.is_some() && extension.kind != ExtensionKind::BackendProvider {
+            errors.push(ValidationError::new(format!(
+                "extension `{}` may declare `activation` only when `kind: backend_provider`",
+                name
+            )));
+        }
     }
 }
 
@@ -1694,7 +1701,8 @@ fn validate_cross_member_target_shape(
     let Some(service) = target.service.as_ref() else {
         return;
     };
-    let Ok(Some(listener)) = select_target_listener_for_host_view(service_task, listener_name) else {
+    let Ok(Some(listener)) = select_target_listener_for_host_view(service_task, listener_name)
+    else {
         if service.address_view == TaskTargetAddressView::Host {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` target `{target_name}` uses cross-member `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare one consistent `project.host` endpoint"
@@ -1703,16 +1711,21 @@ fn validate_cross_member_target_shape(
         return;
     };
 
-    let shared_container =
-        caller_task.backend_binding_for_backend(Backend::Container)
-            == service_task.backend_binding_for_backend(Backend::Container)
-            && caller_task.backend_binding_for_backend(Backend::Container).is_some();
+    let shared_container = caller_task.backend_binding_for_backend(Backend::Container)
+        == service_task.backend_binding_for_backend(Backend::Container)
+        && caller_task
+            .backend_binding_for_backend(Backend::Container)
+            .is_some();
     let shared_native = caller_task.backend_binding_for_backend(Backend::Native)
         == service_task.backend_binding_for_backend(Backend::Native)
-        && caller_task.backend_binding_for_backend(Backend::Native).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Native)
+            .is_some();
     let shared_remote = caller_task.backend_binding_for_backend(Backend::Remote)
         == service_task.backend_binding_for_backend(Backend::Remote)
-        && caller_task.backend_binding_for_backend(Backend::Remote).is_some();
+        && caller_task
+            .backend_binding_for_backend(Backend::Remote)
+            .is_some();
     let shared_any = shared_container || shared_native || shared_remote;
 
     match service.address_view {
@@ -1744,13 +1757,9 @@ fn validate_cross_member_target_shape(
                 )));
                 return;
             }
-            let has_fixed_host = listener
-                .project
-                .host
-                .as_ref()
-                .is_some_and(|host| {
-                    host.port.mode == TaskRuntimeHostPortMode::Fixed && host.port.value.is_some()
-                });
+            let has_fixed_host = listener.project.host.as_ref().is_some_and(|host| {
+                host.port.mode == TaskRuntimeHostPortMode::Fixed && host.port.value.is_some()
+            });
             let has_shared_bind = listener.bind.port.mode == TaskRuntimePortMode::Fixed
                 && listener.bind.port.value.is_some()
                 && shared_any;
@@ -1774,7 +1783,9 @@ fn validate_cross_member_target_shape(
                 )));
                 return;
             }
-            if listener.bind.port.mode != TaskRuntimePortMode::Fixed || listener.bind.port.value.is_none() {
+            if listener.bind.port.mode != TaskRuntimePortMode::Fixed
+                || listener.bind.port.value.is_none()
+            {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` target `{target_name}` uses cross-member `address_view: internal`, but producer task `{service_task_name}` listener `{listener_name}` does not declare a fixed `bind.port.value`"
                 )));
@@ -1898,7 +1909,10 @@ fn validate_task_target_activation_shape(
     };
     let activation_mode = target.activation.mode;
     let readiness = runtime.readiness.as_ref();
-    let use_runtime_readiness = activation_mode == TaskTargetActivationMode::EnsureReady;
+    let use_runtime_readiness = matches!(
+        activation_mode,
+        TaskTargetActivationMode::EnsureReady | TaskTargetActivationMode::RestartReady
+    );
     let listener_label = if use_runtime_readiness {
         "runtime readiness listener"
     } else {
@@ -1916,18 +1930,7 @@ fn validate_task_target_activation_shape(
     let Some(listener) = runtime.listeners.get(probe_listener_name) else {
         return;
     };
-    let remote_provider =
-        resolved_task_context_for_backend(contract, service_task, Backend::Remote)
-            .and_then(|context| context.remote.as_ref())
-            .map(|remote| remote.provider.trim().to_string())
-            .or_else(|| {
-                contract
-                    .execution
-                    .as_ref()
-                    .and_then(|execution| execution.backends.as_ref())
-                    .and_then(|backends| backends.remote.as_ref())
-                    .map(|remote| remote.provider.trim().to_string())
-            });
+    let remote_provider = remote_provider_for_task(contract, service_task).map(str::to_string);
     match service.address_view {
         TaskTargetAddressView::Host => {
             if backend == Backend::Remote && !shared_remote_backend {
@@ -1937,16 +1940,24 @@ fn validate_task_target_activation_shape(
                 )));
                 return;
             }
-            if backend == Backend::Remote
-                && !remote_provider
-                    .as_deref()
-                    .is_some_and(is_builtin_remote_provider)
-            {
-                errors.push(ValidationError::new(format!(
-                    "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: host`, but remote producer activation currently supports built-in remote providers only",
-                    activation_mode.as_str()
-                )));
-                return;
+            if backend == Backend::Remote {
+                if let Some(provider) = remote_provider.as_deref()
+                    && !is_builtin_remote_provider(provider)
+                {
+                    let cleanup_supported = contract
+                        .extensions
+                        .get(provider)
+                        .filter(|extension| extension.kind == ExtensionKind::BackendProvider)
+                        .and_then(|extension| extension.activation.as_ref())
+                        .is_some_and(|activation| activation.provider_managed_cleanup);
+                    if !cleanup_supported {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` target `{target_name}` uses `activation.mode: {}` with `address_view: host`, but backend provider `{provider}` must declare `activation.provider_managed_cleanup: true`",
+                            activation_mode.as_str()
+                        )));
+                        return;
+                    }
+                }
             }
             validate_target_activation_host_projection(
                 task_name,
@@ -2108,19 +2119,43 @@ fn tasks_share_container_local_backend(
     caller_task: &TaskSpec,
     service_task: &TaskSpec,
 ) -> bool {
-    tasks_share_backend(contract, caller_task, service_task, Backend::Container)
+    let Some(execution) = contract.execution.as_ref() else {
+        return false;
+    };
+    let Some(binding) = caller_task.backend_binding_for_backend(Backend::Container) else {
+        return false;
+    };
+    if Some(binding) != service_task.backend_binding_for_backend(Backend::Container) {
+        return false;
+    }
+    execution
+        .shared_backends
+        .get(binding)
+        .is_some_and(|shared| {
+            shared.backend == Backend::Container
+                && shared.scope == crate::schema::ExecutionSharedBackendScope::Local
+        })
 }
 
 fn tasks_share_backend(
-    _contract: &Contract,
+    contract: &Contract,
     caller_task: &TaskSpec,
     service_task: &TaskSpec,
     backend: Backend,
 ) -> bool {
+    let Some(execution) = contract.execution.as_ref() else {
+        return false;
+    };
     let Some(caller_binding) = caller_task.backend_binding_for_backend(backend) else {
         return false;
     };
-    Some(caller_binding) == service_task.backend_binding_for_backend(backend)
+    if Some(caller_binding) != service_task.backend_binding_for_backend(backend) {
+        return false;
+    }
+    execution
+        .shared_backends
+        .get(caller_binding)
+        .is_some_and(|shared| shared.backend == backend)
 }
 
 fn validate_task_direct_container_context_fulfillment(
@@ -3114,6 +3149,36 @@ fn resolved_task_context_for_backend<'a>(
     }?;
 
     execution.contexts.get(context_name)
+}
+
+fn remote_provider_for_task<'a>(contract: &'a Contract, task: &'a TaskSpec) -> Option<&'a str> {
+    let execution = contract.execution.as_ref()?;
+    if let Some(binding) = task.backend_binding_for_backend(Backend::Remote)
+        && let Some(shared) = execution.shared_backends.get(binding)
+        && shared.scope == crate::schema::ExecutionSharedBackendScope::Remote
+        && shared.backend == Backend::Remote
+        && let Some(context_name) = shared.context.as_deref()
+    {
+        return execution
+            .contexts
+            .get(context_name)
+            .and_then(|context| context.remote.as_ref())
+            .map(|remote| remote.provider.trim())
+            .filter(|provider| !provider.is_empty());
+    }
+
+    resolved_task_context_for_backend(contract, task, Backend::Remote)
+        .and_then(|context| context.remote.as_ref())
+        .map(|remote| remote.provider.trim())
+        .filter(|provider| !provider.is_empty())
+        .or_else(|| {
+            execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.remote.as_ref())
+                .map(|remote| remote.provider.trim())
+                .filter(|provider| !provider.is_empty())
+        })
 }
 
 fn backend_mode_name(backend: Backend) -> &'static str {
@@ -5474,6 +5539,36 @@ tasks:
     }
 
     #[test]
+    fn rejects_activation_descriptor_on_non_backend_provider_extension() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: check_provider
+    command: ota-ext-demo
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("may declare `activation` only when `kind: backend_provider`")
+        }));
+    }
+
+    #[test]
     fn validates_remote_backend_target_and_cwd() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -6550,9 +6645,9 @@ tasks:
 
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
-            error
-                .to_string()
-                .contains("cannot declare `activation.mode: ensure_running` for `service.task: dev`")
+            error.to_string().contains(
+                "cannot declare `activation.mode: ensure_running` for `service.task: dev`",
+            )
         }));
     }
 
@@ -6597,9 +6692,56 @@ tasks:
 
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "cannot declare `activation.mode: ensure_started` for `service.task: dev`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_task_target_activation_restart_ready_for_self_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+    targets:
+      self_api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: restart_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
             error
                 .to_string()
-                .contains("cannot declare `activation.mode: ensure_started` for `service.task: dev`")
+                .contains("cannot declare `activation.mode: restart_ready` for `service.task: dev`")
         }));
     }
 
@@ -8276,8 +8418,9 @@ tasks:
         let (contract, contract_path) =
             crate::parser::load_contract_for_member(&fixture.path().join("ota.yaml"), "web")
                 .unwrap();
-        validate_contract_with_path(&contract, Some(&contract_path))
-            .expect("cross-member internal ensure_ready should validate when backend binding is shared");
+        validate_contract_with_path(&contract, Some(&contract_path)).expect(
+            "cross-member internal ensure_ready should validate when backend binding is shared",
+        );
     }
 
     #[test]
@@ -8806,6 +8949,259 @@ tasks:
 
         validate_contract(&contract)
             .expect("shared remote host ensure_ready should validate for built-in providers");
+    }
+
+    #[test]
+    fn allows_ensure_ready_host_view_for_backend_provider_with_managed_cleanup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect(
+            "shared remote host ensure_ready should validate for backend providers with managed cleanup",
+        );
+    }
+
+    #[test]
+    fn allows_restart_ready_host_view_for_backend_provider_with_managed_cleanup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: restart_ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect(
+            "shared remote host restart_ready should validate for backend providers with managed cleanup",
+        );
+    }
+
+    #[test]
+    fn rejects_ensure_ready_host_view_for_backend_provider_without_managed_cleanup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+        cwd: /workspace/app
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "backend provider `backend-demo` must declare `activation.provider_managed_cleanup: true`",
+            )
+        }));
     }
 
     #[test]
