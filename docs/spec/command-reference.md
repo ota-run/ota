@@ -46,9 +46,9 @@ Doctor first, contract second.
 ## Recommended onboarding flow
 
 1. `ota doctor`
-2. `ota explain`
-3. if the repo does not yet have `ota.yaml`, preview with `ota init --dry-run` or `ota detect --dry-run .`
-4. choose an explicit first write with `ota init` or `ota detect --write .`
+2. if the repo does not yet have `ota.yaml`, preview with `ota init --dry-run` or `ota detect --dry-run .`
+3. choose an explicit first write with `ota init` or `ota detect --write .`
+4. if the repo already has `ota.yaml`, use `ota explain`
 5. if the repo already has `ota.yaml`, review changes with `ota detect --merge --dry-run .` or `ota detect --rewrite --dry-run .`
 6. `ota up`
 
@@ -114,7 +114,6 @@ Start here:
 
 ```bash
 ota doctor
-ota explain
 ota detect --dry-run .
 ota init --dry-run
 ota up
@@ -457,10 +456,14 @@ ota explain --member api ./repo
 
 Current behavior:
 
+- requires an existing `ota.yaml`
 - diagnoses the contract first
 - turns each finding into an ordered remediation step
 - stays read-only and deterministic
 - prints a compact overview with step counts at the end
+
+If the repo does not yet have `ota.yaml`, start with `ota doctor`, then use `ota init --dry-run`
+or `ota detect --dry-run .` before coming back to `ota explain`.
 
 Text output:
 

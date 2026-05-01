@@ -30,6 +30,8 @@ If you are rolling ota out to one team instead of just one repo, use
 [adoption/one-team-rollout.md](adoption/one-team-rollout.md) alongside this quickstart.
 If you want one concrete existing-repo sequence, use
 [adoption/worked-example-existing-repo.md](adoption/worked-example-existing-repo.md).
+If you want the fastest path to the right example by repo shape, use
+[adoption/examples-by-goal.md](adoption/examples-by-goal.md).
 
 ## Start Here
 
@@ -76,7 +78,6 @@ Use the authoring path first:
 
 ```bash
 ota doctor
-ota explain
 ota detect --dry-run .
 ota init --dry-run
 ```
@@ -85,9 +86,9 @@ Then choose one explicit write path:
 
 ```bash
 ota init
-# or:
-ota detect --write .
 ```
+
+Use `ota detect --write .` when you want the detector-led authoring path instead of the starter contract path.
 
 ## Existing Repo With `ota.yaml`, But Contract Drift Is Suspected
 
@@ -218,21 +219,36 @@ Current detect sources:
 
 ## Example contract
 
-Examples:
+Choose by goal:
 
-- [../../examples/basic-node/ota.yaml](../../examples/basic-node/ota.yaml)
-- [../../examples/basic-python/ota.yaml](../../examples/basic-python/ota.yaml)
-- [../../examples/basic-go/ota.yaml](../../examples/basic-go/ota.yaml)
-- [../../examples/basic-java/ota.yaml](../../examples/basic-java/ota.yaml)
-- [../../examples/basic-rust/ota.yaml](../../examples/basic-rust/ota.yaml)
-- [../../examples/basic-script/ota.yaml](../../examples/basic-script/ota.yaml)
-- [../../examples/basic-services/ota.yaml](../../examples/basic-services/ota.yaml)
-- [../../examples/mixed-node-python/ota.yaml](../../examples/mixed-node-python/ota.yaml)
-- [../../examples/fullstack-node-go/ota.yaml](../../examples/fullstack-node-go/ota.yaml)
-- [../../examples/full-contract/ota.yaml](../../examples/full-contract/ota.yaml)
+- first contract for one stack:
+  [Basic Node](../../examples/basic-node/ota.yaml),
+  [Basic Python](../../examples/basic-python/ota.yaml),
+  [Basic Go](../../examples/basic-go/ota.yaml),
+  [Basic Java](../../examples/basic-java/ota.yaml),
+  [Basic Rust](../../examples/basic-rust/ota.yaml),
+  [Basic .NET](../../examples/basic-dotnet/ota.yaml),
+  [Basic Script](../../examples/basic-script/ota.yaml)
+- normal app repo with services:
+  [Basic Services](../../examples/basic-services/ota.yaml),
+  [Mixed Node + Python](../../examples/mixed-node-python/ota.yaml),
+  [Fullstack Node + Go](../../examples/fullstack-node-go/ota.yaml)
+- shared topology:
+  [Shared Local Topology](../../examples/shared-local-topology/ota.yaml),
+  [Shared Remote Topology](../../examples/shared-remote-topology/README.md)
+- multi-repo bootstrap:
+  [Basic Workspace](../../examples/workspace-basic/ota.workspace.yaml),
+  [Acquisition Workspace](../../examples/workspace-acquire/ota.workspace.yaml)
+- broad reference:
+  [Full Contract Example](../../examples/full-contract/ota.yaml),
+  [ota-run/examples](https://github.com/ota-run/examples)
+
+If you want the shortest “which example proves what?” guide, use
+[adoption/examples-by-goal.md](adoption/examples-by-goal.md).
+
+Reference docs:
+
 - [../spec/command-reference.md](../spec/command-reference.md)
 - [../spec/contract-reference.md](../spec/contract-reference.md)
 - [../spec/workspace-reference.md](../spec/workspace-reference.md)
-- [../../examples/workspace-acquire/ota.workspace.yaml](../../examples/workspace-acquire/ota.workspace.yaml)
-- [ota-run/examples](https://github.com/ota-run/examples) - advanced, production-adjacent examples and templates
 - [philosophy.md](philosophy.md)
