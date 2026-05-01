@@ -13138,9 +13138,7 @@ tasks:
         assert!(normalized_stderr.contains(&format!(
             "run `ota tasks --use {repo_path}` to inspect runnable task usage"
         )));
-        assert!(!normalized_stderr.contains(&format!(
-            "ota tasks --use {repo_path}/ota.yaml"
-        )));
+        assert!(!normalized_stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
     }
 
     #[test]
