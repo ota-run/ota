@@ -47,6 +47,7 @@
   <p>
     <a href="https://ota.run/docs/install">Install</a> ·
     <a href="https://ota.run/docs/quickstart">Quickstart</a> ·
+    <a href="docs/adoption/examples-by-goal.md">Examples by Goal</a> ·
     <a href="https://github.com/ota-run/examples">Examples</a> ·
     <a href="https://ota.run/docs/reference/governance">Governance</a> ·
     <a href="https://github.com/ota-run/ota/releases">Releases</a>
@@ -189,7 +190,6 @@ Use the authoring path first:
 
 ```bash
 ota doctor
-ota explain
 ota detect --dry-run .
 ota init --dry-run
 ```
@@ -198,9 +198,9 @@ Then choose one explicit write path:
 
 ```bash
 ota init
-# or:
-ota detect --write .
 ```
+
+Use `ota detect --write .` when you want the detector-led authoring path instead of the starter contract path.
 
 If you want an explicit conventional starter instead of detector-led init, use a pack:
 
@@ -320,6 +320,9 @@ ota workspace validate .
 If the contract declares agent guidance, `ota doctor --json` and `ota explain --json` surface the
 same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
 
+If you want the fastest path to the right example by repo shape, use
+[Examples by Goal](docs/adoption/examples-by-goal.md).
+
 Example contracts:
 
 - [basic-node](examples/basic-node/ota.yaml) - Node / TypeScript starter
@@ -328,6 +331,8 @@ Example contracts:
 - [basic-rust](examples/basic-rust/ota.yaml) - Cargo starter
 - [basic-script](examples/basic-script/ota.yaml) - Script-only starter
 - [basic-services](examples/basic-services/ota.yaml) - Service-backed repo starter
+- [shared-local-topology](examples/shared-local-topology/ota.yaml) - Shared local backend topology
+- [shared-remote-topology](examples/shared-remote-topology/README.md) - Shared remote topology dogfood
 - [full-contract](examples/full-contract/ota.yaml) - Full contract surface
 - [workspace-acquire](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow
 - [ota-run/examples](https://github.com/ota-run/examples) - advanced, production-adjacent examples and templates
@@ -511,7 +516,7 @@ execution:
     - container
   backends:
     container:
-      image: rust:1.85
+      image: rust:1.94-bookworm
 ```
 
 ### Native backend
@@ -764,8 +769,12 @@ Choose by goal:
 
 - first repo contract: [Basic Node](examples/basic-node/ota.yaml), [Basic Python](examples/basic-python/ota.yaml), [Basic Rust](examples/basic-rust/ota.yaml)
 - existing app with services: [Basic Services](examples/basic-services/ota.yaml), [Mixed Node + Python](examples/mixed-node-python/ota.yaml)
+- shared topology: [Shared Local Topology](examples/shared-local-topology/ota.yaml), [Shared Remote Topology](examples/shared-remote-topology/README.md)
 - multi-repo bootstrap: [Basic Workspace](examples/workspace-basic/ota.workspace.yaml), [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml)
 - realistic reference shape: [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml), [Full contract example](examples/full-contract/ota.yaml), [ota-run/examples](https://github.com/ota-run/examples)
+
+If you want the shortest “which example proves what?” guide, use
+[Examples by Goal](docs/adoption/examples-by-goal.md).
 
 ### Minimal contracts
 

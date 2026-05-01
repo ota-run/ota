@@ -459,7 +459,11 @@ fn render_task_exit_failure_text(
 }
 
 fn append_output_excerpt_section(output: &mut String, excerpt: &OutputExcerpt) {
-    output.push_str(&format!("\n{}", error_key("Output:")));
+    append_named_output_excerpt_section(output, "Output:", excerpt);
+}
+
+fn append_named_output_excerpt_section(output: &mut String, title: &str, excerpt: &OutputExcerpt) {
+    output.push_str(&format!("\n{}", error_key(title)));
     output.push_str(&format!(
         "\n  {} {}",
         finding_detail_bullet(FindingSeverity::Error),
@@ -10353,6 +10357,20 @@ fn contextualize_repo_command(token: &str, contract_path: &Path) -> Option<Strin
         _ if token.starts_with("ota tasks --member ") => Some(token),
         _ => None,
     }?;
+
+    if matches!(
+        normalized,
+        "ota detect --dry-run"
+            | "ota detect --merge --dry-run"
+            | "ota detect --merge"
+            | "ota detect --rewrite --dry-run"
+            | "ota detect --rewrite"
+    ) {
+        return Some(command_for_repo_from_contract_path(
+            normalized,
+            contract_path,
+        ));
+    }
 
     Some(command_for_contract(normalized, contract_path))
 }
@@ -29945,7 +29963,10 @@ tasks:
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
-        assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(
+            rendered.contains("ERROR  Service stopped after readiness"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("became ready at `http://127.0.0.1:3000/` and then stopped"),
             "{rendered}"
@@ -30075,7 +30096,7 @@ tasks:
     }
 
     #[test]
-    fn run_output_regression_service_startup_failure_stays_task_failed() {
+    fn run_output_regression_service_startup_failure_uses_startup_banner_and_excerpt() {
         let contract = run_output_regression_service_contract();
         let runtime = run_output_regression_service_runtime(3000);
         let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
@@ -30090,18 +30111,39 @@ tasks:
             "",
             "startup failed",
             Some(&runtime),
-            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(1),
+            }),
             false,
             None,
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
-        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
         assert!(
-            !rendered.contains("INFO  Service interrupted"),
+            rendered.contains("ERROR  Service failed to start"),
             "{rendered}"
         );
+        assert!(
+            rendered.contains("the workload exited before readiness was observed"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("readiness was never reached for listener `http`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Startup Output:"), "{rendered}");
+        assert!(rendered.contains("startup failed"), "{rendered}");
         assert!(rendered.contains("Status:      failed"), "{rendered}");
+        assert!(
+            rendered
+                .contains("Note:        service failed to start; container exited with status 1"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -30247,7 +30289,10 @@ tasks:
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
-        assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(
+            rendered.contains("ERROR  Service stopped after readiness"),
+            "{rendered}"
+        );
         assert!(rendered.contains("became ready at `http://127.0.0.1:3000/` and then stopped"));
         assert!(rendered.contains("was OOM-killed by the container engine"));
         assert!(rendered.contains("Status:      failed"));
@@ -30387,7 +30432,7 @@ tasks:
     }
 
     #[test]
-    fn run_failure_text_keeps_pre_readiness_service_nonzero_as_failure() {
+    fn run_failure_text_reports_pre_readiness_service_nonzero_as_startup_failure() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
             r#"
@@ -30448,15 +30493,29 @@ tasks:
             "",
             "startup failed",
             Some(&runtime),
-            None,
+            Some(&ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(1),
+            }),
             false,
             None,
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
-        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
         assert!(
-            !rendered.contains("Task interrupted before readiness"),
+            rendered.contains("ERROR  Service failed to start"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Startup Output:"), "{rendered}");
+        assert!(rendered.contains("startup failed"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "container `ota-ephemeral-deadbeef` exited with status `1` before readiness"
+            ),
             "{rendered}"
         );
     }
@@ -30546,7 +30605,10 @@ tasks:
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
-        assert!(rendered.contains("ERROR  Service stopped"), "{rendered}");
+        assert!(
+            rendered.contains("ERROR  Service stopped after readiness"),
+            "{rendered}"
+        );
         assert!(
             !rendered.contains("INFO  Service interrupted"),
             "{rendered}"
@@ -32193,6 +32255,85 @@ project:
     }
 
     #[test]
+    fn contextualize_detect_command_targets_repo_root_from_custom_contract_path() {
+        let _guard = cwd_mutex_lock();
+        let root = tempfile::tempdir().expect("root tempdir");
+        let repo = root.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo dir");
+        let contract_path = repo.join("custom.contract.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .expect("write contract");
+
+        let cwd = env::current_dir().expect("current dir");
+        env::set_current_dir(root.path()).expect("set current dir");
+
+        let expected = format!("ota detect --dry-run {}", super::compact_repo_path(&repo));
+        let command = super::contextualize_repo_command("ota detect --dry-run", &contract_path)
+            .expect("contextualized command");
+
+        env::set_current_dir(cwd).expect("restore current dir");
+
+        assert_eq!(command, expected);
+    }
+
+    #[test]
+    fn startup_failure_next_uses_repo_path_outside_contract_root() {
+        let _guard = cwd_mutex_lock();
+        let root = tempfile::tempdir().expect("root tempdir");
+        let repo = root.path().join("repo");
+        fs::create_dir_all(&repo).expect("create repo dir");
+        let contract_path = repo.join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .expect("write contract");
+
+        let cwd = env::current_dir().expect("current dir");
+        env::set_current_dir(root.path()).expect("set current dir");
+
+        let rendered = super::render_service_startup_failure_text(
+            &contract_path,
+            "./repo/ota.yaml",
+            "dev",
+            "dev",
+            None,
+            &ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: false,
+                target: String::from("container"),
+                container: String::from("ota-ephemeral-deadbeef"),
+                exit_code: Some(1),
+            },
+            None,
+            "",
+            "startup failed",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        );
+
+        env::set_current_dir(cwd).expect("restore current dir");
+
+        assert!(
+            strip_ansi_codes(&rendered)
+                .contains("run `ota tasks --use ./repo` to inspect runnable task usage"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn wrapped_why_and_next_indent_continuations_under_the_value() {
         let _guard = env_mutex_lock();
         let original_columns = env::var_os("COLUMNS");
@@ -32968,6 +33109,17 @@ fn command_for_repo_contract_target(command: &str, contract_path: &Path) -> Stri
     }
 
     command_for_contract(command, contract_path)
+}
+
+fn command_for_repo_from_contract_path(command: &str, contract_path: &Path) -> String {
+    if contract_path.is_dir() {
+        return command_for_repo(command, contract_path);
+    }
+
+    command_for_repo(
+        command,
+        contract_path.parent().unwrap_or_else(|| Path::new(".")),
+    )
 }
 
 fn command_for_repo(command: &str, repo_path: &Path) -> String {
@@ -34689,6 +34841,21 @@ fn render_run_captured_failure_text(
                 receipt_text,
             );
         }
+        if !service_termination.after_readiness {
+            return render_service_startup_failure_text(
+                contract_path,
+                where_value,
+                task_name,
+                requested_task_name,
+                member,
+                service_termination,
+                runtime,
+                stdout,
+                stderr,
+                summary,
+                receipt_text,
+            );
+        }
         return render_service_stopped_failure_text(
             where_value,
             task_name,
@@ -34958,7 +35125,7 @@ fn render_service_stopped_failure_text(
     let mut out = format!(
         "{}  {}",
         render_severity(FindingSeverity::Error),
-        paint("Service stopped", "1;37")
+        paint("Service stopped after readiness", "1;37")
     );
     out.push_str(&format!(
         "\n{} {}",
@@ -34973,15 +35140,11 @@ fn render_service_stopped_failure_text(
 
     let endpoint = runtime.and_then(primary_runtime_endpoint);
     let subject = service_termination_subject(service_termination);
-    let mut why_lines = vec![if service_termination.after_readiness {
-        match endpoint {
-            Some(endpoint) => {
-                format!("service task `{task_name}` became ready at `{endpoint}` and then stopped")
-            }
-            None => format!("service task `{task_name}` became ready and then stopped"),
+    let mut why_lines = vec![match endpoint {
+        Some(endpoint) => {
+            format!("service task `{task_name}` became ready at `{endpoint}` and then stopped")
         }
-    } else {
-        format!("service task `{task_name}` stopped before readiness")
+        None => format!("service task `{task_name}` became ready and then stopped"),
     }];
     let cause_detail = match service_termination.cause {
         ServiceTerminationCause::OomKilled => {
@@ -35056,7 +35219,7 @@ fn service_termination_summary_note(service_termination: &ServiceTermination) ->
     let prefix = if service_termination.after_readiness {
         "service stopped after readiness"
     } else {
-        "service stopped before readiness"
+        "service failed to start"
     };
     let target = service_termination.target.as_str();
     match service_termination.cause {
@@ -35088,6 +35251,109 @@ fn service_termination_subject(service_termination: &ServiceTermination) -> Stri
         "{} `{}`",
         service_termination.target, service_termination.container
     )
+}
+
+fn render_service_startup_failure_text(
+    contract_path: &Path,
+    where_value: &str,
+    task_name: &str,
+    requested_task_name: &str,
+    member: Option<&str>,
+    service_termination: &ServiceTermination,
+    runtime: Option<&ResolvedTaskRuntime>,
+    stdout: &str,
+    stderr: &str,
+    summary_block: &str,
+    receipt_text: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Service failed to start", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Task:"),
+        paint_code(task_name)
+    ));
+
+    let readiness_listener = runtime
+        .and_then(|runtime| runtime.primary_listener.as_deref())
+        .map(str::to_string);
+    let mut why_lines = vec![String::from(
+        "the workload exited before readiness was observed",
+    )];
+    if let Some(listener_name) = readiness_listener.as_deref() {
+        why_lines.push(format!(
+            "readiness was never reached for listener `{listener_name}`"
+        ));
+    }
+    let subject = service_termination_subject(service_termination);
+    let cause_detail = match service_termination.cause {
+        ServiceTerminationCause::OomKilled => {
+            format!("{subject} was OOM-killed by the container engine")
+        }
+        ServiceTerminationCause::Interrupted => format!(
+            "{subject} was interrupted before readiness (exit code `{}`)",
+            service_termination.exit_code.unwrap_or(130)
+        ),
+        ServiceTerminationCause::ExitedNonZero => {
+            if service_termination.exit_code == Some(137) {
+                format!(
+                    "{subject} was killed before readiness (exit code `137`, SIGKILL), often due to OOM or container runtime termination"
+                )
+            } else {
+                format!(
+                    "{subject} exited with status `{}` before readiness",
+                    service_termination.exit_code.unwrap_or(1)
+                )
+            }
+        }
+        ServiceTerminationCause::Exited => format!("{subject} exited before readiness"),
+        ServiceTerminationCause::Unknown => {
+            format!("{subject} stopped with an unknown termination cause before readiness")
+        }
+    };
+    why_lines.push(cause_detail);
+    append_error_detail_section(&mut out, "Why:", &why_lines, None);
+
+    if let Some(excerpt) = run_output_excerpt(stdout, stderr, 20).as_ref() {
+        append_named_output_excerpt_section(&mut out, "Startup Output:", excerpt);
+    }
+
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push('\n');
+        out.push_str(receipt_text);
+    }
+
+    let next_steps = [
+        format!(
+            "rerun `{}` for live task output",
+            repo_run_stream_command(requested_task_name, member)
+        ),
+        task_use_details_step(Some(contract_path), member),
+    ];
+    let summary_override = summary_with_container_override(
+        summary_with_note_override(
+            Some(summary_block),
+            &service_termination_summary_note(service_termination),
+        )
+        .as_deref(),
+        &service_termination.container,
+    );
+    append_summary_block(
+        &mut out,
+        summary_override.as_deref().or(Some(summary_block)),
+    );
+    append_post_summary_next_block(&mut out, &next_steps);
+    out
 }
 
 fn task_exit_failure_why_lines(

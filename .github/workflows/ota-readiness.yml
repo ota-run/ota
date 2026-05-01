@@ -45,7 +45,7 @@ jobs:
         with:
           command: receipt
           path: .
-          ota-version: 1.5.0
+          ota-version: 1.6.5
           archive: true
           artifact-name: ota-readiness
           github-token: ${{ github.token }}

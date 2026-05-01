@@ -12670,31 +12670,21 @@ fn classify_container_service_termination(
         } else {
             is_interrupt_exit_code(effective_exit_code) || effective_exit_code == 0
         };
-        if !interrupted_before_readiness {
-            // A clean service exit before readiness is still a service-startup stop and must not
-            // silently report success. Keep non-zero pre-readiness failures in the generic path.
-            if effective_exit_code == 0 {
-                return Some(ServiceTermination {
-                    kind: ServiceTerminationKind::ServiceStopped,
-                    cause: ServiceTerminationCause::Exited,
-                    after_readiness: false,
-                    target: if termination_state.is_some() {
-                        String::from("container")
-                    } else {
-                        String::from("service workload in persistent container")
-                    },
-                    container: container_name.to_string(),
-                    exit_code: termination_state
-                        .and_then(|state| state.exit_code)
-                        .or(Some(exit_code)),
-                });
-            }
-            return None;
-        }
+        let cause = if termination_state.and_then(|state| state.oom_killed) == Some(true) {
+            ServiceTerminationCause::OomKilled
+        } else if interrupted_before_readiness {
+            ServiceTerminationCause::Interrupted
+        } else if effective_exit_code > 0 {
+            ServiceTerminationCause::ExitedNonZero
+        } else if effective_exit_code == 0 {
+            ServiceTerminationCause::Exited
+        } else {
+            ServiceTerminationCause::Unknown
+        };
 
         return Some(ServiceTermination {
             kind: ServiceTerminationKind::ServiceStopped,
-            cause: ServiceTerminationCause::Interrupted,
+            cause,
             after_readiness: false,
             target: if termination_state.is_some() {
                 String::from("container")
@@ -12775,7 +12765,7 @@ fn service_termination_execution_note(service_termination: &ServiceTermination) 
     if service_termination.after_readiness {
         format!("service stopped after readiness; {cause}")
     } else {
-        format!("service stopped before readiness; {cause}")
+        format!("service failed to start; {cause}")
     }
 }
 
@@ -27803,7 +27793,7 @@ tasks:
         assert_eq!(
             second.execution_note.as_deref(),
             Some(
-                "persistent container reused; service stopped before readiness; service workload in persistent container exited"
+                "persistent container reused; service failed to start; service workload in persistent container exited"
             )
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
@@ -29760,12 +29750,12 @@ tasks:
         assert!(!service_termination.after_readiness);
         assert_eq!(
             super::service_termination_execution_note(&service_termination),
-            "service stopped before readiness; service workload in persistent container exited"
+            "service failed to start; service workload in persistent container exited"
         );
     }
 
     #[test]
-    fn container_service_classification_keeps_pre_readiness_nonzero_failures_generic() {
+    fn container_service_classification_marks_pre_readiness_nonzero_failure_as_startup_stop() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -29828,13 +29818,19 @@ tasks:
             1,
             true,
             "ota-ephemeral-test",
-        );
+        )
+        .expect("service termination should classify");
 
-        assert!(service_termination.is_none());
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::ExitedNonZero
+        );
+        assert!(!service_termination.after_readiness);
     }
 
     #[test]
-    fn container_service_classification_requires_interrupt_signal_before_readiness() {
+    fn container_service_classification_treats_pre_readiness_exit_130_without_interrupt_flag_as_nonzero_exit()
+     {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -29897,9 +29893,14 @@ tasks:
             130,
             false,
             "ota-ephemeral-test",
-        );
+        )
+        .expect("service termination should classify");
 
-        assert!(service_termination.is_none());
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::ExitedNonZero
+        );
+        assert!(!service_termination.after_readiness);
     }
 
     #[test]
