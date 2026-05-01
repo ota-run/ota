@@ -24,9 +24,10 @@
 
 # Multi-Workload Shared Local Backends
 
-Status: proposed.
+Status: usage and implementation note for the shipped shared-local-backend workload model, plus
+remaining extension direction where explicitly called out.
 
-This spec defines the follow-on topology feature that lets one shared local backend host multiple
+This spec explains the shipped topology behavior that lets one shared local backend host multiple
 distinct long-running workloads honestly.
 
 It extends:
@@ -34,34 +35,53 @@ It extends:
 - [execution-topology.md](execution-topology.md)
 - [local-service-topology.md](local-service-topology.md)
 
-It does not replace the current shared-local-backend model. It relaxes that model by separating
-what is truly backend-shared from what is workload-local.
+It does not replace the current shared-local-backend model. It explains the separation between
+what is truly backend-shared and what is workload-local, and calls out the remaining follow-on
+expansion points.
 
 ## Core truth
 
-The current shared local backend model is strict:
+The current shared local backend model is strict where backend identity must stay deterministic:
 
 - one backend
 - one deterministic container shape
-- one shared publication/listener shape
 
-That is intentionally safe, but it is too narrow for real local stacks like:
+At the same time, the shipped model already allows workload-local differences in:
+
+- listeners
+- publications
+- readiness
+- commands
+- task env
+
+That is the right product boundary for real local stacks like:
 
 - API on `8080`
 - helper app or sandbox on `8787`
 - both should share one local workbench/backend
 - both should keep distinct listeners and publications
 
-The missing concept is:
+The key concept is:
 
 - one backend boundary
 - multiple workload identities inside it
 
-Ota should model that directly instead of forcing repos to choose between:
+Ota now models that directly instead of forcing repos to choose between:
 
 - fake co-location
 - host-bridge workarounds
 - or giving up on a shared backend entirely
+
+The canonical shipped example is:
+
+- [examples/shared-local-topology/ota.yaml](../../examples/shared-local-topology/ota.yaml)
+
+It already demonstrates:
+
+- one shared backend boundary
+- one producer workload on `8080`
+- one helper workload on `3000`
+- one truthful target binding between them
 
 ## Product goal
 
@@ -132,7 +152,7 @@ The correct separation is:
 - task env
 - task identity
 
-This is the heart of the feature.
+This is the heart of the shipped feature.
 
 ## Contract direction
 
@@ -162,9 +182,9 @@ tasks:
       backend_binding: workbench
 ```
 
-Do not introduce backend-declared workload slots yet.
+Do not introduce backend-declared workload slots.
 
-The stronger extension is:
+The shipped model is:
 
 - keep `tasks.<name>.runtime.backend_binding`
 - treat listeners/publications as workload-local within that backend
@@ -174,7 +194,7 @@ That extends the current model cleanly without a second abstraction layer.
 
 ## Validation rules
 
-Validation should split into two classes.
+Validation splits into two classes.
 
 ### Backend compatibility validation
 
@@ -256,7 +276,7 @@ Receipts and human output must preserve both layers of truth:
 
 ## Compatibility and migration
 
-This should be additive.
+This is additive.
 
 Existing repos that rely on the current strict shared-backend model should continue to work.
 
@@ -269,7 +289,7 @@ Migration path:
 
 ## qredex-core success case
 
-This feature should allow:
+The shipped model should allow:
 
 - `dev` and `sandbox` to bind the same shared local backend
 - one effective backend environment/profile
@@ -281,15 +301,23 @@ This feature should allow:
 
 That is the real motivating case.
 
-## Validation requirements for implementation
+## Shipped validation requirements
 
-At minimum, implementation should prove:
+The implementation should prove:
 
 1. two tasks can share one backend while exposing different listeners/publications
 2. incompatible backend environment/profile/image intent is still rejected
 3. backend fulfillment still runs once per backend unit
 4. `address_view: topology` resolves between bound workloads truthfully
 5. receipts show backend evidence and workload evidence separately
+
+## Remaining extension direction
+
+What is still follow-on rather than core shipped behavior:
+
+- broader docs/example coverage for more repos adopting the pattern
+- any future backend-family broadening beyond the current deterministic shared-backend shape rules
+- any future authoring sugar beyond the current `targets.<name>` plus optional `override_input` model
 
 ## Product principle
 

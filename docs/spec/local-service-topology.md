@@ -41,7 +41,7 @@ plus adjacent extension direction where explicitly called out:
 
 This spec extends [execution-topology.md](execution-topology.md). It does not replace it.
 
-The follow-on proposed extension for one shared backend hosting multiple distinct workloads lives in
+The deeper workload-local/shared-backend guidance for one backend hosting multiple distinct workloads lives in
 [multi-workload-shared-local-backends.md](multi-workload-shared-local-backends.md).
 
 ## Core truth
@@ -63,7 +63,7 @@ Ota now models directly:
 The remaining product pressure is narrower:
 
 - some repos still want a more explicit service-target-default authoring story than `targets.<name>` plus optional `override_input`
-- one shared backend hosting multiple distinct workloads is still the main follow-on expansion tracked in [multi-workload-shared-local-backends.md](multi-workload-shared-local-backends.md)
+- the main remaining work in this area is clearer adoption guidance and examples for the shipped workload-local shared-backend model described in [multi-workload-shared-local-backends.md](multi-workload-shared-local-backends.md)
 
 The stable product boundary is:
 
