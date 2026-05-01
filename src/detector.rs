@@ -134,6 +134,8 @@ const DETECT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
         EnvSourceKind::Properties,
         "src/main/resources/application.properties",
     ),
+    (EnvSourceKind::Yaml, "src/main/resources/application.yml"),
+    (EnvSourceKind::Yaml, "src/main/resources/application.yaml"),
     (EnvSourceKind::Json, "appsettings.json"),
     (EnvSourceKind::Json, "appsettings.Development.json"),
 ];
@@ -246,6 +248,8 @@ impl DetectReport {
                             "dotenv" => EnvSourceKind::Dotenv,
                             "properties" => EnvSourceKind::Properties,
                             "json" => EnvSourceKind::Json,
+                            "yaml" => EnvSourceKind::Yaml,
+                            "toml" => EnvSourceKind::Toml,
                             _ => source.kind,
                         };
                     }
@@ -4332,10 +4336,15 @@ requires-python = ">=3.12"
             "src/main/resources/application.properties",
             "app.port=8080\n",
         );
-        fixture.write("appsettings.json", "{ \"App\": { \"Port\": 8081 } }");
+        fixture.write("src/main/resources/application.yml", "app:\n  port: 8081\n");
+        fixture.write(
+            "src/main/resources/application.yaml",
+            "app:\n  port: 8082\n",
+        );
+        fixture.write("appsettings.json", "{ \"App\": { \"Port\": 8083 } }");
         fixture.write(
             "appsettings.Development.json",
-            "{ \"App\": { \"Port\": 8082 } }",
+            "{ \"App\": { \"Port\": 8084 } }",
         );
 
         let report = detect_repo(fixture.path()).unwrap();
@@ -4360,6 +4369,16 @@ requires-python = ">=3.12"
                     must_exist: false,
                 },
                 EnvSource {
+                    kind: EnvSourceKind::Yaml,
+                    path: String::from("src/main/resources/application.yml"),
+                    must_exist: false,
+                },
+                EnvSource {
+                    kind: EnvSourceKind::Yaml,
+                    path: String::from("src/main/resources/application.yaml"),
+                    must_exist: false,
+                },
+                EnvSource {
                     kind: EnvSourceKind::Json,
                     path: String::from("appsettings.json"),
                     must_exist: false,
@@ -4379,7 +4398,7 @@ requires-python = ">=3.12"
                 && inference.confidence == Confidence::High
         }));
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "env.sources.4.path"
+            inference.field == "env.sources.6.path"
                 && inference.value == "appsettings.Development.json"
                 && inference.source == "appsettings.Development.json"
                 && inference.confidence == Confidence::High

@@ -19833,6 +19833,8 @@ requires-python = ">=3.12"
         let fixture = ContractFixture::new_dir();
         fixture.write(".env.local", "APP_URL=http://localhost:3000\n");
         fixture.write(".env", "NODE_ENV=development\n");
+        fixture.write("src/main/resources/application.yml", "app:\n  port: 8080\n");
+        fixture.write("appsettings.json", "{ \"App\": { \"Port\": 8081 } }");
 
         let output = run_with([
             "ota",
@@ -19878,6 +19880,50 @@ requires-python = ">=3.12"
         assert_eq!(env_source["provenance_key"], "repo_signals");
         assert_eq!(env_source["source"], ".env.local");
         assert_eq!(env_source["confidence"], "high");
+    }
+
+    #[test]
+    fn init_detected_write_infers_existing_spring_yaml_sources() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("src/main/resources/application.yml", "app:\n  port: 8080\n");
+        fixture.write(
+            "src/main/resources/application.yaml",
+            "app:\n  port: 8081\n",
+        );
+
+        let output = run_with(["ota", "init", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "detected");
+        assert_eq!(json["config"]["env"]["sources"][0]["kind"], "yaml");
+        assert_eq!(
+            json["config"]["env"]["sources"][0]["path"],
+            "src/main/resources/application.yml"
+        );
+        assert_eq!(json["config"]["env"]["sources"][1]["kind"], "yaml");
+        assert_eq!(
+            json["config"]["env"]["sources"][1]["path"],
+            "src/main/resources/application.yaml"
+        );
+        let inferred = json["inferred"].as_array().expect("inferred array");
+        assert!(inferred.iter().any(|entry| {
+            entry["field"] == "env.sources.0.kind"
+                && entry["value"] == "yaml"
+                && entry["source"] == "src/main/resources/application.yml"
+                && entry["confidence"] == "high"
+        }));
+        assert!(inferred.iter().any(|entry| {
+            entry["field"] == "env.sources.1.path"
+                && entry["value"] == "src/main/resources/application.yaml"
+                && entry["source"] == "src/main/resources/application.yaml"
+                && entry["confidence"] == "high"
+        }));
+
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("kind: yaml"));
+        assert!(written.contains("path: src/main/resources/application.yml"));
+        assert!(written.contains("path: src/main/resources/application.yaml"));
     }
 
     #[test]

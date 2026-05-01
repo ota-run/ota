@@ -21552,9 +21552,18 @@ fn render_execution_plan_contexts_text(
     execution: &ExecutionSummary<'_>,
     selected_context: Option<&str>,
 ) -> String {
+    let other_contexts = execution
+        .contexts
+        .iter()
+        .filter(|context| Some(context.name) != selected_context)
+        .collect::<Vec<_>>();
+    if other_contexts.is_empty() {
+        return String::new();
+    }
+
     let mut stdout = String::new();
-    stdout.push_str(&paint_section_title("Available Contexts"));
-    for context in &execution.contexts {
+    stdout.push_str(&paint_section_title("Other Contexts"));
+    for context in other_contexts {
         stdout.push_str(&format!(
             "\n{} {}{}",
             summary_bullet(),
@@ -21572,6 +21581,36 @@ fn render_execution_plan_contexts_text(
     stdout
 }
 
+fn selected_execution_plan_context_summary<'a>(
+    execution: Option<&'a ExecutionSummary<'_>>,
+    selected_context: Option<&str>,
+) -> Option<&'a ExecutionContextSummary<'a>> {
+    let execution = execution?;
+    let selected_context = selected_context?;
+    execution
+        .contexts
+        .iter()
+        .find(|context| context.name == selected_context)
+}
+
+fn render_execution_plan_selected_context_label(
+    execution: Option<&ExecutionSummary<'_>>,
+    selected_context: Option<&str>,
+) -> Option<String> {
+    let selected_context = selected_context?;
+    let suffix =
+        if execution.and_then(|execution| execution.default_context) == Some(selected_context) {
+            " (default)"
+        } else {
+            ""
+        };
+    Some(format!(
+        "{}{}",
+        paint_backticked_code(selected_context),
+        paint(suffix, "2")
+    ))
+}
+
 fn render_execution_plan_text(
     path: &str,
     contract_path: &Path,
@@ -21586,22 +21625,19 @@ fn render_execution_plan_text(
         render_resolved_status()
     );
     let selected_context = selected_execution_plan_context_name(declared_execution, resolved);
+    let selected_context_summary =
+        selected_execution_plan_context_summary(declared_execution, selected_context);
 
-    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Plan")));
+    stdout.push_str(&format!(
+        "\n\n{}\n",
+        paint_section_title("Selected Execution")
+    ));
     stdout.push_str(&format!(
         "{} {} {}",
         summary_bullet(),
         paint_key("Backend:"),
         paint_backticked_code(&resolved.backend)
     ));
-    if let Some(context_name) = selected_context {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            summary_bullet(),
-            paint_key("Context:"),
-            paint_backticked_code(context_name)
-        ));
-    }
     if let Some(lifecycle) = resolved.lifecycle.as_deref() {
         stdout.push_str(&format!(
             "\n{} {} {}",
@@ -21624,6 +21660,16 @@ fn render_execution_plan_text(
             summary_bullet(),
             paint_key("Engine:"),
             paint_backticked_code(engine)
+        ));
+    }
+    if let Some(context_label) =
+        render_execution_plan_selected_context_label(declared_execution, selected_context)
+    {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Context:"),
+            context_label
         ));
     }
     if resolved.engine.is_none() && !resolved.engine_candidates.is_empty() {
@@ -21650,6 +21696,22 @@ fn render_execution_plan_text(
             paint_backticked_code(target)
         ));
     }
+    if let Some(attachments) =
+        selected_context_summary.and_then(|context| context.attachments.as_ref())
+        && !attachments.isolated_effective_paths.is_empty()
+    {
+        let paths = attachments
+            .isolated_effective_paths
+            .iter()
+            .map(|path| path.as_str())
+            .collect::<Vec<_>>();
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Isolation:"),
+            render_inline_code_list(&paths)
+        ));
+    }
     if let Some(cwd) = resolved.cwd.as_deref() {
         stdout.push_str(&format!(
             "\n{} {} {}",
@@ -21672,11 +21734,11 @@ fn render_execution_plan_text(
     }
 
     if let Some(execution) = declared_execution {
-        if !execution.contexts.is_empty() {
-            stdout.push_str(&format!(
-                "\n\n{}",
-                render_execution_plan_contexts_text(execution, selected_context)
-            ));
+        if execution.contexts.len() > 1 {
+            let contexts_text = render_execution_plan_contexts_text(execution, selected_context);
+            if !contexts_text.is_empty() {
+                stdout.push_str(&format!("\n\n{contexts_text}"));
+            }
         } else {
             stdout.push_str(&format!(
                 "\n\n{}",
@@ -22746,9 +22808,10 @@ mod tests {
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
-        DetectComparison, DetectComparisonRemoval, EnvSourceStatus, ExecutionReceipt,
-        ExecutionReceiptLogs, ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary,
-        ServiceManagerSummary, ServiceReadinessSummary, ServiceSummary, TaskSummary,
+        ContractIdentity, DetectComparison, DetectComparisonRemoval, EnvSourceStatus,
+        ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs, ExecutionReceiptSummary,
+        ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary, ServiceReadinessSummary,
+        ServiceSummary, TaskSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -27453,6 +27516,98 @@ execution:
         );
         assert_eq!(execution.contexts[1].name, "host");
         assert_eq!(execution.contexts[1].backend, "native");
+    }
+
+    #[test]
+    fn execution_plan_text_prioritizes_selected_execution_and_other_contexts() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(&contract_path, "kind: ota").unwrap();
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: topology-example
+execution:
+  default_context: development:ctx
+  contexts:
+    development:ctx:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .next
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .next
+"#,
+        )
+        .unwrap();
+
+        let execution = ExecutionSummary::from_contract(&contract, &contract_path).unwrap();
+        let text = strip_ansi_codes(&super::render_execution_plan_text(
+            "./ota.yaml",
+            &contract_path,
+            &ContractIdentity {
+                version: 1,
+                project: crate::output::ContractIdentityProject {
+                    name: String::from("topology-example"),
+                    project_type: None,
+                },
+                metadata: crate::output::ContractIdentityMetadata::default(),
+                execution: crate::output::ContractIdentityExecution::default(),
+                counts: crate::output::ContractIdentityCounts {
+                    runtimes: 0,
+                    tools: 0,
+                    env: 0,
+                    services: 0,
+                    checks: 0,
+                    tasks: 0,
+                    repos: None,
+                    policies: None,
+                },
+            },
+            Some(&execution),
+            &ExecutionPlanResolved {
+                backend: String::from("container"),
+                backend_source: String::from("default context"),
+                lifecycle: Some(String::from("persistent")),
+                lifecycle_source: Some(String::from("context lifecycle")),
+                image: Some(String::from("node:24-bookworm")),
+                engine: Some(String::from("docker")),
+                engine_candidates: Vec::new(),
+                provider: None,
+                target: Some(String::from("ota-4e6691d00559e2b3")),
+                target_strategy: String::from("persistent"),
+                cwd: None,
+            },
+            None,
+        ));
+
+        assert!(text.contains("\n\nSelected Execution\n"));
+        assert!(text.contains("\n» Backend: `container`"));
+        assert!(text.contains("\n» Lifecycle: `persistent`"));
+        assert!(text.contains("\n» Image: `node:24-bookworm`"));
+        assert!(text.contains("\n» Engine: `docker`"));
+        assert!(text.contains("\n» Context: `development:ctx` (default)"));
+        assert!(text.contains("\n» Target: `ota-4e6691d00559e2b3`"));
+        assert!(text.contains("\n» Isolation: `/workspace/node_modules`, `/workspace/.next`"));
+        assert!(text.contains("\n\nOther Contexts\n"));
+        assert!(text.contains(
+            "\n» `verify:ctx`\n  container, ephemeral, image=node:24-bookworm, isolated=/workspace/node_modules+/workspace/.next"
+        ));
+        assert!(!text.contains("\n\nPlan\n"));
+        assert!(!text.contains("\n\nAvailable Contexts\n"));
     }
 
     #[test]

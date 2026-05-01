@@ -178,8 +178,8 @@ This means:
 Detect/init onboarding inference:
 
 - `ota detect` and detector-led `ota init` may infer curated `env.sources` entries from known standard files only
-- today that curated list is `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, and `appsettings.Development.json`
-- `yaml` and `toml` are supported at runtime when declared, but this curated detect/init inference list does not yet auto-suggest standard yaml/toml paths
+- today that curated list is `.env.local`, `.env`, `src/main/resources/application.properties`, `src/main/resources/application.yml`, `src/main/resources/application.yaml`, `appsettings.json`, and `appsettings.Development.json`
+- `toml` is supported at runtime when declared, but this curated detect/init inference list does not yet auto-suggest standard TOML paths
 - inferred entries carry the same provenance/confidence model as other detect/init fields
 - runtime commands do not auto-discover those files; `ota run`, `ota up`, `ota env`, and `ota doctor` only load sources that are already declared in `env.sources`
 - merge/apply stays explicit: inferred sources are reviewed and written through the existing detect/init flows instead of being silently loaded at execution time

@@ -809,8 +809,8 @@ Current behavior:
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
 - in `detected` mode, plain `ota init` writes the smallest valid starter contract for the repo
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
-- when standard env source files already exist, detector-led init can declare them as explicit `env.sources` in the starter contract: `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, and `appsettings.Development.json`; explicit `--pack` mode does not infer env sources from repo files
-- runtime support for declared `env.sources` also includes curated `yaml` and `toml`, but detector-led init still only auto-infers the explicit standard files listed above
+- when standard env source files already exist, detector-led init can declare them as explicit `env.sources` in the starter contract: `.env.local`, `.env`, `src/main/resources/application.properties`, `src/main/resources/application.yml`, `src/main/resources/application.yaml`, `appsettings.json`, and `appsettings.Development.json`; explicit `--pack` mode does not infer env sources from repo files
+- runtime support for declared `env.sources` also includes curated `yaml` and `toml`; detector-led init auto-infers the explicit standard dotenv, Spring properties/yaml, and .NET JSON files listed above, but does not yet auto-suggest standard TOML paths
 - when `project.name` is still missing in bootstrap mode, ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
 - canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
@@ -820,7 +820,7 @@ Current behavior:
 Choosing an init path:
 
 - use `ota init --dry-run` when detector-led init should shape the first draft from repo signals
-- use detector-led init when you want ota to carry existing declared-source candidates such as `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, or `appsettings.Development.json` into `env.sources`
+- use detector-led init when you want ota to carry existing declared-source candidates such as `.env.local`, `.env`, `src/main/resources/application.properties`, `src/main/resources/application.yml`, `src/main/resources/application.yaml`, `appsettings.json`, or `appsettings.Development.json` into `env.sources`
 - use plain `ota init` only after reviewing that detector-led starter
 - use `ota init --packs` when you want to compare the explicit starter catalog first
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
@@ -1607,7 +1607,7 @@ Dry-run behavior:
 - prints a candidate `ota.yaml`
 - prints per-field provenance
 - prints per-field confidence
-- when curated standard env source files exist, includes inferred `env.sources` entries for `.env.local`, `.env`, `src/main/resources/application.properties`, `appsettings.json`, and `appsettings.Development.json`
+- when curated standard env source files exist, includes inferred `env.sources` entries for `.env.local`, `.env`, `src/main/resources/application.properties`, `src/main/resources/application.yml`, `src/main/resources/application.yaml`, `appsettings.json`, and `appsettings.Development.json`
 - when `ota.yaml` already exists, text output leads with the existing-contract comparison and drift review before the inferred contract details
 - existing-contract add/update lines include the detector source and confidence for the proposed value
 - when `ota.yaml` already exists and only drift is present, text output says there are no additive detected changes and points users at merge vs rewrite review
