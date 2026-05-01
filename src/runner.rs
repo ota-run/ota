@@ -6651,6 +6651,29 @@ fn ensure_target_producer_state(
     };
 
     let producer_initially_observed = readiness_target_observed(&readiness_target);
+    let producer_is_non_persistent_container = producer_backend_kind == Backend::Container
+        && !matches!(
+            producer_backend,
+            ResolvedExecutionBackend::Container {
+                lifecycle: Lifecycle::Persistent,
+                ..
+            }
+        );
+
+    if producer_is_non_persistent_container {
+        if let Some(loader) = loader.take() {
+            loader.stop();
+        }
+        return Err(RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!(
+                "target activation `{}` currently supports only persistent container producer services; `{producer_task_name}` resolves to `container`",
+                activation_mode.as_str()
+            ),
+        });
+    }
+
     if producer_initially_observed && activation_mode != TaskTargetActivationMode::RestartReady {
         if let Some(loader) = loader.take() {
             loader.stop();
@@ -24768,7 +24791,8 @@ tasks:
             host:
               address: 127.0.0.1
               port:
-                mode: auto
+                mode: fixed
+                value: 3000
               path: /
 "#,
         );
@@ -32413,8 +32437,8 @@ tasks:
     run: printf ready >> prepared.txt
 "#;
         fs::write(&contract_path, contract_contents.trim_start()).unwrap();
-        let contract = parse_contract_str(Path::new("ota/ota.yaml"), contract_contents.trim_start())
-            .unwrap();
+        let contract =
+            parse_contract_str(Path::new("ota/ota.yaml"), contract_contents.trim_start()).unwrap();
 
         let bin_dir = root.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();

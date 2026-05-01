@@ -110,6 +110,52 @@ fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> S
     format!("ota-{:x}", hasher.finish())
 }
 
+fn find_container_for_fixture(working_dir: &Path, image: &str) -> Option<String> {
+    let working_dir = working_dir.display().to_string();
+    let names_output = Command::new("docker")
+        .args(["ps", "-a", "--format", "{{.Names}}"])
+        .output()
+        .ok()?;
+    for name in String::from_utf8_lossy(&names_output.stdout).lines() {
+        let name = name.trim();
+        if !name.starts_with("ota-") {
+            continue;
+        }
+
+        let mounted_image = String::from_utf8_lossy(
+            &Command::new("docker")
+                .args(["inspect", "--format", "{{.Config.Image}}", name])
+                .output()
+                .ok()?
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        if mounted_image != image {
+            continue;
+        }
+
+        let mounts_output = Command::new("docker")
+            .args([
+                "inspect",
+                "--format",
+                "{{range .Mounts}}{{.Source}}\n{{end}}",
+                name,
+            ])
+            .output()
+            .ok()?;
+        let has_mount = String::from_utf8_lossy(&mounts_output.stdout)
+            .lines()
+            .any(|mount| mount == working_dir);
+
+        if has_mount {
+            return Some(name.to_string());
+        }
+    }
+
+    None
+}
+
 fn make_shim(dir: &Path, name: &str, log: &Path) {
     let shim = dir.join(name);
     let script = format!(
@@ -869,8 +915,9 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
         "stderr was: {}",
         outcome.stderr
     );
-
     let container_name = persistent_container_name(fixture.path(), "rust:1.94-bookworm", "docker");
+    let container_name =
+        find_container_for_fixture(fixture.path(), "rust:1.94-bookworm").unwrap_or(container_name);
     let exec_output = Command::new("docker")
         .args([
             "exec",

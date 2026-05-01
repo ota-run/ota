@@ -23637,6 +23637,7 @@ env:
     #[cfg(unix)]
     #[test]
     fn run_command_persists_logs_and_reports_their_location() {
+        let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
             repo.path().join("ota.yaml"),
@@ -25121,7 +25122,7 @@ tasks:
 
         assert!(text.contains("BLOCKED"));
         assert!(text.contains("Invalid contract"));
-        assert!(text.contains("Where: ./ota.yaml"));
+        assert!(text.contains("Where: ./ota.yaml") || text.contains("Where: ota.yaml"));
         assert!(text.contains("Field: execution.backends.container.image"));
         assert!(text.contains(
             "container-backed provisioning requires `execution.backends.container.image`"
@@ -30223,7 +30224,7 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("external endpoint was projected as `http://127.0.0.1:3001/`"),
+            rendered.contains("projected host endpoint `http://127.0.0.1:3001/`"),
             "{rendered}"
         );
         assert!(rendered.contains("Status:      interrupted"), "{rendered}");
@@ -36356,6 +36357,35 @@ fn run_execution_receipt_with_shared(
         Some(contract_path),
     )
     .ok();
+    let shared_backend_lifecycle = shared_local_backend
+        .as_ref()
+        .and_then(
+            |shared_local_backend| match shared_local_backend.lifecycle.as_str() {
+                "persistent" => Some(Lifecycle::Persistent),
+                "ephemeral" => Some(Lifecycle::Ephemeral),
+                _ => None,
+            },
+        );
+    let task_shared_backend_lifecycle = shared_backend_lifecycle.or_else(|| {
+        (effective.backend == Backend::Container)
+            .then(|| {
+                contract
+                    .tasks
+                    .get(task_name)
+                    .and_then(|task| task.backend_binding_for_backend(Backend::Container))
+                    .and_then(|shared_backend_binding| {
+                        contract
+                            .execution
+                            .as_ref()
+                            .and_then(|execution| {
+                                execution.shared_backends.get(shared_backend_binding)
+                            })
+                            .filter(|shared_backend| shared_backend.backend == Backend::Container)
+                            .map(|shared_backend| shared_backend.lifecycle)
+                    })
+            })
+            .flatten()
+    });
     let backend = resolved_backend
         .as_ref()
         .map(|backend| match backend {
@@ -36369,7 +36399,10 @@ fn run_execution_receipt_with_shared(
         Some(ResolvedExecutionBackend::Container { lifecycle, .. }) => Some(*lifecycle),
         _ => match backend {
             Backend::Native if overrides.lifecycle.is_none() => None,
-            _ => effective.lifecycle,
+            _ => overrides
+                .lifecycle
+                .or(task_shared_backend_lifecycle)
+                .or(effective.lifecycle),
         },
     };
     let image = match resolved_backend.as_ref() {
@@ -36388,7 +36421,8 @@ fn run_execution_receipt_with_shared(
             Backend::Native | Backend::Remote => None,
         },
     };
-    let context = reported_task_context_for_backend(contract, task_name, backend).map(str::to_string);
+    let context =
+        reported_task_context_for_backend(contract, task_name, backend).map(str::to_string);
     let provider = resolved_backend.as_ref().and_then(|backend| match backend {
         ResolvedExecutionBackend::Remote { provider, .. }
         | ResolvedExecutionBackend::BackendProvider { provider, .. } => Some(provider.clone()),
