@@ -6,6 +6,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_release:
+        description: Force release asset creation even if the release tag already exists.
+        type: boolean
+        required: false
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -90,7 +96,9 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
     needs: release-gate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && github.event.inputs.force_release == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -113,11 +121,24 @@ jobs:
         id: tag
         run: |
           tag="${{ steps.meta.outputs.tag }}"
+          force_release="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_release == 'true' }}"
+
+          if [[ "${force_release}" == "true" ]]; then
+            if git rev-parse "${tag}" >/dev/null 2>&1; then
+              git tag -d "${tag}" || true
+              git push --delete origin "${tag}" || true
+            fi
+          fi
+
           git fetch --tags --force
           if git rev-parse "${tag}" >/dev/null 2>&1; then
-            echo "tag already exists: ${tag}"
-            echo "created=false" >> "${GITHUB_OUTPUT}"
-            exit 0
+            if [[ "${force_release}" == "true" ]]; then
+              echo "tag already exists, recreating: ${tag}"
+            else
+              echo "tag already exists: ${tag}"
+              echo "created=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
           fi
 
           git config user.name "github-actions[bot]"
