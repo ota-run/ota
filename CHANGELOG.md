@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added explicit `--setup-path` support to the POSIX installer so `install.sh` can persist the chosen bin directory into the detected shell startup file only when requested, while keeping default installs non-mutating; docs now show the opt-in PATH setup path and the readiness workflow pin stays on the latest published release until `1.6.6` is actually available
 ## 1.6.6
 
 - fixed launch-facing onboarding drift: contractless quickstart/help flows no longer tell users to run `ota explain` before `ota.yaml` exists, `ota detect` rerun/contextualization now targets repo roots instead of appending `ota.yaml`, and the readiness workflow/README execution example now match the current `1.6.6` / `rust:1.94-bookworm` release surface
