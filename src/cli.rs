@@ -13130,14 +13130,17 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let normalized_stderr = normalize_inline_whitespace(&stderr);
         let repo_path = fs::canonicalize(fixture.path())
             .unwrap()
             .display()
             .to_string();
-        assert!(stderr.contains(&format!(
+        assert!(normalized_stderr.contains(&format!(
             "run `ota tasks --use {repo_path}` to inspect runnable task usage"
         )));
-        assert!(!stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
+        assert!(!normalized_stderr.contains(&format!(
+            "ota tasks --use {repo_path}/ota.yaml"
+        )));
     }
 
     #[test]
