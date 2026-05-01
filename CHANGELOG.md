@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- expanded curated detect/init env-source inference to include the standard Spring YAML files `src/main/resources/application.yml` and `src/main/resources/application.yaml`, and fixed detector high-confidence contract replay so inferred `yaml` and `toml` source kinds preserve their actual runtime kind instead of falling back incorrectly during contract reconstruction
 - clarified the shipped topology surface in repo docs: `tasks.<name>.targets.<target>` plus optional `override_input` is the current service-target-default authoring model, local-topology docs now describe the shipped workload-local shared-backend model instead of treating it as future-only, and backend-provider remote activation guidance now reflects shared-remote `host` / `topology` / `internal` support when `activation.provider_managed_cleanup: true`
 
 ## 1.6.5
