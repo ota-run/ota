@@ -26,7 +26,9 @@
 
 ## Unreleased
 
-- fixed launch-facing onboarding drift: contractless quickstart/help flows no longer tell users to run `ota explain` before `ota.yaml` exists, `ota detect` rerun/contextualization now targets repo roots instead of appending `ota.yaml`, and the readiness workflow/README execution example now match the current `1.6.5` / `rust:1.94-bookworm` release surface
+## 1.6.6
+
+- fixed launch-facing onboarding drift: contractless quickstart/help flows no longer tell users to run `ota explain` before `ota.yaml` exists, `ota detect` rerun/contextualization now targets repo roots instead of appending `ota.yaml`, and the readiness workflow/README execution example now match the current `1.6.6` / `rust:1.94-bookworm` release surface
 - expanded curated detect/init env-source inference to include the standard Spring YAML files `src/main/resources/application.yml` and `src/main/resources/application.yaml`, and fixed detector high-confidence contract replay so inferred `yaml` and `toml` source kinds preserve their actual runtime kind instead of falling back incorrectly during contract reconstruction
 - clarified the shipped topology surface in repo docs: `tasks.<name>.targets.<target>` plus optional `override_input` is the current service-target-default authoring model, local-topology docs now describe the shipped workload-local shared-backend model instead of treating it as future-only, and backend-provider remote activation guidance now reflects shared-remote `host` / `topology` / `internal` support when `activation.provider_managed_cleanup: true`
 - tightened launch-facing adoption docs around example discovery: added an `Examples by Goal` guide that maps repo shapes to the right canonical contract or workspace example, linked it from the README and quickstart, and surfaced the shared-local and shared-remote topology examples directly instead of leaving users to infer which raw example file proves which feature
