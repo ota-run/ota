@@ -24,6 +24,8 @@
 
 set -eu
 
+setup_path=false
+
 supports_color() {
   [ -t 2 ] && [ -z "${NO_COLOR-}" ]
 }
@@ -94,6 +96,76 @@ ota_error() {
   else
     printf '%s\n' "$1" >&2
   fi
+}
+
+detect_shell_rc_file() {
+  shell_name="$(basename "${SHELL:-sh}")"
+  case "${shell_name}" in
+    zsh) printf "%s" "$HOME/.zshrc" ;;
+    bash)
+      if [ -f "$HOME/.bashrc" ] || [ ! -f "$HOME/.bash_profile" ]; then
+        printf "%s" "$HOME/.bashrc"
+      else
+        printf "%s" "$HOME/.bash_profile"
+      fi
+      ;;
+    fish) printf "%s" "$HOME/.config/fish/config.fish" ;;
+    ksh) printf "%s" "$HOME/.kshrc" ;;
+    *) printf "%s" "$HOME/.profile" ;;
+  esac
+}
+
+persist_path_update() {
+  dir="$1"
+  rc_file="$(detect_shell_rc_file)"
+  rc_dir="$(dirname "${rc_file}")"
+  shell_name="$(basename "${SHELL:-sh}")"
+  begin_marker="# >>> ota PATH >>>"
+  end_marker="# <<< ota PATH <<<"
+
+  mkdir -p "${rc_dir}"
+  if [ ! -f "${rc_file}" ]; then
+    : > "${rc_file}"
+  fi
+
+  if grep -F "${begin_marker}" "${rc_file}" >/dev/null 2>&1; then
+    ota_info "PATH setup already exists in ${rc_file}"
+    ota_warn "next: restart your shell or source ${rc_file}"
+    return 0
+  fi
+
+  {
+    printf '\n%s\n' "${begin_marker}"
+    if [ "${shell_name}" = "fish" ]; then
+      printf 'if not contains -- "%s" $PATH\n' "${dir}"
+      printf '    set -gx PATH "%s" $PATH\n' "${dir}"
+      printf 'end\n'
+    else
+      printf 'case ":$PATH:" in\n'
+      printf '  *:"%s":*) ;;\n' "${dir}"
+      printf '  *) export PATH="%s:$PATH" ;;\n' "${dir}"
+      printf 'esac\n'
+    fi
+    printf '%s\n' "${end_marker}"
+  } >> "${rc_file}"
+
+  ota_info "added ${dir} to PATH in ${rc_file}"
+  ota_warn "next: restart your shell or source ${rc_file}"
+}
+
+setup_path_rerun_command() {
+  release_base="${OTA_RELEASE_BASE:-https://dist.ota.run}"
+  case "${install_mode}" in
+    source)
+      printf "./scripts/install.sh --from-source --setup-path"
+      ;;
+    git)
+      printf "curl -fsSL %s/install.sh | sh -s -- --from-git --setup-path" "${release_base}"
+      ;;
+    *)
+      printf "curl -fsSL %s/install.sh | sh -s -- --setup-path" "${release_base}"
+      ;;
+  esac
 }
 
 downloader() {
@@ -284,17 +356,32 @@ install_mode_forced=false
 if [ "${OTA_INSTALL_MODE+x}" = "x" ]; then
   install_mode_forced=true
 fi
-if [ "${1-}" = "--from-source" ]; then
-  install_from_source=true
-  install_mode="source"
-  install_mode_forced=true
-elif [ "${1-}" = "--from-git" ]; then
-  install_mode="git"
-  install_mode_forced=true
-elif [ "${1-}" = "--from-release" ]; then
-  install_mode="release"
-  install_mode_forced=true
-fi
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --from-source)
+      install_from_source=true
+      install_mode="source"
+      install_mode_forced=true
+      ;;
+    --from-git)
+      install_mode="git"
+      install_mode_forced=true
+      ;;
+    --from-release)
+      install_mode="release"
+      install_mode_forced=true
+      ;;
+    --setup-path)
+      setup_path=true
+      ;;
+    *)
+      ota_error "error: unknown install flag: $1"
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 if [ "${install_mode_forced}" != "true" ] && [ -f "./Cargo.toml" ] && grep -q '^name = "ota"$' "./Cargo.toml"; then
   if [ "${install_mode}" = "release" ]; then
@@ -328,17 +415,32 @@ elif [ -n "${OTA_BIN_DIR:-}" ] && [ -x "${OTA_BIN_DIR}/ota" ]; then
 elif [ -x "$HOME/.local/bin/ota" ]; then
   binary_path="$HOME/.local/bin/ota"
   version_output="$("$HOME/.local/bin/ota" --version 2>/dev/null || true)"
-  ota_warn "warning: add $HOME/.local/bin to PATH to run 'ota' directly"
+  if [ "${setup_path}" = "true" ]; then
+    persist_path_update "$HOME/.local/bin"
+  else
+    ota_warn "warning: add $HOME/.local/bin to PATH to run 'ota' directly"
+    ota_warn "next: rerun \`$(setup_path_rerun_command)\` to persist it automatically"
+  fi
 elif [ -x "$HOME/.cargo/bin/ota" ]; then
   binary_path="$HOME/.cargo/bin/ota"
   version_output="$("$HOME/.cargo/bin/ota" --version 2>/dev/null || true)"
-  ota_warn "warning: add $HOME/.cargo/bin to PATH to run 'ota' directly"
+  if [ "${setup_path}" = "true" ]; then
+    persist_path_update "$HOME/.cargo/bin"
+  else
+    ota_warn "warning: add $HOME/.cargo/bin to PATH to run 'ota' directly"
+    ota_warn "next: rerun \`$(setup_path_rerun_command)\` to persist it automatically"
+  fi
 else
   ota_error "error: install completed but \`ota\` is not on PATH yet"
   if [ "${install_mode}" = "release" ]; then
     ota_warn "next: export PATH=\"\$HOME/.local/bin:\$PATH\""
   else
     ota_warn "next: ensure cargo bin path is on PATH"
+  fi
+  if [ "${setup_path}" = "true" ]; then
+    ota_warn "next: rerun after confirming the installed binary location"
+  else
+    ota_warn "next: rerun \`$(setup_path_rerun_command)\` to persist PATH automatically"
   fi
   exit 1
 fi

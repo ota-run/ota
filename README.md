@@ -94,6 +94,12 @@ Install the latest release binary:
 curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
+Persist the install directory on `PATH` explicitly:
+
+```bash
+curl -fsSL https://dist.ota.run/install.sh | sh -s -- --setup-path
+```
+
 Windows PowerShell:
 
 ```powershell
@@ -135,6 +141,12 @@ Install from a local checkout:
 
 ```bash
 ./scripts/install.sh --from-source
+```
+
+Persist the source-install binary directory on `PATH` explicitly:
+
+```bash
+./scripts/install.sh --from-source --setup-path
 ```
 
 Windows PowerShell:

@@ -43,6 +43,12 @@ Install the latest release binary:
 curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
+Persist the install directory on `PATH` explicitly:
+
+```bash
+curl -fsSL https://dist.ota.run/install.sh | sh -s -- --setup-path
+```
+
 Pin a release:
 
 ```bash
@@ -55,8 +61,15 @@ From a cloned ota repository:
 ./scripts/install.sh --from-source
 ```
 
+Persist the source-install binary directory on `PATH` explicitly:
+
+```bash
+./scripts/install.sh --from-source --setup-path
+```
+
 The shell installer also supports `OTA_RELEASE_BASE` if you host the release assets on a mirror or CDN.
 If a prebuilt release is not published for the detected target, the installer now says so explicitly before trying the cargo fallback.
+`--setup-path` is opt-in: ota will not silently modify shell startup files unless you ask it to.
 
 ## Windows (PowerShell)
 
