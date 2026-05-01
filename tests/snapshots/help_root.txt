@@ -43,9 +43,10 @@ Options:
 
 Choose a flow:
   existing repo with ota.yaml  ota doctor
-  turn findings into a plan    ota explain
-  repo without ota.yaml        ota detect --dry-run .
+  repo without ota.yaml        ota doctor
+  preview inferred contract    ota detect --dry-run .
   review a starter contract    ota init --dry-run
+  turn contract findings into a plan  ota explain
   inspect execution choice     ota execution plan
   prepare the repo             ota up
   inspect env requirements     ota env

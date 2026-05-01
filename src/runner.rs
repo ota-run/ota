@@ -13005,6 +13005,11 @@ fn execute_ephemeral_container_task_command(
                 interrupted_by_user,
                 &container_name,
             );
+            let service_termination = if readiness_observed || output.exit_code == 0 || interrupted_by_user {
+                service_termination
+            } else {
+                None
+            };
             let mut exit_code = output.exit_code;
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
@@ -13082,6 +13087,11 @@ fn execute_ephemeral_container_task_command(
                 interrupted_by_user,
                 &container_name,
             );
+            let service_termination = if readiness_observed || output_exit_code == 0 || interrupted_by_user {
+                service_termination
+            } else {
+                None
+            };
             let mut exit_code = output_exit_code;
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
@@ -28942,7 +28952,7 @@ tasks:
                 .execution_note
                 .as_deref()
                 .is_some_and(|note| note.contains("persistent container created")
-                    && note.contains("service stopped"))
+                    && note.contains("service failed to start"))
         );
 
         let state_dir = bin_dir.join("docker-state");
@@ -29071,14 +29081,14 @@ tasks:
                 .execution_note
                 .as_deref()
                 .is_some_and(|note| note.contains("persistent container created")
-                    && note.contains("service stopped"))
+                    && note.contains("service failed to start"))
         );
         assert!(
             second
                 .execution_note
                 .as_deref()
                 .is_some_and(|note| note.contains("persistent container reused")
-                    && note.contains("service stopped"))
+                    && note.contains("service failed to start"))
         );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
@@ -29189,7 +29199,7 @@ tasks:
             first
                 .execution_note
                 .as_deref()
-                .is_some_and(|note| note.contains("service stopped")),
+                .is_some_and(|note| note.contains("service failed to start")),
             "{first:?}"
         );
         assert_eq!(
@@ -30674,7 +30684,7 @@ tasks:
         assert_eq!(outcome.exit_code, 1);
         assert!(outcome.execution_note.as_deref().is_some_and(|note| {
             note.contains("persistent container recreated (execution shape changed)")
-                && note.contains("service stopped")
+                && note.contains("service failed to start")
         }));
         assert!(
             !state_dir

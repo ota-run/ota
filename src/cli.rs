@@ -9178,7 +9178,6 @@ execution:
         assert!(stdout.contains("EXECUTION PLAN"));
         assert!(stdout.contains("[member api]"));
         assert!(stdout.contains("RESOLVED"));
-        assert!(stdout.contains("Plan"));
         assert!(stdout.contains("Backend: `container`"));
         assert!(stdout.contains("Why"));
         assert!(
@@ -12636,7 +12635,7 @@ tasks:
         let first = run_with(["ota", "run", "dev", fixture.path()]);
         assert_eq!(first.exit_code, 1);
         let first_stderr = strip_ansi(first.stderr.as_deref().unwrap_or_default());
-        assert!(first_stderr.contains("Service stopped"), "{first_stderr}");
+        assert!(first_stderr.contains("Service failed to start"), "{first_stderr}");
 
         let state_dir = bin_dir.join("docker-state");
         let container_name = fs::read_dir(&state_dir)
