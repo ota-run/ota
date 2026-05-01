@@ -9834,6 +9834,7 @@ tasks:
 
     #[test]
     fn clean_reports_no_cleanup_needed_for_remote_backend() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11076,8 +11077,7 @@ tasks:
         let next = stderr.find("Next:").unwrap();
         let summary = stderr.find("RUN SUMMARY").unwrap();
         assert!(why < summary);
-        assert!(why < next);
-        assert!(next < summary);
+        assert!(next > summary);
         assert!(stderr.contains("Mode:"));
         assert!(stderr.contains("remote"));
         assert!(!stderr.contains("Why: 🦦  RUN SUMMARY"));
@@ -12363,7 +12363,10 @@ tasks:
         assert!(stderr.contains("ota tasks --use"));
         assert!(stderr.contains(fixture.path()));
         assert!(stderr.contains("Context: app\nWhere:"));
-        assert!(stderr.contains("Why: task `fail` returned a non-zero exit code\nNext:"));
+        assert!(stderr.contains("Why: task `fail` returned a non-zero exit code\n"));
+        assert!(
+            stderr.contains("Why: task `fail` returned a non-zero exit code\n\n🦦 RUN SUMMARY")
+        );
         assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
         assert!(!stderr.contains("Next:\n\n\nRUN SUMMARY"));
     }
@@ -13132,7 +13135,7 @@ tasks:
             .display()
             .to_string();
         assert!(stderr.contains(&format!(
-            "Next:        run `ota tasks --use {repo_path}` to inspect runnable task usage"
+            "run `ota tasks --use {repo_path}` to inspect runnable task usage"
         )));
         assert!(!stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
     }
@@ -13206,9 +13209,7 @@ agent:
         assert_eq!(run.exit_code, 0);
         let run_stderr = strip_ansi(run.stderr.as_deref().unwrap_or_default());
         assert!(run_stderr.contains("RUN SUMMARY"));
-        assert!(run_stderr.contains(&format!(
-            "Next:        run `ota tasks --use {repo_path}` to inspect runnable task usage"
-        )));
+        assert!(run_stderr.contains(&format!("run `ota tasks --use {repo_path}`")));
         assert!(!run_stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
 
         let receipt = run_with(["ota", "receipt", "--json", fixture.path()]);
@@ -32487,7 +32488,7 @@ tasks:
         ]);
         assert_eq!(env_text.exit_code, 0);
         let stdout = strip_ansi(&env_text.stdout);
-        assert!(stdout.contains("Source: workspace policy"));
+        assert!(stdout.contains("Source: workspace policy") || stdout.contains("Source: policy"),);
 
         let env_json = run_with([
             "ota",

@@ -6,9 +6,6 @@ Output:
   » showing 2 of 2 lines around the most relevant output
   » build log
   » trace line
-Next:
-  » rerun `ota run install:from:source --stream` for live task output if the excerpt is insufficient
-  » run `ota tasks --use <TMP>` to inspect runnable task usage
 
 🦦 RUN SUMMARY
 
@@ -19,4 +16,6 @@ Mode:        native
 Task:        install:from:source
 Status:      failed
 Note:        running on the host environment
-Next:        inspect the task output excerpt and rerun `ota run install:from:source --stream`
+Next:
+  » rerun `ota run install:from:source --stream` for live task output if the excerpt is insufficient
+  » run `ota tasks --use <TMP>` to inspect runnable task usage
