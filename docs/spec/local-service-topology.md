@@ -30,7 +30,8 @@ backend-fulfillment surface, plus adjacent extension direction where explicitly 
 Use [contract-reference.md](contract-reference.md) as the canonical field and validation truth.
 Use this page when the question is how to apply those fields honestly in real repo topology.
 
-This spec defines the long-term Ota feature program for container-first local development:
+This spec defines the shipped Ota local-topology surface for container-first local development,
+plus adjacent extension direction where explicitly called out:
 
 - first-class task target bindings
 - intentional shared local backends for long-running tasks
@@ -52,21 +53,19 @@ Ota already models:
 - which listeners a service task exposes
 - whether the host sees a published endpoint
 
-Ota does not yet model strongly enough:
+Ota now models directly:
 
 - which local service another task intends to target by identity
-- which long-running tasks intentionally share one local backend
+- which long-running tasks intentionally share one backend
 - which address is correct inside that shared topology
-- how a mixed-runtime local backend is fulfilled on the actual run path
+- how that backend is fulfilled on the actual run path
 
-That gap forces repos into glue:
+The remaining product pressure is narrower:
 
-- guessed defaults like `127.0.0.1` or `host.docker.internal`
-- repo-local workbench bootstrap scripts
-- fake orchestration through sequential `depends_on`
-- hidden assumptions about which address is valid from which container
+- some repos still want a more explicit service-target-default authoring story than `targets.<name>` plus optional `override_input`
+- one shared backend hosting multiple distinct workloads is still the main follow-on expansion tracked in [multi-workload-shared-local-backends.md](multi-workload-shared-local-backends.md)
 
-The product boundary should be:
+The stable product boundary is:
 
 - repos declare intent
 - Ota serves the topology
@@ -102,6 +101,8 @@ The main abstraction should be:
 - this backend fulfills these effective requirements
 
 Operator inputs remain important, but they are override surfaces, not the primary topology model.
+The shipped authoring surface is `targets.<name>` plus optional `override_input`; there is no
+separate `default_from.service` field today.
 
 ### Keep open overrides
 

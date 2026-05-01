@@ -26,7 +26,7 @@
 
 ## Unreleased
 
-- No unreleased entries yet.
+- clarified the shipped topology surface in repo docs: `tasks.<name>.targets.<target>` plus optional `override_input` is the current service-target-default authoring model, local-topology docs now distinguish shipped behavior from the remaining multi-workload follow-on, and backend-provider remote activation guidance now reflects shared-remote `host` / `topology` / `internal` support when `activation.provider_managed_cleanup: true`
 
 ## 1.6.5
 
