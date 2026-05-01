@@ -13005,11 +13005,12 @@ fn execute_ephemeral_container_task_command(
                 interrupted_by_user,
                 &container_name,
             );
-            let service_termination = if readiness_observed || output.exit_code == 0 || interrupted_by_user {
-                service_termination
-            } else {
-                None
-            };
+            let service_termination =
+                if readiness_observed || output.exit_code == 0 || interrupted_by_user {
+                    service_termination
+                } else {
+                    None
+                };
             let mut exit_code = output.exit_code;
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
@@ -13087,11 +13088,12 @@ fn execute_ephemeral_container_task_command(
                 interrupted_by_user,
                 &container_name,
             );
-            let service_termination = if readiness_observed || output_exit_code == 0 || interrupted_by_user {
-                service_termination
-            } else {
-                None
-            };
+            let service_termination =
+                if readiness_observed || output_exit_code == 0 || interrupted_by_user {
+                    service_termination
+                } else {
+                    None
+                };
             let mut exit_code = output_exit_code;
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
