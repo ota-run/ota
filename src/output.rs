@@ -437,6 +437,137 @@ pub struct ExecutionPlanFailure<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ExecutionTopologySuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub contract: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<&'a str>,
+    pub contract_identity: ContractIdentity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_execution: Option<ExecutionSummary<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shared_backends: Vec<ExecutionTopologySharedBackendSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<ServiceSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<ExecutionTopologyTaskSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySharedBackendSummary {
+    pub name: String,
+    pub scope: String,
+    pub backend: String,
+    pub lifecycle: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fulfillment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<ExecutionTopologySharedBackendEnvironmentSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySharedBackendEnvironmentSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyTaskSummary<'a> {
+    #[serde(flatten)]
+    pub task: TaskSummary<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<ExecutionTopologyRuntimeSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<ExecutionTopologyTargetSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyRuntimeSummary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_binding: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<ExecutionTopologyReadinessSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub listeners: BTreeMap<String, ExecutionTopologyListenerSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyReadinessSummary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyListenerSummary {
+    pub protocol: String,
+    pub bind_address: String,
+    pub bind_port_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind_port_value: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_projection: Option<ExecutionTopologyHostProjectionSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyHostProjectionSummary {
+    pub address: String,
+    pub port_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_value: Option<u16>,
+    pub primary: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyTargetSummary {
+    pub name: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_input: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub activation_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<ExecutionTopologyTargetServiceSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyTargetServiceSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
+    pub task: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    pub address_view: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ExplainStep {
     pub order: usize,
     pub code: &'static str,

@@ -51,7 +51,7 @@ pub(crate) use commands::parse_container_host_port_conflict;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  repo without ota.yaml        ota doctor\n  preview inferred contract    ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  turn contract findings into a plan  ota explain\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion --setup\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  repo without ota.yaml        ota doctor\n  preview inferred contract    ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  turn contract findings into a plan  ota explain\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  export and open Studio       ota studio --open\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion --setup\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -148,6 +148,21 @@ enum Commands {
     Execution {
         #[command(subcommand)]
         command: ExecutionCommands,
+    },
+    #[command(display_order = 10)]
+    /// Export a read-only local Studio snapshot for the current repo.
+    Studio {
+        /// Open the generated snapshot in the default browser after export.
+        #[arg(long, action = ArgAction::SetTrue)]
+        open: bool,
+        /// Serve the generated Studio snapshot locally and enable reviewed write actions.
+        #[arg(long, action = ArgAction::SetTrue)]
+        serve: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
     },
     #[command(
         display_order = 4,
@@ -577,6 +592,17 @@ enum ExecutionCommands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Show the declared execution topology, services, listeners, and targets.
+    Topology {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
         /// Inspect one merged monorepo member contract declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
@@ -3660,6 +3686,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Execution {
                 command: ExecutionCommands::Plan { json: true, .. },
             }
+            | Commands::Execution {
+                command: ExecutionCommands::Topology { json: true, .. },
+            }
             | Commands::Policy { json: true, .. }
             | Commands::Policy {
                 command: Some(PolicyCommands::Init { json: true, .. }),
@@ -3745,6 +3774,28 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 memory: None,
             },
             format_from_json(json),
+            debug,
+        ),
+        Commands::Execution {
+            command: ExecutionCommands::Topology { json, member, path },
+        } => commands::execution_topology(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Studio {
+            open,
+            serve,
+            member,
+            path,
+        } => commands::studio(
+            path.as_deref(),
+            file.as_deref(),
+            open,
+            serve,
+            member.as_deref(),
             debug,
         ),
         Commands::Run {
@@ -4431,6 +4482,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
         }
+        Commands::Studio { .. } => {
+            "run `ota doctor` to refresh readiness or rerun `ota studio` after contract changes"
+        }
         Commands::Run { .. } => {
             if stderr_reports_missing_repo_contract(&stderr) {
                 "run this command from a repo directory that contains `ota.yaml`, or run `ota init` to create a starter contract"
@@ -4629,8 +4683,12 @@ fn command_requests_json(command: &Commands) -> bool {
             command: None,
             ..
         } => *json,
+        Commands::Studio { .. } => false,
         Commands::Execution {
             command: ExecutionCommands::Plan { json, .. },
+        } => *json,
+        Commands::Execution {
+            command: ExecutionCommands::Topology { json, .. },
         } => *json,
         Commands::Policy {
             command: Some(PolicyCommands::Init { json, .. }),
@@ -4674,7 +4732,11 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Tasks { .. } => "ota tasks",
         Commands::Services { .. } => "ota services",
         Commands::Env { .. } => "ota env",
-        Commands::Execution { .. } => "ota execution plan",
+        Commands::Execution { command } => match command {
+            ExecutionCommands::Plan { .. } => "ota execution plan",
+            ExecutionCommands::Topology { .. } => "ota execution topology",
+        },
+        Commands::Studio { .. } => "ota studio",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
         Commands::Annotations { .. } => "ota annotations",
@@ -9243,6 +9305,528 @@ project:
             stderr.contains("this contract does not declare `execution.backends.remote.provider`")
         );
         assert!(stderr.contains("add `execution.backends.remote.provider` to the repo contract"));
+    }
+
+    #[test]
+    fn execution_topology_json_reports_shared_backends_runtime_and_targets() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: topology-demo
+  type: application
+execution:
+  default_context: development:ctx
+  contexts:
+    development:ctx:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: development:ctx
+      fulfillment: run
+      environment:
+        profile: node-dev
+tasks:
+  api:
+    run: npm run dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3001
+              primary: true
+              path: /
+  web:
+    run: npm run web
+    targets:
+      api:
+        service:
+          task: api
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#,
+        );
+
+        let output = run_with(["ota", "execution", "topology", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(
+            json["contract_identity"]["project"]["name"],
+            "topology-demo"
+        );
+        assert_eq!(
+            json["declared_execution"]["default_context"],
+            "development:ctx"
+        );
+        assert_eq!(json["shared_backends"][0]["name"], "workbench");
+        assert_eq!(json["shared_backends"][0]["backend"], "container");
+        assert_eq!(
+            json["shared_backends"][0]["environment"]["profile"],
+            "node-dev"
+        );
+        assert_eq!(json["tasks"][0]["name"], "api");
+        assert_eq!(json["tasks"][0]["runtime"]["backend_binding"], "workbench");
+        assert_eq!(json["tasks"][0]["runtime"]["readiness"]["kind"], "http");
+        assert_eq!(
+            json["tasks"][0]["runtime"]["listeners"]["http"]["host_projection"]["address"],
+            "127.0.0.1"
+        );
+        assert_eq!(json["tasks"][1]["name"], "web");
+        assert_eq!(json["tasks"][1]["targets"][0]["name"], "api");
+        assert_eq!(
+            json["tasks"][1]["targets"][0]["activation_mode"],
+            "ensure_ready"
+        );
+        assert_eq!(
+            json["tasks"][1]["targets"][0]["service"]["address_view"],
+            "host"
+        );
+    }
+
+    #[test]
+    fn execution_topology_text_highlights_shared_backend_runtime_and_target_sections() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: topology-demo
+execution:
+  default_context: development:ctx
+  contexts:
+    development:ctx:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+  shared_backends:
+    workbench:
+      scope: local
+      backend: container
+      lifecycle: persistent
+      context: development:ctx
+      fulfillment: run
+tasks:
+  api:
+    run: npm run dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3001
+              primary: true
+  web:
+    run: npm run web
+    targets:
+      api:
+        service:
+          task: api
+          listener: http
+          address_view: topology
+        activation:
+          mode: restart_ready
+"#,
+        );
+
+        let output = run_with(["ota", "execution", "topology", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("EXECUTION TOPOLOGY "));
+        assert!(stdout.contains("\n\nOverview\n"));
+        assert!(stdout.contains("\n\nShared Backends\n"));
+        assert!(stdout.contains("workbench"));
+        assert!(stdout.contains("Fulfillment: run"));
+        assert!(stdout.contains("\n\nTasks\n"));
+        assert!(stdout.contains("Backend Binding: workbench"));
+        assert!(stdout.contains("Readiness: tcp via http"));
+        assert!(
+            stdout.contains(
+                "http (http, bind=0.0.0.0 fixed:3000, host=127.0.0.1 fixed:3001, primary)"
+            )
+        );
+        assert!(stdout.contains("api (api.http, activation=restart_ready, view=topology)"));
+    }
+
+    #[test]
+    fn studio_writes_read_only_snapshot_for_valid_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: studio-demo
+tasks:
+  test:
+    run: printf ok
+"#,
+        );
+
+        let output = run_with(["ota", "studio", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("STUDIO "));
+        assert!(stdout.contains("read-only snapshot"));
+        assert!(stdout.contains("ota studio --open"));
+        let snapshot_path = fixture
+            .dir
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("studio")
+            .join("index.html");
+        assert!(snapshot_path.is_file());
+        let html = fs::read_to_string(snapshot_path).unwrap();
+        assert!(html.contains("Ota Studio"));
+        assert!(html.contains("studio-demo"));
+        assert!(html.contains("ota-studio-data"));
+        assert!(html.contains("Contract review"));
+        assert!(html.contains("Activity"));
+        assert!(html.contains("Action needed"));
+        assert!(html.contains("no activity yet"));
+        assert!(html.contains("no immediate action"));
+    }
+
+    #[test]
+    fn studio_writes_snapshot_for_contractless_repo() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"
+{
+  "name": "contractless-studio",
+  "scripts": {
+    "test": "node -e \"console.log('ok')\""
+  }
+}
+"#,
+        );
+
+        let output = run_with(["ota", "studio", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let snapshot_path = fixture
+            .dir
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("studio")
+            .join("index.html");
+        assert!(snapshot_path.is_file());
+        let html = fs::read_to_string(snapshot_path).unwrap();
+        assert!(html.contains("No ota.yaml detected yet"));
+        assert!(html.contains("contractless-studio"));
+        assert!(html.contains("Review starter draft"));
+        assert!(html.contains("starter review"));
+        assert!(html.contains("no activity yet"));
+        assert!(html.contains("Action needed"));
+        assert!(html.contains("Onboarding"));
+        assert!(html.contains("ota init --dry-run"));
+    }
+
+    #[test]
+    fn studio_contractless_activity_uses_archived_provenance_labels() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"
+{
+  "name": "contractless-studio",
+  "scripts": {
+    "test": "node -e \"console.log('ok')\""
+  }
+}
+"#,
+        );
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260502-080000-123Z.json",
+            &serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 0,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1,
+                },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": "/tmp/archived/ota.yaml",
+                    "status": "READY",
+                    "backend": "native",
+                    "steps": [{
+                        "order": 1,
+                        "label": "test",
+                        "status": "READY",
+                        "exit_code": 0,
+                    }]
+                }
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with(["ota", "studio", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let snapshot_path = fixture
+            .dir
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("studio")
+            .join("index.html");
+        let html = fs::read_to_string(snapshot_path).unwrap();
+        assert!(html.contains("Archived receipt"));
+    }
+
+    #[test]
+    fn studio_snapshot_renders_service_and_task_drill_in_sections() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: studio-topology
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    endpoints:
+      app:
+        address: postgres
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h postgres -p 5432
+tasks:
+  api:
+    run: printf api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 8080
+              path: /
+  web:
+    run: printf web
+    targets:
+      api:
+        service:
+          task: api
+          listener: http
+          address_view: host
+"#,
+        );
+
+        let output = run_with(["ota", "studio", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let snapshot_path = fixture
+            .dir
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("studio")
+            .join("index.html");
+        let html = fs::read_to_string(snapshot_path).unwrap();
+        assert!(html.contains("Services"));
+        assert!(html.contains("Targets"));
+        assert!(html.contains("Listeners"));
+        assert!(html.contains("Contract Review"));
+        assert!(html.contains("Current contract"));
+        assert!(html.contains("Inferred draft"));
+        assert!(html.contains("draft differs"));
+        assert!(html.contains("recent failure"));
+        assert!(html.contains("Action needed"));
+        assert!(html.contains("Reviewed merge result"));
+        assert!(html.contains("Reviewed rewrite result"));
+        assert!(html.contains("Copy merge apply"));
+        assert!(html.contains("Why"));
+        assert!(html.contains("explain-group"));
+        assert!(html.contains("Activation"));
+        assert!(html.contains("postgres"));
+        assert!(html.contains("pg_isready -h postgres -p 5432"));
+        assert!(html.contains("Resolution"));
+        assert!(html.contains("serves:"));
+        assert!(html.contains("targets:"));
+        assert!(html.contains("backend:"));
+        assert!(html.contains("This target follows the producer's published host-facing address."));
+        assert!(html.contains("This listener projects the primary host-facing endpoint"));
+    }
+
+    #[test]
+    fn studio_snapshot_renders_recent_activity_from_archived_receipts() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: studio-activity
+tasks:
+  build:
+    run: printf build
+"#,
+        );
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260502-111213-123Z.json",
+            &serde_json::to_string_pretty(&json!({
+                "ok": false,
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1,
+                },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": fixture.dir.path().join("ota.yaml").display().to_string(),
+                    "status": "TASK FAILED",
+                    "backend": "native",
+                    "failed_task": "build",
+                    "logs": {
+                        "dir": ".ota/state/logs/20260502-build",
+                        "stdout": ".ota/state/logs/20260502-build/stdout.log",
+                        "stderr": ".ota/state/logs/20260502-build/stderr.log",
+                    },
+                    "steps": [{
+                        "order": 1,
+                        "label": "build",
+                        "status": "FAILED",
+                        "exit_code": 1,
+                    }],
+                    "next": "rerun `ota run build --stream`",
+                },
+                "findings": [{
+                    "severity": "error",
+                    "summary": "build failed",
+                    "why": "the archived build receipt recorded a failure",
+                    "next": "rerun `ota run build --stream`"
+                }]
+            }))
+            .unwrap(),
+        );
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260501-101010-123Z.json",
+            &serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 0,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1,
+                },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": fixture.dir.path().join("legacy.yaml").display().to_string(),
+                    "status": "READY",
+                    "backend": "native",
+                    "steps": [{
+                        "order": 1,
+                        "label": "legacy-build",
+                        "status": "READY",
+                        "exit_code": 0,
+                    }]
+                }
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with(["ota", "studio", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let snapshot_path = fixture
+            .dir
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("studio")
+            .join("index.html");
+        let html = fs::read_to_string(snapshot_path).unwrap();
+        assert!(html.contains("Recent Activity"));
+        assert!(html.contains("Activity focus"));
+        assert!(html.contains("Latest failure"));
+        assert!(html.contains("Latest ready"));
+        assert!(html.contains("Failure summary"));
+        assert!(html.contains("Most recent failure"));
+        assert!(html.contains("Recovery"));
+        assert!(html.contains("Ready summary"));
+        assert!(html.contains("Most recent ready run"));
+        assert!(html.contains("data-activity-filter=\"failures\""));
+        assert!(html.contains("TASK FAILED"));
+        assert!(html.contains("build"));
+        assert!(html.contains("Execution timeline"));
+        assert!(html.contains("timeline-strip"));
+        assert!(html.contains("Readiness"));
+        assert!(html.contains("Provenance"));
+        assert!(html.contains("Archived age"));
+        assert!(html.contains("Most recent current-contract receipt"));
+        assert!(html.contains("Most recent older-contract receipt"));
+        assert!(html.contains("Current contract receipt"));
+        assert!(html.contains("Older contract receipt"));
+        assert!(html.contains("Receipt details"));
+        assert!(html.contains("Archived findings"));
+        assert!(html.contains("Durable log paths"));
+        assert!(html.contains("Copy stdout path"));
+        assert!(html.contains("Copy stderr path"));
+        assert!(html.contains("build failed"));
+        assert!(html.contains(".ota/state/logs/20260502-build"));
+        assert!(html.contains("rerun `ota run build --stream`"));
     }
 
     #[test]
@@ -23986,22 +24570,36 @@ project:
     #[test]
     fn detect_refuses_to_write_when_high_confidence_fields_are_insufficient() {
         let fixture = ContractFixture::new_dir();
-        fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
+        fixture.write(
+            "package.json",
+            r#"{
+  "scripts": {
+    "check": "npm run check",
+    "pdf": "npm run pdf",
+    "pptx": "npm run pptx"
+  }
+}"#,
+        );
 
         let output = run_with(["ota", "detect", "--write", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Detect write blocked"));
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains(
-            "detected high-confidence fields are not sufficient to produce a valid contract"
+            "detected fields are not sufficient to write a valid contract automatically"
         ));
+        assert!(stderr.contains("`project.name` is still low confidence"));
         assert!(
             stderr
-                .contains("use `ota detect --dry-run` to review medium and low confidence fields")
+                .contains("run `ota detect --dry-run` to review medium and low confidence fields")
         );
-        assert!(stderr.contains("Excluded from automatic write:"));
-        assert!(stderr.contains("project.name"));
+        assert!(stderr.contains("confirm or add `project.name`, then rerun `ota detect --write`"));
+        assert!(stderr.contains("eligible inferred fields:"));
+        assert!(stderr.contains("`tasks.check.run = npm run check`"));
+        assert!(stderr.contains("`tasks.pdf.run = npm run pdf`"));
+        assert!(stderr.contains("`tasks.pptx.run = npm run pptx`"));
         assert!(!fixture.file_path().exists());
     }
 

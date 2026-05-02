@@ -139,6 +139,7 @@ ota receipt
 ```
 
 Use `ota tasks --use` when the next runnable task is unclear.
+Use `ota studio --open` when you want the same contract, detect draft, and declared topology review in one local visual surface.
 
 ### Repo without `ota.yaml`
 
@@ -146,6 +147,7 @@ Use `ota tasks --use` when the next runnable task is unclear.
 ota doctor
 ota detect --dry-run .
 ota init --dry-run
+ota studio --open
 ```
 
 Then choose one explicit write path:
@@ -155,6 +157,7 @@ ota init
 ```
 
 Use `ota detect --write .` when you want the detector-led authoring path instead of the starter contract path.
+Use `ota studio --open` after the dry-run steps when you want to review the inferred draft and the reviewed apply path visually before writing.
 
 ## When To Leave This Repo For More Examples
 

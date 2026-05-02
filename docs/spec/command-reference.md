@@ -79,6 +79,8 @@ ota currently ships these commands:
 - `ota init`
 - `ota env`
 - `ota execution plan`
+- `ota execution topology`
+- `ota studio`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -408,6 +410,84 @@ JSON output:
 
 - success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
+
+## `ota execution topology`
+
+Inspect the declared execution topology without provisioning, starting services, or running tasks.
+
+```bash
+ota execution topology [PATH]
+ota execution topology --json [PATH]
+ota execution topology --member api [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when `--member` is set, inspects the merged member contract
+- stays read-only
+- reports the contract identity, declared execution surface, shared backends, services, runtime listeners, and task target bindings exactly as the repo declares them
+- does not resolve effective readiness state or start anything; this is topology inspection, not execution planning
+
+Text output:
+
+- header: `EXECUTION TOPOLOGY <path>`
+- `Overview` section with project and topology counts
+- `Execution` section when the contract declares execution intent
+- `Shared Backends`, `Services`, and `Tasks` sections with runtime/listener/target detail when present
+
+JSON output:
+
+- success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `shared_backends`, `services`, and `tasks`
+- task runtime entries may include `backend_binding`, `readiness`, and `listeners`
+- task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
+- failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
+
+## `ota studio`
+
+Export a self-contained read-only Studio snapshot for the current repo.
+
+```bash
+ota studio [PATH]
+ota studio --open [PATH]
+ota studio --member api [PATH]
+```
+
+Current behavior:
+
+- writes a local HTML snapshot under `.ota/state/studio/index.html`
+- `--open` exports the snapshot first, then asks the operating system to open that exact HTML file in the default browser
+- `--serve` keeps the same snapshot file on disk, serves it from localhost, and enables the first reviewed write actions inside Studio without turning the snapshot into a second write engine
+- uses existing Ota read surfaces as inputs instead of inventing a parallel Studio model
+- currently embeds:
+  - `ota doctor --json`
+  - `ota detect --dry-run --json`
+  - `ota execution topology --json`
+- works for both contract-bearing and contractless repos
+- is repo-first in this prototype; workspace coverage should land later as an explicit `ota workspace studio` surface
+- stays read-only and never rewrites `ota.yaml`
+- keeps services, tasks, targets, readiness, and shared-backend detail aligned with `ota execution topology --json` rather than teaching a different visual model
+- now includes a contract review surface: current contract, inferred draft, semantic detect comparison, exact reviewed merge/rewrite contract outputs, and copyable reviewed apply guidance for `init`, `detect --merge`, or `detect --rewrite`
+- in `--serve` mode, Studio can trigger the first safe Ota-owned reviewed writes:
+  - `Apply starter contract` → `ota init`
+  - `Apply additive changes` → `ota detect --merge`
+- after a served Studio action succeeds, the page refreshes its review state in place from a fresh localhost snapshot instead of forcing a browser reload
+- Studio now also surfaces recent repo activity from archived Ota receipts and durable log metadata, and `--serve` polls that artifact-backed snapshot so outside `ota run` activity can appear in the page without introducing a daemon or a second execution model
+- rewrite remains review-first and terminal-first for now; Studio does not trigger `ota detect --rewrite --yes` yet
+- task cards now surface flatter scan hints (`serves`, `targets`, `backend`) before the deeper listener/target drill-ins
+
+Text output:
+
+- header: `STUDIO <path>`
+- status line: `EXPORTED`
+- `Overview` section with output path, mode, and embedded data sources
+- `Next` guidance to open the generated HTML, rerun with `--open` for the one-step visual path, or run `--serve` for the first interactive reviewed-write Studio path
+
+Artifact:
+
+- HTML snapshot path: `.ota/state/studio/index.html`
+- purpose: local visual inspection of readiness, detect draft, contract text, and declared topology
+- embedded data contract: one `ota-studio-data` JSON payload containing `studio`, `contract_text`, `detect_contract_text`, `review_contracts`, `activity`, `doctor`, `detect`, and `topology`
 
 ## `ota diff`
 
