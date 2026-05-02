@@ -50,6 +50,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
+- use `ota execution topology --json` when you want the declared execution graph for Studio-like contract or topology inspection without running anything
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
@@ -73,6 +74,7 @@ human text output:
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
+- `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `services`, and `tasks`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
@@ -94,6 +96,31 @@ Hosted CI can use the same fields as annotations or check-run summaries:
 - `severity` to decide blocking versus warning annotations
 - `why` for the annotation body
 - `next` for the suggested fix or link target
+
+## `ota studio` embedded snapshot payload
+
+`ota studio` does not expose a top-level `--json` command result. Instead, it writes one HTML
+artifact with an embedded `ota-studio-data` JSON payload that Studio itself consumes.
+
+Current top-level payload sections are:
+
+- `studio`: snapshot metadata such as `version`, `mode`, `repo_root`, optional `contract_path`,
+  generation timestamp, and optional `action_base_url` in `--serve` mode
+- `contract_text`: current `ota.yaml` contents when a contract exists
+- `detect_contract_text`: the inferred contract draft rendered from `ota detect --dry-run`
+- `review_contracts`: exact reviewed `merge_contract_text` / `rewrite_contract_text` outputs when available
+- `activity`: recent repo-scoped receipt and durable-log metadata from archived Ota artifacts, including
+  `history_count`, `invalid_archive_count`, and recent `entries[]`
+- `doctor`: wrapped `ota doctor --json` payload with `exit_code`
+- `detect`: wrapped `ota detect --dry-run --json` payload with `exit_code`
+- `topology`: wrapped `ota execution topology --json` payload with `exit_code`
+
+For Studio consumers, `activity.entries[]` is the durable recent-execution evidence surface. Each
+entry currently carries archived receipt metadata such as `archived_at`, `ok`, `contract`,
+`status`, execution identity fields (`backend`, `context`, `lifecycle`, `target`, `provider`,
+`cwd`), optional `failed_task` / `failure_origin`, optional `logs`, optional `steps`, optional
+`next`, and the archived summary counts. In `--serve` mode, Studio may poll this same snapshot
+payload again to notice new repo activity written by other Ota commands.
 
 ## `ota validate --json`
 
@@ -316,6 +343,169 @@ Failure:
   "errors": ["..."]
 }
 ```
+
+## `ota execution topology --json`
+
+Execution topology inspection stays read-only. It reports the declared execution surface that a
+Studio or topology viewer can render without starting tasks or services.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "contract": "/abs/path/to/ota.yaml",
+  "contract_identity": {
+    "version": 1,
+    "project": {
+      "name": "topology-demo",
+      "type": "application"
+    }
+  },
+  "declared_execution": {
+    "default_context": "development:ctx"
+  },
+  "shared_backends": [
+    {
+      "name": "workbench",
+      "scope": "local",
+      "backend": "container",
+      "lifecycle": "persistent",
+      "context": "development:ctx",
+      "fulfillment": "run"
+    }
+  ],
+  "services": [],
+  "tasks": [
+    {
+      "name": "api",
+      "runtime": {
+        "kind": "service",
+        "backend_binding": "workbench",
+        "readiness": {
+          "kind": "http",
+          "listener": "http",
+          "path": "/health"
+        },
+        "listeners": {
+          "http": {
+            "protocol": "http",
+            "bind_address": "0.0.0.0",
+            "bind_port_mode": "fixed",
+            "bind_port_value": 3000,
+            "host_projection": {
+              "address": "127.0.0.1",
+              "port_mode": "fixed",
+              "port_value": 3001,
+              "primary": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "web",
+      "targets": [
+        {
+          "name": "api",
+          "kind": "service",
+          "activation_mode": "ensure_ready",
+          "service": {
+            "task": "api",
+            "listener": "http",
+            "address_view": "host"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "errors": ["..."]
+}
+```
+
+## `ota studio` snapshot payload
+
+`ota studio` writes HTML, not CLI JSON. The generated file embeds one canonical JSON payload inside
+`<script id="ota-studio-data" type="application/json">...</script>`. That payload is the stable
+Studio-facing contract.
+
+Current top-level sections:
+
+- `studio`: snapshot metadata such as version, mode, repo root, contract path, member, generation time, and optional `action_base_url` when Studio is being served locally for reviewed actions
+- `contract_text`: the current contract text when `ota.yaml` exists
+- `detect_contract_text`: the inferred dry-run contract text rendered for Studio review
+- `review_contracts`: reviewed contract outputs for Studio, currently including `merge_contract_text`, `rewrite_contract_text`, and optional `error` when exact merge preview text is unavailable
+- `doctor`: `{ exit_code, data }` where `data` is the normal `ota doctor --json` payload
+- `detect`: `{ exit_code, data }` where `data` is the normal `ota detect --dry-run --json` payload
+- `topology`: `{ exit_code, data }` where `data` is the normal `ota execution topology --json` payload
+
+Example:
+
+```json
+{
+  "studio": {
+    "version": "1.6.6",
+    "mode": "interactive_server",
+    "repo_root": "/abs/path/to/repo",
+    "contract_path": "/abs/path/to/repo/ota.yaml",
+    "generated_at": "2026-05-01T10:20:30Z",
+    "action_base_url": "http://127.0.0.1:43129/"
+  },
+  "contract_text": "version: 1\nproject:\n  name: repo\n",
+  "detect_contract_text": "version: 1\nproject:\n  name: repo\n",
+  "review_contracts": {
+    "merge_contract_text": "version: 1\nproject:\n  name: repo\nmetadata:\n  ota:\n    detect:\n      field_ownership:\n        tasks.test.run: merged\n",
+    "rewrite_contract_text": "version: 1\nproject:\n  name: repo\nmetadata:\n  ota:\n    detect:\n      field_ownership:\n        project.name: merged\n"
+  },
+  "doctor": {
+    "exit_code": 0,
+    "data": {
+      "ok": true,
+      "summary": {
+        "verdict": "ready"
+      }
+    }
+  },
+  "detect": {
+    "exit_code": 0,
+    "data": {
+      "ok": true,
+      "inferred": []
+    }
+  },
+  "topology": {
+    "exit_code": 0,
+    "data": {
+      "ok": true,
+      "contract_identity": {
+        "project": {
+          "name": "repo"
+        }
+      },
+      "services": [],
+      "tasks": [],
+      "shared_backends": []
+    }
+  }
+}
+```
+
+Studio stays read-only. Consumers should treat `doctor.data`, `detect.data`, and `topology.data` as
+embedded canonical command payloads, while `contract_text`, `detect_contract_text`, and
+`review_contracts` are presentation-ready review surfaces over those same truths rather than a
+parallel Studio-specific semantics layer. When `studio.mode` is `interactive_server`, the page is
+being served locally and may surface reviewed write actions that still route back through Ota core
+(`ota init` and `ota detect --merge`) rather than mutating `ota.yaml` in client-side code.
 
 ## `ota workspace execution plan --json`
 

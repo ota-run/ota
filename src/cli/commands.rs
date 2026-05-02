@@ -26,14 +26,19 @@ use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 use serde_yaml::{Mapping, Value as YamlValue};
+use signal_hook::consts::signal::{SIGINT, SIGTERM};
+use signal_hook::flag as signal_flag;
 use time::OffsetDateTime;
 use time::macros::format_description;
 
@@ -66,7 +71,12 @@ use crate::output::{
     EnvEntryStatus, EnvFailure, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
     ExecutionContextSummary, ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved,
     ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptLogs,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExecutionTopologyFailure,
+    ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
+    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
+    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
+    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
+    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
     ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
     InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
     InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
@@ -133,6 +143,7 @@ use crate::workspace::{
 mod execution_summary;
 mod explain_output;
 mod init_starter;
+mod studio_output;
 mod workspace_diagnostics;
 mod workspace_output;
 use self::execution_summary::{
@@ -151,6 +162,7 @@ use self::init_starter::{
     apply_inferred_init_env_sources, apply_starter_contract_defaults, bootstrap_init_contract,
     starter_pack_advisory, starter_pack_catalog, starter_pack_contract,
 };
+use self::studio_output::render_studio_snapshot_html;
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
     render_workspace_doctor_text, render_workspace_explain_text,
@@ -1312,6 +1324,1417 @@ pub fn execution_plan(
         debug,
         debug_lines,
     )
+}
+
+pub fn execution_topology(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=execution-topology")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=execution-topology"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let contract_path_display = target.contract_path.display().to_string();
+                let contract_identity = repo_contract_identity(&target.contract);
+                let declared_execution =
+                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                let shared_backends = build_execution_topology_shared_backend_summaries(
+                    target.contract.execution.as_ref(),
+                );
+                let services = target
+                    .contract
+                    .services
+                    .iter()
+                    .map(|(name, service)| ServiceSummary::from_spec(name, service))
+                    .collect::<Vec<_>>();
+                let tasks = target
+                    .contract
+                    .tasks
+                    .iter()
+                    .map(|(name, task)| {
+                        build_execution_topology_task_summary(
+                            name,
+                            task,
+                            current_os(),
+                            &target.contract,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                match format {
+                    OutputFormat::Text => CommandOutput::success(render_execution_topology_text(
+                        &text_path_display,
+                        &contract_identity,
+                        declared_execution.as_ref(),
+                        &shared_backends,
+                        &services,
+                        &tasks,
+                    )),
+                    OutputFormat::Json => {
+                        CommandOutput::success(to_json(&ExecutionTopologySuccess {
+                            ok: true,
+                            path: &path_display,
+                            contract: &contract_path_display,
+                            member,
+                            contract_identity,
+                            declared_execution,
+                            shared_backends,
+                            services,
+                            tasks,
+                        }))
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "EXECUTION TOPOLOGY",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota execution topology",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ExecutionTopologyFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "EXECUTION TOPOLOGY",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota execution topology",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ExecutionTopologyFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn build_execution_topology_shared_backend_summaries(
+    execution: Option<&crate::schema::Execution>,
+) -> Vec<ExecutionTopologySharedBackendSummary> {
+    execution
+        .map(|execution| {
+            execution
+                .shared_backends
+                .iter()
+                .map(
+                    |(name, shared_backend)| ExecutionTopologySharedBackendSummary {
+                        name: name.clone(),
+                        scope: match shared_backend.scope {
+                            crate::schema::ExecutionSharedBackendScope::Local => "local",
+                            crate::schema::ExecutionSharedBackendScope::Remote => "remote",
+                        }
+                        .to_string(),
+                        backend: format_backend(shared_backend.backend).to_string(),
+                        lifecycle: format_lifecycle(shared_backend.lifecycle).to_string(),
+                        context: shared_backend.context.clone(),
+                        fulfillment: shared_backend.fulfillment.map(|fulfillment| {
+                            match fulfillment {
+                                crate::schema::ExecutionSharedBackendFulfillment::None => "none",
+                                crate::schema::ExecutionSharedBackendFulfillment::Run => "run",
+                            }
+                            .to_string()
+                        }),
+                        environment: shared_backend.environment.as_ref().map(|environment| {
+                            ExecutionTopologySharedBackendEnvironmentSummary {
+                                profile: environment.profile.clone(),
+                                image_alias: environment.image_alias.clone(),
+                                image: environment.image.clone(),
+                                source: environment.source.clone(),
+                            }
+                        }),
+                    },
+                )
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn build_execution_topology_task_summary<'a>(
+    name: &'a str,
+    task: &'a TaskSpec,
+    current_os: &str,
+    contract: &'a Contract,
+) -> ExecutionTopologyTaskSummary<'a> {
+    ExecutionTopologyTaskSummary {
+        task: TaskSummary::from_spec(name, task, current_os, contract),
+        runtime: task
+            .runtime
+            .as_ref()
+            .map(build_execution_topology_runtime_summary),
+        targets: task
+            .targets
+            .iter()
+            .map(|(target_name, target)| ExecutionTopologyTargetSummary {
+                name: target_name.clone(),
+                kind: match target.kind() {
+                    crate::schema::TaskTargetKind::Service => "service",
+                    crate::schema::TaskTargetKind::Url => "url",
+                }
+                .to_string(),
+                override_input: target.override_input.clone(),
+                url: target.url.clone(),
+                activation_mode: target.activation.mode.as_str().to_string(),
+                service: target.service.as_ref().map(|service| {
+                    ExecutionTopologyTargetServiceSummary {
+                        member: service.member.clone(),
+                        task: service.task.clone(),
+                        listener: service.listener.clone(),
+                        address_view: match service.address_view {
+                            crate::schema::TaskTargetAddressView::Topology => "topology",
+                            crate::schema::TaskTargetAddressView::Host => "host",
+                            crate::schema::TaskTargetAddressView::Internal => "internal",
+                        }
+                        .to_string(),
+                    }
+                }),
+            })
+            .collect(),
+    }
+}
+
+fn build_execution_topology_runtime_summary(
+    runtime: &crate::schema::TaskRuntimeSpec,
+) -> ExecutionTopologyRuntimeSummary {
+    ExecutionTopologyRuntimeSummary {
+        kind: match runtime.kind {
+            crate::schema::TaskRuntimeKind::Service => "service",
+        }
+        .to_string(),
+        backend_binding: runtime.backend_binding.clone(),
+        readiness: runtime
+            .readiness
+            .as_ref()
+            .map(|readiness| ExecutionTopologyReadinessSummary {
+                kind: match readiness.kind {
+                    crate::schema::TaskRuntimeReadinessKind::Http => "http",
+                    crate::schema::TaskRuntimeReadinessKind::Tcp => "tcp",
+                }
+                .to_string(),
+                listener: readiness.listener.clone(),
+                path: readiness.path.clone(),
+            }),
+        listeners: runtime
+            .listeners
+            .iter()
+            .map(|(listener_name, listener)| {
+                (
+                    listener_name.clone(),
+                    ExecutionTopologyListenerSummary {
+                        protocol: match listener.protocol {
+                            crate::schema::TaskRuntimeProtocol::Http => "http",
+                            crate::schema::TaskRuntimeProtocol::Https => "https",
+                            crate::schema::TaskRuntimeProtocol::Tcp => "tcp",
+                        }
+                        .to_string(),
+                        bind_address: listener.bind.address.clone(),
+                        bind_port_mode: match listener.bind.port.mode {
+                            crate::schema::TaskRuntimePortMode::Fixed => "fixed",
+                            crate::schema::TaskRuntimePortMode::Discover => "discover",
+                            crate::schema::TaskRuntimePortMode::Auto => "auto",
+                        }
+                        .to_string(),
+                        bind_port_value: listener.bind.port.value,
+                        host_projection: listener.project.host.as_ref().map(|host| {
+                            ExecutionTopologyHostProjectionSummary {
+                                address: host.address.clone(),
+                                port_mode: match host.port.mode {
+                                    crate::schema::TaskRuntimeHostPortMode::Fixed => "fixed",
+                                    crate::schema::TaskRuntimeHostPortMode::Auto => "auto",
+                                }
+                                .to_string(),
+                                port_value: host.port.value,
+                                primary: host.primary,
+                                path: host.path.clone(),
+                            }
+                        }),
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+fn render_execution_topology_text(
+    path: &str,
+    contract_identity: &ContractIdentity,
+    declared_execution: Option<&ExecutionSummary<'_>>,
+    shared_backends: &[ExecutionTopologySharedBackendSummary],
+    services: &[ServiceSummary],
+    tasks: &[ExecutionTopologyTaskSummary<'_>],
+) -> String {
+    let mut output = format_command_header("EXECUTION TOPOLOGY", path);
+
+    output.push_str("\n\n");
+    output.push_str(&paint_section_title("Overview"));
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Project:", "1;38;2;102;217;255"),
+            &paint_code(&contract_identity.project.name),
+        )
+    ));
+    if let Some(project_type) = contract_identity.project.project_type.as_deref() {
+        output.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Type:", "1;38;2;102;217;255"),
+                &paint_code(project_type),
+            )
+        ));
+    }
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Services:", "1;38;2;102;217;255"),
+            &paint(&services.len().to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Tasks:", "1;38;2;102;217;255"),
+            &paint(&tasks.len().to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Shared Backends:", "1;38;2;102;217;255"),
+            &paint(&shared_backends.len().to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+
+    if let Some(execution) = declared_execution {
+        output.push_str("\n\n");
+        output.push_str(&render_execution_summary_text(execution));
+    }
+
+    output.push_str(&render_execution_topology_shared_backends_text(
+        shared_backends,
+    ));
+    output.push_str(&render_execution_topology_services_text(services));
+    output.push_str(&render_execution_topology_tasks_text(tasks));
+    output
+}
+
+fn render_execution_topology_shared_backends_text(
+    shared_backends: &[ExecutionTopologySharedBackendSummary],
+) -> String {
+    let mut output = String::from("\n\n");
+    output.push_str(&paint_section_title("Shared Backends"));
+    if shared_backends.is_empty() {
+        output.push_str(&format!("\n{}", detail_list_item("none")));
+        return output;
+    }
+
+    for shared_backend in shared_backends {
+        output.push_str(&format!(
+            "\n\n{} {}",
+            list_bullet(),
+            paint(&shared_backend.name, "1")
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Scope:"),
+            shared_backend.scope
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Backend:"),
+            shared_backend.backend
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Lifecycle:"),
+            shared_backend.lifecycle
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Context:"),
+            shared_backend.context.as_deref().unwrap_or("-")
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Fulfillment:"),
+            shared_backend.fulfillment.as_deref().unwrap_or("-")
+        ));
+        if let Some(environment) = shared_backend.environment.as_ref() {
+            let mut details = Vec::new();
+            if let Some(profile) = environment.profile.as_deref() {
+                details.push(format!("profile={profile}"));
+            }
+            if let Some(image_alias) = environment.image_alias.as_deref() {
+                details.push(format!("image_alias={image_alias}"));
+            }
+            if let Some(image) = environment.image.as_deref() {
+                details.push(format!("image={image}"));
+            }
+            if let Some(source) = environment.source.as_deref() {
+                details.push(format!("source={source}"));
+            }
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Environment:"),
+                if details.is_empty() {
+                    String::from("-")
+                } else {
+                    details.join(", ")
+                }
+            ));
+        }
+    }
+
+    output
+}
+
+fn render_execution_topology_services_text(services: &[ServiceSummary]) -> String {
+    let mut output = String::from("\n\n");
+    output.push_str(&paint_section_title("Services"));
+    if services.is_empty() {
+        output.push_str(&format!("\n{}", detail_list_item("none")));
+        return output;
+    }
+
+    for service in services {
+        output.push_str(&format!(
+            "\n\n{} {} [{}]",
+            list_bullet(),
+            paint(&service.name, "1"),
+            if service.required {
+                "required"
+            } else {
+                "optional"
+            }
+        ));
+        let manager = service
+            .manager
+            .as_ref()
+            .map(|manager| manager.kind.as_str())
+            .or(service.provider.as_deref())
+            .unwrap_or("-");
+        output.push_str(&format!("\n  {} {manager}", paint_key("Manager:")));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Depends On:"),
+            if service.depends_on.is_empty() {
+                String::from("-")
+            } else {
+                service.depends_on.join(", ")
+            }
+        ));
+        if let Some(readiness) = service.readiness.as_ref() {
+            output.push_str(&format!(
+                "\n  {} from {} -> {}",
+                paint_key("Readiness:"),
+                readiness.from,
+                readiness.run
+            ));
+        }
+        if !service.endpoints.is_empty() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Endpoints:"),
+                service
+                    .endpoints
+                    .iter()
+                    .map(|(context, endpoint)| {
+                        format!("{context}=http://{}:{}", endpoint.address, endpoint.port)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+
+    output
+}
+
+fn render_execution_topology_tasks_text(tasks: &[ExecutionTopologyTaskSummary<'_>]) -> String {
+    let mut output = String::from("\n\n");
+    output.push_str(&paint_section_title("Tasks"));
+    if tasks.is_empty() {
+        output.push_str(&format!("\n{}", detail_list_item("none")));
+        return output;
+    }
+
+    for task in tasks {
+        output.push_str(&format!(
+            "\n\n{} {}",
+            list_bullet(),
+            paint(task.task.name, "1")
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Context:"),
+            task.task.context.unwrap_or("-")
+        ));
+        output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.task.kind));
+        if let Some(runtime) = task.runtime.as_ref() {
+            output.push_str(&format!("\n  {} {}", paint_key("Runtime:"), runtime.kind));
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Backend Binding:"),
+                runtime.backend_binding.as_deref().unwrap_or("-")
+            ));
+            if let Some(readiness) = runtime.readiness.as_ref() {
+                let mut readiness_detail = readiness.kind.clone();
+                if let Some(listener) = readiness.listener.as_deref() {
+                    readiness_detail.push_str(&format!(" via {listener}"));
+                }
+                if let Some(path) = readiness.path.as_deref() {
+                    readiness_detail.push_str(&format!(" path={path}"));
+                }
+                output.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Readiness:"),
+                    readiness_detail
+                ));
+            }
+            if !runtime.listeners.is_empty() {
+                output.push_str(&format!("\n  {}", paint_key("Listeners:")));
+                for (listener_name, listener) in &runtime.listeners {
+                    let mut bind_detail =
+                        format!("{} {}", listener.bind_address, listener.bind_port_mode);
+                    if let Some(value) = listener.bind_port_value {
+                        bind_detail.push_str(&format!(":{value}"));
+                    }
+                    let mut listener_line =
+                        format!("{listener_name} ({}, bind={bind_detail}", listener.protocol);
+                    if let Some(host_projection) = listener.host_projection.as_ref() {
+                        listener_line.push_str(&format!(
+                            ", host={} {}",
+                            host_projection.address, host_projection.port_mode
+                        ));
+                        if let Some(value) = host_projection.port_value {
+                            listener_line.push_str(&format!(":{value}"));
+                        }
+                        if host_projection.primary {
+                            listener_line.push_str(", primary");
+                        }
+                        if let Some(path) = host_projection.path.as_deref() {
+                            listener_line.push_str(&format!(", path={path}"));
+                        }
+                    }
+                    listener_line.push(')');
+                    output.push_str(&format!("\n    {} {listener_line}", detail_arrow()));
+                }
+            }
+        }
+        if !task.targets.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Targets:")));
+            for target in &task.targets {
+                let target_line = if let Some(service) = target.service.as_ref() {
+                    let mut service_ref = String::new();
+                    if let Some(member) = service.member.as_deref() {
+                        service_ref.push_str(&format!("{member}."));
+                    }
+                    service_ref.push_str(&service.task);
+                    if let Some(listener) = service.listener.as_deref() {
+                        service_ref.push_str(&format!(".{listener}"));
+                    }
+                    format!(
+                        "{} ({}, activation={}, view={})",
+                        target.name, service_ref, target.activation_mode, service.address_view
+                    )
+                } else {
+                    format!(
+                        "{} (url={}, activation={})",
+                        target.name,
+                        target.url.as_deref().unwrap_or("-"),
+                        target.activation_mode
+                    )
+                };
+                output.push_str(&format!("\n    {} {target_line}", detail_arrow()));
+            }
+        }
+    }
+
+    output
+}
+
+pub fn studio(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    open: bool,
+    serve: bool,
+    member: Option<&str>,
+    debug: bool,
+) -> CommandOutput {
+    let repo_root = studio_repo_root(path, file_override);
+    let compact_repo_display = compact_repo_path(&repo_root);
+    let path_display = repo_root.display().to_string();
+    let mut debug_lines = vec![
+        String::from("DEBUG command=studio"),
+        format!("DEBUG repo_root={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    debug_lines.push(format!("DEBUG open={open}"));
+    debug_lines.push(format!("DEBUG serve={serve}"));
+    if let Some(file_override) = file_override {
+        debug_lines.push(format!("DEBUG file_override={}", file_override.display()));
+    }
+
+    finalize_debug(
+        if serve {
+            serve_studio(
+                path,
+                file_override,
+                member,
+                &repo_root,
+                &compact_repo_display,
+                open,
+            )
+        } else {
+            match write_studio_snapshot(
+                path,
+                file_override,
+                member,
+                &repo_root,
+                StudioSnapshotMode::ReadOnlySnapshot,
+                None,
+            ) {
+                Ok(report) => {
+                    if open {
+                        if let Err(error) =
+                            open_studio_target_in_browser(report.output_path.display().to_string())
+                        {
+                            CommandOutput::failure(format!(
+                                "studio snapshot exported to `{}` but could not be opened automatically: {error}",
+                                report.output_path.display()
+                            ))
+                        } else {
+                            CommandOutput::success(render_studio_export_text(
+                                &compact_repo_display,
+                                member,
+                                &report.output_path,
+                                report.contract_path.as_deref(),
+                                None,
+                                false,
+                                true,
+                            ))
+                        }
+                    } else {
+                        CommandOutput::success(render_studio_export_text(
+                            &compact_repo_display,
+                            member,
+                            &report.output_path,
+                            report.contract_path.as_deref(),
+                            None,
+                            false,
+                            false,
+                        ))
+                    }
+                }
+                Err(error) => CommandOutput::failure(error),
+            }
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+struct StudioSnapshotReport {
+    output_path: PathBuf,
+    contract_path: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
+enum StudioSnapshotMode {
+    ReadOnlySnapshot,
+    InteractiveServer,
+}
+
+impl StudioSnapshotMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnlySnapshot => "read_only_snapshot",
+            Self::InteractiveServer => "interactive_server",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StudioAction {
+    Starter,
+    Merge,
+}
+
+impl StudioAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Starter => "starter",
+            Self::Merge => "merge",
+        }
+    }
+}
+
+fn studio_snapshot_payload(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    repo_root: &Path,
+    mode: StudioSnapshotMode,
+    action_base_url: Option<&str>,
+) -> Result<(JsonValue, Option<PathBuf>), String> {
+    let contract_path = resolve_contract_path(path, file_override).ok();
+    let contract_text = contract_path
+        .as_ref()
+        .and_then(|path| fs::read_to_string(path).ok());
+    let review_contracts = studio_review_contracts(repo_root, contract_path.as_deref())?;
+    let activity = studio_recent_activity_payload(repo_root, contract_path.as_deref());
+    let member_args = member
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_default();
+    let doctor_json = studio_command_json_value(doctor(
+        Some(repo_root),
+        file_override,
+        &member_args,
+        false,
+        false,
+        crate::doctor::DoctorMode::Native,
+        OutputFormat::Json,
+        false,
+    ))?;
+    let detect_json = studio_command_json_value(detect(
+        Some(repo_root),
+        false,
+        true,
+        false,
+        false,
+        &[],
+        false,
+        false,
+        false,
+        OutputFormat::Json,
+        false,
+    ))?;
+    let detect_contract_text = detect_json
+        .get("config")
+        .cloned()
+        .and_then(|value| serde_yaml::to_string(&value).ok());
+    let topology_json = if contract_path.is_some() {
+        studio_command_json_value(execution_topology(
+            Some(repo_root),
+            file_override,
+            member,
+            OutputFormat::Json,
+            false,
+        ))?
+    } else {
+        json!({
+            "ok": false,
+            "path": repo_root.display().to_string(),
+            "member": member,
+            "error": "execution topology requires a valid ota.yaml; start with `ota doctor` or `ota detect --dry-run .`"
+        })
+    };
+
+    Ok((
+        json!({
+            "studio": {
+                "version": env!("CARGO_PKG_VERSION"),
+                "mode": mode.as_str(),
+                "member": member,
+                "repo_root": repo_root.display().to_string(),
+                "contract_path": contract_path.as_ref().map(|value| value.display().to_string()),
+                "generated_at": OffsetDateTime::now_utc()
+                    .format(&format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z"))
+                    .unwrap_or_else(|_| String::from("unknown")),
+                "action_base_url": action_base_url,
+            },
+            "contract_text": contract_text,
+            "detect_contract_text": detect_contract_text,
+            "review_contracts": review_contracts,
+            "activity": activity,
+            "doctor": {
+                "exit_code": if doctor_json["ok"].as_bool() == Some(true) { 0 } else { 1 },
+                "data": doctor_json,
+            },
+            "detect": {
+                "exit_code": if detect_json["ok"].as_bool() == Some(true) { 0 } else { 1 },
+                "data": detect_json,
+            },
+            "topology": {
+                "exit_code": if topology_json["ok"].as_bool() == Some(true) { 0 } else { 1 },
+                "data": topology_json,
+            }
+        }),
+        contract_path,
+    ))
+}
+
+fn studio_recent_activity_payload(repo_root: &Path, contract_path: Option<&Path>) -> JsonValue {
+    let scan = match scan_repo_receipt_archives(repo_root) {
+        Ok(scan) => scan,
+        Err(error) => {
+            return json!({
+                "entries": [],
+                "invalid_archive_count": 0,
+                "error": error,
+            });
+        }
+    };
+
+    let current_identity =
+        contract_path.map(|path| repo_receipt_contract_identity(repo_root, path));
+    let entries = scan
+        .archives
+        .iter()
+        .take(5)
+        .map(|record| {
+            let receipt = &record.payload.receipt;
+            json!({
+                "archived_at": record.archived_at,
+                "ok": record.payload.ok,
+                "contract": receipt.contract,
+                "status": receipt.status,
+                "backend": receipt.backend,
+                "context": receipt.context,
+                "lifecycle": receipt.lifecycle,
+                "target": receipt.target,
+                "provider": receipt.provider,
+                "cwd": receipt.cwd,
+                "failed_task": receipt.failed_task,
+                "failed_dependency": receipt.failed_dependency,
+                "failure_origin": receipt.failure_origin,
+                "next": receipt.next,
+                "summary": record.payload.summary,
+                "logs": receipt.logs,
+                "steps": receipt.steps,
+                "findings": record.payload.findings,
+                "matches_current_contract": current_identity.as_deref().is_none_or(|identity| {
+                    repo_receipt_contract_identity_from_archive_record(record).as_deref()
+                        == Some(identity)
+                }),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "contract_identity": current_identity,
+        "history_count": scan.archives.len(),
+        "invalid_archive_count": scan.invalid_archives.len(),
+        "entries": entries,
+    })
+}
+
+fn studio_review_contracts(
+    repo_root: &Path,
+    contract_path: Option<&Path>,
+) -> Result<JsonValue, String> {
+    let report = detect_repo(repo_root).map_err(|error| error.to_string())?;
+    let rewrite_contract_text = studio_rewrite_contract_text(&report).ok();
+    let Some(contract_path) = contract_path else {
+        return Ok(json!({
+            "rewrite_contract_text": rewrite_contract_text,
+        }));
+    };
+
+    let (merge_contract_text, error) = match load_contract(contract_path) {
+        Ok(existing_contract) => {
+            let comparison =
+                build_detect_comparison(&existing_contract, &report, DetectRemovalScope::Drift);
+            match studio_merge_contract_text(contract_path, &report, &comparison) {
+                Ok(text) => (Some(text), None),
+                Err(error) => (None, Some(error)),
+            }
+        }
+        Err(error) => (None, Some(error.to_string())),
+    };
+    Ok(json!({
+        "merge_contract_text": merge_contract_text,
+        "rewrite_contract_text": rewrite_contract_text,
+        "error": error,
+    }))
+}
+
+fn studio_merge_contract_text(
+    contract_path: &Path,
+    report: &DetectReport,
+    comparison: &DetectComparison,
+) -> Result<String, String> {
+    let contents = fs::read_to_string(contract_path).map_err(|error| {
+        format!(
+            "failed to read existing contract `{}` for Studio merge preview: {error}",
+            compact_contract_path(contract_path)
+        )
+    })?;
+    let mut document: YamlValue = serde_yaml::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse existing contract `{}` for Studio merge preview: {error}",
+            compact_contract_path(contract_path)
+        )
+    })?;
+    let high_confidence_fields = detect_high_confidence_inference_fields(&report.inferences)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut applied_fields = Vec::new();
+    for change in comparison
+        .changes
+        .iter()
+        .filter(|change| change.status == "add" || change.status == "update")
+    {
+        if !detect_change_is_high_confidence(change, &high_confidence_fields) {
+            continue;
+        }
+        if apply_detect_change(&mut document, change) {
+            applied_fields.push(change.field.clone());
+        }
+    }
+    record_detect_owned_fields(&mut document, applied_fields)?;
+    serde_yaml::to_string(&document).map_err(|error| {
+        format!(
+            "failed to serialize Studio merge preview for `{}`: {error}",
+            compact_contract_path(contract_path)
+        )
+    })
+}
+
+fn studio_rewrite_contract_text(report: &DetectReport) -> Result<String, String> {
+    let mut document = serde_yaml::to_value(&report.contract)
+        .map_err(|error| format!("failed to serialize Studio rewrite preview: {error}"))?;
+    record_detect_owned_fields(&mut document, detect_field_paths(&report.contract))?;
+    serde_yaml::to_string(&document)
+        .map_err(|error| format!("failed to render Studio rewrite preview: {error}"))
+}
+
+fn write_studio_snapshot(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    repo_root: &Path,
+    mode: StudioSnapshotMode,
+    action_base_url: Option<&str>,
+) -> Result<StudioSnapshotReport, String> {
+    ensure_ota_state_gitignored(repo_root)?;
+
+    let output_path = repo_root.join(".ota/state/studio/index.html");
+    let (snapshot, contract_path) = studio_snapshot_payload(
+        path,
+        file_override,
+        member,
+        repo_root,
+        mode,
+        action_base_url,
+    )?;
+    let html = render_studio_snapshot_html(&snapshot);
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create `{}`: {error}", parent.display()))?;
+    }
+    fs::write(&output_path, html)
+        .map_err(|error| format!("failed to write `{}`: {error}", output_path.display()))?;
+
+    Ok(StudioSnapshotReport {
+        output_path,
+        contract_path,
+    })
+}
+
+fn serve_studio(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    repo_root: &Path,
+    compact_repo_display: &str,
+    open: bool,
+) -> CommandOutput {
+    let listener = match TcpListener::bind(("127.0.0.1", 0)) {
+        Ok(listener) => listener,
+        Err(error) => {
+            return CommandOutput::failure(format!(
+                "failed to start Studio server on localhost: {error}"
+            ));
+        }
+    };
+    let port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(error) => {
+            return CommandOutput::failure(format!(
+                "studio server started but local address could not be determined: {error}"
+            ));
+        }
+    };
+    let url = format!("http://127.0.0.1:{port}/");
+    let report = match write_studio_snapshot(
+        path,
+        file_override,
+        member,
+        repo_root,
+        StudioSnapshotMode::InteractiveServer,
+        Some(&url),
+    ) {
+        Ok(report) => report,
+        Err(error) => return CommandOutput::failure(error),
+    };
+    if open && let Err(error) = open_studio_target_in_browser(url.clone()) {
+        return CommandOutput::failure(format!(
+            "studio server started on `{url}` but could not be opened automatically: {error}"
+        ));
+    }
+
+    let rendered = render_studio_export_text(
+        compact_repo_display,
+        member,
+        &report.output_path,
+        report.contract_path.as_deref(),
+        Some(&url),
+        true,
+        open,
+    );
+    println!("{rendered}");
+    let _ = io::stdout().flush();
+
+    if let Err(error) = listener.set_nonblocking(true) {
+        return CommandOutput::failure(format!(
+            "studio server started on `{url}` but could not switch to nonblocking mode: {error}"
+        ));
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    if let Err(error) = signal_flag::register(SIGINT, Arc::clone(&stop)) {
+        return CommandOutput::failure(format!(
+            "studio server started on `{url}` but could not register SIGINT handler: {error}"
+        ));
+    }
+    if let Err(error) = signal_flag::register(SIGTERM, Arc::clone(&stop)) {
+        return CommandOutput::failure(format!(
+            "studio server started on `{url}` but could not register SIGTERM handler: {error}"
+        ));
+    }
+
+    while !stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let _ = handle_studio_server_request(
+                    &mut stream,
+                    path,
+                    file_override,
+                    member,
+                    repo_root,
+                    &report.output_path,
+                    &url,
+                );
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(80));
+            }
+            Err(error) => {
+                eprintln!("studio server stopped after accept error: {error}");
+                break;
+            }
+        }
+    }
+
+    CommandOutput::success(String::new())
+}
+
+fn handle_studio_server_request(
+    stream: &mut TcpStream,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    repo_root: &Path,
+    output_path: &Path,
+    url: &str,
+) -> Result<(), String> {
+    let (method, request_path) = read_http_request_head(stream)?;
+    match (method.as_str(), request_path.as_str()) {
+        ("GET", "/") | ("GET", "/index.html") => {
+            let body = fs::read(output_path).map_err(|error| {
+                format!(
+                    "failed to read Studio snapshot `{}`: {error}",
+                    compact_path(output_path, "index.html")
+                )
+            })?;
+            write_http_response(stream, 200, "OK", "text/html; charset=utf-8", &body)
+        }
+        ("GET", "/api/snapshot") => {
+            let (snapshot, _contract_path) = studio_snapshot_payload(
+                path,
+                file_override,
+                member,
+                repo_root,
+                StudioSnapshotMode::InteractiveServer,
+                Some(url),
+            )?;
+            write_http_json(stream, &snapshot)
+        }
+        ("POST", "/api/actions/init") => {
+            let payload = studio_apply_action(StudioAction::Starter, repo_root);
+            if payload["ok"].as_bool() == Some(true) {
+                let _ = write_studio_snapshot(
+                    path,
+                    file_override,
+                    member,
+                    repo_root,
+                    StudioSnapshotMode::InteractiveServer,
+                    Some(url),
+                );
+            }
+            write_http_json(stream, &payload)
+        }
+        ("POST", "/api/actions/merge") => {
+            let payload = studio_apply_action(StudioAction::Merge, repo_root);
+            if payload["ok"].as_bool() == Some(true) {
+                let _ = write_studio_snapshot(
+                    path,
+                    file_override,
+                    member,
+                    repo_root,
+                    StudioSnapshotMode::InteractiveServer,
+                    Some(url),
+                );
+            }
+            write_http_json(stream, &payload)
+        }
+        _ => write_http_response(
+            stream,
+            404,
+            "Not Found",
+            "application/json; charset=utf-8",
+            br#"{"ok":false,"error":"not found"}"#,
+        ),
+    }
+}
+
+fn studio_apply_action(action: StudioAction, repo_root: &Path) -> JsonValue {
+    let output = match action {
+        StudioAction::Starter => init(
+            Some(repo_root),
+            true,
+            false,
+            None,
+            false,
+            OutputFormat::Json,
+            false,
+        ),
+        StudioAction::Merge => detect(
+            Some(repo_root),
+            true,
+            false,
+            false,
+            true,
+            &[],
+            true,
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        ),
+    };
+    match studio_command_json_value(output) {
+        Ok(mut payload) => {
+            if payload.get("ok").is_none() {
+                payload["ok"] = JsonValue::Bool(false);
+            }
+            payload["action"] = JsonValue::String(action.label().to_string());
+            payload
+        }
+        Err(error) => json!({
+            "ok": false,
+            "action": action.label(),
+            "error": error,
+        }),
+    }
+}
+
+fn read_http_request_head(stream: &mut TcpStream) -> Result<(String, String), String> {
+    let mut buffer = [0u8; 4096];
+    let bytes_read = stream
+        .read(&mut buffer)
+        .map_err(|error| format!("failed to read studio request: {error}"))?;
+    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let mut lines = request.lines();
+    let request_line = lines
+        .next()
+        .ok_or_else(|| String::from("studio request was empty"))?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts
+        .next()
+        .ok_or_else(|| String::from("studio request is missing method"))?;
+    let path = parts
+        .next()
+        .ok_or_else(|| String::from("studio request is missing path"))?;
+    Ok((method.to_string(), path.to_string()))
+}
+
+fn write_http_json(stream: &mut TcpStream, payload: &JsonValue) -> Result<(), String> {
+    let body = serde_json::to_vec(payload)
+        .map_err(|error| format!("failed to serialize studio action response: {error}"))?;
+    write_http_response(stream, 200, "OK", "application/json; charset=utf-8", &body)
+}
+
+fn write_http_response(
+    stream: &mut TcpStream,
+    status_code: u16,
+    status_text: &str,
+    content_type: &str,
+    body: &[u8],
+) -> Result<(), String> {
+    let headers = format!(
+        "HTTP/1.1 {status_code} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(headers.as_bytes())
+        .and_then(|_| stream.write_all(body))
+        .and_then(|_| stream.flush())
+        .map_err(|error| format!("failed to write studio response: {error}"))
+}
+
+fn studio_repo_root(path: Option<&Path>, file_override: Option<&Path>) -> PathBuf {
+    match file_override.or(path) {
+        Some(path) if path.is_file() => contract_working_dir(path).to_path_buf(),
+        Some(path) => path.to_path_buf(),
+        None => PathBuf::from("."),
+    }
+}
+
+fn studio_command_json_value(output: CommandOutput) -> Result<JsonValue, String> {
+    let body = if !output.stdout.trim().is_empty() {
+        output.stdout
+    } else if let Some(stderr) = output.stderr {
+        stderr
+    } else {
+        return Err(String::from(
+            "studio snapshot command produced no JSON output",
+        ));
+    };
+
+    serde_json::from_str(&body)
+        .map_err(|error| format!("studio snapshot could not parse command JSON output: {error}"))
+}
+
+fn open_studio_target_in_browser(target: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(&target);
+        command
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg("start").arg("").arg(&target);
+        command
+    };
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(&target);
+        command
+    };
+
+    let status = command
+        .status()
+        .map_err(|error| format!("failed to launch browser opener: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("browser opener exited with status {status}"))
+    }
+}
+
+fn render_studio_export_text(
+    path: &str,
+    member: Option<&str>,
+    output_path: &Path,
+    contract_path: Option<&Path>,
+    serve_url: Option<&str>,
+    interactive: bool,
+    opened: bool,
+) -> String {
+    let display = display_contract_target(path, member);
+    let mut output = format!(
+        "{}\n\n{}",
+        format_command_header("STUDIO", &display),
+        render_named_status("EXPORTED", String::from("✓"), "1;38;2;125;255;212")
+    );
+    output.push_str(&format!("\n\n{}", paint_section_title("Overview")));
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Mode:", "1;38;2;102;217;255"),
+            &paint(
+                if interactive {
+                    "interactive local server"
+                } else {
+                    "read-only snapshot"
+                },
+                "1;38;2;255;255;255"
+            ),
+        )
+    ));
+    if let Some(serve_url) = serve_url {
+        output.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Serve:", "1;38;2;102;217;255"),
+                &paint_code(serve_url),
+            )
+        ));
+    }
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Output:", "1;38;2;102;217;255"),
+            &paint_code(&compact_path(output_path, "index.html")),
+        )
+    ));
+    if let Some(contract_path) = contract_path {
+        output.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Contract:", "1;38;2;102;217;255"),
+                &paint_code(&compact_contract_path(contract_path)),
+            )
+        ));
+    }
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Data:", "1;38;2;102;217;255"),
+            &paint("doctor, detect, execution topology", "1;38;2;255;255;255"),
+        )
+    ));
+    let next_steps = if opened {
+        if interactive {
+            vec![
+                String::from(
+                    "opened Studio in your default browser with reviewed write actions enabled",
+                ),
+                String::from("press Ctrl-C to stop the local Studio server"),
+                String::from("rerun `ota studio --serve --open` after repo or contract changes"),
+            ]
+        } else {
+            vec![
+                format!("opened `{}` in your default browser", output_path.display()),
+                String::from("rerun `ota studio --open` after repo or contract changes"),
+            ]
+        }
+    } else {
+        if interactive {
+            vec![
+                format!(
+                    "open `{}` in a browser to review and apply safe changes",
+                    serve_url.unwrap_or("http://127.0.0.1")
+                ),
+                String::from(
+                    "rerun `ota studio --serve --open` to launch the interactive Studio path directly",
+                ),
+                String::from("press Ctrl-C to stop the local Studio server"),
+            ]
+        } else {
+            vec![
+                format!("open `{}` in a browser", output_path.display()),
+                String::from("rerun `ota studio --open` to export and open it automatically"),
+                String::from("rerun `ota studio` after repo or contract changes"),
+            ]
+        }
+    };
+    output.push_str(&format_next_timeline(&next_steps));
+    output
 }
 
 fn execution_plan_overrides(overrides: ExecutionOverrides) -> Option<ExecutionPlanOverrides> {
@@ -13105,17 +14528,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         }) {
         Ok(()) => {}
         Err(_) => {
-            let mut stderr = format!(
-                "detected high-confidence fields are not sufficient to produce a valid contract{}",
-                format_next_timeline(&[String::from(
-                    "use `ota detect --dry-run` to review medium and low confidence fields",
-                )]),
-            );
-            render_inference_section(
-                &mut stderr,
-                "Excluded from automatic write",
-                excluded_write_inferences(&report),
-            );
+            let stderr = render_detect_write_blocked_error(&report);
             return match format {
                 OutputFormat::Text => CommandOutput::failure(stderr),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -22806,6 +24219,8 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use serde_json::json;
+
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
@@ -23596,6 +25011,166 @@ env:
         let merged = fs::read_to_string(&contract_path).expect("read merged contract");
         assert!(merged.contains("path: custom.properties"), "{merged}");
         assert!(merged.contains("path: .env.local"), "{merged}");
+    }
+
+    #[test]
+    fn studio_apply_starter_writes_first_contract() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("package.json"),
+            r#"{
+  "name": "studio-starter",
+  "scripts": { "test": "node -e \"console.log('ok')\"" }
+}"#,
+        )
+        .expect("write package.json");
+
+        let payload = super::studio_apply_action(super::StudioAction::Starter, repo.path());
+
+        assert_eq!(payload["ok"], true, "{payload}");
+        assert_eq!(payload["action"], "starter", "{payload}");
+        let written = fs::read_to_string(repo.path().join("ota.yaml")).expect("read contract");
+        assert!(written.contains("name: studio-starter"), "{written}");
+        assert!(written.contains("tasks:"), "{written}");
+    }
+
+    #[test]
+    fn studio_apply_merge_writes_all_eligible_high_confidence_changes() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        )
+        .expect("write existing contract");
+        fs::write(
+            repo.path().join("package.json"),
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        )
+        .expect("write package.json");
+
+        let payload = super::studio_apply_action(super::StudioAction::Merge, repo.path());
+
+        assert_eq!(payload["ok"], true, "{payload}");
+        assert_eq!(payload["action"], "merge", "{payload}");
+        let written = fs::read_to_string(&contract_path).expect("read merged contract");
+        assert!(written.contains("pnpm: 10.1.0"), "{written}");
+        assert!(written.contains("run: pnpm dev"), "{written}");
+    }
+
+    #[test]
+    fn studio_snapshot_payload_includes_action_base_url_in_interactive_mode() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("package.json"),
+            r#"{
+  "name": "studio-interactive",
+  "scripts": { "test": "node -e \"console.log('ok')\"" }
+}"#,
+        )
+        .expect("write package.json");
+
+        let (snapshot, _contract_path) = super::studio_snapshot_payload(
+            Some(repo.path()),
+            None,
+            None,
+            repo.path(),
+            super::StudioSnapshotMode::InteractiveServer,
+            Some("http://127.0.0.1:43129/"),
+        )
+        .expect("studio snapshot payload");
+
+        assert_eq!(snapshot["studio"]["mode"], "interactive_server");
+        assert_eq!(
+            snapshot["studio"]["action_base_url"],
+            "http://127.0.0.1:43129/"
+        );
+    }
+
+    #[test]
+    fn studio_snapshot_payload_includes_recent_activity_from_repo_receipts() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: studio-activity
+tasks:
+  build:
+    run: printf build
+"#,
+        )
+        .expect("write contract");
+        let receipts_dir = repo.path().join(".ota").join("receipts");
+        fs::create_dir_all(&receipts_dir).expect("create receipts dir");
+        fs::write(
+            receipts_dir.join("repo-receipt-20260502-101010-123Z.json"),
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 0,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1,
+                },
+                "receipt": {
+                    "scope": "repo",
+                    "contract": contract_path.display().to_string(),
+                    "status": "READY",
+                    "backend": "native",
+                    "context": "app",
+                    "lifecycle": "ephemeral",
+                    "logs": {
+                        "dir": ".ota/state/logs/20260502-build",
+                        "stdout": ".ota/state/logs/20260502-build/stdout.log",
+                        "stderr": ".ota/state/logs/20260502-build/stderr.log",
+                    },
+                    "steps": [{
+                        "order": 1,
+                        "label": "build",
+                        "status": "READY",
+                        "exit_code": 0,
+                    }],
+                }
+            }))
+            .expect("serialize receipt archive"),
+        )
+        .expect("write receipt archive");
+
+        let (snapshot, _contract_path) = super::studio_snapshot_payload(
+            Some(repo.path()),
+            None,
+            None,
+            repo.path(),
+            super::StudioSnapshotMode::ReadOnlySnapshot,
+            None,
+        )
+        .expect("studio snapshot payload");
+
+        assert_eq!(snapshot["activity"]["history_count"], 1, "{snapshot}");
+        assert_eq!(
+            snapshot["activity"]["entries"][0]["status"], "READY",
+            "{snapshot}"
+        );
+        assert_eq!(
+            snapshot["activity"]["entries"][0]["logs"]["dir"], ".ota/state/logs/20260502-build",
+            "{snapshot}"
+        );
+        assert_eq!(
+            snapshot["activity"]["entries"][0]["steps"][0]["label"], "build",
+            "{snapshot}"
+        );
     }
 
     #[test]
@@ -40863,7 +42438,7 @@ struct PhaseExecutionContext {
     cwd: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 struct ArchivedReceiptSummaryData {
     #[serde(default)]
     error_count: usize,
@@ -40917,6 +42492,18 @@ struct ArchivedRepoReceiptData {
     provider: Option<String>,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    logs: Option<ExecutionReceiptLogs>,
+    #[serde(default)]
+    steps: Vec<ExecutionReceiptStep>,
+    #[serde(default)]
+    failed_task: Option<String>,
+    #[serde(default)]
+    failed_dependency: Option<String>,
+    #[serde(default)]
+    failure_origin: Option<String>,
+    #[serde(default)]
+    next: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46687,6 +48274,77 @@ fn excluded_write_inferences(report: &DetectReport) -> impl Iterator<Item = &Inf
         .inferences
         .iter()
         .filter(|inference| inference.confidence != Confidence::High)
+}
+
+fn render_detect_write_blocked_error(report: &DetectReport) -> String {
+    let excluded = excluded_write_inferences(report).collect::<Vec<_>>();
+    let low_confidence = excluded
+        .iter()
+        .copied()
+        .filter(|inference| inference.confidence == Confidence::Low)
+        .collect::<Vec<_>>();
+    let eligible = excluded
+        .iter()
+        .copied()
+        .filter(|inference| inference.confidence != Confidence::Low)
+        .collect::<Vec<_>>();
+
+    let mut why_lines = vec![String::from(
+        "detected fields are not sufficient to write a valid contract automatically",
+    )];
+    if !low_confidence.is_empty() {
+        why_lines.push(format!(
+            "{} {}",
+            join_detect_inference_fields(&low_confidence),
+            if low_confidence.len() == 1 {
+                "is still low confidence"
+            } else {
+                "are still low confidence"
+            }
+        ));
+    }
+
+    let mut next_steps = vec![String::from(
+        "run `ota detect --dry-run` to review medium and low confidence fields",
+    )];
+    if !low_confidence.is_empty() {
+        next_steps.push(format!(
+            "confirm or add {}, then rerun `ota detect --write`",
+            join_detect_inference_fields(&low_confidence)
+        ));
+    }
+    if !eligible.is_empty() {
+        let mut inferred_fields = String::from("eligible inferred fields:");
+        for inference in eligible {
+            inferred_fields.push_str(&format!(
+                "\n    • `{} = {}`",
+                inference.field, inference.value
+            ));
+        }
+        next_steps.push(inferred_fields);
+    }
+
+    let mut output = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Detect write blocked", "1;37")
+    );
+    output.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code("ota detect")
+    ));
+    append_error_detail_section(&mut output, "Why:", &why_lines, None);
+    append_error_detail_section(&mut output, "Next:", &next_steps, None);
+    output
+}
+
+fn join_detect_inference_fields(inferences: &[&Inference]) -> String {
+    inferences
+        .iter()
+        .map(|inference| paint_code(&format!("`{}`", inference.field)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn render_inference_section<'a>(
