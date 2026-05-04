@@ -1670,7 +1670,15 @@ pub struct TaskRuntimeReadinessSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listener: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<TaskRuntimeReadinessHttpMethod>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub success: Option<TaskRuntimeReadinessHttpSuccessSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<TaskRuntimeReadinessHttpBodySpec>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -1678,6 +1686,34 @@ pub struct TaskRuntimeReadinessSpec {
 pub enum TaskRuntimeReadinessKind {
     Http,
     Tcp,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TaskRuntimeReadinessHttpMethod {
+    Get,
+    Head,
+}
+
+impl TaskRuntimeReadinessHttpMethod {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Head => "HEAD",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeReadinessHttpSuccessSpec {
+    pub status: Vec<u16>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeReadinessHttpBodySpec {
+    pub contains: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- expanded HTTP service `runtime.readiness` so repos can now declare probe `method`, request `headers`, accepted `success.status` codes, and a required `body.contains` substring; validation, runtime probing, topology JSON output, and canonical docs/examples now follow the same richer readiness contract
 - made local Studio persistence policy explicit in the spec: offline and non-enterprise Studio stays file-backed by default, with JSON registry/state plus repo artifacts as the baseline architecture, while local databases are explicitly out of scope unless a later enterprise or hosted boundary justifies a different persistence model
 - removed snapshot retention from the Studio spec direction and added `docs/spec/studio/cleanup-plan.md` so the canonical plan now says the static prototype was proof-only, should not survive as a supported Studio mode, and should be retired as the interactive shell takes over while only genuinely reusable normalization/server internals are preserved
 - made guided contract authoring explicit in the Studio spec: the `Contract` pane is now required to reduce manual YAML burden through common-field guided controls, and Phase 3 now explicitly includes guided authoring for starter and common contract flows while keeping YAML visibility, diff review, and Ota-core-backed writes as hard product rules

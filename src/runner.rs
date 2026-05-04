@@ -60,9 +60,10 @@ use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
     ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment, ExtensionKind, Lifecycle,
     RemoteBackend, RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessKind, TaskRuntimeSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, ToolRequirement,
-    format_memory_size_bytes, parse_memory_size_bytes, task_target_env_name,
+    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
+    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetSpec, ToolRequirement, format_memory_size_bytes,
+    parse_memory_size_bytes, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 
@@ -3693,7 +3694,7 @@ enum RuntimeReadinessTarget {
     Http {
         address: String,
         port: u16,
-        path: String,
+        request: HttpReadinessRequest,
     },
     RemoteTcp {
         probe: RemoteReadinessProbeTarget,
@@ -3703,8 +3704,17 @@ enum RuntimeReadinessTarget {
         probe: RemoteReadinessProbeTarget,
         address: String,
         port: u16,
-        path: String,
+        request: HttpReadinessRequest,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HttpReadinessRequest {
+    method: TaskRuntimeReadinessHttpMethod,
+    path: String,
+    headers: BTreeMap<String, String>,
+    success_statuses: Vec<u16>,
+    body_contains: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7299,9 +7309,7 @@ fn declared_target_probe_target(
                                     listener.bind.address.as_str(),
                                 ),
                                 port: bind_port,
-                                path: normalized_runtime_path(
-                                    readiness.and_then(|probe| probe.path.as_deref()),
-                                ),
+                                request: readiness_http_request(readiness),
                             }
                         }
                         Some(TaskRuntimeReadinessKind::Tcp) | None => {
@@ -7384,9 +7392,7 @@ fn declared_target_probe_target(
                                     listener.bind.address.as_str(),
                                 ),
                                 port: bind_port,
-                                path: normalized_runtime_path(
-                                    readiness.and_then(|probe| probe.path.as_deref()),
-                                ),
+                                request: readiness_http_request(readiness),
                             }
                         }
                         Some(TaskRuntimeReadinessKind::Tcp) | None => {
@@ -7411,7 +7417,7 @@ fn declared_target_probe_target(
         Some(TaskRuntimeReadinessKind::Http) => Ok(RuntimeReadinessTarget::Http {
             address,
             port,
-            path: normalized_runtime_path(readiness.and_then(|probe| probe.path.as_deref())),
+            request: readiness_http_request(readiness),
         }),
         Some(TaskRuntimeReadinessKind::Tcp) | None => {
             Ok(RuntimeReadinessTarget::Tcp { address, port })
@@ -12379,7 +12385,7 @@ fn runtime_readiness_target(
         Some(TaskRuntimeReadinessKind::Http) => Some(RuntimeReadinessTarget::Http {
             address: endpoint.host.address,
             port: endpoint.host.port,
-            path: normalized_runtime_path(readiness.and_then(|probe| probe.path.as_deref())),
+            request: readiness_http_request(readiness),
         }),
         Some(TaskRuntimeReadinessKind::Tcp) | None => Some(RuntimeReadinessTarget::Tcp {
             address: endpoint.host.address,
@@ -12396,8 +12402,8 @@ fn readiness_target_observed(target: &RuntimeReadinessTarget) -> bool {
         RuntimeReadinessTarget::Http {
             address,
             port,
-            path,
-        } => http_readiness_endpoint_reachable(address.as_str(), *port, path.as_str()),
+            request,
+        } => http_readiness_endpoint_reachable(address.as_str(), *port, request),
         RuntimeReadinessTarget::RemoteTcp { probe, port } => {
             remote_target_probe_port_reachable(probe, *port)
         }
@@ -12405,18 +12411,41 @@ fn readiness_target_observed(target: &RuntimeReadinessTarget) -> bool {
             probe,
             address,
             port,
-            path,
-        } => remote_target_probe_http_reachable(probe, address.as_str(), *port, path.as_str()),
+            request,
+        } => remote_target_probe_http_reachable(probe, address.as_str(), *port, request),
     }
 }
 
-fn http_readiness_endpoint_reachable(address: &str, port: u16, path: &str) -> bool {
+fn readiness_http_request(readiness: Option<&TaskRuntimeReadinessSpec>) -> HttpReadinessRequest {
+    HttpReadinessRequest {
+        method: readiness
+            .and_then(|probe| probe.method)
+            .unwrap_or(TaskRuntimeReadinessHttpMethod::Get),
+        path: normalized_runtime_path(readiness.and_then(|probe| probe.path.as_deref())),
+        headers: readiness
+            .map(|probe| probe.headers.clone())
+            .unwrap_or_default(),
+        success_statuses: readiness
+            .and_then(|probe| probe.success.as_ref())
+            .map(|success| success.status.clone())
+            .unwrap_or_else(|| (200u16..400u16).collect()),
+        body_contains: readiness
+            .and_then(|probe| probe.body.as_ref().map(|body| body.contains.clone())),
+    }
+}
+
+fn http_readiness_endpoint_reachable(
+    address: &str,
+    port: u16,
+    request: &HttpReadinessRequest,
+) -> bool {
     let addr = format!("{}:{}", address.trim(), port);
-    let request_path = normalized_runtime_path(Some(path));
     addr.to_socket_addrs()
         .map(|addrs| {
             addrs.into_iter().any(|socket| {
-                let Ok(mut stream) = TcpStream::connect_timeout(&socket, Duration::from_millis(200)) else {
+                let Ok(mut stream) =
+                    TcpStream::connect_timeout(&socket, Duration::from_millis(200))
+                else {
                     return false;
                 };
                 let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
@@ -12426,32 +12455,71 @@ fn http_readiness_endpoint_reachable(address: &str, port: u16, path: &str) -> bo
                 } else {
                     address.trim().to_string()
                 };
-                let request = format!(
-                    "GET {request_path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n"
+                let mut request_text = format!(
+                    "{} {} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n",
+                    request.method.as_str(),
+                    request.path,
                 );
-                if stream.write_all(request.as_bytes()).is_err() {
+                for (name, value) in &request.headers {
+                    request_text.push_str(name);
+                    request_text.push_str(": ");
+                    request_text.push_str(value);
+                    request_text.push_str("\r\n");
+                }
+                request_text.push_str("\r\n");
+                if stream.write_all(request_text.as_bytes()).is_err() {
                     return false;
                 }
-                let mut buffer = [0u8; 128];
-                let Ok(bytes_read) = stream.read(&mut buffer) else {
-                    return false;
-                };
-                if bytes_read == 0 {
-                    return false;
+                let mut response_bytes = Vec::with_capacity(1024);
+                let mut chunk = [0u8; 1024];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(bytes_read) => {
+                            let remaining = 32768usize.saturating_sub(response_bytes.len());
+                            if remaining == 0 {
+                                break;
+                            }
+                            response_bytes.extend_from_slice(&chunk[..bytes_read.min(remaining)]);
+                            if response_bytes.len() >= 32768 {
+                                break;
+                            }
+                        }
+                        Err(_) => return false,
+                    }
                 }
-                let response = String::from_utf8_lossy(&buffer[..bytes_read]);
-                let Some(status_line) = response.lines().next() else {
-                    return false;
-                };
-                let mut parts = status_line.split_whitespace();
-                let _ = parts.next();
-                let Some(status_code) = parts.next().and_then(|value| value.parse::<u16>().ok()) else {
-                    return false;
-                };
-                (200..400).contains(&status_code)
+                response_matches_http_readiness(&response_bytes, request)
             })
         })
         .unwrap_or(false)
+}
+
+fn response_matches_http_readiness(response_bytes: &[u8], request: &HttpReadinessRequest) -> bool {
+    if response_bytes.is_empty() {
+        return false;
+    }
+    let response = String::from_utf8_lossy(response_bytes);
+    let Some(status_line) = response.lines().next() else {
+        return false;
+    };
+    let mut parts = status_line.split_whitespace();
+    let _ = parts.next();
+    let Some(status_code) = parts.next().and_then(|value| value.parse::<u16>().ok()) else {
+        return false;
+    };
+    if !request.success_statuses.contains(&status_code) {
+        return false;
+    }
+    if let Some(contains) = request.body_contains.as_deref() {
+        let body = response
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or("");
+        if !body.contains(contains) {
+            return false;
+        }
+    }
+    true
 }
 
 fn remote_target_probe_port_reachable(probe: &RemoteReadinessProbeTarget, port: u16) -> bool {
@@ -12499,32 +12567,10 @@ fn remote_target_probe_http_reachable(
     probe: &RemoteReadinessProbeTarget,
     address: &str,
     port: u16,
-    path: &str,
+    request: &HttpReadinessRequest,
 ) -> bool {
-    let normalized_path = normalized_runtime_path(Some(path));
-    let url = format!("http://{}:{}{}", address.trim(), port, normalized_path);
-    let command = format!(
-        "url={url}; \
-if command -v curl >/dev/null 2>&1; then \
-  curl -fsS -L --connect-timeout 1 --max-time 2 -o /dev/null \"$url\" && exit 0; \
-fi; \
-if command -v wget >/dev/null 2>&1; then \
-  wget -q -O /dev/null --timeout=2 \"$url\" && exit 0; \
-fi; \
-if command -v python3 >/dev/null 2>&1; then \
-  python3 - \"$url\" <<'PY' && exit 0 || exit 1\n\
-import sys, urllib.request\n\
-url = sys.argv[1]\n\
-try:\n\
-    with urllib.request.urlopen(url, timeout=2) as response:\n\
-        sys.exit(0 if 200 <= response.status < 400 else 1)\n\
-except Exception:\n\
-    sys.exit(1)\n\
-PY\n\
-fi; \
-exit 1",
-        url = shell_quote(&url),
-    );
+    let url = format!("http://{}:{}{}", address.trim(), port, request.path);
+    let command = remote_http_readiness_probe_command(url.as_str(), request);
     let output = if let Some(provider_command) = probe.provider_command.as_deref() {
         execute_backend_provider_task_command(
             "__ota_remote_probe__",
@@ -12552,6 +12598,69 @@ exit 1",
         )
     };
     matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
+}
+
+fn remote_http_readiness_probe_command(url: &str, request: &HttpReadinessRequest) -> String {
+    let status_csv = request
+        .success_statuses
+        .iter()
+        .map(|status| status.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let headers_shell = request
+        .headers
+        .iter()
+        .map(|(name, value)| format!("-H {}", shell_quote(&format!("{name}: {value}"))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let headers_json =
+        serde_json::to_string(&request.headers).unwrap_or_else(|_| String::from("{}"));
+    let body_contains = request.body_contains.clone().unwrap_or_default();
+    format!(
+        "url={url}; method={method}; statuses={statuses}; contains={contains}; headers_json={headers_json}; \
+if command -v curl >/dev/null 2>&1; then \
+  body_file=$(mktemp 2>/dev/null || printf '/tmp/ota-readiness-body-$$'); \
+  code=$(curl -sS --connect-timeout 1 --max-time 2 -X \"$method\" {headers} -o \"$body_file\" -w '%{{http_code}}' \"$url\") || {{ rm -f \"$body_file\"; exit 1; }}; \
+  matched=1; OLDIFS=\"$IFS\"; IFS=,; for expected in $statuses; do if [ \"$code\" = \"$expected\" ]; then matched=0; break; fi; done; IFS=\"$OLDIFS\"; \
+  [ $matched -eq 0 ] || {{ rm -f \"$body_file\"; exit 1; }}; \
+  if [ -n \"$contains\" ]; then grep -Fq -- \"$contains\" \"$body_file\" || {{ rm -f \"$body_file\"; exit 1; }}; fi; \
+  rm -f \"$body_file\"; exit 0; \
+fi; \
+if command -v python3 >/dev/null 2>&1; then \
+  python3 - \"$url\" \"$method\" \"$statuses\" \"$contains\" \"$headers_json\" <<'PY' && exit 0 || exit 1\n\
+import json, sys, urllib.error, urllib.request\n\
+class NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+    def redirect_request(self, req, fp, code, msg, headers, newurl):\n\
+        return None\n\
+url, method, statuses_raw, contains, headers_raw = sys.argv[1:6]\n\
+statuses = {{int(value) for value in statuses_raw.split(',') if value}}\n\
+headers = json.loads(headers_raw)\n\
+request = urllib.request.Request(url, method=method, headers=headers)\n\
+opener = urllib.request.build_opener(NoRedirect)\n\
+try:\n\
+    with opener.open(request, timeout=2) as response:\n\
+        status = response.status\n\
+        body = response.read().decode(errors='ignore')\n\
+except urllib.error.HTTPError as error:\n\
+    status = error.code\n\
+    body = error.read().decode(errors='ignore')\n\
+except Exception:\n\
+    raise SystemExit(1)\n\
+if status not in statuses:\n\
+    raise SystemExit(1)\n\
+if contains and contains not in body:\n\
+    raise SystemExit(1)\n\
+raise SystemExit(0)\n\
+PY\n\
+fi; \
+exit 1",
+        url = shell_quote(url),
+        method = shell_quote(request.method.as_str()),
+        statuses = shell_quote(&status_csv),
+        contains = shell_quote(&body_contains),
+        headers_json = shell_quote(&headers_json),
+        headers = headers_shell,
+    )
 }
 
 fn start_runtime_readiness_probe(
@@ -16564,15 +16673,16 @@ mod tests {
 
     use super::{
         BackendFulfillmentStrategy, CapturedRunOutcome, ContainerPortPublication,
-        EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, LEGACY_EXECUTION_CONTEXT_NAME,
-        ProvisioningExecutionTarget, ResolvedExecutionBackend, ResolvedSharedLocalBackend,
-        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
-        ResolvedTaskRuntimeHost, RunError, RuntimeListenerHostPublicationFailure,
-        RuntimeListenerResolutionKind, RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode,
-        TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
-        TaskTargetActivationStatus, TaskTargetResolutionSource, activation_loader_label,
-        backend_fulfillment_plan, clean_execution, clean_execution_report, container_identity_seed,
-        contract_working_dir, current_os, effective_task_env_for_backend, effective_task_execution,
+        EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, HttpReadinessRequest,
+        LEGACY_EXECUTION_CONTEXT_NAME, ProvisioningExecutionTarget, ResolvedExecutionBackend,
+        ResolvedSharedLocalBackend, ResolvedTaskRuntime, ResolvedTaskRuntimeBind,
+        ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost, RunError,
+        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
+        RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
+        TaskRunState, TaskTargetActivationEvidence, TaskTargetActivationStatus,
+        TaskTargetResolutionSource, activation_loader_label, backend_fulfillment_plan,
+        clean_execution, clean_execution_report, container_identity_seed, contract_working_dir,
+        current_os, effective_task_env_for_backend, effective_task_execution,
         ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
         persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
         plan_task_execution, preflight_container_host_publications,
@@ -16589,7 +16699,8 @@ mod tests {
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
         TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec,
         TaskRuntimePortMode, TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
-        TaskRuntimeSpec, TaskTargetActivationMode, parse_memory_size_bytes,
+        TaskRuntimeReadinessHttpMethod, TaskRuntimeSpec, TaskTargetActivationMode,
+        parse_memory_size_bytes,
     };
 
     struct PathEnvGuard(Option<std::ffi::OsString>);
@@ -26788,7 +26899,13 @@ exec "$(dirname "$0")/docker-real" "$@"
                 &RuntimeReadinessTarget::Http {
                     address: String::from("127.0.0.1"),
                     port: 8080,
-                    path: String::from("/actuator/health"),
+                    request: HttpReadinessRequest {
+                        method: TaskRuntimeReadinessHttpMethod::Get,
+                        path: String::from("/actuator/health"),
+                        headers: BTreeMap::new(),
+                        success_statuses: vec![200],
+                        body_contains: None,
+                    },
                 }
             ),
             "Waiting for dev to be ready"
@@ -26800,6 +26917,82 @@ exec "$(dirname "$0")/docker-real" "$@"
         assert!(!super::buffer_contains_visible_output(b"\r\n\t"));
         assert!(!super::buffer_contains_visible_output(b"\x1b[2K\r"));
         assert!(super::buffer_contains_visible_output(b"$ cargo test\n"));
+    }
+
+    #[test]
+    fn http_readiness_response_requires_expected_body_when_declared() {
+        let request = HttpReadinessRequest {
+            method: TaskRuntimeReadinessHttpMethod::Get,
+            path: String::from("/actuator/health"),
+            headers: BTreeMap::new(),
+            success_statuses: vec![200],
+            body_contains: Some(String::from("\"status\":\"UP\"")),
+        };
+
+        assert!(super::response_matches_http_readiness(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"UP\"}",
+            &request,
+        ));
+        assert!(!super::response_matches_http_readiness(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"DOWN\"}",
+            &request,
+        ));
+    }
+
+    #[test]
+    fn http_readiness_response_accepts_declared_status_codes() {
+        let request = HttpReadinessRequest {
+            method: TaskRuntimeReadinessHttpMethod::Head,
+            path: String::from("/ready"),
+            headers: BTreeMap::new(),
+            success_statuses: vec![200, 204],
+            body_contains: None,
+        };
+
+        assert!(super::response_matches_http_readiness(
+            b"HTTP/1.1 204 No Content\r\n\r\n",
+            &request,
+        ));
+        assert!(!super::response_matches_http_readiness(
+            b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
+            &request,
+        ));
+    }
+
+    #[test]
+    fn remote_http_probe_command_does_not_follow_redirects() {
+        let request = HttpReadinessRequest {
+            method: TaskRuntimeReadinessHttpMethod::Get,
+            path: String::from("/ready"),
+            headers: BTreeMap::new(),
+            success_statuses: vec![302],
+            body_contains: None,
+        };
+
+        let command =
+            super::remote_http_readiness_probe_command("http://127.0.0.1:3000/ready", &request);
+
+        assert!(!command.contains("curl -sS -L"));
+        assert!(command.contains("class NoRedirect(urllib.request.HTTPRedirectHandler):"));
+        assert!(!command.contains("wget -q -O /dev/null"));
+    }
+
+    #[test]
+    fn remote_http_probe_command_python_path_handles_http_error_statuses() {
+        let request = HttpReadinessRequest {
+            method: TaskRuntimeReadinessHttpMethod::Get,
+            path: String::from("/health"),
+            headers: BTreeMap::new(),
+            success_statuses: vec![401, 503],
+            body_contains: Some(String::from("DOWN")),
+        };
+
+        let command =
+            super::remote_http_readiness_probe_command("http://127.0.0.1:8080/health", &request);
+
+        assert!(command.contains("except urllib.error.HTTPError as error:"));
+        assert!(command.contains("status = error.code"));
+        assert!(command.contains("body = error.read().decode(errors='ignore')"));
     }
 
     fn strip_test_ansi(value: &str) -> String {

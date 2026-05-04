@@ -2525,6 +2525,37 @@ fn validate_task_runtime_readiness(
                     "task `{task_name}` runtime readiness `path` must start with `/`"
                 )));
             }
+            if readiness
+                .headers
+                .keys()
+                .any(|header| header.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `headers` must not use an empty header name"
+                )));
+            }
+            if let Some(success) = readiness.success.as_ref() {
+                if success.status.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` runtime readiness `success.status` must declare at least one HTTP status code"
+                    )));
+                } else if success
+                    .status
+                    .iter()
+                    .any(|status| !(100..=599).contains(status))
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` runtime readiness `success.status` must use valid HTTP status codes between 100 and 599"
+                    )));
+                }
+            }
+            if let Some(body) = readiness.body.as_ref()
+                && body.contains.trim().is_empty()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `body.contains` must not be empty"
+                )));
+            }
             if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` runtime readiness listener `{listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
@@ -2558,6 +2589,26 @@ fn validate_task_runtime_readiness(
             {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.path`"
+                )));
+            }
+            if readiness.method.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.method`"
+                )));
+            }
+            if !readiness.headers.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.headers`"
+                )));
+            }
+            if readiness.success.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.success`"
+                )));
+            }
+            if readiness.body.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.body`"
                 )));
             }
             if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
@@ -4960,6 +5011,140 @@ tasks:
             error.to_string().contains(
                 "runtime readiness listener `http` must declare `project.host`; runtime readiness currently probes projected host endpoints",
             )
+        }));
+    }
+
+    #[test]
+    fn rejects_invalid_http_runtime_readiness_response_expectations() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        success:
+          status: []
+        body:
+          contains: "   "
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "runtime readiness `success.status` must declare at least one HTTP status code",
+            )
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `body.contains` must not be empty")
+        }));
+    }
+
+    #[test]
+    fn rejects_tcp_runtime_readiness_http_only_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: http
+        method: HEAD
+        headers:
+          Accept: application/json
+        success:
+          status: [200]
+        body:
+          contains: "UP"
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("kind: tcp` must not declare `readiness.method`")
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("kind: tcp` must not declare `readiness.headers`")
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("kind: tcp` must not declare `readiness.success`")
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("kind: tcp` must not declare `readiness.body`")
         }));
     }
 

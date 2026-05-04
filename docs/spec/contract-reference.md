@@ -891,7 +891,14 @@ tasks:
       readiness:
         kind: http
         listener: http
+        method: GET
         path: /health
+        headers:
+          Accept: application/json
+        success:
+          status: [200]
+        body:
+          contains: '"status":"UP"'
       listeners:
         http:
           protocol: http
@@ -1140,12 +1147,17 @@ Current `runtime.readiness` support for service tasks:
 - `kind: http`
   - requires `listener`
   - requires `path`
+  - optional `method` supports `GET` and `HEAD`; default is `GET`
+  - optional `headers` adds request headers to the readiness probe
+  - optional `success.status` overrides the accepted HTTP status codes; default is any `2xx` or `3xx`
+  - optional `body.contains` requires the response body to contain one exact substring after the status code matches
   - requires the referenced listener to declare `project.host`, except for shared-remote
     `ensure_ready` on built-in remote providers where ota may instead probe the declared
     remote-plane listener address and fixed `bind.port.value`
-  - ota waits for a `2xx` or `3xx` response from the selected probe endpoint
+  - ota waits for the declared response contract from the selected probe endpoint
 - `kind: tcp`
   - requires `listener`
+  - must not declare `method`, `headers`, `success`, or `body`
   - for local host-projected readiness, requires the referenced listener to declare `project.host`
   - for shared-remote `ensure_ready`, built-in remote providers may instead use the listener `bind.port.value` on the remote plane
   - ota waits until the selected probe endpoint accepts TCP connections or is listening on the shared remote plane

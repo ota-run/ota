@@ -383,13 +383,17 @@ Current non-manual activation constraints:
 Current `runtime.readiness` support for service tasks:
 
 - `kind: http`
-  - probe one declared listener through its projected host endpoint and wait for a `2xx` or `3xx`
-    response on the declared `path`
+  - probe one declared listener through its projected host endpoint
+  - `method` defaults to `GET` and may be overridden to `HEAD`
+  - `headers` may add explicit request headers
+  - `success.status` may narrow or widen accepted HTTP status codes; otherwise ota accepts any `2xx` or `3xx`
+  - `body.contains` may require one exact substring in the response body
   - for shared-remote `ensure_ready`, built-in remote providers may instead probe the declared
     remote-plane listener address and fixed `bind.port.value`
 - `kind: tcp`
   - probe one declared listener through its projected host endpoint and wait until it accepts
     connections
+  - must not declare HTTP-only readiness fields such as `method`, `headers`, `success`, or `body`
   - for shared-remote `ensure_ready`, built-in remote providers may instead probe the fixed
     `bind.port.value` on the remote plane
 - stream-mode endpoint banners such as `External:` and `Internal:` are confirmation-only output:
@@ -840,7 +844,14 @@ tasks:
       readiness:
         kind: http
         listener: http
+        method: GET
         path: /health
+        headers:
+          Accept: application/json
+        success:
+          status: [200]
+        body:
+          contains: '"status":"UP"'
       listeners:
         http:
           protocol: http
