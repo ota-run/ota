@@ -4846,10 +4846,7 @@ fn diagnose_checks(
                 severity: map_check_severity(check.severity),
                 summary: format!("Check failed: {}", check.name),
                 why: format!("the configured `{}` check did not succeed", check.name),
-                next: format!(
-                    "run `{}` and fix the reported issue, then rerun `ota doctor`",
-                    check.run
-                ),
+                next: failed_check_next(contract, check),
             }),
             CheckStatus::TimedOut(timeout) => findings.push(Finding {
                 severity: map_check_severity(check.severity),
@@ -4866,6 +4863,38 @@ fn diagnose_checks(
             }),
         }
     }
+}
+
+fn failed_check_next(contract: &Contract, check: &crate::schema::CheckSpec) -> String {
+    if let Some(path) = missing_file_check_path(&check.run) {
+        if contract.tasks.contains_key("setup") {
+            return format!(
+                "run `ota up` or `ota run setup` to create `{path}`, then rerun `ota doctor`"
+            );
+        }
+        return format!("create `{path}`, then rerun `ota doctor`");
+    }
+
+    format!(
+        "run `{}` and fix the reported issue, then rerun `ota doctor`",
+        check.run
+    )
+}
+
+fn missing_file_check_path(command: &str) -> Option<&str> {
+    let trimmed = command.trim();
+
+    if let Some(rest) = trimmed.strip_prefix("test -f ") {
+        let path = rest.trim();
+        return (!path.is_empty() && !path.contains(char::is_whitespace)).then_some(path);
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("[ -f ") {
+        let path = rest.strip_suffix(" ]")?.trim();
+        return (!path.is_empty() && !path.contains(char::is_whitespace)).then_some(path);
+    }
+
+    None
 }
 
 enum CheckStatus {
@@ -7359,6 +7388,39 @@ tasks:
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].summary, "Check failed: health-check");
+    }
+
+    #[test]
+    fn diagnose_checks_points_missing_file_precondition_to_setup_when_available() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: env-local-present
+    kind: precondition
+    severity: error
+    run: test -f .env.local
+tasks:
+  setup:
+    run: test -f .env.local || cp .env.example .env.local
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, synthetic_contract_path());
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].summary,
+            "Check failed: env-local-present"
+        );
+        assert_eq!(
+            report.findings[0].next,
+            "run `ota up` or `ota run setup` to create `.env.local`, then rerun `ota doctor`"
+        );
     }
 
     #[test]
