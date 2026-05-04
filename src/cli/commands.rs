@@ -21497,10 +21497,10 @@ fn render_doctor_ready_next(
     contract_path: Option<&Path>,
 ) -> String {
     let mut items = Vec::new();
-    let up_command = contract_path
-        .map(|path| command_for_repo_contract_target("ota up", path))
-        .unwrap_or_else(|| String::from("ota up"));
-    items.push(format!("run `{up_command}` to prepare the repo end to end"));
+    if let Some(path) = contract_path {
+        let up_command = command_for_repo_contract_target("ota up", path);
+        items.push(format!("run `{up_command}` to prepare the repo end to end"));
+    }
     if let Some(task) = agent
         .and_then(|agent| agent.default_task.or(agent.entrypoint))
         .filter(|task| !task.trim().is_empty())
