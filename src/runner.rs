@@ -18934,7 +18934,7 @@ tasks:
 version: 1
 project:
   name: ota
-  tasks:
+tasks:
   dev:
     run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & wait
     runtime:
