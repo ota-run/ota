@@ -2259,8 +2259,30 @@ impl ServiceSummary {
 
 #[derive(Debug, Serialize)]
 pub struct ServiceReadinessSummary {
-    pub from: String,
-    pub run: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success: Option<ExecutionTopologyReadinessSuccessSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<ExecutionTopologyReadinessBodySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_period: Option<String>,
 }
 
 impl ServiceReadinessSummary {
@@ -2268,6 +2290,25 @@ impl ServiceReadinessSummary {
         Self {
             from: readiness.from.clone(),
             run: readiness.run.clone(),
+            kind: readiness.kind.map(|kind| kind.as_str().to_string()),
+            method: readiness.method.map(|method| method.as_str().to_string()),
+            path: readiness.path.clone(),
+            headers: readiness.headers.clone(),
+            success: readiness.success.as_ref().map(|success| {
+                ExecutionTopologyReadinessSuccessSummary {
+                    status: success.status.clone(),
+                }
+            }),
+            body: readiness
+                .body
+                .as_ref()
+                .map(|body| ExecutionTopologyReadinessBodySummary {
+                    contains: body.contains.clone(),
+                }),
+            interval: readiness.interval.clone(),
+            timeout: readiness.timeout.clone(),
+            retries: readiness.retries,
+            start_period: readiness.start_period.clone(),
         }
     }
 }

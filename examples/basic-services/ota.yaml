@@ -45,7 +45,19 @@ services:
         port: 3000
     readiness:
       from: host
-      run: docker compose exec -T api sh -lc 'curl -fsS http://localhost:3000/health'
+      kind: http
+      method: GET
+      path: /health
+      headers:
+        Accept: application/json
+      success:
+        status: [200]
+      body:
+        contains: '"ok":true'
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
   postgres:
     manager:
       kind: compose
@@ -58,7 +70,11 @@ services:
         port: 5432
     readiness:
       from: host
-      run: docker compose exec -T postgres sh -lc 'pg_isready -h localhost -p 5432'
+      kind: tcp
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
   redis:
     manager:
       kind: compose
@@ -71,7 +87,11 @@ services:
         port: 6379
     readiness:
       from: host
-      run: docker compose exec -T redis sh -lc 'redis-cli ping'
+      kind: tcp
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 tasks:
   setup:
     context: host
