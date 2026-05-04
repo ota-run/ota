@@ -1611,6 +1611,10 @@ fn build_execution_topology_runtime_summary(
                         contains: body.contains.clone(),
                     }
                 }),
+                interval: readiness.interval.clone(),
+                timeout: readiness.timeout.clone(),
+                retries: readiness.retries,
+                start_period: readiness.start_period.clone(),
             }),
         listeners: runtime
             .listeners

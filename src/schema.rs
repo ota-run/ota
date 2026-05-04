@@ -1679,6 +1679,14 @@ pub struct TaskRuntimeReadinessSpec {
     pub success: Option<TaskRuntimeReadinessHttpSuccessSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<TaskRuntimeReadinessHttpBodySpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_period: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -1714,6 +1722,44 @@ pub struct TaskRuntimeReadinessHttpSuccessSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskRuntimeReadinessHttpBodySpec {
     pub contains: String,
+}
+
+pub(crate) fn parse_readiness_duration_spec(value: &str) -> Option<std::time::Duration> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(number) = value.strip_suffix("ms") {
+        return number
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .map(std::time::Duration::from_millis);
+    }
+    if let Some(number) = value.strip_suffix('s') {
+        return number
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .map(std::time::Duration::from_secs);
+    }
+    if let Some(number) = value.strip_suffix('m') {
+        return number
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .and_then(|minutes| minutes.checked_mul(60))
+            .map(std::time::Duration::from_secs);
+    }
+    if let Some(number) = value.strip_suffix('h') {
+        return number
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .and_then(|hours| hours.checked_mul(60 * 60))
+            .map(std::time::Duration::from_secs);
+    }
+    None
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

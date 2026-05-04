@@ -528,6 +528,14 @@ pub struct ExecutionTopologyReadinessSummary {
     pub success: Option<ExecutionTopologyReadinessSuccessSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<ExecutionTopologyReadinessBodySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_period: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

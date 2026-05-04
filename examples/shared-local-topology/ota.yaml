@@ -56,6 +56,10 @@ tasks:
           status: [200]
         body:
           contains: '"status":"UP"'
+        interval: 5s
+        timeout: 3s
+        retries: 5
+        start_period: 10s
       listeners:
         http:
           protocol: http

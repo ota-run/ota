@@ -388,6 +388,7 @@ Current `runtime.readiness` support for service tasks:
   - `headers` may add explicit request headers
   - `success.status` may narrow or widen accepted HTTP status codes; otherwise ota accepts any `2xx` or `3xx`
   - `body.contains` may require one exact substring in the response body
+  - `interval`, `timeout`, `retries`, and `start_period` shape the readiness wait loop when ota is activating or observing the service
   - for shared-remote `ensure_ready`, built-in remote providers may instead probe the declared
     remote-plane listener address and fixed `bind.port.value`
 - `kind: tcp`
@@ -852,6 +853,10 @@ tasks:
           status: [200]
         body:
           contains: '"status":"UP"'
+        interval: 5s
+        timeout: 3s
+        retries: 5
+        start_period: 10s
       listeners:
         http:
           protocol: http

@@ -9349,6 +9349,10 @@ tasks:
           status: [200]
         body:
           contains: "ok"
+        interval: 5s
+        timeout: 3s
+        retries: 5
+        start_period: 10s
       listeners:
         http:
           protocol: http
@@ -9412,6 +9416,13 @@ tasks:
         assert_eq!(
             json["tasks"][0]["runtime"]["readiness"]["body"]["contains"],
             "ok"
+        );
+        assert_eq!(json["tasks"][0]["runtime"]["readiness"]["interval"], "5s");
+        assert_eq!(json["tasks"][0]["runtime"]["readiness"]["timeout"], "3s");
+        assert_eq!(json["tasks"][0]["runtime"]["readiness"]["retries"], 5);
+        assert_eq!(
+            json["tasks"][0]["runtime"]["readiness"]["start_period"],
+            "10s"
         );
         assert_eq!(
             json["tasks"][0]["runtime"]["listeners"]["http"]["host_projection"]["address"],

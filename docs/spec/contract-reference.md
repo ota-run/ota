@@ -899,6 +899,10 @@ tasks:
           status: [200]
         body:
           contains: '"status":"UP"'
+        interval: 5s
+        timeout: 3s
+        retries: 5
+        start_period: 10s
       listeners:
         http:
           protocol: http
@@ -1151,6 +1155,10 @@ Current `runtime.readiness` support for service tasks:
   - optional `headers` adds request headers to the readiness probe
   - optional `success.status` overrides the accepted HTTP status codes; default is any `2xx` or `3xx`
   - optional `body.contains` requires the response body to contain one exact substring after the status code matches
+  - optional `interval` sets the wait between probe attempts; when omitted, ota uses the current small internal poll cadence
+  - optional `timeout` sets the per-attempt probe timeout
+  - optional `retries` sets the consecutive failed probe budget before activation fails
+  - optional `start_period` delays the first readiness probe after activation starts
   - requires the referenced listener to declare `project.host`, except for shared-remote
     `ensure_ready` on built-in remote providers where ota may instead probe the declared
     remote-plane listener address and fixed `bind.port.value`
@@ -1158,6 +1166,7 @@ Current `runtime.readiness` support for service tasks:
 - `kind: tcp`
   - requires `listener`
   - must not declare `method`, `headers`, `success`, or `body`
+  - may still declare `interval`, `timeout`, `retries`, and `start_period` to control readiness wait behavior
   - for local host-projected readiness, requires the referenced listener to declare `project.host`
   - for shared-remote `ensure_ready`, built-in remote providers may instead use the listener `bind.port.value` on the remote plane
   - ota waits until the selected probe endpoint accepts TCP connections or is listening on the shared remote plane
