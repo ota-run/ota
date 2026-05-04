@@ -20050,7 +20050,7 @@ execution:
       context: remote_app
 tasks:
   dev:
-    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & sleep 300
+    run: python3 -m http.server {port} --bind 127.0.0.1
     runtime:
       kind: service
       backend_binding: workbench
@@ -20206,7 +20206,7 @@ execution:
       context: remote_app
 tasks:
   dev:
-    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & sleep 300
+    run: python3 -m http.server {port} --bind 127.0.0.1
     runtime:
       kind: service
       backend_binding: workbench
@@ -20384,7 +20384,7 @@ execution:
       context: remote_app
 tasks:
   dev:
-    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & wait
+    run: python3 -m http.server {port} --bind 127.0.0.1
     runtime:
       kind: service
       backend_binding: workbench
