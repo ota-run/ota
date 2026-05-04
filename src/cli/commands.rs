@@ -27114,6 +27114,7 @@ tasks:
             &preflight,
         );
 
+        dbg!(&preview.plan.actions);
         assert!(
             preview
                 .plan
@@ -27433,6 +27434,8 @@ services:
         port: 8080
 tasks:
   setup:
+    requires_services:
+      - api
     run: echo setup
 "#,
         )
@@ -27452,12 +27455,9 @@ tasks:
             &preflight,
         );
 
-        assert!(
-            preview
-                .plan
-                .actions
-                .contains(&String::from("verify service `api` readiness"))
-        );
+        assert!(preview.plan.actions.contains(&String::from(
+            "verify service `api` readiness before `setup`"
+        )));
     }
 
     #[test]

@@ -20360,7 +20360,14 @@ execution:
       context: remote_app
 tasks:
   dev:
-    run: python3 -m http.server {port} --bind 127.0.0.1
+    run: |
+      python3 -c 'import http.server, socketserver, time; port={port};
+      while True:
+          try:
+              with socketserver.TCPServer(("127.0.0.1", port), http.server.SimpleHTTPRequestHandler) as httpd:
+                  httpd.serve_forever()
+          except OSError:
+              time.sleep(0.1)'
     runtime:
       kind: service
       backend_binding: workbench
@@ -27222,7 +27229,7 @@ exec "$(dirname "$0")/docker-real" "$@"
         assert!(command.contains("except urllib.error.HTTPError as error:"));
         assert!(command.contains("status = error.code"));
         assert!(command.contains("body = error.read().decode(errors='ignore')"));
-        assert!(command.contains("timeout=3"));
+        assert!(command.contains("timeout='3'"));
     }
 
     fn strip_test_ansi(value: &str) -> String {

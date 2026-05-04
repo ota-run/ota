@@ -18,6 +18,7 @@ Commands:
   diff         Compare two Ota contracts semantically
   env          Inspect resolved environment requirements from an Ota contract
   execution    Inspect the resolved execution context without running anything
+  studio       Export a read-only local Studio snapshot for the current repo
   check        Run configured checks from an Ota contract
   receipt      Capture a read-only repo receipt for audit and automation
   annotations  Render Ota JSON findings as CI annotations or log lines
@@ -48,6 +49,8 @@ Choose a flow:
   review a starter contract    ota init --dry-run
   turn contract findings into a plan  ota explain
   inspect execution choice     ota execution plan
+  inspect declared topology    ota execution topology
+  export and open Studio       ota studio --open
   prepare the repo             ota up
   inspect env requirements     ota env
   scaffold org policy          ota policy init --dry-run

@@ -22624,6 +22624,8 @@ services:
     healthcheck: test -f service.txt
 tasks:
   setup:
+    requires_services:
+      - postgres
     run: test -f service.txt && printf ready > prepared.txt
 "#,
         );
@@ -22656,6 +22658,8 @@ services:
     healthcheck: test -f db-ready.txt
 tasks:
   setup:
+    requires_services:
+      - api
     run: test "$(cat order.txt)" = "dbapi" && printf ready > prepared.txt
 "#,
         );
@@ -22684,6 +22688,8 @@ services:
     healthcheck: test -f service-ready.txt
 tasks:
   setup:
+    requires_services:
+      - postgres
     run: printf ready > prepared.txt
 "#,
         );
@@ -22720,6 +22726,8 @@ services:
     healthcheck: test -f db-ready.txt
 tasks:
   setup:
+    requires_services:
+      - postgres
     run: printf ready > prepared.txt
 "#,
         );
@@ -23050,6 +23058,8 @@ services:
     healthcheck: exit 0
 tasks:
   setup:
+    requires_services:
+      - postgres
     run: printf ready > prepared.txt
 "#,
         );
