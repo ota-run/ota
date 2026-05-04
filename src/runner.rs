@@ -63,7 +63,7 @@ use crate::schema::{
     TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
     TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetAddressView, TaskTargetSpec, ToolRequirement, format_memory_size_bytes,
-    parse_memory_size_bytes, task_target_env_name,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 
@@ -3717,6 +3717,14 @@ struct HttpReadinessRequest {
     body_contains: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ReadinessTimingPolicy {
+    start_period: Duration,
+    interval: Duration,
+    timeout: Option<Duration>,
+    retries: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RemoteReadinessProbeTarget {
     provider: String,
@@ -6659,8 +6667,10 @@ fn ensure_target_producer_state(
         )),
         _ => None,
     };
+    let readiness_timing = readiness_timing_policy(producer_runtime_spec.readiness.as_ref());
 
-    let producer_initially_observed = readiness_target_observed(&readiness_target);
+    let producer_initially_observed =
+        readiness_target_observed_with_timeout(&readiness_target, readiness_timing.timeout);
     let producer_is_non_persistent_container = producer_backend_kind == Backend::Container
         && !matches!(
             producer_backend,
@@ -6896,28 +6906,68 @@ fn ensure_target_producer_state(
     }
 
     let mut result_rx = Some(result_rx);
+    let mut next_probe_at = Instant::now() + readiness_timing.start_period;
+    let mut failed_probes = 0u32;
     loop {
-        if readiness_target_observed(&readiness_target) {
-            if let Some(loader) = loader.take() {
-                loader.stop();
+        if Instant::now() >= next_probe_at {
+            if readiness_target_observed_with_timeout(&readiness_target, readiness_timing.timeout) {
+                if let Some(loader) = loader.take() {
+                    loader.stop();
+                }
+                let started_status = match activation_mode {
+                    TaskTargetActivationMode::Manual => TaskTargetActivationStatus::Manual,
+                    TaskTargetActivationMode::EnsureStarted => {
+                        TaskTargetActivationStatus::StartedStarted
+                    }
+                    TaskTargetActivationMode::RestartReady => {
+                        TaskTargetActivationStatus::RestartedReady
+                    }
+                    TaskTargetActivationMode::EnsureReady => {
+                        TaskTargetActivationStatus::StartedReady
+                    }
+                    TaskTargetActivationMode::EnsureRunning => {
+                        TaskTargetActivationStatus::StartedRunning
+                    }
+                };
+                state
+                    .ensured_target_producers
+                    .insert(producer_key, started_status);
+                return Ok(started_status);
             }
-            let started_status = match activation_mode {
-                TaskTargetActivationMode::Manual => TaskTargetActivationStatus::Manual,
-                TaskTargetActivationMode::EnsureStarted => {
-                    TaskTargetActivationStatus::StartedStarted
+            failed_probes = failed_probes.saturating_add(1);
+            if let Some(retries) = readiness_timing.retries
+                && failed_probes >= retries
+            {
+                if let Some(loader) = loader.take() {
+                    loader.stop();
                 }
-                TaskTargetActivationMode::RestartReady => {
-                    TaskTargetActivationStatus::RestartedReady
-                }
-                TaskTargetActivationMode::EnsureReady => TaskTargetActivationStatus::StartedReady,
-                TaskTargetActivationMode::EnsureRunning => {
-                    TaskTargetActivationStatus::StartedRunning
-                }
-            };
-            state
-                .ensured_target_producers
-                .insert(producer_key, started_status);
-            return Ok(started_status);
+                let cleanup_note = cleanup_activation_started_producer_and_note(
+                    producer_task_name,
+                    &producer_backend,
+                    Some(producer_runtime_spec),
+                    Some(producer_task_command.as_str()),
+                    producer_working_dir.as_path(),
+                    remove_backend_on_interrupt,
+                );
+                state
+                    .activation_started_producers
+                    .remove(&(service_member.clone(), producer_task_name.to_string()));
+                return Err(RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "target activation `{}` for producer task `{producer_task_name}` did not satisfy readiness after {} failed probe attempt{}{}",
+                        activation_mode.as_str(),
+                        retries,
+                        if retries == 1 { "" } else { "s" },
+                        cleanup_note
+                            .as_deref()
+                            .map(|note| format!("; {note}"))
+                            .unwrap_or_default()
+                    ),
+                });
+            }
+            next_probe_at = Instant::now() + readiness_timing.interval;
         }
 
         if let Some(receiver) = result_rx.as_ref()
@@ -7020,7 +7070,11 @@ fn ensure_target_producer_state(
                 ),
             });
         }
-        thread::sleep(Duration::from_millis(200));
+        let sleep_for = next_probe_at
+            .checked_duration_since(Instant::now())
+            .map(|remaining| remaining.min(Duration::from_millis(30)))
+            .unwrap_or(Duration::from_millis(30));
+        thread::sleep(sleep_for);
     }
 }
 
@@ -7456,13 +7510,23 @@ fn ensure_target_producer_ready(
     )
 }
 
+#[cfg(test)]
 fn target_probe_endpoint_reachable(address: &str, port: u16) -> bool {
+    target_probe_endpoint_reachable_with_timeout(address, port, None)
+}
+
+fn target_probe_endpoint_reachable_with_timeout(
+    address: &str,
+    port: u16,
+    timeout: Option<Duration>,
+) -> bool {
     let addr = format!("{}:{}", address.trim(), port);
+    let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
     addr.to_socket_addrs()
         .map(|addrs| {
-            addrs.into_iter().any(|socket| {
-                TcpStream::connect_timeout(&socket, Duration::from_millis(200)).is_ok()
-            })
+            addrs
+                .into_iter()
+                .any(|socket| TcpStream::connect_timeout(&socket, connect_timeout).is_ok())
         })
         .unwrap_or(false)
 }
@@ -12395,15 +12459,22 @@ fn runtime_readiness_target(
 }
 
 fn readiness_target_observed(target: &RuntimeReadinessTarget) -> bool {
+    readiness_target_observed_with_timeout(target, None)
+}
+
+fn readiness_target_observed_with_timeout(
+    target: &RuntimeReadinessTarget,
+    timeout: Option<Duration>,
+) -> bool {
     match target {
         RuntimeReadinessTarget::Tcp { address, port } => {
-            target_probe_endpoint_reachable(address.as_str(), *port)
+            target_probe_endpoint_reachable_with_timeout(address.as_str(), *port, timeout)
         }
         RuntimeReadinessTarget::Http {
             address,
             port,
             request,
-        } => http_readiness_endpoint_reachable(address.as_str(), *port, request),
+        } => http_readiness_endpoint_reachable(address.as_str(), *port, request, timeout),
         RuntimeReadinessTarget::RemoteTcp { probe, port } => {
             remote_target_probe_port_reachable(probe, *port)
         }
@@ -12412,7 +12483,7 @@ fn readiness_target_observed(target: &RuntimeReadinessTarget) -> bool {
             address,
             port,
             request,
-        } => remote_target_probe_http_reachable(probe, address.as_str(), *port, request),
+        } => remote_target_probe_http_reachable(probe, address.as_str(), *port, request, timeout),
     }
 }
 
@@ -12434,22 +12505,40 @@ fn readiness_http_request(readiness: Option<&TaskRuntimeReadinessSpec>) -> HttpR
     }
 }
 
+fn readiness_timing_policy(readiness: Option<&TaskRuntimeReadinessSpec>) -> ReadinessTimingPolicy {
+    ReadinessTimingPolicy {
+        start_period: readiness
+            .and_then(|probe| probe.start_period.as_deref())
+            .and_then(parse_readiness_duration_spec)
+            .unwrap_or(Duration::ZERO),
+        interval: readiness
+            .and_then(|probe| probe.interval.as_deref())
+            .and_then(parse_readiness_duration_spec)
+            .unwrap_or(Duration::from_millis(200)),
+        timeout: readiness
+            .and_then(|probe| probe.timeout.as_deref())
+            .and_then(parse_readiness_duration_spec),
+        retries: readiness.and_then(|probe| probe.retries),
+    }
+}
+
 fn http_readiness_endpoint_reachable(
     address: &str,
     port: u16,
     request: &HttpReadinessRequest,
+    timeout: Option<Duration>,
 ) -> bool {
     let addr = format!("{}:{}", address.trim(), port);
+    let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
+    let io_timeout = timeout.unwrap_or(Duration::from_millis(500));
     addr.to_socket_addrs()
         .map(|addrs| {
             addrs.into_iter().any(|socket| {
-                let Ok(mut stream) =
-                    TcpStream::connect_timeout(&socket, Duration::from_millis(200))
-                else {
+                let Ok(mut stream) = TcpStream::connect_timeout(&socket, connect_timeout) else {
                     return false;
                 };
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-                let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+                let _ = stream.set_read_timeout(Some(io_timeout));
+                let _ = stream.set_write_timeout(Some(io_timeout));
                 let host_header = if address.contains(':') && !address.starts_with('[') {
                     format!("[{}]", address.trim())
                 } else {
@@ -12568,9 +12657,10 @@ fn remote_target_probe_http_reachable(
     address: &str,
     port: u16,
     request: &HttpReadinessRequest,
+    timeout: Option<Duration>,
 ) -> bool {
     let url = format!("http://{}:{}{}", address.trim(), port, request.path);
-    let command = remote_http_readiness_probe_command(url.as_str(), request);
+    let command = remote_http_readiness_probe_command(url.as_str(), request, timeout);
     let output = if let Some(provider_command) = probe.provider_command.as_deref() {
         execute_backend_provider_task_command(
             "__ota_remote_probe__",
@@ -12600,7 +12690,11 @@ fn remote_target_probe_http_reachable(
     matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
 }
 
-fn remote_http_readiness_probe_command(url: &str, request: &HttpReadinessRequest) -> String {
+fn remote_http_readiness_probe_command(
+    url: &str,
+    request: &HttpReadinessRequest,
+    timeout: Option<Duration>,
+) -> String {
     let status_csv = request
         .success_statuses
         .iter()
@@ -12616,29 +12710,33 @@ fn remote_http_readiness_probe_command(url: &str, request: &HttpReadinessRequest
     let headers_json =
         serde_json::to_string(&request.headers).unwrap_or_else(|_| String::from("{}"));
     let body_contains = request.body_contains.clone().unwrap_or_default();
+    let timeout_seconds = timeout
+        .map(|duration| duration.as_secs_f64().max(0.001))
+        .unwrap_or(2.0);
     format!(
-        "url={url}; method={method}; statuses={statuses}; contains={contains}; headers_json={headers_json}; \
+        "url={url}; method={method}; statuses={statuses}; contains={contains}; headers_json={headers_json}; timeout={timeout}; \
 if command -v curl >/dev/null 2>&1; then \
   body_file=$(mktemp 2>/dev/null || printf '/tmp/ota-readiness-body-$$'); \
-  code=$(curl -sS --connect-timeout 1 --max-time 2 -X \"$method\" {headers} -o \"$body_file\" -w '%{{http_code}}' \"$url\") || {{ rm -f \"$body_file\"; exit 1; }}; \
+  code=$(curl -sS --connect-timeout \"$timeout\" --max-time \"$timeout\" -X \"$method\" {headers} -o \"$body_file\" -w '%{{http_code}}' \"$url\") || {{ rm -f \"$body_file\"; exit 1; }}; \
   matched=1; OLDIFS=\"$IFS\"; IFS=,; for expected in $statuses; do if [ \"$code\" = \"$expected\" ]; then matched=0; break; fi; done; IFS=\"$OLDIFS\"; \
   [ $matched -eq 0 ] || {{ rm -f \"$body_file\"; exit 1; }}; \
   if [ -n \"$contains\" ]; then grep -Fq -- \"$contains\" \"$body_file\" || {{ rm -f \"$body_file\"; exit 1; }}; fi; \
   rm -f \"$body_file\"; exit 0; \
 fi; \
 if command -v python3 >/dev/null 2>&1; then \
-  python3 - \"$url\" \"$method\" \"$statuses\" \"$contains\" \"$headers_json\" <<'PY' && exit 0 || exit 1\n\
+  python3 - \"$url\" \"$method\" \"$statuses\" \"$contains\" \"$headers_json\" \"$timeout\" <<'PY' && exit 0 || exit 1\n\
 import json, sys, urllib.error, urllib.request\n\
 class NoRedirect(urllib.request.HTTPRedirectHandler):\n\
     def redirect_request(self, req, fp, code, msg, headers, newurl):\n\
         return None\n\
-url, method, statuses_raw, contains, headers_raw = sys.argv[1:6]\n\
+url, method, statuses_raw, contains, headers_raw, timeout_raw = sys.argv[1:7]\n\
 statuses = {{int(value) for value in statuses_raw.split(',') if value}}\n\
 headers = json.loads(headers_raw)\n\
+timeout = float(timeout_raw)\n\
 request = urllib.request.Request(url, method=method, headers=headers)\n\
 opener = urllib.request.build_opener(NoRedirect)\n\
 try:\n\
-    with opener.open(request, timeout=2) as response:\n\
+    with opener.open(request, timeout=timeout) as response:\n\
         status = response.status\n\
         body = response.read().decode(errors='ignore')\n\
 except urllib.error.HTTPError as error:\n\
@@ -12659,6 +12757,7 @@ exit 1",
         statuses = shell_quote(&status_csv),
         contains = shell_quote(&body_contains),
         headers_json = shell_quote(&headers_json),
+        timeout = shell_quote(&timeout_seconds.to_string()),
         headers = headers_shell,
     )
 }
@@ -12676,6 +12775,7 @@ fn start_runtime_readiness_probe(
         return None;
     }
     let readiness_target = runtime_readiness_target(runtime_spec, runtime)?;
+    let timing = readiness_timing_policy(runtime_spec.readiness.as_ref());
     let ready_line = announce_ready_endpoint
         .then(|| ready_runtime_public_endpoint_line(runtime))
         .flatten();
@@ -12690,8 +12790,11 @@ fn start_runtime_readiness_probe(
     let thread_target = readiness_target.clone();
     let handle = thread::spawn(move || {
         let mut interrupt_grace_applied = false;
+        let mut next_probe_at = Instant::now() + timing.start_period;
         while !thread_stop.load(Ordering::Relaxed) {
-            if readiness_target_observed(&thread_target) {
+            if Instant::now() >= next_probe_at
+                && readiness_target_observed_with_timeout(&thread_target, timing.timeout)
+            {
                 thread_observed.store(true, Ordering::Relaxed);
                 if let Some(line) = ready_line.as_deref() {
                     if let Some(notifier) = probe_notifier.as_ref() {
@@ -12708,12 +12811,15 @@ fn start_runtime_readiness_probe(
                 }
                 break;
             }
+            if Instant::now() >= next_probe_at {
+                next_probe_at = Instant::now() + timing.interval;
+            }
             if !interrupt_grace_applied && interruption_observed_since(interrupt_epoch) {
                 let grace_deadline = std::time::Instant::now() + Duration::from_millis(300);
                 while std::time::Instant::now() < grace_deadline
                     && !thread_stop.load(Ordering::Relaxed)
                 {
-                    if readiness_target_observed(&thread_target) {
+                    if readiness_target_observed_with_timeout(&thread_target, timing.timeout) {
                         thread_observed.store(true, Ordering::Relaxed);
                         if let Some(line) = ready_line.as_deref() {
                             if let Some(notifier) = probe_notifier.as_ref() {
@@ -12735,13 +12841,14 @@ fn start_runtime_readiness_probe(
                 interrupt_grace_applied = true;
                 continue;
             }
-            for _ in 0..5 {
-                if thread_stop.load(Ordering::Relaxed)
-                    || (!interrupt_grace_applied && interruption_observed_since(interrupt_epoch))
-                {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(30));
+            let sleep_for = next_probe_at
+                .checked_duration_since(Instant::now())
+                .map(|remaining| remaining.min(Duration::from_millis(30)))
+                .unwrap_or(Duration::from_millis(30));
+            if !thread_stop.load(Ordering::Relaxed)
+                && !(!interrupt_grace_applied && interruption_observed_since(interrupt_epoch))
+            {
+                thread::sleep(sleep_for);
             }
         }
     });
@@ -16663,7 +16770,7 @@ mod tests {
     use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use tempfile::{TempDir, tempdir};
 
@@ -20646,6 +20753,122 @@ tasks:
             .expect("http readiness probe server should finish");
         assert!(matches!(error, RunError::TaskTargetResolutionFailed { .. }));
         assert!(error.to_string().contains("before becoming ready"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_ready_activation_honors_readiness_retry_budget() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener
+                    .accept()
+                    .expect("http readiness probe should connect");
+                let mut buffer = [0u8; 256];
+                let _ = stream.read(&mut buffer);
+                stream
+                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\nConnection: close\r\n\r\nDOWN")
+                    .expect("http readiness probe should write response");
+            }
+        });
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: python3 -c "import time; time.sleep(30)"
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        success:
+          status: [200]
+        body:
+          contains: "UP"
+        interval: 50ms
+        timeout: 200ms
+        retries: 3
+        start_period: 10ms
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+  sandbox:
+    run: echo sandbox
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#
+            )
+            .as_str(),
+        );
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let mut state = TaskRunState::default();
+        let started_at = Instant::now();
+        let error = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut state,
+        )
+        .unwrap_err();
+
+        server
+            .join()
+            .expect("http readiness probe server should finish");
+        assert!(started_at.elapsed() < Duration::from_secs(2));
+        assert!(
+            error
+                .to_string()
+                .contains("did not satisfy readiness after 3 failed probe attempts")
+        );
+        let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
+            &fixture.contract,
+            fixture.file_path(),
+            fixture.dir.path(),
+            &mut state,
+        );
     }
 
     #[test]
@@ -26969,8 +27192,11 @@ exec "$(dirname "$0")/docker-real" "$@"
             body_contains: None,
         };
 
-        let command =
-            super::remote_http_readiness_probe_command("http://127.0.0.1:3000/ready", &request);
+        let command = super::remote_http_readiness_probe_command(
+            "http://127.0.0.1:3000/ready",
+            &request,
+            None,
+        );
 
         assert!(!command.contains("curl -sS -L"));
         assert!(command.contains("class NoRedirect(urllib.request.HTTPRedirectHandler):"));
@@ -26987,12 +27213,16 @@ exec "$(dirname "$0")/docker-real" "$@"
             body_contains: Some(String::from("DOWN")),
         };
 
-        let command =
-            super::remote_http_readiness_probe_command("http://127.0.0.1:8080/health", &request);
+        let command = super::remote_http_readiness_probe_command(
+            "http://127.0.0.1:8080/health",
+            &request,
+            Some(Duration::from_secs(3)),
+        );
 
         assert!(command.contains("except urllib.error.HTTPError as error:"));
         assert!(command.contains("status = error.code"));
         assert!(command.contains("body = error.read().decode(errors='ignore')"));
+        assert!(command.contains("timeout=3"));
     }
 
     fn strip_test_ansi(value: &str) -> String {

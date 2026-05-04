@@ -33,7 +33,7 @@ use crate::schema::{
     ExtensionKind, Lifecycle, RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode,
     TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    parse_memory_size_bytes, task_target_env_name,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2556,6 +2556,7 @@ fn validate_task_runtime_readiness(
                     "task `{task_name}` runtime readiness `body.contains` must not be empty"
                 )));
             }
+            validate_runtime_readiness_timing(task_name, readiness, errors);
             if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` runtime readiness listener `{listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
@@ -2611,6 +2612,7 @@ fn validate_task_runtime_readiness(
                     "task `{task_name}` runtime readiness `kind: tcp` must not declare `readiness.body`"
                 )));
             }
+            validate_runtime_readiness_timing(task_name, readiness, errors);
             if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` runtime readiness listener `{listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
@@ -2624,6 +2626,37 @@ fn validate_task_runtime_readiness(
                 )));
             }
         }
+    }
+}
+
+fn validate_runtime_readiness_timing(
+    task_name: &str,
+    readiness: &crate::schema::TaskRuntimeReadinessSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (field_name, value) in [
+        ("interval", readiness.interval.as_deref()),
+        ("timeout", readiness.timeout.as_deref()),
+        ("start_period", readiness.start_period.as_deref()),
+    ] {
+        if let Some(value) = value {
+            let Some(duration) = parse_readiness_duration_spec(value) else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `{field_name}` must use a positive duration like `200ms`, `3s`, or `1m`"
+                )));
+                continue;
+            };
+            if duration.is_zero() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `{field_name}` must be greater than zero"
+                )));
+            }
+        }
+    }
+    if matches!(readiness.retries, Some(0)) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness `retries` must be greater than zero"
+        )));
     }
 }
 
@@ -5145,6 +5178,77 @@ tasks:
             error
                 .to_string()
                 .contains("kind: tcp` must not declare `readiness.body`")
+        }));
+    }
+
+    #[test]
+    fn rejects_invalid_runtime_readiness_timing_controls() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        interval: soon
+        timeout: 0s
+        retries: 0
+        start_period: 0ms
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `interval` must use a positive duration")
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `timeout` must be greater than zero")
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `retries` must be greater than zero")
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `start_period` must be greater than zero")
         }));
     }
 
