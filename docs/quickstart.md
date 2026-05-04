@@ -58,7 +58,6 @@ What this gives you:
 - `ota up` prepares the repo from the contract instead of from guesswork
 - `ota run <task>` executes a declared task through the same contract
 - `ota receipt` captures the resulting repo state as a reviewable artifact
-- `ota studio --open` can show the same contract, detect draft, and declared topology visually when that is easier to review than raw CLI output
 
 If you are not sure which task to run next, use:
 
@@ -81,7 +80,6 @@ Use the authoring path first:
 ota doctor
 ota detect --dry-run .
 ota init --dry-run
-ota studio --open
 ```
 
 Then choose one explicit write path:
@@ -91,13 +89,6 @@ ota init
 ```
 
 Use `ota detect --write .` when you want the detector-led authoring path instead of the starter contract path.
-
-Use `ota studio --open` after `ota detect --dry-run .` or `ota init --dry-run` when you want one local visual review surface for:
-
-- current contract text when it exists
-- inferred draft text
-- semantic detect comparison
-- declared execution topology
 
 ## Existing Repo With `ota.yaml`, But Contract Drift Is Suspected
 
