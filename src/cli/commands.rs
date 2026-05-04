@@ -21496,10 +21496,7 @@ fn render_doctor_ready_next(
     agent: Option<&AgentSummary<'_>>,
     contract_path: Option<&Path>,
 ) -> String {
-    let up_command = contract_path
-        .map(|path| command_for_repo_contract_target("ota up", path))
-        .unwrap_or_else(|| String::from("ota up"));
-    let mut items = vec![format!("run `{up_command}` to prepare the repo end to end")];
+    let mut items = Vec::new();
     if let Some(task) = agent
         .and_then(|agent| agent.default_task.or(agent.entrypoint))
         .filter(|task| !task.trim().is_empty())
@@ -29500,8 +29497,8 @@ execution:
         ));
 
         assert!(text.contains("Next:"));
-        assert!(text.contains("run `ota up` to prepare the repo end to end"));
         assert!(text.contains("run `ota run ci` to execute the default repo task"));
+        assert!(!text.contains("run `ota up` to prepare the repo end to end"));
         let verdict = text.find("Verdict").expect("verdict");
         let next = text.find("Next:").expect("next");
         let agent_index = text.find("\nAgent\n").expect("agent");
