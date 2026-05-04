@@ -115,11 +115,14 @@ fn doctor_mode_for_service(contract: &Contract, service: &ServiceSpec) -> Doctor
     let Some(readiness) = service.readiness.as_ref() else {
         return DoctorMode::Native;
     };
+    let Some(from_context) = readiness.from_context() else {
+        return DoctorMode::Native;
+    };
 
     let backend = contract
         .execution
         .as_ref()
-        .and_then(|execution| execution.contexts.get(readiness.from.as_str()))
+        .and_then(|execution| execution.contexts.get(from_context))
         .map(|context| context.backend)
         .unwrap_or(Backend::Native);
 
@@ -2532,6 +2535,7 @@ fn service_finding(
 ) -> Option<Finding> {
     let rerun_doctor = rerun_doctor_command(mode);
     if let Some(readiness) = &service.readiness {
+        let from_context = readiness.from_context().unwrap_or_default();
         return match run_service_readiness(contract, name, service, working_dir, readiness) {
             Ok(CheckStatus::Passed) => None,
             Ok(CheckStatus::Failed) => Some(Finding {
@@ -2543,14 +2547,14 @@ fn service_finding(
                 summary: format!("Service readiness failed: {name}"),
                 why: service_readiness_failure_why(
                     name,
-                    service.endpoint_for_context(readiness.from.as_str()),
-                    readiness.from.as_str(),
+                    service.endpoint_for_context(from_context),
+                    from_context,
                 ),
                 next: match service.start_command(name) {
                     Some(start) => format!("run `{start}` and rerun `{rerun_doctor}`"),
                     None => format!(
                         "repair `{name}` from context `{}` and rerun `{rerun_doctor}`",
-                        readiness.from,
+                        from_context,
                     ),
                 },
             }),
@@ -2564,11 +2568,11 @@ fn service_finding(
                 summary: format!("Service readiness context is not executable: {name}"),
                 why: service_readiness_execution_why(
                     name,
-                    service.endpoint_for_context(readiness.from.as_str()),
-                    readiness.from.as_str(),
+                    service.endpoint_for_context(from_context),
+                    from_context,
                     &error,
                 ),
-                next: service_readiness_execution_next(name, readiness.from.as_str(), mode),
+                next: service_readiness_execution_next(name, from_context, mode),
             }),
         };
     }
@@ -2681,22 +2685,269 @@ fn service_readiness_execution_next(name: &str, context_name: &str, mode: Doctor
 fn run_service_readiness(
     contract: &Contract,
     name: &str,
-    _service: &ServiceSpec,
+    service: &ServiceSpec,
     working_dir: &Path,
     readiness: &crate::schema::ServiceReadinessSpec,
 ) -> Result<CheckStatus, RunError> {
-    let backend = resolve_context_execution_backend(contract, readiness.from.as_str())?;
+    let Some(from_context) = readiness.from_context() else {
+        return Ok(CheckStatus::Failed);
+    };
+    let backend = resolve_context_execution_backend(contract, from_context)?;
 
-    match run_backend_command_captured(
-        &format!("readiness:{name}"),
-        readiness.run.as_str(),
-        working_dir,
-        &backend,
-    ) {
-        Ok(output) if output.exit_code == 0 => Ok(CheckStatus::Passed),
-        Ok(_) => Ok(CheckStatus::Failed),
-        Err(error) => Err(error),
+    if let Some(command) = readiness.legacy_run_command() {
+        return match run_backend_command_captured(
+            &format!("readiness:{name}"),
+            command.as_str(),
+            working_dir,
+            &backend,
+        ) {
+            Ok(output) if output.exit_code == 0 => Ok(CheckStatus::Passed),
+            Ok(_) => Ok(CheckStatus::Failed),
+            Err(error) => Err(error),
+        };
     }
+
+    let Some(kind) = readiness.structured_kind() else {
+        return Ok(CheckStatus::Failed);
+    };
+    let Some(endpoint) = service.endpoint_for_context(from_context) else {
+        return Ok(CheckStatus::Failed);
+    };
+    let command = structured_service_readiness_command(readiness, endpoint, kind);
+    let timing = service_readiness_timing_policy(readiness);
+    if !timing.start_period.is_zero() {
+        thread::sleep(timing.start_period);
+    }
+
+    let failure_budget = timing.retries.unwrap_or(1);
+    let mut failed_attempts = 0u32;
+    loop {
+        match run_backend_command_captured(
+            &format!("readiness:{name}"),
+            command.as_str(),
+            working_dir,
+            &backend,
+        ) {
+            Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
+            Ok(_) => {
+                failed_attempts = failed_attempts.saturating_add(1);
+                if failed_attempts >= failure_budget {
+                    return Ok(CheckStatus::Failed);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+        thread::sleep(timing.interval);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ServiceReadinessTimingPolicy {
+    start_period: Duration,
+    interval: Duration,
+    retries: Option<u32>,
+}
+
+fn service_readiness_timing_policy(
+    readiness: &crate::schema::ServiceReadinessSpec,
+) -> ServiceReadinessTimingPolicy {
+    ServiceReadinessTimingPolicy {
+        start_period: readiness
+            .start_period
+            .as_deref()
+            .and_then(crate::schema::parse_readiness_duration_spec)
+            .unwrap_or(Duration::ZERO),
+        interval: readiness
+            .interval
+            .as_deref()
+            .and_then(crate::schema::parse_readiness_duration_spec)
+            .unwrap_or(Duration::from_millis(200)),
+        retries: readiness.retries,
+    }
+}
+
+fn structured_service_readiness_command(
+    readiness: &crate::schema::ServiceReadinessSpec,
+    endpoint: &crate::schema::ServiceEndpointSpec,
+    kind: crate::schema::TaskRuntimeReadinessKind,
+) -> String {
+    match kind {
+        crate::schema::TaskRuntimeReadinessKind::Http => {
+            service_http_readiness_probe_command(readiness, endpoint)
+        }
+        crate::schema::TaskRuntimeReadinessKind::Tcp => {
+            service_tcp_readiness_probe_command(readiness, endpoint)
+        }
+    }
+}
+
+fn service_http_readiness_probe_command(
+    readiness: &crate::schema::ServiceReadinessSpec,
+    endpoint: &crate::schema::ServiceEndpointSpec,
+) -> String {
+    let url = format!(
+        "http://{}:{}{}",
+        endpoint.address.trim(),
+        endpoint.port,
+        normalized_runtime_path(readiness.path.as_deref())
+    );
+    let method = readiness
+        .method
+        .unwrap_or(crate::schema::TaskRuntimeReadinessHttpMethod::Get);
+    let status_csv = readiness
+        .success
+        .as_ref()
+        .filter(|success| !success.status.is_empty())
+        .map(|success| {
+            success
+                .status
+                .iter()
+                .map(|status| status.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_else(|| {
+            String::from(
+                "200,201,202,203,204,205,206,207,208,226,300,301,302,303,304,305,306,307,308",
+            )
+        });
+    let headers_shell = readiness
+        .headers
+        .iter()
+        .map(|(name, value)| format!("-H {}", doctor_shell_quote(&format!("{name}: {value}"))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let headers_json =
+        serde_json::to_string(&readiness.headers).unwrap_or_else(|_| String::from("{}"));
+    let body_contains = readiness
+        .body
+        .as_ref()
+        .map(|body| body.contains.clone())
+        .unwrap_or_default();
+    let timeout_seconds = readiness
+        .timeout
+        .as_deref()
+        .and_then(crate::schema::parse_readiness_duration_spec)
+        .map(|duration| duration.as_secs_f64().max(0.001))
+        .unwrap_or(2.0);
+    format!(
+        "url={url}; method={method}; statuses={statuses}; contains={contains}; headers_json={headers_json}; timeout={timeout}; \
+if command -v curl >/dev/null 2>&1; then \
+  body_file=$(mktemp 2>/dev/null || printf '/tmp/ota-service-readiness-body-$$'); \
+  code=$(curl -sS --connect-timeout \"$timeout\" --max-time \"$timeout\" -X \"$method\" {headers} -o \"$body_file\" -w '%{{http_code}}' \"$url\") || {{ rm -f \"$body_file\"; exit 1; }}; \
+  matched=1; OLDIFS=\"$IFS\"; IFS=,; for expected in $statuses; do if [ \"$code\" = \"$expected\" ]; then matched=0; break; fi; done; IFS=\"$OLDIFS\"; \
+  [ $matched -eq 0 ] || {{ rm -f \"$body_file\"; exit 1; }}; \
+  if [ -n \"$contains\" ]; then grep -Fq -- \"$contains\" \"$body_file\" || {{ rm -f \"$body_file\"; exit 1; }}; fi; \
+  rm -f \"$body_file\"; exit 0; \
+fi; \
+if command -v python3 >/dev/null 2>&1; then \
+  python3 - \"$url\" \"$method\" \"$statuses\" \"$contains\" \"$headers_json\" \"$timeout\" <<'PY' && exit 0 || exit 1\n\
+import json, sys, urllib.error, urllib.request\n\
+class NoRedirect(urllib.request.HTTPRedirectHandler):\n\
+    def redirect_request(self, req, fp, code, msg, headers, newurl):\n\
+        return None\n\
+url, method, statuses_raw, contains, headers_raw, timeout_raw = sys.argv[1:7]\n\
+statuses = {{int(value) for value in statuses_raw.split(',') if value}}\n\
+headers = json.loads(headers_raw)\n\
+timeout = float(timeout_raw)\n\
+request = urllib.request.Request(url, method=method, headers=headers)\n\
+opener = urllib.request.build_opener(NoRedirect)\n\
+try:\n\
+    with opener.open(request, timeout=timeout) as response:\n\
+        status = response.status\n\
+        body = response.read().decode(errors='ignore')\n\
+except urllib.error.HTTPError as error:\n\
+    status = error.code\n\
+    body = error.read().decode(errors='ignore')\n\
+except Exception:\n\
+    sys.exit(1)\n\
+if status not in statuses:\n\
+    sys.exit(1)\n\
+if contains and contains not in body:\n\
+    sys.exit(1)\n\
+PY\n\
+fi; \
+exit 1",
+        url = doctor_shell_quote(&url),
+        method = doctor_shell_quote(method.as_str()),
+        statuses = doctor_shell_quote(&status_csv),
+        contains = doctor_shell_quote(&body_contains),
+        headers_json = doctor_shell_quote(&headers_json),
+        timeout = doctor_shell_quote(&timeout_seconds.to_string()),
+        headers = headers_shell,
+    )
+}
+
+fn service_tcp_readiness_probe_command(
+    readiness: &crate::schema::ServiceReadinessSpec,
+    endpoint: &crate::schema::ServiceEndpointSpec,
+) -> String {
+    let timeout_seconds = readiness
+        .timeout
+        .as_deref()
+        .and_then(crate::schema::parse_readiness_duration_spec)
+        .map(|duration| duration.as_secs_f64().max(0.001))
+        .unwrap_or(2.0);
+    format!(
+        "host={host}; port={port}; timeout={timeout}; \
+if command -v python3 >/dev/null 2>&1; then \
+  python3 - \"$host\" \"$port\" \"$timeout\" <<'PY' && exit 0 || exit 1\n\
+import socket, sys\n\
+host, port_raw, timeout_raw = sys.argv[1:4]\n\
+port = int(port_raw)\n\
+timeout = float(timeout_raw)\n\
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n\
+sock.settimeout(timeout)\n\
+try:\n\
+    sock.connect((host, port))\n\
+except Exception:\n\
+    sys.exit(1)\n\
+finally:\n\
+    try:\n\
+        sock.close()\n\
+    except Exception:\n\
+        pass\n\
+PY\n\
+fi; \
+if command -v nc >/dev/null 2>&1; then nc -z -w \"$timeout\" \"$host\" \"$port\" >/dev/null 2>&1 && exit 0 || exit 1; fi; \
+if command -v bash >/dev/null 2>&1; then bash -lc \"exec 3<>/dev/tcp/$host/$port\" >/dev/null 2>&1 && exit 0 || exit 1; fi; \
+exit 1",
+        host = doctor_shell_quote(endpoint.address.trim()),
+        port = doctor_shell_quote(&endpoint.port.to_string()),
+        timeout = doctor_shell_quote(&timeout_seconds.to_string()),
+    )
+}
+
+fn normalized_runtime_path(path: Option<&str>) -> String {
+    match path {
+        Some(path) => {
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                String::from("/")
+            } else if trimmed.starts_with('/') {
+                trimmed.to_string()
+            } else {
+                format!("/{trimmed}")
+            }
+        }
+        None => String::from("/"),
+    }
+}
+
+fn doctor_shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return String::from("''");
+    }
+    let mut quoted = String::from("'");
+    for ch in value.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\"'\"'");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 fn run_service_healthcheck(
@@ -5113,8 +5364,11 @@ fn shell_single_quote(command: &str) -> String {
 mod tests {
     use std::env;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
+    use std::thread;
 
     use crate::parser::parse_contract_str;
     use crate::schema::ServiceSpec;
@@ -7288,6 +7542,69 @@ services:
             "{}",
             report.findings[0].next
         );
+    }
+
+    #[test]
+    fn diagnose_service_supports_structured_http_readiness() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"UP\"}",
+                )
+                .expect("probe response should write");
+        });
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    required: true
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: {port}
+    readiness:
+      from: host
+      kind: http
+      method: GET
+      path: /health
+      headers:
+        Accept: application/json
+      success:
+        status: [200]
+      body:
+        contains: '"status":"UP"'
+      interval: 50ms
+      timeout: 200ms
+      retries: 2
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_service(&contract, synthetic_contract_path(), "api");
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
     }
 
     #[test]

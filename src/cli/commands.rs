@@ -84,16 +84,17 @@ use crate::output::{
     ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
     ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
     ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
-    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
+    TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
+    ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
+    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
+    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
+    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -1832,10 +1833,9 @@ fn render_execution_topology_services_text(services: &[ServiceSummary]) -> Strin
         ));
         if let Some(readiness) = service.readiness.as_ref() {
             output.push_str(&format!(
-                "\n  {} from {} -> {}",
+                "\n  {} {}",
                 paint_key("Readiness:"),
-                readiness.from,
-                readiness.run
+                format_service_readiness_summary(readiness)
             ));
         }
         if !service.endpoints.is_empty() {
@@ -4865,7 +4865,7 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
             append_wrapped_detail(
                 &mut output,
                 "readiness:",
-                &format!("from {} -> {}", readiness.from, readiness.run),
+                &format_service_readiness_summary(readiness),
                 "  ",
                 84,
                 stylize_inline_text,
@@ -4941,6 +4941,51 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
     }
 
     output
+}
+
+fn format_service_readiness_summary(readiness: &ServiceReadinessSummary) -> String {
+    let from = readiness.from.as_deref().unwrap_or("?");
+    if let Some(run) = readiness.run.as_deref() {
+        return format!("from {from} -> {run}");
+    }
+
+    let mut detail = String::new();
+    if let Some(kind) = readiness.kind.as_deref() {
+        detail.push_str(kind);
+    }
+    if let Some(method) = readiness.method.as_deref() {
+        if !detail.is_empty() {
+            detail.push(' ');
+        }
+        detail.push_str(method);
+    }
+    if let Some(path) = readiness.path.as_deref() {
+        if !detail.is_empty() {
+            detail.push(' ');
+        }
+        detail.push_str(path);
+    }
+    if let Some(success) = readiness.success.as_ref()
+        && !success.status.is_empty()
+    {
+        detail.push_str(" status=");
+        detail.push_str(
+            &success
+                .status
+                .iter()
+                .map(|status: &u16| status.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    if let Some(body) = readiness.body.as_ref() {
+        detail.push_str(" contains=");
+        detail.push_str(body.contains.as_str());
+    }
+    if detail.is_empty() {
+        detail.push_str("structured probe");
+    }
+    format!("from {from} -> {detail}")
 }
 
 pub fn run_command(
@@ -25674,8 +25719,18 @@ tasks:
             stop: Some(String::from("docker compose stop postgres")),
             healthcheck: Some(String::from("pg_isready -U postgres")),
             readiness: Some(ServiceReadinessSummary {
-                from: String::from("host"),
-                run: String::from("postgres://localhost:5432"),
+                from: Some(String::from("host")),
+                run: Some(String::from("postgres://localhost:5432")),
+                kind: None,
+                method: None,
+                path: None,
+                headers: BTreeMap::new(),
+                success: None,
+                body: None,
+                interval: None,
+                timeout: None,
+                retries: None,
+                start_period: None,
             }),
             endpoints,
             depends_on: Vec::new(),

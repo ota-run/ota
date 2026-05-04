@@ -1209,13 +1209,13 @@ impl ServiceSpec {
     pub fn readiness_context(&self) -> Option<&str> {
         self.readiness
             .as_ref()
-            .map(|readiness| readiness.from.as_str())
+            .and_then(ServiceReadinessSpec::from_context)
     }
 
     pub fn readiness_command(&self, service_name: &str) -> Option<String> {
         self.readiness
             .as_ref()
-            .map(|readiness| readiness.run.clone())
+            .and_then(|readiness| readiness.legacy_run_command())
             .or_else(|| {
                 self.healthcheck
                     .as_deref()
@@ -1238,8 +1238,44 @@ pub struct ServiceEndpointSpec {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceReadinessSpec {
-    pub from: String,
-    pub run: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<TaskRuntimeReadinessKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<TaskRuntimeReadinessHttpMethod>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub success: Option<TaskRuntimeReadinessHttpSuccessSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<TaskRuntimeReadinessHttpBodySpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_period: Option<String>,
+}
+
+impl ServiceReadinessSpec {
+    pub fn from_context(&self) -> Option<&str> {
+        self.from.as_deref()
+    }
+
+    pub fn legacy_run_command(&self) -> Option<String> {
+        self.run.clone()
+    }
+
+    pub fn structured_kind(&self) -> Option<TaskRuntimeReadinessKind> {
+        self.kind
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -1694,6 +1730,15 @@ pub struct TaskRuntimeReadinessSpec {
 pub enum TaskRuntimeReadinessKind {
     Http,
     Tcp,
+}
+
+impl TaskRuntimeReadinessKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Tcp => "tcp",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

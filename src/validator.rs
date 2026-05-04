@@ -3754,44 +3754,143 @@ fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
 
         if let Some(readiness) = &service.readiness {
-            if readiness.from.trim().is_empty() {
+            let from = readiness.from.as_deref().map(str::trim).unwrap_or_default();
+            let run = readiness.run.as_deref().map(str::trim).unwrap_or_default();
+            let uses_legacy_command = !run.is_empty();
+            let structured_kind = readiness.kind;
+
+            if from.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness field `from` must not be empty"
                 )));
             }
-            if readiness.run.trim().is_empty() {
+            if uses_legacy_command && structured_kind.is_some() {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` readiness field `run` must not be empty"
+                    "service `{name}` readiness must not declare both legacy `run` and structured `kind`; choose one readiness form"
                 )));
+            }
+            if !uses_legacy_command && structured_kind.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness must declare either legacy `run` or structured `kind`"
+                )));
+            }
+            if uses_legacy_command {
+                for (field_name, present) in [
+                    ("method", readiness.method.is_some()),
+                    ("path", readiness.path.is_some()),
+                    ("headers", !readiness.headers.is_empty()),
+                    ("success", readiness.success.is_some()),
+                    ("body", readiness.body.is_some()),
+                    ("interval", readiness.interval.is_some()),
+                    ("timeout", readiness.timeout.is_some()),
+                    ("retries", readiness.retries.is_some()),
+                    ("start_period", readiness.start_period.is_some()),
+                ] {
+                    if present {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` legacy readiness `run` must not declare `readiness.{field_name}`"
+                        )));
+                    }
+                }
+            } else if let Some(kind) = structured_kind {
+                match kind {
+                    crate::schema::TaskRuntimeReadinessKind::Http => {
+                        let path = readiness.path.as_deref().map(str::trim).unwrap_or_default();
+                        if path.is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured HTTP readiness field `path` must not be empty"
+                            )));
+                        } else if !path.starts_with('/') {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured HTTP readiness `path` must start with `/`"
+                            )));
+                        }
+                        for header_name in readiness.headers.keys() {
+                            if header_name.trim().is_empty() {
+                                errors.push(ValidationError::new(format!(
+                                    "service `{name}` structured HTTP readiness header names must not be empty"
+                                )));
+                            }
+                        }
+                        if let Some(success) = &readiness.success {
+                            if success.status.is_empty() {
+                                errors.push(ValidationError::new(format!(
+                                    "service `{name}` structured HTTP readiness `success.status` must list at least one status code"
+                                )));
+                            }
+                            for status in &success.status {
+                                if !(100..=599).contains(status) {
+                                    errors.push(ValidationError::new(format!(
+                                        "service `{name}` structured HTTP readiness status `{status}` must be between 100 and 599"
+                                    )));
+                                }
+                            }
+                        }
+                        if let Some(body) = &readiness.body
+                            && body.contains.trim().is_empty()
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured HTTP readiness `body.contains` must not be empty"
+                            )));
+                        }
+                        validate_service_readiness_timing(name, readiness, errors);
+                    }
+                    crate::schema::TaskRuntimeReadinessKind::Tcp => {
+                        if readiness.method.is_some() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured TCP readiness must not declare `readiness.method`"
+                            )));
+                        }
+                        if readiness.path.is_some() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured TCP readiness must not declare `readiness.path`"
+                            )));
+                        }
+                        if !readiness.headers.is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured TCP readiness must not declare `readiness.headers`"
+                            )));
+                        }
+                        if readiness.success.is_some() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured TCP readiness must not declare `readiness.success`"
+                            )));
+                        }
+                        if readiness.body.is_some() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured TCP readiness must not declare `readiness.body`"
+                            )));
+                        }
+                        validate_service_readiness_timing(name, readiness, errors);
+                    }
+                }
             }
             if service.healthcheck.is_some() {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` must not declare both `healthcheck` and `readiness`; keep legacy host-bound `healthcheck` or migrate to `readiness`"
                 )));
             }
-            if !readiness.from.trim().is_empty()
+            if !from.is_empty()
                 && contract
                     .execution
                     .as_ref()
-                    .is_none_or(|execution| !execution.contexts.contains_key(readiness.from.trim()))
+                    .is_none_or(|execution| !execution.contexts.contains_key(from))
             {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness references unknown `from: {}`; declare it under `execution.contexts`",
-                    readiness.from.trim()
+                    from
                 )));
             }
-            if !readiness.from.trim().is_empty()
-                && !service.endpoints.contains_key(readiness.from.trim())
-            {
+            if !from.is_empty() && !service.endpoints.contains_key(from) {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness from `{}` requires a matching `services.{name}.endpoints.{}` projection",
-                    readiness.from.trim(),
-                    readiness.from.trim()
+                    from,
+                    from
                 )));
             }
             if service.timeout.is_some() {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` readiness does not yet support `timeout`; remove `services.{name}.timeout` or keep legacy `healthcheck` if timeout enforcement is required"
+                    "service `{name}` readiness does not support top-level `services.{name}.timeout`; keep legacy `healthcheck` with `timeout` or move timeout control into `services.{name}.readiness.timeout`"
                 )));
             }
         }
@@ -3870,6 +3969,37 @@ fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
     }
 
     detect_service_cycles(services, errors);
+}
+
+fn validate_service_readiness_timing(
+    service_name: &str,
+    readiness: &crate::schema::ServiceReadinessSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (field_name, value) in [
+        ("interval", readiness.interval.as_deref()),
+        ("timeout", readiness.timeout.as_deref()),
+        ("start_period", readiness.start_period.as_deref()),
+    ] {
+        if let Some(value) = value {
+            let Some(duration) = parse_readiness_duration_spec(value) else {
+                errors.push(ValidationError::new(format!(
+                    "service `{service_name}` readiness `{field_name}` must use a positive duration like `200ms`, `3s`, or `1m`"
+                )));
+                continue;
+            };
+            if duration.is_zero() {
+                errors.push(ValidationError::new(format!(
+                    "service `{service_name}` readiness `{field_name}` must be greater than zero"
+                )));
+            }
+        }
+    }
+    if matches!(readiness.retries, Some(0)) {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` readiness `retries` must be greater than zero"
+        )));
+    }
 }
 
 fn detect_task_cycles(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<ValidationError>) {
@@ -5532,6 +5662,130 @@ services:
                 .to_string()
                 .contains("service `postgres` readiness from `app` requires a matching `services.postgres.endpoints.app` projection")
         }));
+    }
+
+    #[test]
+    fn validates_structured_service_http_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 3000
+    readiness:
+      from: host
+      kind: http
+      method: GET
+      path: /health
+      headers:
+        Accept: application/json
+      success:
+        status: [200]
+      body:
+        contains: '"status":"UP"'
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_mixed_legacy_and_structured_service_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 3000
+    readiness:
+      from: host
+      run: curl -fsS http://127.0.0.1:3000/health
+      kind: http
+      path: /health
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("must not declare both legacy `run` and structured `kind`")
+        }));
+    }
+
+    #[test]
+    fn rejects_structured_service_http_readiness_without_rooted_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 8080
+    readiness:
+      from: host
+      kind: http
+      path: health
+"#,
+        )
+        .expect("contract parses");
+
+        let errors = validate_contract(&contract).expect_err("validation should fail");
+        assert!(
+            errors.errors().iter().any(|error| error
+                .message
+                .contains("service `api` structured HTTP readiness `path` must start with `/`")),
+            "expected rooted path validation error, got: {errors:#?}"
+        );
     }
 
     #[test]

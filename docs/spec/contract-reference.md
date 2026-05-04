@@ -495,7 +495,11 @@ services:
         port: 5432
     readiness:
       from: app
-      run: pg_isready -h billing-db -p 5432
+      kind: tcp
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 ```
 
 Fields:
@@ -514,13 +518,26 @@ Fields:
 - `depends_on`: optional list of service names
 - `timeout`: optional healthcheck timeout in milliseconds
 - `readiness`: optional explicit readiness check that runs in a named execution context
-- `readiness.from`: context name that owns the runtime for the check
-- `readiness.run`: command to execute in that context
+- `readiness.from`: context name that owns the runtime for the check and matches one declared endpoint projection
+- legacy `readiness.run`: command to execute in that context
+- structured `readiness.kind`: `tcp` or `http`
+- structured `readiness.method`: optional HTTP method, default `GET`
+- structured `readiness.path`: required for structured HTTP readiness and must start with `/`
+- structured `readiness.headers`: optional HTTP request headers
+- structured `readiness.success.status`: optional exact accepted HTTP status-code set
+- structured `readiness.body.contains`: optional exact required response substring
+- structured `readiness.interval`: optional wait between probe attempts
+- structured `readiness.timeout`: optional per-attempt probe timeout
+- structured `readiness.retries`: optional failed probe budget before the service readiness gate fails
+- structured `readiness.start_period`: optional delay before the first structured readiness probe
 
 Current behavior:
 
 - services are part of the accepted V1 contract surface
 - service declarations may use legacy `provider/start/stop/healthcheck` fields or new context-aware `manager/endpoints/readiness` fields
+- `services.<name>.readiness` now supports two valid forms:
+  - legacy command form: `from` + `run`
+  - structured probe form: `from` + `kind` (+ `path` for HTTP, with optional request/response/timing controls)
 - unknown `depends_on` references are invalid
 - service dependency cycles are invalid
 - `timeout` must be greater than zero when set
@@ -530,6 +547,10 @@ Current behavior:
 - for `manager.kind: compose`, `ota doctor` derives `start/stop/healthcheck` commands from compose metadata
 - for `manager.kind: host`, `ota doctor` runs healthchecks in the resolved host command context
 - `services.<name>.readiness.from` with a named endpoint projection validates readiness from that execution context
+- structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
+- structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
+- legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
+- structured top-level service readiness timing controls are bounded by the declared `retries`; when omitted, ota performs one structured readiness probe attempt
 - `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
