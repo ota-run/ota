@@ -9341,7 +9341,14 @@ tasks:
       readiness:
         kind: http
         listener: http
+        method: GET
         path: /health
+        headers:
+          Accept: application/json
+        success:
+          status: [200]
+        body:
+          contains: "ok"
       listeners:
         http:
           protocol: http
@@ -9393,6 +9400,19 @@ tasks:
         assert_eq!(json["tasks"][0]["name"], "api");
         assert_eq!(json["tasks"][0]["runtime"]["backend_binding"], "workbench");
         assert_eq!(json["tasks"][0]["runtime"]["readiness"]["kind"], "http");
+        assert_eq!(json["tasks"][0]["runtime"]["readiness"]["method"], "GET");
+        assert_eq!(
+            json["tasks"][0]["runtime"]["readiness"]["headers"]["Accept"],
+            "application/json"
+        );
+        assert_eq!(
+            json["tasks"][0]["runtime"]["readiness"]["success"]["status"][0],
+            200
+        );
+        assert_eq!(
+            json["tasks"][0]["runtime"]["readiness"]["body"]["contains"],
+            "ok"
+        );
         assert_eq!(
             json["tasks"][0]["runtime"]["listeners"]["http"]["host_projection"]["address"],
             "127.0.0.1"

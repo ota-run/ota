@@ -1598,7 +1598,19 @@ fn build_execution_topology_runtime_summary(
                 }
                 .to_string(),
                 listener: readiness.listener.clone(),
+                method: readiness.method.map(|method| method.as_str().to_string()),
                 path: readiness.path.clone(),
+                headers: readiness.headers.clone(),
+                success: readiness.success.as_ref().map(|success| {
+                    crate::output::ExecutionTopologyReadinessSuccessSummary {
+                        status: success.status.clone(),
+                    }
+                }),
+                body: readiness.body.as_ref().map(|body| {
+                    crate::output::ExecutionTopologyReadinessBodySummary {
+                        contains: body.contains.clone(),
+                    }
+                }),
             }),
         listeners: runtime
             .listeners

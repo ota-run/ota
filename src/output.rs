@@ -519,7 +519,25 @@ pub struct ExecutionTopologyReadinessSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub listener: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success: Option<ExecutionTopologyReadinessSuccessSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<ExecutionTopologyReadinessBodySummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyReadinessSuccessSummary {
+    pub status: Vec<u16>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyReadinessBodySummary {
+    pub contains: String,
 }
 
 #[derive(Debug, Serialize)]
