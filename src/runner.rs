@@ -18658,7 +18658,7 @@ version: 1
 project:
   name: ota
 tasks:
-  dev:
+  dev_internal:
     run: echo dev
     runtime:
       kind: service
@@ -18683,7 +18683,7 @@ tasks:
     targets:
       api:
         service:
-          task: dev
+          task: dev_internal
           listener: http
           address_view: topology
         override_input: base_url
@@ -18726,7 +18726,7 @@ version: 1
 project:
   name: ota
 tasks:
-  dev:
+  dev_host:
     run: echo dev
     runtime:
       kind: service
@@ -18751,7 +18751,7 @@ tasks:
     targets:
       api:
         service:
-          task: dev
+          task: dev_host
           listener: http
           address_view: topology
         override_input: base_url
@@ -18796,7 +18796,7 @@ version: 1
 project:
   name: ota
 tasks:
-  dev:
+  dev_internal_http:
     run: echo dev
     runtime:
       kind: service
@@ -18821,7 +18821,7 @@ tasks:
     targets:
       api:
         service:
-          task: dev
+          task: dev_internal_http
           listener: http
           address_view: host
         override_input: base_url
