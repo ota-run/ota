@@ -204,7 +204,6 @@ Use the authoring path first:
 ota doctor
 ota detect --dry-run .
 ota init --dry-run
-ota studio --open
 ```
 
 Then choose one explicit write path:
@@ -214,7 +213,6 @@ ota init
 ```
 
 Use `ota detect --write .` when you want the detector-led authoring path instead of the starter contract path.
-Use `ota studio --open` when you want one local visual review surface for the current contract, inferred draft, and declared topology before writing.
 
 If you want an explicit conventional starter instead of detector-led init, use a pack:
 
@@ -643,7 +641,6 @@ ota treats detection as trust-sensitive.
 
 - `ota detect --dry-run` is the review path
 - `ota detect --merge --dry-run` is the review path for existing contracts
-- `ota studio --open` is the visual review path when one local snapshot is easier than raw CLI output
 - every inferred field includes provenance
 - every inferred field includes confidence
 - write mode uses only `high` confidence fields
