@@ -20037,7 +20037,7 @@ execution:
       lifecycle: persistent
       context: remote_app
 tasks:
-  dev:
+  dev_internal:
     run: python3 -m http.server {port} --bind 127.0.0.1
     runtime:
       kind: service
@@ -20069,7 +20069,7 @@ tasks:
     targets:
       api:
         service:
-          task: dev
+          task: dev_internal
           listener: http
           address_view: internal
         activation:
@@ -20193,7 +20193,7 @@ execution:
       lifecycle: persistent
       context: remote_app
 tasks:
-  dev:
+  dev_host:
     run: python3 -m http.server {port} --bind 127.0.0.1
     runtime:
       kind: service
@@ -20223,7 +20223,7 @@ tasks:
     targets:
       api:
         service:
-          task: dev
+          task: dev_host
           listener: http
           address_view: host
         activation:
@@ -20371,7 +20371,7 @@ execution:
       lifecycle: persistent
       context: remote_app
 tasks:
-  dev:
+  dev_internal_http:
     run: python3 -m http.server {port} --bind 127.0.0.1
     runtime:
       kind: service
@@ -20396,7 +20396,7 @@ tasks:
     targets:
       api:
         service:
-          task: dev
+          task: dev_internal_http
           listener: http
           address_view: internal
         activation:
