@@ -18934,9 +18934,9 @@ tasks:
 version: 1
 project:
   name: ota
-tasks:
+  tasks:
   dev:
-    run: python3 -c "import socket,time; sock=socket.socket(); sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); sock.bind(('127.0.0.1', {port})); sock.listen(1); time.sleep(30)"
+    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & wait
     runtime:
       kind: service
       listeners:
@@ -20026,7 +20026,7 @@ execution:
       context: remote_app
 tasks:
   dev:
-    run: python3 -c "import socket,time; sock=socket.socket(); sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); sock.bind(('127.0.0.1', {port})); sock.listen(1); time.sleep(30)"
+    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & wait
     runtime:
       kind: service
       backend_binding: workbench
@@ -20182,7 +20182,7 @@ execution:
       context: remote_app
 tasks:
   dev:
-    run: python3 -c "import socket,time; sock=socket.socket(); sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); sock.bind(('127.0.0.1', {port})); sock.listen(1); time.sleep(30)"
+    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & wait
     runtime:
       kind: service
       backend_binding: workbench
@@ -20360,14 +20360,7 @@ execution:
       context: remote_app
 tasks:
   dev:
-    run: |
-      python3 -c 'import http.server, socketserver, time; port={port};
-      while True:
-          try:
-              with socketserver.TCPServer(("127.0.0.1", port), http.server.SimpleHTTPRequestHandler) as httpd:
-                  httpd.serve_forever()
-          except OSError:
-              time.sleep(0.1)'
+    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & wait
     runtime:
       kind: service
       backend_binding: workbench
