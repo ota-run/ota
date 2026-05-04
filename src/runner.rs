@@ -12634,11 +12634,7 @@ awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if
             probe.target.as_str(),
             probe.cwd.as_deref(),
             BackendProviderCommandContext::ActivationProbe,
-            TaskExecutionMode::Stream {
-                emit_progress: false,
-                capture_output: true,
-                live_log: None,
-            },
+            TaskExecutionMode::CaptureActivation,
         )
     } else {
         execute_remote_task_command(
@@ -12650,11 +12646,7 @@ awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if
             probe.target.as_str(),
             probe.cwd.as_deref(),
             probe.ssh.as_ref(),
-            TaskExecutionMode::Stream {
-                emit_progress: false,
-                capture_output: true,
-                live_log: None,
-            },
+            TaskExecutionMode::CaptureActivation,
         )
     };
     matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
@@ -12680,11 +12672,7 @@ fn remote_target_probe_http_reachable(
             probe.target.as_str(),
             probe.cwd.as_deref(),
             BackendProviderCommandContext::ActivationProbe,
-            TaskExecutionMode::Stream {
-                emit_progress: false,
-                capture_output: true,
-                live_log: None,
-            },
+            TaskExecutionMode::CaptureActivation,
         )
     } else {
         execute_remote_task_command(
