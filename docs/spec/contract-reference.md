@@ -525,10 +525,10 @@ Fields:
 - structured `readiness.path`: required for structured HTTP readiness and must start with `/`
 - structured `readiness.headers`: optional HTTP request headers
 - structured `readiness.success.status`: optional exact accepted HTTP status-code set
-- structured `readiness.body.contains`: optional exact required response substring
+- structured `readiness.body.contains`: optional exact required response substring; it must not be combined with `method: HEAD`
 - structured `readiness.interval`: optional wait between probe attempts
 - structured `readiness.timeout`: optional per-attempt probe timeout
-- structured `readiness.retries`: optional failed probe budget before the service readiness gate fails
+- structured `readiness.retries`: optional failed probe budget before the service readiness gate fails; when omitted, ota keeps waiting until readiness passes, the run is interrupted, or a higher-level command boundary ends the wait
 - structured `readiness.start_period`: optional delay before the first structured readiness probe
 
 Current behavior:
@@ -550,7 +550,7 @@ Current behavior:
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
-- structured top-level service readiness timing controls are bounded by the declared `retries`; when omitted, ota performs one structured readiness probe attempt
+- structured top-level service readiness uses the same default wait model as task runtime readiness: when `retries` is omitted, ota keeps waiting until readiness passes or the surrounding run is interrupted; declaring `retries` makes the failure budget explicit and bounded
 - `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
@@ -1175,7 +1175,7 @@ Current `runtime.readiness` support for service tasks:
   - optional `method` supports `GET` and `HEAD`; default is `GET`
   - optional `headers` adds request headers to the readiness probe
   - optional `success.status` overrides the accepted HTTP status codes; default is any `2xx` or `3xx`
-  - optional `body.contains` requires the response body to contain one exact substring after the status code matches
+  - optional `body.contains` requires the response body to contain one exact substring after the status code matches, and it must not be used with `method: HEAD`
   - optional `interval` sets the wait between probe attempts; when omitted, ota uses the current small internal poll cadence
   - optional `timeout` sets the per-attempt probe timeout
   - optional `retries` sets the consecutive failed probe budget before activation fails

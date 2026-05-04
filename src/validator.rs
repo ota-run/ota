@@ -2556,6 +2556,15 @@ fn validate_task_runtime_readiness(
                     "task `{task_name}` runtime readiness `body.contains` must not be empty"
                 )));
             }
+            if matches!(
+                readiness.method,
+                Some(crate::schema::TaskRuntimeReadinessHttpMethod::Head)
+            ) && readiness.body.is_some()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `method: HEAD` must not declare `body.contains`"
+                )));
+            }
             validate_runtime_readiness_timing(task_name, readiness, errors);
             if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
                 errors.push(ValidationError::new(format!(
@@ -3831,6 +3840,15 @@ fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         {
                             errors.push(ValidationError::new(format!(
                                 "service `{name}` structured HTTP readiness `body.contains` must not be empty"
+                            )));
+                        }
+                        if matches!(
+                            readiness.method,
+                            Some(crate::schema::TaskRuntimeReadinessHttpMethod::Head)
+                        ) && readiness.body.is_some()
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured HTTP readiness `method: HEAD` must not declare `body.contains`"
                             )));
                         }
                         validate_service_readiness_timing(name, readiness, errors);
@@ -5239,6 +5257,61 @@ tasks:
     }
 
     #[test]
+    fn rejects_head_runtime_readiness_with_body_contains() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        method: HEAD
+        path: /health
+        body:
+          contains: "UP"
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `method: HEAD` must not declare `body.contains`")
+        }));
+    }
+
+    #[test]
     fn rejects_tcp_runtime_readiness_http_only_fields() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -5785,6 +5858,49 @@ services:
                 .message
                 .contains("service `api` structured HTTP readiness `path` must start with `/`")),
             "expected rooted path validation error, got: {errors:#?}"
+        );
+    }
+
+    #[test]
+    fn rejects_head_service_readiness_with_body_contains() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 8080
+    readiness:
+      from: host
+      kind: http
+      method: HEAD
+      path: /health
+      body:
+        contains: "UP"
+"#,
+        )
+        .expect("contract parses");
+
+        let errors = validate_contract(&contract).expect_err("validation should fail");
+        assert!(errors.errors().iter().any(|error| error
+            .message
+            .contains("service `api` structured HTTP readiness `method: HEAD` must not declare `body.contains`")),
+            "expected HEAD/body validation error, got: {errors:#?}"
         );
     }
 

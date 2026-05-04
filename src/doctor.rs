@@ -2719,7 +2719,6 @@ fn run_service_readiness(
         thread::sleep(timing.start_period);
     }
 
-    let failure_budget = timing.retries.unwrap_or(1);
     let mut failed_attempts = 0u32;
     loop {
         match run_backend_command_captured(
@@ -2731,7 +2730,10 @@ fn run_service_readiness(
             Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
             Ok(_) => {
                 failed_attempts = failed_attempts.saturating_add(1);
-                if failed_attempts >= failure_budget {
+                if timing
+                    .retries
+                    .is_some_and(|failure_budget| failed_attempts >= failure_budget)
+                {
                     return Ok(CheckStatus::Failed);
                 }
             }
@@ -7594,6 +7596,78 @@ services:
       interval: 50ms
       timeout: 200ms
       retries: 2
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_service(&contract, synthetic_contract_path(), "api");
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn diagnose_service_structured_http_readiness_keeps_waiting_when_retries_omitted() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().expect("probe should connect");
+                let mut buffer = [0u8; 256];
+                let _ = stream.read(&mut buffer);
+                if attempt == 0 {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 19\r\nConnection: close\r\n\r\n{\"status\":\"BOOTING\"}",
+                        )
+                        .expect("initial probe response should write");
+                } else {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"UP\"}",
+                        )
+                        .expect("ready probe response should write");
+                }
+            }
+        });
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    required: true
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: {port}
+    readiness:
+      from: host
+      kind: http
+      method: GET
+      path: /health
+      headers:
+        Accept: application/json
+      success:
+        status: [200]
+      body:
+        contains: '"status":"UP"'
+      interval: 20ms
+      timeout: 200ms
 "#
             )
             .as_str(),
