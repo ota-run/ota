@@ -1063,6 +1063,7 @@ Task input semantics:
 - if every declared input has a default, the task can be run with no input flags
 - task input names may overlap ota command flags such as `mode` or `jobs`; when they do, put ota command flags before the task and task inputs after the task
 - `requires_services` resolves declared services before the task body and keeps lifecycle ownership with `services.<name>.manager`
+- `setup.requires_services` is also the pre-setup service phase for `ota up`: ota starts and verifies those services before running `setup`, then starts the remaining required services after `setup`
 - `runtime.listeners` keep workload ingress with the task instead of overloading `services`
 - `ota run` records the resolved runtime endpoint in receipts and JSON output when ota can authoritatively resolve it
 - `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`

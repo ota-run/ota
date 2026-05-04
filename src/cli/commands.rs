@@ -27141,6 +27141,76 @@ tasks:
     }
 
     #[test]
+    fn up_preview_orders_pre_setup_setup_and_post_setup_service_phases_honestly() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    endpoints:
+      app:
+        address: postgres
+        port: 5432
+    readiness:
+      from: app
+      kind: tcp
+  app:
+    required: true
+    start: ./bin/start-app
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 8080
+    readiness:
+      from: host
+      kind: http
+      path: /health
+tasks:
+  setup:
+    requires_services:
+      - postgres
+    run: ./bin/setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert_eq!(
+            preview.plan.actions,
+            vec![
+                String::from("start service `postgres` before `setup`"),
+                String::from("verify service `postgres` readiness before `setup`"),
+                String::from("run task `setup`"),
+                String::from("start service `app` after `setup`"),
+                String::from("verify service `app` readiness after `setup`"),
+                String::from("re-check repo readiness"),
+            ]
+        );
+    }
+
+    #[test]
     fn finding_targets_provisioning_action_strips_context_suffix() {
         let finding = Finding {
             severity: FindingSeverity::Error,
@@ -34456,6 +34526,115 @@ tasks:
         assert_eq!(
             up_doctor_mode(&contract, ExecutionOverrides::default()),
             DoctorMode::Container
+        );
+    }
+
+    #[test]
+    fn up_starts_required_services_after_setup_when_setup_does_not_require_them() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: phased-up
+services:
+  app:
+    required: true
+    start: test -f .env.local && echo service >> run.log
+    healthcheck: test -f .env.local
+tasks:
+  setup:
+    script: |
+      echo setup >> run.log
+      touch .env.local
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            result.ok,
+            "status={} phase={} stdout=\n{}\nstderr=\n{}",
+            result.status, result.phase, result.stdout, result.stderr
+        );
+        assert_eq!(result.status, "READY");
+        assert_eq!(
+            fs::read_to_string(repo.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["setup", "service"]
+        );
+    }
+
+    #[test]
+    fn up_honors_setup_requires_services_as_pre_setup_service_phase() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: phased-up
+services:
+  postgres:
+    required: true
+    start: |
+      echo postgres >> run.log
+      touch db.ready
+    healthcheck: test -f db.ready
+  app:
+    required: true
+    start: test -f .env.local && echo app >> run.log
+    healthcheck: test -f .env.local
+tasks:
+  setup:
+    requires_services:
+      - postgres
+    script: |
+      test -f db.ready
+      echo setup >> run.log
+      touch .env.local
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            result.ok,
+            "status={} phase={} stdout=\n{}\nstderr=\n{}",
+            result.status, result.phase, result.stdout, result.stderr
+        );
+        assert_eq!(result.status, "READY");
+        assert_eq!(
+            fs::read_to_string(repo.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["postgres", "setup", "app"]
         );
     }
 
@@ -44156,23 +44335,68 @@ fn render_up_preview_skip_action(action: &crate::policy_pack::ProvisioningAction
 }
 
 fn append_up_preview_service_actions(contract: &Contract, actions: &mut Vec<String>) {
-    for service_name in service_start_order(contract) {
+    let pre_setup_services = setup_required_service_closure(contract);
+    let post_setup_services = remaining_required_service_closure(contract, &pre_setup_services);
+
+    append_up_preview_service_phase_actions(
+        contract,
+        &pre_setup_services,
+        actions,
+        Some("before `setup`"),
+    );
+
+    if contract.tasks.contains_key("setup") {
+        actions.push(String::from("run task `setup`"));
+    }
+
+    append_up_preview_service_phase_actions(
+        contract,
+        &post_setup_services,
+        actions,
+        contract
+            .tasks
+            .contains_key("setup")
+            .then_some("after `setup`"),
+    );
+}
+
+fn append_up_preview_service_phase_actions(
+    contract: &Contract,
+    selected_services: &BTreeSet<String>,
+    actions: &mut Vec<String>,
+    phase_suffix: Option<&str>,
+) {
+    for service_name in service_start_order_for(contract, selected_services) {
         let service = contract
             .services
             .get(service_name.as_str())
             .expect("validated service should exist");
 
         if service.start_command(service_name.as_str()).is_some() {
-            actions.push(format!("start service `{service_name}`"));
+            match phase_suffix {
+                Some(phase_suffix) => {
+                    actions.push(format!("start service `{service_name}` {phase_suffix}"))
+                }
+                None => actions.push(format!("start service `{service_name}`")),
+            }
         }
     }
 
-    for (service_name, service) in &contract.services {
+    for service_name in selected_services {
+        let service = contract
+            .services
+            .get(service_name.as_str())
+            .expect("validated service should exist");
         if service.healthcheck.is_some()
             || service.readiness.is_some()
             || !service.endpoints.is_empty()
         {
-            actions.push(format!("verify service `{service_name}` readiness"));
+            match phase_suffix {
+                Some(phase_suffix) => actions.push(format!(
+                    "verify service `{service_name}` readiness {phase_suffix}"
+                )),
+                None => actions.push(format!("verify service `{service_name}` readiness")),
+            }
         }
     }
 }
@@ -44202,10 +44426,6 @@ fn build_up_preview(
     }
 
     append_up_preview_service_actions(contract, &mut actions);
-
-    if contract.tasks.contains_key("setup") {
-        actions.push(String::from("run task `setup`"));
-    }
 
     actions.push(String::from("re-check repo readiness"));
 
@@ -44305,6 +44525,122 @@ fn run_up_setup_task(
         })
         .map_err(|error| render_up_run_error(resolved_path, error)),
     }
+}
+
+fn contract_without_setup_requires_services(contract: &Contract) -> Option<Contract> {
+    let setup_task = contract.tasks.get("setup")?;
+    if setup_task.requires_services.is_empty() {
+        return None;
+    }
+
+    let mut adjusted = contract.clone();
+    if let Some(setup) = adjusted.tasks.get_mut("setup") {
+        setup.requires_services.clear();
+    }
+    Some(adjusted)
+}
+
+fn run_up_required_services_phase(
+    contract: &Contract,
+    resolved_path: &Path,
+    selected_services: &BTreeSet<String>,
+    phase: &'static str,
+    mode: RepoExecutionMode,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> Result<Option<RepoUpResult>, String> {
+    if selected_services.is_empty() {
+        return Ok(None);
+    }
+
+    let working_dir = contract_working_dir(resolved_path);
+    for name in service_start_order_for(contract, selected_services) {
+        let service = contract
+            .services
+            .get(name.as_str())
+            .expect("validated service should exist");
+
+        if let Some(start) = service.start_command(name.as_str()) {
+            match run_shell_command(&start, working_dir, mode, "Starting service") {
+                Ok(command) if command.exit_code == 0 => {
+                    stdout.push_str(&command.stdout);
+                    stderr.push_str(&command.stderr);
+                }
+                Ok(command) => {
+                    stdout.push_str(&command.stdout);
+                    stderr.push_str(&command.stderr);
+                    return Ok(Some(RepoUpResult {
+                        ok: false,
+                        status: "SERVICE START FAILED",
+                        phase,
+                        preview: None,
+                        receipt: repo_execution_receipt(
+                            resolved_path,
+                            contract,
+                            native_phase_execution_context(),
+                            "SERVICE START FAILED",
+                            phase,
+                            Some(name.as_str()),
+                            None,
+                            &[],
+                            Some(command.exit_code),
+                            None,
+                        ),
+                        report: DoctorReport {
+                            ok: false,
+                            provisioning: None,
+                            adapter_bootstrap: None,
+                            execution_target: None,
+                            findings: Vec::new(),
+                        },
+                        service: Some(name.clone()),
+                        service_command: Some(start.clone()),
+                        task: None,
+                        task_command: None,
+                        exit_code: Some(command.exit_code),
+                        stdout: stdout.clone(),
+                        stderr: stderr.clone(),
+                    }));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let service_report = diagnose_service(contract, resolved_path, name.as_str());
+        if !service_report.ok {
+            return Ok(Some(RepoUpResult {
+                ok: false,
+                status: "NOT READY",
+                phase,
+                preview: None,
+                receipt: repo_execution_receipt(
+                    resolved_path,
+                    contract,
+                    native_phase_execution_context(),
+                    "NOT READY",
+                    phase,
+                    Some(name.as_str()),
+                    None,
+                    &service_report.findings,
+                    None,
+                    service_report
+                        .findings
+                        .first()
+                        .map(|finding| finding.next.clone()),
+                ),
+                report: service_report,
+                service: Some(name),
+                service_command: None,
+                task: None,
+                task_command: None,
+                exit_code: None,
+                stdout: stdout.clone(),
+                stderr: stderr.clone(),
+            }));
+        }
+    }
+
+    Ok(None)
 }
 
 fn resolve_up_workloads(
@@ -44420,7 +44756,6 @@ fn execute_repo_up(
 ) -> Result<RepoUpResult, String> {
     let mut stdout = String::new();
     let mut stderr = String::new();
-    let mut provisioned_setup = false;
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let provisioning_output_mode = match mode {
         RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
@@ -44940,11 +45275,62 @@ fn execute_repo_up(
         }
     }
 
-    if preflight.ok {
-        // The backend fixed the missing prerequisites; fall through to the normal flow.
-    } else if contract.tasks.contains_key("setup") {
+    if !preflight.ok && !contract.tasks.contains_key("setup") {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            preview: None,
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(contract, resolved_path, doctor_mode, &preflight),
+                "NOT READY",
+                "preconditions",
+                None,
+                None,
+                &preflight.findings,
+                None,
+                preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+            ),
+            report: preflight,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
+
+    let pre_setup_services = setup_required_service_closure(contract);
+    if let Some(result) = run_up_required_services_phase(
+        contract,
+        resolved_path,
+        &pre_setup_services,
+        "services",
+        mode,
+        &mut stdout,
+        &mut stderr,
+    )? {
+        return Ok(result);
+    }
+
+    if contract.tasks.contains_key("setup") {
         let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
-        match run_up_setup_task(contract, resolved_path, overrides, policy_env, mode) {
+        let setup_contract = contract_without_setup_requires_services(contract);
+        let setup_contract_ref = setup_contract.as_ref().unwrap_or(contract);
+        match run_up_setup_task(
+            setup_contract_ref,
+            resolved_path,
+            overrides,
+            policy_env,
+            mode,
+        ) {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -44991,165 +45377,62 @@ fn execute_repo_up(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
-                let refreshed =
-                    diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
-                if !refreshed.ok {
-                    return Ok(RepoUpResult {
-                        ok: false,
-                        status: "BLOCKED",
-                        phase: "provisioning",
-                        preview: None,
-                        receipt: repo_execution_receipt(
-                            resolved_path,
-                            contract,
-                            doctor_report_execution_context(
-                                contract,
+                if !preflight.ok {
+                    let refreshed =
+                        diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+                    if !refreshed.ok {
+                        return Ok(RepoUpResult {
+                            ok: false,
+                            status: "BLOCKED",
+                            phase: "provisioning",
+                            preview: None,
+                            receipt: repo_execution_receipt(
                                 resolved_path,
-                                doctor_mode,
-                                &refreshed,
+                                contract,
+                                doctor_report_execution_context(
+                                    contract,
+                                    resolved_path,
+                                    doctor_mode,
+                                    &refreshed,
+                                ),
+                                "BLOCKED",
+                                "provisioning",
+                                None,
+                                None,
+                                &refreshed.findings,
+                                None,
+                                refreshed
+                                    .findings
+                                    .first()
+                                    .map(|finding| finding.next.clone()),
                             ),
-                            "BLOCKED",
-                            "provisioning",
-                            None,
-                            None,
-                            &refreshed.findings,
-                            None,
-                            refreshed
-                                .findings
-                                .first()
-                                .map(|finding| finding.next.clone()),
-                        ),
-                        report: refreshed,
-                        service: None,
-                        service_command: None,
-                        task: Some(String::from("setup")),
-                        task_command: None,
-                        exit_code: None,
-                        stdout,
-                        stderr,
-                    });
+                            report: refreshed,
+                            service: None,
+                            service_command: None,
+                            task: Some(String::from("setup")),
+                            task_command: None,
+                            exit_code: None,
+                            stdout,
+                            stderr,
+                        });
+                    }
                 }
-                provisioned_setup = true;
             }
             Err(error) => return Err(error),
         }
-    } else {
-        return Ok(RepoUpResult {
-            ok: false,
-            status: "NOT READY",
-            phase: "preconditions",
-            preview: None,
-            receipt: repo_execution_receipt(
-                resolved_path,
-                contract,
-                doctor_report_execution_context(contract, resolved_path, doctor_mode, &preflight),
-                "NOT READY",
-                "preconditions",
-                None,
-                None,
-                &preflight.findings,
-                None,
-                preflight
-                    .findings
-                    .first()
-                    .map(|finding| finding.next.clone()),
-            ),
-            report: preflight,
-            service: None,
-            service_command: None,
-            task: None,
-            task_command: None,
-            exit_code: None,
-            stdout,
-            stderr,
-        });
     }
 
-    let working_dir = contract_working_dir(resolved_path);
-    for name in service_start_order(contract) {
-        let service = contract
-            .services
-            .get(name.as_str())
-            .expect("validated service should exist");
-
-        if let Some(start) = service.start_command(name.as_str()) {
-            match run_shell_command(&start, working_dir, mode, "Starting service") {
-                Ok(command) if command.exit_code == 0 => {
-                    stdout.push_str(&command.stdout);
-                    stderr.push_str(&command.stderr);
-                }
-                Ok(command) => {
-                    stdout.push_str(&command.stdout);
-                    stderr.push_str(&command.stderr);
-                    return Ok(RepoUpResult {
-                        ok: false,
-                        status: "SERVICE START FAILED",
-                        phase: "services",
-                        preview: None,
-                        receipt: repo_execution_receipt(
-                            resolved_path,
-                            contract,
-                            native_phase_execution_context(),
-                            "SERVICE START FAILED",
-                            "services",
-                            Some(name.as_str()),
-                            None,
-                            &[],
-                            Some(command.exit_code),
-                            None,
-                        ),
-                        report: DoctorReport {
-                            ok: false,
-                            provisioning: None,
-                            adapter_bootstrap: None,
-                            execution_target: None,
-                            findings: Vec::new(),
-                        },
-                        service: Some(name.clone()),
-                        service_command: Some(start.clone()),
-                        task: None,
-                        task_command: None,
-                        exit_code: Some(command.exit_code),
-                        stdout,
-                        stderr,
-                    });
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        let service_report = diagnose_service(contract, resolved_path, name.as_str());
-        if !service_report.ok {
-            return Ok(RepoUpResult {
-                ok: false,
-                status: "NOT READY",
-                phase: "services",
-                preview: None,
-                receipt: repo_execution_receipt(
-                    resolved_path,
-                    contract,
-                    native_phase_execution_context(),
-                    "NOT READY",
-                    "services",
-                    Some(name.as_str()),
-                    None,
-                    &service_report.findings,
-                    None,
-                    service_report
-                        .findings
-                        .first()
-                        .map(|finding| finding.next.clone()),
-                ),
-                report: service_report,
-                service: Some(name),
-                service_command: None,
-                task: None,
-                task_command: None,
-                exit_code: None,
-                stdout,
-                stderr,
-            });
-        }
+    let post_setup_services = remaining_required_service_closure(contract, &pre_setup_services);
+    if let Some(result) = run_up_required_services_phase(
+        contract,
+        resolved_path,
+        &post_setup_services,
+        "services",
+        mode,
+        &mut stdout,
+        &mut stderr,
+    )? {
+        return Ok(result);
     }
 
     let service_report = diagnose_services_only(contract, resolved_path);
@@ -45183,60 +45466,6 @@ fn execute_repo_up(
             stdout,
             stderr,
         });
-    }
-
-    if contract.tasks.contains_key("setup") && !provisioned_setup {
-        let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
-        match run_up_setup_task(contract, resolved_path, overrides, policy_env, mode) {
-            Ok(outcome) if outcome.exit_code != 0 => {
-                stdout.push_str(&outcome.stdout);
-                stderr.push_str(&outcome.stderr);
-                return Ok(RepoUpResult {
-                    ok: false,
-                    status: "SETUP FAILED",
-                    phase: "setup",
-                    preview: None,
-                    receipt: repo_execution_receipt(
-                        resolved_path,
-                        contract,
-                        task_phase_execution_context(
-                            contract,
-                            resolved_path,
-                            "setup",
-                            overrides,
-                            outcome.target.clone(),
-                        ),
-                        "SETUP FAILED",
-                        "setup",
-                        None,
-                        Some("setup"),
-                        &[],
-                        Some(outcome.exit_code),
-                        None,
-                    ),
-                    report: DoctorReport {
-                        ok: false,
-                        provisioning: None,
-                        adapter_bootstrap: None,
-                        execution_target: None,
-                        findings: Vec::new(),
-                    },
-                    service: None,
-                    service_command: None,
-                    task: Some(String::from("setup")),
-                    task_command: setup_task_command,
-                    exit_code: Some(outcome.exit_code),
-                    stdout,
-                    stderr,
-                });
-            }
-            Ok(outcome) => {
-                stdout.push_str(&outcome.stdout);
-                stderr.push_str(&outcome.stderr);
-                setup_runtime = outcome.runtime;
-            }
-            Err(error) => return Err(error),
-        }
     }
 
     let report = diagnose_contract_in_mode(contract, resolved_path, doctor_mode);
@@ -47899,21 +48128,44 @@ fn render_contract_problem(error: &ContractProblem) -> String {
     }
 }
 
-fn service_start_order(contract: &Contract) -> Vec<String> {
+fn service_start_order_for(contract: &Contract, selected: &BTreeSet<String>) -> Vec<String> {
+    let mut order = Vec::new();
+    let mut visited = BTreeSet::new();
+    for name in selected.clone() {
+        visit_service_start_order(contract, name.as_str(), selected, &mut visited, &mut order);
+    }
+    order
+}
+
+fn required_service_closure(contract: &Contract) -> BTreeSet<String> {
     let mut selected = BTreeSet::new();
     for (name, service) in &contract.services {
         if service.required {
             collect_service_dependencies(contract, name, &mut selected);
         }
     }
+    selected
+}
 
-    let mut order = Vec::new();
-    let mut visited = BTreeSet::new();
-    for name in selected.clone() {
-        visit_service_start_order(contract, name.as_str(), &selected, &mut visited, &mut order);
+fn setup_required_service_closure(contract: &Contract) -> BTreeSet<String> {
+    let mut selected = BTreeSet::new();
+    let Some(setup_task) = contract.tasks.get("setup") else {
+        return selected;
+    };
+    for service_name in &setup_task.requires_services {
+        collect_service_dependencies(contract, service_name, &mut selected);
     }
+    selected
+}
 
-    order
+fn remaining_required_service_closure(
+    contract: &Contract,
+    already_selected: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    required_service_closure(contract)
+        .into_iter()
+        .filter(|service_name| !already_selected.contains(service_name))
+        .collect()
 }
 
 fn collect_service_dependencies(contract: &Contract, name: &str, selected: &mut BTreeSet<String>) {
