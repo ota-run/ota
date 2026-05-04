@@ -12696,7 +12696,11 @@ fn remote_target_probe_http_reachable(
             probe.target.as_str(),
             probe.cwd.as_deref(),
             probe.ssh.as_ref(),
-            TaskExecutionMode::Capture,
+            TaskExecutionMode::Stream {
+                emit_progress: false,
+                capture_output: true,
+                live_log: None,
+            },
         )
     };
     matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
@@ -18999,7 +19003,11 @@ tasks:
             target_spec,
             Backend::Native,
             None,
-            TaskExecutionMode::Capture,
+            TaskExecutionMode::Stream {
+                emit_progress: false,
+                capture_output: true,
+                live_log: None,
+            },
             fixture.dir.path(),
             std::env::consts::OS,
             0,
@@ -19157,7 +19165,11 @@ tasks:
             target_spec,
             Backend::Remote,
             None,
-            TaskExecutionMode::Capture,
+            TaskExecutionMode::Stream {
+                emit_progress: false,
+                capture_output: true,
+                live_log: None,
+            },
             fixture.dir.path(),
             std::env::consts::OS,
             0,
