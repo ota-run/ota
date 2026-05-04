@@ -2514,6 +2514,8 @@ services:
     healthcheck: test -f .service-ready
 tasks:
   setup:
+    requires_services:
+      - postgres
     run: printf ready > prepared.txt
 "#;
 
