@@ -34447,6 +34447,8 @@ execution:
         assert!(stdout.contains("port: 5432"));
         assert!(stdout.contains("kind: tcp"));
         assert!(stdout.contains("ota assist declare-service --name postgres --manager compose"));
+        assert!(!stdout.contains("depends_on: []"));
+        assert!(!stdout.contains("--required false"));
     }
 
     #[test]

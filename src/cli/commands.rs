@@ -4015,9 +4015,13 @@ impl AssistServiceProposal {
         command.push_str(&format!(" --endpoint {}", self.endpoint));
         command.push_str(&format!(" --address {}", self.address));
         command.push_str(&format!(" --port {}", self.port));
-        command.push_str(&format!(" --required {}", self.required));
+        if self.required {
+            command.push_str(" --required true");
+        }
         if let Some(name) = &self.manager_name {
-            command.push_str(&format!(" --manager-name {}", shell_quote(name)));
+            if !(self.manager == AssistServiceManagerArg::Compose && name == "local") {
+                command.push_str(&format!(" --manager-name {}", shell_quote(name)));
+            }
         }
         if let Some(file) = &self.compose_file {
             command.push_str(&format!(" --compose-file {}", shell_quote(file)));
@@ -4599,6 +4603,26 @@ fn render_assist_readiness_text(
         paint_key("Style:"),
         assist_readiness_style_name(proposal.style)
     ));
+    if mode == "write" {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Applied:"),
+            paint_backticked_code(&proposal.change_path)
+        ));
+        output.push_str(&format_validation_timeline(
+            &validation
+                .iter()
+                .map(|command| format!("run `{}`", command))
+                .collect::<Vec<_>>(),
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code(&proposal.change_path))
+        ));
+        return output;
+    }
     output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
@@ -4692,6 +4716,26 @@ fn render_assist_service_text(
             assist_readiness_style_name(style)
         ));
     }
+    if mode == "write" {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Applied:"),
+            paint_backticked_code(&proposal.change_path)
+        ));
+        output.push_str(&format_validation_timeline(
+            &validation
+                .iter()
+                .map(|command| format!("run `{}`", command))
+                .collect::<Vec<_>>(),
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code(&proposal.change_path))
+        ));
+        return output;
+    }
     output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
@@ -4759,6 +4803,26 @@ fn render_assist_setup_text(
         paint_key("Subject:"),
         paint_named_drift_label("Task", "setup")
     ));
+    if mode == "write" {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Applied:"),
+            paint_backticked_code("tasks.setup")
+        ));
+        output.push_str(&format_validation_timeline(
+            &validation
+                .iter()
+                .map(|command| format!("run `{}`", command))
+                .collect::<Vec<_>>(),
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code("tasks.setup"))
+        ));
+        return output;
+    }
     output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
@@ -4867,6 +4931,27 @@ fn render_assist_bind_task_text(
             override_input
         ));
     }
+    if mode == "write" {
+        let applied_path = format!("tasks.{}.targets.{}", proposal.consumer_task, proposal.target_name);
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Applied:"),
+            paint_backticked_code(&applied_path)
+        ));
+        output.push_str(&format_validation_timeline(
+            &validation
+                .iter()
+                .map(|command| format!("run `{}`", command))
+                .collect::<Vec<_>>(),
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code(&applied_path))
+        ));
+        return output;
+    }
     output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
@@ -4968,6 +5053,26 @@ fn render_assist_env_text(
             ));
         }
     }
+    if mode == "write" {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Applied:"),
+            paint_backticked_code(&proposal.change_path)
+        ));
+        output.push_str(&format_validation_timeline(
+            &validation
+                .iter()
+                .map(|command| format!("run `{}`", command))
+                .collect::<Vec<_>>(),
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code(&proposal.change_path))
+        ));
+        return output;
+    }
     output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
@@ -5041,6 +5146,27 @@ fn render_assist_add_task_text(
         paint_key("Kind:"),
         assist_task_kind_name(proposal.kind)
     ));
+    if mode == "write" {
+        let applied_path = format!("tasks.{}", proposal.name);
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Applied:"),
+            paint_backticked_code(&applied_path)
+        ));
+        output.push_str(&format_validation_timeline(
+            &validation
+                .iter()
+                .map(|command| format!("run `{}`", command))
+                .collect::<Vec<_>>(),
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("created {}", paint_backticked_code(&applied_path))
+        ));
+        return output;
+    }
     output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
@@ -5099,6 +5225,30 @@ fn render_assist_normalize_text(
         paint_named_drift_label("Task", &proposal.source_task),
         paint_backticked_code("tasks.setup")
     ));
+    if mode == "write" {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Applied:"),
+            paint_backticked_code("tasks.setup")
+        ));
+        output.push_str(&format_validation_timeline(
+            &validation
+                .iter()
+                .map(|command| format!("run `{}`", command))
+                .collect::<Vec<_>>(),
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!(
+                "normalized {} into {}",
+                paint_backticked_code(&format!("tasks.{}", proposal.source_task)),
+                paint_backticked_code("tasks.setup")
+            )
+        ));
+        return output;
+    }
     output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
@@ -31111,13 +31261,23 @@ fn compact_contract_file_path_relative_to(
 fn prune_yaml_nulls(value: &mut YamlValue) {
     match value {
         YamlValue::Mapping(mapping) => {
-            let keys_to_remove: Vec<YamlValue> = mapping
-                .iter()
-                .filter_map(|(key, child)| child.is_null().then_some(key.clone()))
-                .collect();
             for child in mapping.values_mut() {
                 prune_yaml_nulls(child);
             }
+            let keys_to_remove: Vec<YamlValue> = mapping
+                .iter()
+                .filter_map(|(key, child)| {
+                    if child.is_null() {
+                        return Some(key.clone());
+                    }
+                    let key_name = key.as_str();
+                    let empty_sequence = matches!(child, YamlValue::Sequence(sequence) if sequence.is_empty());
+                    if empty_sequence && matches!(key_name, Some("depends_on")) {
+                        return Some(key.clone());
+                    }
+                    None
+                })
+                .collect();
             for key in keys_to_remove {
                 mapping.remove(&key);
             }
