@@ -22,11 +22,13 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Mutex;
 
+use fs2::FileExt;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -39,6 +41,43 @@ use ota::provisioning::{
 use ota::validator::validate_contract;
 
 static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+struct EnvLockGuard {
+    _mutex: std::sync::MutexGuard<'static, ()>,
+    _file_lock: File,
+}
+
+fn test_lock_path(name: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join("ota-test-locks")
+        .join(format!("{name}.lock"))
+}
+
+fn acquire_cross_process_lock(name: &str) -> File {
+    let path = test_lock_path(name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("test lock directory should exist");
+    }
+
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("test lock file should open");
+    file.lock_exclusive()
+        .expect("test lock file should lock exclusively");
+    file
+}
+
+fn env_mutex_lock() -> EnvLockGuard {
+    let mutex = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let file_lock = acquire_cross_process_lock("env");
+    EnvLockGuard {
+        _mutex: mutex,
+        _file_lock: file_lock,
+    }
+}
 
 fn real_fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -820,7 +859,7 @@ fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
         }
     }
 
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = env_mutex_lock();
     let fixture = copy_fixture_to_temp("container-path-probe");
 
     let bin_dir = fixture.path().join("bin");
@@ -943,7 +982,7 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
 #[cfg(unix)]
 #[test]
 fn provisioning_request_uses_real_linux_mirror_policy_on_real_command_path() {
-    let _guard = ENV_MUTEX.lock().unwrap();
+    let _guard = env_mutex_lock();
     let fixture = copy_fixture_to_temp("linux-mirror-probe");
     let contract_path = fixture.path().join("ota.yaml");
     let contract = load_contract(&contract_path).expect("contract should parse");

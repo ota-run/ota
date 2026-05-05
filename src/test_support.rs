@@ -20,17 +20,61 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::fs::{self, File, OpenOptions};
+use std::path::PathBuf;
 use std::sync::Mutex;
+
+use fs2::FileExt;
 
 pub static ENV_MUTEX: Mutex<()> = Mutex::new(());
 pub static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
-/// Acquire the ENV_MUTEX, recovering from poison if a previous test panicked.
-pub fn env_mutex_lock() -> std::sync::MutexGuard<'static, ()> {
-    ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+pub struct TestMutexGuard {
+    _mutex: std::sync::MutexGuard<'static, ()>,
+    _file_lock: File,
 }
 
-/// Acquire the CWD_MUTEX, recovering from poison if a previous test panicked.
-pub fn cwd_mutex_lock() -> std::sync::MutexGuard<'static, ()> {
-    CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+fn test_lock_path(name: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join("ota-test-locks")
+        .join(format!("{name}.lock"))
+}
+
+fn acquire_cross_process_lock(name: &str) -> File {
+    let path = test_lock_path(name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("test lock directory should exist");
+    }
+
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .expect("test lock file should open");
+    file.lock_exclusive()
+        .expect("test lock file should lock exclusively");
+    file
+}
+
+/// Acquire the ENV_MUTEX and a matching cross-process test lock, recovering from poison if a
+/// previous test panicked.
+pub fn env_mutex_lock() -> TestMutexGuard {
+    let mutex = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let file_lock = acquire_cross_process_lock("env");
+    TestMutexGuard {
+        _mutex: mutex,
+        _file_lock: file_lock,
+    }
+}
+
+/// Acquire the CWD_MUTEX and a matching cross-process test lock, recovering from poison if a
+/// previous test panicked.
+pub fn cwd_mutex_lock() -> TestMutexGuard {
+    let mutex = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let file_lock = acquire_cross_process_lock("cwd");
+    TestMutexGuard {
+        _mutex: mutex,
+        _file_lock: file_lock,
+    }
 }

@@ -12634,7 +12634,11 @@ awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if
             probe.target.as_str(),
             probe.cwd.as_deref(),
             BackendProviderCommandContext::ActivationProbe,
-            TaskExecutionMode::CaptureActivation,
+            TaskExecutionMode::Stream {
+                emit_progress: false,
+                capture_output: true,
+                live_log: None,
+            },
         )
     } else {
         execute_remote_task_command(
@@ -12646,7 +12650,11 @@ awk -v target=\"$hex\" 'BEGIN {{ found = 0 }} FNR > 1 {{ split($2, a, \":\"); if
             probe.target.as_str(),
             probe.cwd.as_deref(),
             probe.ssh.as_ref(),
-            TaskExecutionMode::CaptureActivation,
+            TaskExecutionMode::Stream {
+                emit_progress: false,
+                capture_output: true,
+                live_log: None,
+            },
         )
     };
     matches!(output, Ok(TaskCommandOutput { exit_code: 0, .. }))
@@ -12672,7 +12680,11 @@ fn remote_target_probe_http_reachable(
             probe.target.as_str(),
             probe.cwd.as_deref(),
             BackendProviderCommandContext::ActivationProbe,
-            TaskExecutionMode::CaptureActivation,
+            TaskExecutionMode::Stream {
+                emit_progress: false,
+                capture_output: true,
+                live_log: None,
+            },
         )
     } else {
         execute_remote_task_command(
@@ -20106,6 +20118,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn ensure_ready_activation_starts_and_cleans_up_shared_remote_internal_target() {
+        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
@@ -20163,6 +20176,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn ensure_ready_activation_starts_and_cleans_up_shared_remote_host_target() {
+        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
