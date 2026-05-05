@@ -42,7 +42,10 @@ use signal_hook::flag as signal_flag;
 use time::OffsetDateTime;
 use time::macros::format_description;
 
-use super::{AnnotationFormat, AnnotationMode, AssistReadinessStyleArg, AssistServiceManagerArg};
+use super::{
+    AnnotationFormat, AnnotationMode, AssistReadinessStyleArg, AssistServiceManagerArg,
+    AssistTaskTargetActivationModeArg, AssistTaskTargetAddressViewArg,
+};
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
@@ -130,7 +133,9 @@ use crate::schema::{
     Lifecycle, RequirementSurface, ServiceReadinessSpec, TaskRuntimeHostPortMode,
     TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
     TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
-    TaskSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec, TaskTargetAddressView,
+    TaskTargetServiceRefSpec, TaskTargetSpec, format_memory_size_bytes,
+    parse_memory_size_bytes,
 };
 use crate::update;
 use crate::validator::{
@@ -4088,6 +4093,93 @@ impl AssistSetupProposal {
     }
 }
 
+struct AssistBindTaskProposal {
+    consumer_task: String,
+    target_name: String,
+    producer_task: String,
+    producer_member: Option<String>,
+    listener: String,
+    address_view: TaskTargetAddressView,
+    activation: TaskTargetActivationMode,
+    override_input: Option<String>,
+    assumptions: Vec<String>,
+    before_value: YamlValue,
+    after_value: YamlValue,
+    write_value: YamlValue,
+}
+
+impl AssistBindTaskProposal {
+    fn subject_json(&self) -> BTreeMap<&'static str, &str> {
+        let mut subject = BTreeMap::new();
+        subject.insert("task", self.consumer_task.as_str());
+        subject.insert("target", self.target_name.as_str());
+        subject
+    }
+
+    fn inputs_json(&self) -> BTreeMap<&'static str, String> {
+        let mut inputs = BTreeMap::new();
+        let mut to = self.producer_task.clone();
+        to.push(':');
+        to.push_str(&self.listener);
+        inputs.insert("to", to);
+        inputs.insert(
+            "address_view",
+            assist_task_target_address_view_name(self.address_view).to_string(),
+        );
+        inputs.insert(
+            "activation",
+            assist_task_target_activation_mode_name(self.activation).to_string(),
+        );
+        if let Some(member) = &self.producer_member {
+            inputs.insert("producer_member", member.clone());
+        }
+        if let Some(override_input) = &self.override_input {
+            inputs.insert("override_input", override_input.clone());
+        }
+        inputs
+    }
+
+    fn diff(&self) -> String {
+        format!(
+            "tasks.{}.targets.{}\n- {}\n+ {}",
+            self.consumer_task,
+            self.target_name,
+            compact_yaml_inline(&self.before_value),
+            compact_yaml_inline(&self.after_value)
+        )
+    }
+
+    fn preview_next_command(&self, member: Option<&str>, contract_path: &Path) -> String {
+        let mut command = String::from("ota assist bind-task");
+        if let Some(member) = member {
+            command.push_str(&format!(" --member {member}"));
+        }
+        command.push_str(&format!(" --task {}", self.consumer_task));
+        command.push_str(&format!(" --target {}", self.target_name));
+        if let Some(producer_member) = &self.producer_member {
+            command.push_str(&format!(" --producer-member {producer_member}"));
+        }
+        command.push_str(&format!(" --to {}:{}", self.producer_task, self.listener));
+        command.push_str(&format!(
+            " --address-view {}",
+            assist_task_target_address_view_name(self.address_view)
+        ));
+        command.push_str(&format!(
+            " --activation {}",
+            assist_task_target_activation_mode_name(self.activation)
+        ));
+        if let Some(override_input) = &self.override_input {
+            command.push_str(&format!(
+                " --override-input {}",
+                shell_quote(override_input)
+            ));
+        }
+        command.push_str(" --write");
+        let command = command_for_repo_from_contract_path(&command, contract_path);
+        format!("rerun with `{command}` to apply this task binding")
+    }
+}
+
 fn is_http_readiness_style(style: AssistReadinessStyleArg) -> bool {
     matches!(
         style,
@@ -4122,6 +4214,18 @@ fn assist_service_manager_name(manager: AssistServiceManagerArg) -> &'static str
         AssistServiceManagerArg::Compose => "compose",
         AssistServiceManagerArg::Host => "host",
     }
+}
+
+fn assist_task_target_address_view_name(address_view: TaskTargetAddressView) -> &'static str {
+    match address_view {
+        TaskTargetAddressView::Topology => "topology",
+        TaskTargetAddressView::Host => "host",
+        TaskTargetAddressView::Internal => "internal",
+    }
+}
+
+fn assist_task_target_activation_mode_name(mode: TaskTargetActivationMode) -> &'static str {
+    mode.as_str()
 }
 
 fn render_assist_readiness_text(
@@ -4365,6 +4469,128 @@ fn render_assist_setup_text(
             "\n{} {}",
             paint_key("Result:"),
             format!("applied {}", paint_backticked_code("tasks.setup"))
+        ));
+    }
+    output
+}
+
+fn render_assist_bind_task_text(
+    path: &str,
+    proposal: &AssistBindTaskProposal,
+    mode: &str,
+    validation: &[String],
+    preview_next: Option<&str>,
+) -> String {
+    let mut output = format_command_header("ASSIST BIND-TASK", path);
+    output.push_str(&format!("\n\n{} {}", mode_icon(), paint_key("Mode:")));
+    output.push_str(&format!(
+        " {}",
+        if mode == "write" { "write" } else { "preview" }
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Subject:"),
+        paint_named_drift_label("Task", &proposal.consumer_task)
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Target:"),
+        proposal.target_name
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}:{}",
+        info_bullet(),
+        paint_key("Producer:"),
+        proposal.producer_task,
+        proposal.listener
+    ));
+    if let Some(member) = &proposal.producer_member {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Producer member:"),
+            member
+        ));
+    }
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Address view:"),
+        assist_task_target_address_view_name(proposal.address_view)
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Activation:"),
+        assist_task_target_activation_mode_name(proposal.activation)
+    ));
+    if let Some(override_input) = &proposal.override_input {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Override input:"),
+            override_input
+        ));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    for assumption in &proposal.assumptions {
+        output.push_str(&format!("\n{} {}", info_bullet(), assumption));
+    }
+    if !proposal.before_value.is_null() {
+        output.push_str(&format!("\n\n{}:", paint_section_title("Current target")));
+        output.push_str(&format!(
+            "\n{} {}",
+            info_bullet(),
+            paint_backticked_code(&format!(
+                "tasks.{}.targets.{}",
+                proposal.consumer_task, proposal.target_name
+            ))
+        ));
+        let before_yaml =
+            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        output.push_str(&format!(
+            "\n{}",
+            stylize_yaml_preview(before_yaml.trim_end())
+        ));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed target")));
+    output.push_str(&format!(
+        "\n{} {}",
+        info_bullet(),
+        paint_backticked_code(&format!(
+            "tasks.{}.targets.{}",
+            proposal.consumer_task, proposal.target_name
+        ))
+    ));
+    let after_yaml =
+        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(after_yaml.trim_end())
+    ));
+    output.push_str(&format_next_timeline(
+        &validation
+            .iter()
+            .map(|command| format!("run `{}`", command))
+            .collect::<Vec<_>>(),
+    ));
+    if mode == "preview" {
+        if let Some(preview_next) = preview_next {
+            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+        }
+    } else {
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!(
+                "applied {}",
+                paint_backticked_code(&format!(
+                    "tasks.{}.targets.{}",
+                    proposal.consumer_task, proposal.target_name
+                ))
+            )
         ));
     }
     output
@@ -5299,6 +5525,978 @@ pub fn assist_wire_setup(
         debug,
         debug_lines,
     )
+}
+
+pub fn assist_bind_task(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    task: &str,
+    target_name: &str,
+    to: &str,
+    producer_member: Option<&str>,
+    address_view: Option<AssistTaskTargetAddressViewArg>,
+    activation: Option<AssistTaskTargetActivationModeArg>,
+    override_input: Option<&str>,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=assist bind-task")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=assist bind-task"),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG task={task}"),
+        format!("DEBUG target={target_name}"),
+        format!("DEBUG to={to}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(producer_member) = producer_member {
+        debug_lines.push(format!("DEBUG producer_member={producer_member}"));
+    }
+    if let Some(address_view) = address_view {
+        debug_lines.push(format!(
+            "DEBUG address_view={}",
+            match address_view {
+                AssistTaskTargetAddressViewArg::Topology => "topology",
+                AssistTaskTargetAddressViewArg::Host => "host",
+                AssistTaskTargetAddressViewArg::Internal => "internal",
+            }
+        ));
+    }
+    if let Some(activation) = activation {
+        debug_lines.push(format!(
+            "DEBUG activation={}",
+            match activation {
+                AssistTaskTargetActivationModeArg::Manual => "manual",
+                AssistTaskTargetActivationModeArg::EnsureStarted => "ensure_started",
+                AssistTaskTargetActivationModeArg::RestartReady => "restart_ready",
+                AssistTaskTargetActivationModeArg::EnsureReady => "ensure_ready",
+                AssistTaskTargetActivationModeArg::EnsureRunning => "ensure_running",
+            }
+        ));
+    }
+    if let Some(override_input) = override_input {
+        debug_lines.push(format!("DEBUG override_input={override_input}"));
+    }
+    if write {
+        debug_lines.push(String::from("DEBUG mode=write"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "ASSIST BIND-TASK",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota assist bind-task` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota assist bind-task", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let source_contents = match fs::read_to_string(&target.contract_path) {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to read `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "bind-task",
+                                    subject: assist_bind_task_subject_map(task, target_name),
+                                    why,
+                                    next: String::from(
+                                        "repair the contract path, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+                let document: YamlValue = match serde_yaml::from_str(&source_contents) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to parse `{}` for assist preview: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "bind-task",
+                                    subject: assist_bind_task_subject_map(task, target_name),
+                                    why,
+                                    next: String::from(
+                                        "repair the existing contract, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let overlay_before_value = get_yaml_path_value(
+                    &document,
+                    &["tasks", task, "targets", target_name],
+                )
+                .unwrap_or(YamlValue::Null);
+                let before_value = if member.is_some() {
+                    let root_contents = match fs::read_to_string(&resolved_path) {
+                        Ok(contents) => contents,
+                        Err(error) => {
+                            let why = format!(
+                                "failed to read `{}`: {}",
+                                compact_contract_path(&resolved_path),
+                                error
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "bind-task",
+                                        subject: assist_bind_task_subject_map(task, target_name),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path, then rerun the assist command",
+                                        ),
+                                    },
+                                )),
+                            };
+                        }
+                    };
+                    let mut effective_document: YamlValue = match serde_yaml::from_str(&root_contents)
+                    {
+                        Ok(document) => document,
+                        Err(error) => {
+                            let why = format!(
+                                "failed to parse `{}` for assist preview: {}",
+                                compact_contract_path(&resolved_path),
+                                error
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "bind-task",
+                                        subject: assist_bind_task_subject_map(task, target_name),
+                                        why,
+                                        next: String::from(
+                                            "repair the existing contract, then rerun the assist command",
+                                        ),
+                                    },
+                                )),
+                            };
+                        }
+                    };
+                    merge_yaml_value(&mut effective_document, document.clone());
+                    get_yaml_path_value(&effective_document, &["tasks", task, "targets", target_name])
+                        .unwrap_or(YamlValue::Null)
+                } else {
+                    overlay_before_value.clone()
+                };
+
+                let consumer_task = match target.contract.tasks.get(task) {
+                    Some(task_spec) => task_spec,
+                    None => {
+                        let why = format!("task `{task}` is not declared");
+                        let next = String::from("run `ota tasks` to inspect declared task names");
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST BIND-TASK", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "bind-task",
+                                    subject: assist_bind_task_subject_map(task, target_name),
+                                    why,
+                                    next,
+                                },
+                            )),
+                        };
+                    }
+                };
+                let existing_target = consumer_task.targets.get(target_name);
+
+                let (producer_task_name, explicit_listener) = parse_assist_bind_target_selector(to);
+                let producer_target = if producer_member.is_some_and(|producer| Some(producer) != member)
+                {
+                    match load_and_validate_target(&resolved_path, producer_member) {
+                        Ok(target) => target,
+                        Err(error) => {
+                            let why = match error {
+                                ContractProblem::Validation(errors) => errors.to_string(),
+                                ContractProblem::Load(error) => error.to_string(),
+                            };
+                            let next = String::from(
+                                "repair the producer member contract, then rerun the assist command",
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(format!(
+                                    "{}\n{} {}\n{} {}",
+                                    format_command_header("ASSIST BIND-TASK", &text_path_display),
+                                    error_key("Why:"),
+                                    why,
+                                    paint_key("Next:"),
+                                    next
+                                )),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "bind-task",
+                                        subject: assist_bind_task_subject_map(task, target_name),
+                                        why,
+                                        next,
+                                    },
+                                )),
+                            };
+                        }
+                    }
+                } else {
+                    LoadedContractTarget {
+                        contract: target.contract.clone(),
+                        contract_path: target.contract_path.clone(),
+                    }
+                };
+                let producer_task = match producer_target.contract.tasks.get(producer_task_name.as_str()) {
+                    Some(task_spec) => task_spec,
+                    None => {
+                        let why = match producer_member {
+                            Some(producer_member) => format!(
+                                "producer task `{}` is not declared under member `{producer_member}`",
+                                producer_task_name
+                            ),
+                            None => format!("producer task `{}` is not declared", producer_task_name),
+                        };
+                        let next = if let Some(producer_member) = producer_member {
+                            format!(
+                                "run `ota tasks --member {producer_member}` to inspect producer task names"
+                            )
+                        } else {
+                            String::from("run `ota tasks` to inspect producer task names")
+                        };
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST BIND-TASK", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "bind-task",
+                                    subject: assist_bind_task_subject_map(task, target_name),
+                                    why,
+                                    next,
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let producer_member_value =
+                    producer_member.and_then(|value| if Some(value) == member { None } else { Some(value) });
+                let listener = match resolve_assist_bind_task_listener(
+                    producer_task,
+                    existing_target.and_then(|target| target.service.as_ref()),
+                    producer_member_value,
+                    producer_task_name.as_str(),
+                    explicit_listener.as_deref(),
+                ) {
+                    Ok(listener) => listener,
+                    Err((why, next)) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST BIND-TASK", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "bind-task",
+                                    subject: assist_bind_task_subject_map(task, target_name),
+                                    why,
+                                    next,
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let activation_mode = activation
+                    .map(assist_task_target_activation_mode_from_arg)
+                    .or_else(|| existing_target.map(|target| target.activation.mode))
+                    .unwrap_or(TaskTargetActivationMode::Manual);
+                let override_input_value = override_input
+                    .map(str::to_string)
+                    .or_else(|| existing_target.and_then(|target| target.override_input.clone()));
+                let address_candidates = assist_bind_task_address_view_candidates(
+                    address_view,
+                    existing_target.and_then(|target| target.service.as_ref()),
+                    producer_member_value,
+                    producer_task_name.as_str(),
+                );
+
+                let mut selected: Option<(AssistBindTaskProposal, String)> = None;
+                let mut last_error: Option<String> = None;
+                for candidate in address_candidates {
+                    let proposal = match build_assist_bind_task_proposal(
+                        task,
+                        target_name,
+                        &before_value,
+                        &overlay_before_value,
+                        member.is_some(),
+                        existing_target,
+                        producer_task_name.as_str(),
+                        producer_member_value,
+                        listener.as_str(),
+                        candidate,
+                        activation_mode,
+                        override_input_value.clone(),
+                    ) {
+                        Ok(proposal) => proposal,
+                        Err((why, next)) => {
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(format!(
+                                    "{}\n{} {}\n{} {}",
+                                    format_command_header("ASSIST BIND-TASK", &text_path_display),
+                                    error_key("Why:"),
+                                    why,
+                                    paint_key("Next:"),
+                                    next
+                                )),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "bind-task",
+                                        subject: assist_bind_task_subject_map(task, target_name),
+                                        why,
+                                        next,
+                                    },
+                                )),
+                            };
+                        }
+                    };
+
+                    let mut trial_document = document.clone();
+                    set_yaml_path(
+                        &mut trial_document,
+                        &["tasks", task, "targets", target_name],
+                        proposal.write_value.clone(),
+                    );
+                    let yaml = match serde_yaml::to_string(&trial_document) {
+                        Ok(yaml) => yaml,
+                        Err(error) => {
+                            let why = format!(
+                                "failed to serialize assist proposal for `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "bind-task",
+                                        subject: proposal.subject_json(),
+                                        why,
+                                        next: String::from(
+                                            "rerun the assist command after fixing the repo contract",
+                                        ),
+                                    },
+                                )),
+                            };
+                        }
+                    };
+
+                    match validate_assist_contract_update(
+                        &resolved_path,
+                        member,
+                        &target.contract_path,
+                        &yaml,
+                    ) {
+                        Ok(()) => {
+                            selected = Some((proposal, yaml));
+                            break;
+                        }
+                        Err(error) => {
+                            last_error = Some(error);
+                        }
+                    }
+                }
+
+                let Some((proposal, yaml)) = selected else {
+                    let why = last_error.unwrap_or_else(|| {
+                        String::from("the requested binding could not be validated")
+                    });
+                    let next = if address_view.is_some() {
+                        String::from(
+                            "adjust `--address-view` or inspect `ota execution topology` before retrying",
+                        )
+                    } else {
+                        String::from(
+                            "rerun with one explicit `--address-view` after checking `ota execution topology`",
+                        )
+                    };
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(format!(
+                            "{}\n{} {}\n{} {}",
+                            format_command_header("ASSIST BIND-TASK", &text_path_display),
+                            error_key("Why:"),
+                            why,
+                            paint_key("Next:"),
+                            next
+                        )),
+                        OutputFormat::Json => CommandOutput::failure(to_json(
+                            &AssistProposalFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                operation: "bind-task",
+                                subject: assist_bind_task_subject_map(task, target_name),
+                                why,
+                                next,
+                            },
+                        )),
+                    };
+                };
+
+                let validation =
+                    assist_bind_task_validation_commands(&resolved_path, &target.contract_path, member);
+                let after_value = proposal.after_value.clone();
+
+                if write {
+                    match fs::write(&target.contract_path, yaml) {
+                        Ok(()) => match format {
+                            OutputFormat::Text => CommandOutput::success(render_assist_bind_task_text(
+                                &text_path_display,
+                                &proposal,
+                                "write",
+                                &validation,
+                                None,
+                            )),
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&AssistProposalSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    member,
+                                    mode: "write",
+                                    operation: "bind-task",
+                                    subject: proposal.subject_json(),
+                                    inputs: proposal.inputs_json(),
+                                    assumptions: proposal.assumptions.clone(),
+                                    changes: vec![AssistProposalChange {
+                                        path: &format!(
+                                            "tasks.{}.targets.{}",
+                                            proposal.consumer_task, proposal.target_name
+                                        ),
+                                        action: "set",
+                                        before: proposal.before_value.clone(),
+                                        after: after_value,
+                                    }],
+                                    diff: proposal.diff(),
+                                    validation,
+                                    next: String::from(
+                                        "rerun `ota execution topology` to inspect the updated task edge",
+                                    ),
+                                }))
+                            }
+                        },
+                        Err(error) => {
+                            let why = format!(
+                                "failed to write `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "bind-task",
+                                        subject: proposal.subject_json(),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path or permissions, then rerun with `--write`",
+                                        ),
+                                    },
+                                )),
+                            }
+                        }
+                    }
+                } else {
+                    let preview_target_path = if member.is_some() {
+                        &resolved_path
+                    } else {
+                        &target.contract_path
+                    };
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_assist_bind_task_text(
+                            &text_path_display,
+                            &proposal,
+                            "preview",
+                            &validation,
+                            Some(&proposal.preview_next_command(member, preview_target_path)),
+                        )),
+                        OutputFormat::Json => {
+                            CommandOutput::success(to_json(&AssistProposalSuccess {
+                                ok: true,
+                                path: &path_display,
+                                member,
+                                mode: "preview",
+                                operation: "bind-task",
+                                subject: proposal.subject_json(),
+                                inputs: proposal.inputs_json(),
+                                assumptions: proposal.assumptions.clone(),
+                                changes: vec![AssistProposalChange {
+                                    path: &format!(
+                                        "tasks.{}.targets.{}",
+                                        proposal.consumer_task, proposal.target_name
+                                    ),
+                                    action: "set",
+                                    before: proposal.before_value.clone(),
+                                    after: after_value,
+                                }],
+                                diff: proposal.diff(),
+                                validation,
+                                next: proposal.preview_next_command(member, preview_target_path),
+                            }))
+                        }
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ASSIST BIND-TASK",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist bind-task",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "bind-task",
+                    subject: assist_bind_task_subject_map(task, target_name),
+                    why: errors.to_string(),
+                    next: String::from(
+                        "repair the existing contract, then rerun the assist command",
+                    ),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ASSIST BIND-TASK",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist bind-task",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "bind-task",
+                    subject: assist_bind_task_subject_map(task, target_name),
+                    why: error.to_string(),
+                    next: String::from("repair the contract path, then rerun the assist command"),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn assist_bind_task_subject_map<'a>(
+    task: &'a str,
+    target_name: &'a str,
+) -> BTreeMap<&'static str, &'a str> {
+    let mut subject = BTreeMap::new();
+    subject.insert("task", task);
+    subject.insert("target", target_name);
+    subject
+}
+
+fn parse_assist_bind_target_selector(value: &str) -> (String, Option<String>) {
+    match value.split_once(':') {
+        Some((task, listener)) => (task.trim().to_string(), Some(listener.trim().to_string())),
+        None => (value.trim().to_string(), None),
+    }
+}
+
+fn assist_task_target_address_view_from_arg(
+    value: AssistTaskTargetAddressViewArg,
+) -> TaskTargetAddressView {
+    match value {
+        AssistTaskTargetAddressViewArg::Topology => TaskTargetAddressView::Topology,
+        AssistTaskTargetAddressViewArg::Host => TaskTargetAddressView::Host,
+        AssistTaskTargetAddressViewArg::Internal => TaskTargetAddressView::Internal,
+    }
+}
+
+fn assist_task_target_activation_mode_from_arg(
+    value: AssistTaskTargetActivationModeArg,
+) -> TaskTargetActivationMode {
+    match value {
+        AssistTaskTargetActivationModeArg::Manual => TaskTargetActivationMode::Manual,
+        AssistTaskTargetActivationModeArg::EnsureStarted => TaskTargetActivationMode::EnsureStarted,
+        AssistTaskTargetActivationModeArg::RestartReady => TaskTargetActivationMode::RestartReady,
+        AssistTaskTargetActivationModeArg::EnsureReady => TaskTargetActivationMode::EnsureReady,
+        AssistTaskTargetActivationModeArg::EnsureRunning => TaskTargetActivationMode::EnsureRunning,
+    }
+}
+
+fn assist_bind_task_address_view_candidates(
+    explicit: Option<AssistTaskTargetAddressViewArg>,
+    existing_service: Option<&TaskTargetServiceRefSpec>,
+    producer_member: Option<&str>,
+    producer_task_name: &str,
+) -> Vec<TaskTargetAddressView> {
+    if let Some(explicit) = explicit {
+        return vec![assist_task_target_address_view_from_arg(explicit)];
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(existing_service) = existing_service {
+        if existing_service.task == producer_task_name
+            && existing_service.member.as_deref() == producer_member
+        {
+            candidates.push(existing_service.address_view);
+        }
+    }
+    for fallback in [
+        TaskTargetAddressView::Topology,
+        TaskTargetAddressView::Host,
+        TaskTargetAddressView::Internal,
+    ] {
+        if !candidates.contains(&fallback) {
+            candidates.push(fallback);
+        }
+    }
+    candidates
+}
+
+fn task_declared_service_listener_names_for_assist(task: &TaskSpec) -> BTreeSet<String> {
+    let mut listeners = BTreeSet::new();
+    if let Some(runtime) = task
+        .runtime
+        .as_ref()
+        .filter(|runtime| runtime.kind == crate::schema::TaskRuntimeKind::Service)
+    {
+        listeners.extend(runtime.listeners.keys().cloned());
+    }
+    if let Some(execution) = task.execution.as_ref() {
+        for (_, branch) in execution.modes.iter() {
+            if let Some(runtime) = branch
+                .runtime
+                .as_ref()
+                .filter(|runtime| runtime.kind == crate::schema::TaskRuntimeKind::Service)
+            {
+                listeners.extend(runtime.listeners.keys().cloned());
+            }
+        }
+    }
+    listeners
+}
+
+fn resolve_assist_bind_task_listener(
+    producer_task: &TaskSpec,
+    existing_service: Option<&TaskTargetServiceRefSpec>,
+    producer_member: Option<&str>,
+    producer_task_name: &str,
+    explicit_listener: Option<&str>,
+) -> Result<String, (String, String)> {
+    if let Some(listener) = explicit_listener {
+        let listener = listener.trim();
+        if listener.is_empty() {
+            return Err((
+                String::from("`--to` must not declare an empty listener name"),
+                String::from("rerun with `--to <task>:<listener>` using one declared listener"),
+            ));
+        }
+        if task_declared_service_listener_names_for_assist(producer_task).contains(listener) {
+            return Ok(listener.to_string());
+        }
+        return Err((
+            format!(
+                "producer task `{producer_task_name}` does not declare listener `{listener}`"
+            ),
+            String::from("run `ota execution topology` to inspect the producer listeners"),
+        ));
+    }
+
+    if let Some(existing_service) = existing_service {
+        if existing_service.task == producer_task_name
+            && existing_service.member.as_deref() == producer_member
+            && existing_service
+                .listener
+                .as_deref()
+                .is_some_and(|listener| {
+                    task_declared_service_listener_names_for_assist(producer_task).contains(listener)
+                })
+        {
+            return Ok(existing_service.listener.clone().expect("checked above"));
+        }
+    }
+
+    let listeners = task_declared_service_listener_names_for_assist(producer_task);
+    match listeners.len() {
+        0 => Err((
+            format!("producer task `{producer_task_name}` does not declare any service listeners"),
+            String::from("declare the producer runtime listener first, then rerun the assist command"),
+        )),
+        1 => Ok(listeners
+            .into_iter()
+            .next()
+            .expect("one listener should exist")),
+        _ => Err((
+            format!(
+                "producer task `{producer_task_name}` declares multiple listeners, so assist cannot pick one safely"
+            ),
+            String::from("rerun with `--to <task>:<listener>` after checking `ota execution topology`"),
+        )),
+    }
+}
+
+fn build_assist_bind_task_proposal(
+    task: &str,
+    target_name: &str,
+    before_value: &YamlValue,
+    overlay_before_value: &YamlValue,
+    member_mode: bool,
+    existing_target: Option<&TaskTargetSpec>,
+    producer_task_name: &str,
+    producer_member: Option<&str>,
+    listener: &str,
+    address_view: TaskTargetAddressView,
+    activation: TaskTargetActivationMode,
+    override_input: Option<String>,
+) -> Result<AssistBindTaskProposal, (String, String)> {
+    let mut assumptions = Vec::new();
+    if existing_target.is_some() {
+        assumptions.push(format!(
+            "the existing target `{target_name}` will be refined in place"
+        ));
+    } else {
+        assumptions.push(format!(
+            "a new target binding will be created under `tasks.{task}.targets.{target_name}`"
+        ));
+    }
+    assumptions.push(format!(
+        "task `{task}` will resolve `{target_name}` through producer task `{producer_task_name}` listener `{listener}`"
+    ));
+    assumptions.push(format!(
+        "ota will resolve this edge with `address_view: {}`",
+        assist_task_target_address_view_name(address_view)
+    ));
+    assumptions.push(format!(
+        "`activation.mode` will be `{}`",
+        assist_task_target_activation_mode_name(activation)
+    ));
+    if let Some(override_input) = &override_input {
+        assumptions.push(format!(
+            "operators may override this edge through declared input `{override_input}`"
+        ));
+    }
+
+    let service_ref = TaskTargetServiceRefSpec {
+        member: producer_member.map(str::to_string),
+        task: producer_task_name.to_string(),
+        listener: Some(listener.to_string()),
+        address_view,
+    };
+    let target_spec = TaskTargetSpec {
+        service: Some(service_ref.clone()),
+        url: None,
+        override_input: override_input.clone(),
+        activation: TaskTargetActivationSpec { mode: activation },
+    };
+    let after_value = serde_yaml::to_value(&target_spec).map_err(|error| {
+        (
+            format!("failed to build target preview: {error}"),
+            String::from("rerun the assist command after repairing the contract"),
+        )
+    })?;
+
+    if &after_value == before_value {
+        return Err((
+            format!("the requested binding would not change `tasks.{task}.targets.{target_name}`"),
+            String::from("change one of the binding inputs, then rerun the assist command"),
+        ));
+    }
+
+    let string_key = |key: &str| YamlValue::String(key.to_string());
+    let mut write_mapping = overlay_before_value
+        .as_mapping()
+        .cloned()
+        .unwrap_or_else(Mapping::new);
+    write_mapping.insert(
+        string_key("service"),
+        serde_yaml::to_value(&service_ref).map_err(|error| {
+            (
+                format!("failed to build target service preview: {error}"),
+                String::from("rerun the assist command after repairing the contract"),
+            )
+        })?,
+    );
+    if member_mode
+        && producer_member.is_none()
+        && existing_target
+            .and_then(|target| target.service.as_ref())
+            .is_some_and(|service| service.member.is_some())
+    {
+        if let Some(service_mapping) = write_mapping
+            .get_mut(string_key("service"))
+            .and_then(YamlValue::as_mapping_mut)
+        {
+            service_mapping.insert(string_key("member"), YamlValue::Null);
+        }
+    }
+    write_mapping.insert(
+        string_key("activation"),
+        serde_yaml::to_value(TaskTargetActivationSpec { mode: activation }).map_err(|error| {
+            (
+                format!("failed to build target activation preview: {error}"),
+                String::from("rerun the assist command after repairing the contract"),
+            )
+        })?,
+    );
+    if let Some(override_input) = &override_input {
+        write_mapping.insert(
+            string_key("override_input"),
+            YamlValue::String(override_input.clone()),
+        );
+    }
+    if member_mode
+        && existing_target.is_some_and(|target| target.kind() == crate::schema::TaskTargetKind::Url)
+    {
+        write_mapping.insert(string_key("url"), YamlValue::Null);
+    } else {
+        write_mapping.remove(string_key("url"));
+    }
+
+    Ok(AssistBindTaskProposal {
+        consumer_task: task.to_string(),
+        target_name: target_name.to_string(),
+        producer_task: producer_task_name.to_string(),
+        producer_member: producer_member.map(str::to_string),
+        listener: listener.to_string(),
+        address_view,
+        activation,
+        override_input,
+        assumptions,
+        before_value: before_value.clone(),
+        after_value,
+        write_value: YamlValue::Mapping(write_mapping),
+    })
 }
 
 fn proposal_service_subject_map(service: &str) -> BTreeMap<&'static str, &str> {
@@ -6392,6 +7590,31 @@ fn assist_setup_validation_commands(
             command_for_repo_contract_target("ota validate", target_contract_path),
             command_for_repo_contract_target("ota up --dry-run", target_contract_path),
             command_for_repo_contract_target("ota doctor", target_contract_path),
+        ],
+    }
+}
+
+fn assist_bind_task_validation_commands(
+    resolved_path: &Path,
+    target_contract_path: &Path,
+    member: Option<&str>,
+) -> Vec<String> {
+    match member {
+        Some(member) => [
+            command_for_repo_from_contract_path(
+                &format!("ota validate --member {member}"),
+                resolved_path,
+            ),
+            command_for_repo_from_contract_path(
+                &format!("ota execution topology --member {member}"),
+                resolved_path,
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        None => vec![
+            command_for_repo_contract_target("ota validate", target_contract_path),
+            command_for_repo_contract_target("ota execution topology", target_contract_path),
         ],
     }
 }

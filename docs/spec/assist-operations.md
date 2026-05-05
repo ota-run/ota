@@ -279,12 +279,13 @@ Minimum required selectors:
 
 Canonical `--to` grammar:
 
-- `<task>:<listener>` for a task runtime producer, for example `dev:http`
-- `service:<name>:<endpoint>` for a top-level managed service endpoint
+- `<task>` when the producer exposes exactly one declared service listener or the existing target already pins one safe listener
+- `<task>:<listener>` for an explicit task runtime producer listener, for example `dev:http`
 
 Behavior:
 
 - proposes `tasks.<consumer>.targets.<name>`
+- currently binds only to producer task runtimes, not directly to top-level managed service endpoints
 - selects `address_view` deterministically from the active topology shape
 - may propose `host`, `topology`, or `internal`
 - refuses when multiple listeners or multiple producer surfaces are equally valid without more
