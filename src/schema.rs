@@ -1144,7 +1144,7 @@ pub struct EnvRequirement {
     pub append: Vec<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceSpec {
     #[serde(default)]

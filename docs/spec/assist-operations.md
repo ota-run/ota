@@ -24,7 +24,7 @@
 
 # Assist Operations
 
-Status: planned.
+Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness`, `ota assist declare-service`, `ota assist bind-task`, `ota assist declare-env`, `ota assist add-task`, `ota assist wire-setup`, and `ota assist normalize`.
 
 This document defines the long-term product contract for `ota assist`.
 
@@ -36,6 +36,45 @@ deterministic contract-operation layer above Ota's existing repo truth:
 - `ota assist` proposes bounded contract changes against that same truth
 
 The goal is to reduce author burden without weakening trust.
+
+## Current shipped slice
+
+The currently shipped assist operations are:
+
+- `ota assist declare-readiness`
+- `ota assist declare-service`
+- `ota assist bind-task`
+- `ota assist declare-env`
+- `ota assist add-task`
+- `ota assist wire-setup`
+- `ota assist normalize`
+
+Current scope:
+
+- previews or applies one deterministic readiness mutation
+- targets either an existing task runtime service or an existing top-level managed service
+- supports `--member` for monorepo overlays
+- supports `spring-http`, `http`, and `tcp`
+- emits a stable JSON proposal/apply result
+- previews or applies one deterministic managed-service mutation
+- can create or refine one `services.<name>` block with explicit manager, endpoint, and optional readiness inputs
+- previews or applies one deterministic `tasks.<consumer>.targets.<name>` binding to a producer runtime listener
+- previews or applies one deterministic env requirement, env source, or task-local env mutation
+- previews or applies one deterministic new-task declaration with explicit execution input
+- previews or applies one deterministic `tasks.setup` mutation with explicit setup body, `setup.requires_services`, and `internal` ownership
+- previews or applies one deterministic normalization that moves one existing setup-like task into the canonical `tasks.setup` slot
+
+Current trust boundaries:
+
+- preview is the default
+- managed services require explicit `--style` unless assist is refining an existing structured readiness kind
+- assist refuses ambiguous listener selection instead of guessing
+- text preview must show destructive readiness replacement honestly
+- `add-task` creates only new tasks and requires explicit runtime listener inputs for service tasks
+- `normalize` only operates on tasks declared in the current write target and currently ships only the `--into setup` intent
+- `wire-setup` owns only `tasks.setup` plus the phased `setup.requires_services` boundary; it is not a broad task authoring command
+
+For the operator guide and concrete examples, see [assist-workflow.md](assist-workflow.md).
 
 ## Product model
 
@@ -250,12 +289,13 @@ Minimum required selectors:
 
 Canonical `--to` grammar:
 
-- `<task>:<listener>` for a task runtime producer, for example `dev:http`
-- `service:<name>:<endpoint>` for a top-level managed service endpoint
+- `<task>` when the producer exposes exactly one declared service listener or the existing target already pins one safe listener
+- `<task>:<listener>` for an explicit task runtime producer listener, for example `dev:http`
 
 Behavior:
 
 - proposes `tasks.<consumer>.targets.<name>`
+- currently binds only to producer task runtimes, not directly to top-level managed service endpoints
 - selects `address_view` deterministically from the active topology shape
 - may propose `host`, `topology`, or `internal`
 - refuses when multiple listeners or multiple producer surfaces are equally valid without more
@@ -298,6 +338,10 @@ Behavior:
 - may still preserve legacy top-level `readiness.run` when the user asked only for review and Ota
   cannot express the existing probe shape structurally
 - must refuse contradictory output such as `method: HEAD` plus `body.contains`
+- must refuse a managed-service proposal when protocol truth cannot be inferred and the user did not
+  pass `--style`
+- must derive task style inference from the selected readiness listener, not from the runtime in the
+  abstract
 
 Typical validation:
 
@@ -323,6 +367,9 @@ Behavior:
   - `endpoints`
   - `readiness`
 - must not invent undeclared topology outside the selected service
+- for new services, must require an explicit manager kind
+- when the selected service manager is `compose`, may default `manager.name` to `local` and `manager.service` to the declared service name if those values are otherwise absent
+- may attach structured readiness with the same shipped readiness templates as `declare-readiness`
 
 Typical validation:
 
@@ -342,6 +389,7 @@ Behavior:
   - `env.vars`
   - `env.sources`
   - task-level env only when explicitly requested
+- current shipped task-level env support is explicit `tasks.<name>.env.<KEY> = <value>` only
 - should prefer canonical declared source kinds over opaque shell glue
 - must preserve existing deterministic precedence rules
 
@@ -380,8 +428,10 @@ Purpose:
 
 Behavior:
 
-- may move misplaced or redundant declarations into the correct contract section
-- may normalize execution-context placement, readiness ownership, or setup wiring
+- current shipped scope moves one existing setup-like task into the canonical `tasks.setup` slot
+- removes the original `tasks.<name>` entry in the same write target
+- normalizes the resulting `tasks.setup` to `internal: true`
+- must refuse inherited member-overlay source tasks it cannot safely delete
 - must remain bounded to one normalization intent at a time
 - must not act as an arbitrary beautifier or formatter-only command
 
@@ -443,4 +493,3 @@ Reason:
 - readiness, topology binding, and setup orchestration already have strong shipped primitives
 - these operations solve immediate adoption pain
 - they exercise the full preview/apply/validate model without needing a general-purpose mutator
-

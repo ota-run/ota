@@ -231,6 +231,164 @@ fn policy_init_schema_includes_minimal_policy_pack_shape() {
 }
 
 #[test]
+fn assist_declare_service_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-declare-service.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+    let inputs = &success["inputs"]["properties"];
+
+    assert_eq!(
+        success["operation"]["const"],
+        serde_json::json!("declare-service")
+    );
+    assert_eq!(
+        success["subject"]["required"],
+        serde_json::json!(["service"])
+    );
+    assert!(inputs.get("manager").is_some());
+    assert!(inputs.get("endpoint").is_some());
+    assert!(inputs.get("address").is_some());
+    assert!(inputs.get("port").is_some());
+    assert!(inputs.get("required").is_some());
+    assert!(inputs.get("style").is_some());
+    assert!(inputs.get("compose_file").is_some());
+    assert!(inputs.get("compose_service").is_some());
+    assert_eq!(
+        failure["operation"]["const"],
+        serde_json::json!("declare-service")
+    );
+    assert_eq!(
+        failure["subject"]["required"],
+        serde_json::json!(["service"])
+    );
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn assist_wire_setup_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-wire-setup.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("wire-setup"));
+    assert_eq!(subject["task"]["const"], json!("setup"));
+    assert!(inputs.get("run").is_some());
+    assert!(inputs.get("script").is_some());
+    assert!(inputs.get("services").is_some());
+    assert!(inputs.get("clear_services").is_some());
+    assert!(inputs.get("internal").is_some());
+    assert_eq!(change["path"]["const"], json!("tasks.setup"));
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn assist_bind_task_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-bind-task.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("bind-task"));
+    assert!(subject.get("task").is_some());
+    assert!(subject.get("target").is_some());
+    assert!(inputs.get("to").is_some());
+    assert!(inputs.get("producer_member").is_some());
+    assert!(inputs.get("address_view").is_some());
+    assert!(inputs.get("activation").is_some());
+    assert!(inputs.get("override_input").is_some());
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn assist_declare_env_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-declare-env.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("declare-env"));
+    assert!(subject.get("kind").is_some());
+    assert!(subject.get("name").is_some());
+    assert!(subject.get("task").is_some());
+    assert!(subject.get("source_kind").is_some());
+    assert!(subject.get("source_path").is_some());
+    assert!(inputs.get("required").is_some());
+    assert!(inputs.get("secret").is_some());
+    assert!(inputs.get("default").is_some());
+    assert!(inputs.get("allowed").is_some());
+    assert!(inputs.get("prepend").is_some());
+    assert!(inputs.get("append").is_some());
+    assert!(inputs.get("source_kind").is_some());
+    assert!(inputs.get("source_path").is_some());
+    assert!(inputs.get("must_exist").is_some());
+    assert!(inputs.get("value").is_some());
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn assist_add_task_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-add-task.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("add-task"));
+    assert!(subject.get("task").is_some());
+    assert!(inputs.get("kind").is_some());
+    assert!(inputs.get("run").is_some());
+    assert!(inputs.get("script").is_some());
+    assert!(inputs.get("description").is_some());
+    assert!(inputs.get("internal").is_some());
+    assert!(inputs.get("listener").is_some());
+    assert!(inputs.get("protocol").is_some());
+    assert!(inputs.get("address").is_some());
+    assert!(inputs.get("port").is_some());
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn assist_normalize_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-normalize.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("normalize"));
+    assert!(subject.get("task").is_some());
+    assert!(subject.get("into").is_some());
+    assert!(inputs.get("into").is_some());
+    assert_eq!(success["changes"]["minItems"], json!(2));
+    assert_eq!(change["action"]["enum"], json!(["delete", "set"]));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];
@@ -482,6 +640,28 @@ fn init_schema_includes_optional_next_on_failures() {
     assert!(provenance.get("provenance_key").is_some());
     assert!(provenance.get("source").is_some());
     assert!(provenance.get("confidence").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn assist_declare_readiness_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-declare-readiness.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("declare-readiness"));
+    assert!(subject.get("task").is_some());
+    assert!(subject.get("service").is_some());
+    assert_eq!(
+        inputs["style"]["enum"],
+        json!(["spring-http", "http", "tcp"])
+    );
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
     assert!(failure.get("next").is_some());
 }
 

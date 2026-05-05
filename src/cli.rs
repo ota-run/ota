@@ -149,6 +149,12 @@ enum Commands {
         #[command(subcommand)]
         command: ExecutionCommands,
     },
+    #[command(display_order = 5)]
+    /// Propose reviewed contract mutations from bounded Ota intents.
+    Assist {
+        #[command(subcommand)]
+        command: AssistCommands,
+    },
     #[command(display_order = 10)]
     /// Export a read-only local Studio snapshot for the current repo.
     Studio {
@@ -609,6 +615,313 @@ enum ExecutionCommands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum AssistCommands {
+    /// Declare or refine structured readiness for a task runtime or managed service.
+    DeclareReadiness {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed readiness mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Target one declared task runtime service.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: Option<String>,
+        /// Target one declared managed service.
+        #[arg(long)]
+        service: Option<String>,
+        /// Use one explicit readiness template style.
+        #[arg(long, value_enum)]
+        style: Option<AssistReadinessStyleArg>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Declare or refine one top-level managed service.
+    DeclareService {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed service mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Target service name.
+        #[arg(long)]
+        name: String,
+        /// Explicit service manager kind for creation or refinement.
+        #[arg(long, value_enum)]
+        manager: Option<AssistServiceManagerArg>,
+        /// Optional manager name such as a compose project name.
+        #[arg(long = "manager-name")]
+        manager_name: Option<String>,
+        /// Optional compose file path when using `--manager compose`.
+        #[arg(long = "compose-file")]
+        compose_file: Option<String>,
+        /// Optional compose service override when using `--manager compose`.
+        #[arg(long = "compose-service")]
+        compose_service: Option<String>,
+        /// Endpoint name to declare or refine. Defaults to `host` when safe.
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Endpoint address to declare or refine.
+        #[arg(long)]
+        address: Option<String>,
+        /// Endpoint port to declare or refine.
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
+        /// Explicit required flag value.
+        #[arg(long)]
+        required: Option<bool>,
+        /// Optional structured readiness template to attach to the selected endpoint.
+        #[arg(long, value_enum)]
+        style: Option<AssistReadinessStyleArg>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Create or refine the setup task and pre-setup service phase for `ota up`.
+    WireSetup {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed setup mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Replace the setup task body with a single run command.
+        #[arg(long, conflicts_with = "script")]
+        run: Option<String>,
+        /// Replace the setup task body with a shell script body.
+        #[arg(long, conflicts_with = "run")]
+        script: Option<String>,
+        /// Declare one service that must be ready before setup runs. Repeat to set the ordered list.
+        #[arg(long = "service")]
+        services: Vec<String>,
+        /// Clear `setup.requires_services` explicitly.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "services")]
+        clear_services: bool,
+        /// Explicit internal flag value for `tasks.setup`.
+        #[arg(long)]
+        internal: Option<bool>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Bind one declared task to a producer task runtime target.
+    BindTask {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed task-target mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Consumer task name to mutate.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: String,
+        /// Consumer-local target name such as `api`.
+        #[arg(long)]
+        target: String,
+        /// Producer task selector in `<task>` or `<task>:<listener>` form.
+        #[arg(long)]
+        to: String,
+        /// Optional producer member when the producer task lives in another monorepo member.
+        #[arg(long = "producer-member", add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        producer_member: Option<String>,
+        /// Explicit address view for the bound target.
+        #[arg(long = "address-view", value_enum)]
+        address_view: Option<AssistTaskTargetAddressViewArg>,
+        /// Explicit activation mode for the bound target.
+        #[arg(long, value_enum)]
+        activation: Option<AssistTaskTargetActivationModeArg>,
+        /// Optional consumer task input name to use as the explicit override channel.
+        #[arg(long = "override-input")]
+        override_input: Option<String>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Declare or refine repo env requirements, env sources, or one explicit task-local env value.
+    DeclareEnv {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed env mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Target one task-local env override instead of root env contract truth.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: Option<String>,
+        /// Env variable name for root `env.vars` or task-local `tasks.<name>.env`.
+        #[arg(long)]
+        name: Option<String>,
+        /// Explicit task-local env value. Only valid with `--task`.
+        #[arg(long)]
+        value: Option<String>,
+        /// Explicit required flag for root `env.vars.<NAME>`.
+        #[arg(long)]
+        required: Option<bool>,
+        /// Explicit secret flag for root `env.vars.<NAME>`.
+        #[arg(long)]
+        secret: Option<bool>,
+        /// Explicit default value for root `env.vars.<NAME>`.
+        #[arg(long)]
+        default: Option<String>,
+        /// Allowed root env values. Repeat to set the ordered list.
+        #[arg(long = "allowed")]
+        allowed: Vec<String>,
+        /// PATH entries to prepend for root `env.vars.PATH`. Repeat to set the ordered list.
+        #[arg(long = "prepend")]
+        prepend: Vec<String>,
+        /// PATH entries to append for root `env.vars.PATH`. Repeat to set the ordered list.
+        #[arg(long = "append")]
+        append: Vec<String>,
+        /// Declared root env source kind.
+        #[arg(long = "source-kind", value_enum)]
+        source_kind: Option<AssistEnvSourceKindArg>,
+        /// Declared root env source path, relative to the contract.
+        #[arg(long = "source-path")]
+        source_path: Option<String>,
+        /// Explicit must-exist flag for the declared env source.
+        #[arg(long = "must-exist")]
+        must_exist: Option<bool>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Add one new declared task with an explicit execution body.
+    AddTask {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed task creation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// New task name.
+        #[arg(long)]
+        name: String,
+        /// Task shape to create. Defaults to `command`.
+        #[arg(long, value_enum)]
+        kind: Option<AssistTaskKindArg>,
+        /// Single run command for the new task.
+        #[arg(long, conflicts_with = "script")]
+        run: Option<String>,
+        /// Shell script body for the new task.
+        #[arg(long, conflicts_with = "run")]
+        script: Option<String>,
+        /// Optional task description.
+        #[arg(long)]
+        description: Option<String>,
+        /// Explicit internal flag for the new task.
+        #[arg(long)]
+        internal: Option<bool>,
+        /// Listener name for a new service task.
+        #[arg(long)]
+        listener: Option<String>,
+        /// Listener protocol for a new service task.
+        #[arg(long, value_enum)]
+        protocol: Option<AssistTaskListenerProtocolArg>,
+        /// Bind address for a new service task listener. Defaults to `127.0.0.1`.
+        #[arg(long)]
+        address: Option<String>,
+        /// Fixed bind and host projection port for a new service task listener.
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Normalize one existing task into the canonical setup slot.
+    Normalize {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed normalization.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Existing task name to normalize.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: String,
+        /// Canonical destination for the normalization intent.
+        #[arg(long, value_enum)]
+        into: AssistNormalizeIntoArg,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistReadinessStyleArg {
+    SpringHttp,
+    Http,
+    Tcp,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistServiceManagerArg {
+    Compose,
+    Host,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskTargetAddressViewArg {
+    Topology,
+    Host,
+    Internal,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskTargetActivationModeArg {
+    Manual,
+    EnsureStarted,
+    RestartReady,
+    EnsureReady,
+    EnsureRunning,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistEnvSourceKindArg {
+    Dotenv,
+    Properties,
+    Json,
+    Yaml,
+    Toml,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskKindArg {
+    Command,
+    Service,
+    Setup,
+    Check,
+    Sandbox,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskListenerProtocolArg {
+    Http,
+    Tcp,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistNormalizeIntoArg {
+    Setup,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -3675,6 +3988,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Validate { json: true, .. }
             | Commands::Tasks { json: true, .. }
             | Commands::Services { json: true, .. }
+            | Commands::Assist {
+                command: AssistCommands::DeclareReadiness { json: true, .. },
+            }
             | Commands::Doctor { json: true, .. }
             | Commands::Explain { json: true, .. }
             | Commands::Check { json: true, .. }
@@ -3782,6 +4098,216 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::DeclareReadiness {
+                    json,
+                    write,
+                    member,
+                    task,
+                    service,
+                    style,
+                    path,
+                },
+        } => commands::assist_declare_readiness(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            task.as_deref(),
+            service.as_deref(),
+            style,
+            write,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::DeclareService {
+                    json,
+                    write,
+                    member,
+                    name,
+                    manager,
+                    manager_name,
+                    compose_file,
+                    compose_service,
+                    endpoint,
+                    address,
+                    port,
+                    required,
+                    style,
+                    path,
+                },
+        } => commands::assist_declare_service(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            &name,
+            manager,
+            manager_name.as_deref(),
+            compose_file.as_deref(),
+            compose_service.as_deref(),
+            endpoint.as_deref(),
+            address.as_deref(),
+            port,
+            required,
+            style,
+            write,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::WireSetup {
+                    json,
+                    write,
+                    member,
+                    run,
+                    script,
+                    services,
+                    clear_services,
+                    internal,
+                    path,
+                },
+        } => commands::assist_wire_setup(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            run.as_deref(),
+            script.as_deref(),
+            &services,
+            clear_services,
+            internal,
+            write,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::BindTask {
+                    json,
+                    write,
+                    member,
+                    task,
+                    target,
+                    to,
+                    producer_member,
+                    address_view,
+                    activation,
+                    override_input,
+                    path,
+                },
+        } => commands::assist_bind_task(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            &task,
+            &target,
+            &to,
+            producer_member.as_deref(),
+            address_view,
+            activation,
+            override_input.as_deref(),
+            write,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::DeclareEnv {
+                    json,
+                    write,
+                    member,
+                    task,
+                    name,
+                    value,
+                    required,
+                    secret,
+                    default,
+                    allowed,
+                    prepend,
+                    append,
+                    source_kind,
+                    source_path,
+                    must_exist,
+                    path,
+                },
+        } => commands::assist_declare_env(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            task.as_deref(),
+            name.as_deref(),
+            value.as_deref(),
+            required,
+            secret,
+            default.as_deref(),
+            &allowed,
+            &prepend,
+            &append,
+            source_kind,
+            source_path.as_deref(),
+            must_exist,
+            write,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::AddTask {
+                    json,
+                    write,
+                    member,
+                    name,
+                    kind,
+                    run,
+                    script,
+                    description,
+                    internal,
+                    listener,
+                    protocol,
+                    address,
+                    port,
+                    path,
+                },
+        } => commands::assist_add_task(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            &name,
+            kind,
+            run.as_deref(),
+            script.as_deref(),
+            description.as_deref(),
+            internal,
+            listener.as_deref(),
+            protocol,
+            address.as_deref(),
+            port,
+            write,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::Normalize {
+                    json,
+                    write,
+                    member,
+                    task,
+                    into,
+                    path,
+                },
+        } => commands::assist_normalize(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            &task,
+            into,
+            write,
             format_from_json(json),
             debug,
         ),
@@ -4478,6 +5004,39 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Validate { .. } => "run `ota init` to create a starter contract",
         Commands::Tasks { .. } => "run `ota tasks` to inspect available task names",
         Commands::Services { .. } => "run `ota services` to inspect declared services",
+        Commands::Assist {
+            command: AssistCommands::DeclareReadiness { .. },
+        } => {
+            "rerun `ota assist declare-readiness --task <name>` or `--service <name>` with one explicit target"
+        }
+        Commands::Assist {
+            command: AssistCommands::DeclareService { .. },
+        } => {
+            "rerun `ota assist declare-service --name <service>` with explicit manager or endpoint inputs"
+        }
+        Commands::Assist {
+            command: AssistCommands::WireSetup { .. },
+        } => "rerun `ota assist wire-setup --run '<command>'` with any pre-setup services you need",
+        Commands::Assist {
+            command: AssistCommands::BindTask { .. },
+        } => {
+            "rerun `ota assist bind-task --task <consumer> --target <name> --to <producer>:<listener>` with one explicit producer edge"
+        }
+        Commands::Assist {
+            command: AssistCommands::DeclareEnv { .. },
+        } => {
+            "rerun `ota assist declare-env` with one explicit env var, env source, or task-local env target"
+        }
+        Commands::Assist {
+            command: AssistCommands::AddTask { .. },
+        } => {
+            "rerun `ota assist add-task --name <task>` with one explicit task body and any required service listener inputs"
+        }
+        Commands::Assist {
+            command: AssistCommands::Normalize { .. },
+        } => {
+            "rerun `ota assist normalize --task <name> --into setup` when one existing setup-like task should move into the canonical `tasks.setup` slot"
+        }
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
@@ -4667,6 +5226,27 @@ fn command_requests_json(command: &Commands) -> bool {
         Commands::Validate { json, .. }
         | Commands::Tasks { json, .. }
         | Commands::Services { json, .. }
+        | Commands::Assist {
+            command: AssistCommands::DeclareReadiness { json, .. },
+        }
+        | Commands::Assist {
+            command: AssistCommands::DeclareService { json, .. },
+        }
+        | Commands::Assist {
+            command: AssistCommands::WireSetup { json, .. },
+        }
+        | Commands::Assist {
+            command: AssistCommands::BindTask { json, .. },
+        }
+        | Commands::Assist {
+            command: AssistCommands::DeclareEnv { json, .. },
+        }
+        | Commands::Assist {
+            command: AssistCommands::AddTask { json, .. },
+        }
+        | Commands::Assist {
+            command: AssistCommands::Normalize { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
@@ -4731,6 +5311,27 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Validate { .. } => "ota validate",
         Commands::Tasks { .. } => "ota tasks",
         Commands::Services { .. } => "ota services",
+        Commands::Assist {
+            command: AssistCommands::DeclareReadiness { .. },
+        } => "ota assist declare-readiness",
+        Commands::Assist {
+            command: AssistCommands::DeclareService { .. },
+        } => "ota assist declare-service",
+        Commands::Assist {
+            command: AssistCommands::WireSetup { .. },
+        } => "ota assist wire-setup",
+        Commands::Assist {
+            command: AssistCommands::BindTask { .. },
+        } => "ota assist bind-task",
+        Commands::Assist {
+            command: AssistCommands::DeclareEnv { .. },
+        } => "ota assist declare-env",
+        Commands::Assist {
+            command: AssistCommands::AddTask { .. },
+        } => "ota assist add-task",
+        Commands::Assist {
+            command: AssistCommands::Normalize { .. },
+        } => "ota assist normalize",
         Commands::Env { .. } => "ota env",
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
@@ -9198,6 +9799,11 @@ execution:
 version: 1
 project:
   name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 workspace:
   type: monorepo
   members:
@@ -33369,6 +33975,1913 @@ tasks:
             }
             fs::write(path, contents).unwrap();
         }
+    }
+
+    #[test]
+    fn assist_declare_readiness_previews_task_runtime_http_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST DECLARE-READINESS"));
+        assert!(stdout.contains("tasks.dev.runtime.readiness"));
+        assert!(stdout.contains("path: /health"));
+        assert!(stdout.contains("ota validate"));
+        assert!(stdout.contains("ota doctor"));
+        assert!(stdout.contains("ota assist declare-readiness --task dev --style http --write"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_write_updates_task_runtime_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: ./gradlew bootRun
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            "--style",
+            "spring-http",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("readiness:"));
+        assert!(written.contains("path: /actuator/health"));
+        assert!(written.contains("contains: '\"status\":\"UP\"'"));
+        assert!(written.contains("start_period: 10s"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--member",
+            "api",
+            "--task",
+            "dev",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota doctor --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(!member_contract.contains("version: 1"));
+        assert!(member_contract.contains("readiness:"));
+        assert!(member_contract.contains("path: /health"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_json_preview_supports_managed_service_targets() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 43127
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--json",
+            "--service",
+            "api",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["path"], fixture.file_path().display().to_string());
+        assert_eq!(json["mode"], "preview");
+        assert_eq!(json["operation"], "declare-readiness");
+        assert_eq!(json["subject"]["service"], "api");
+        assert_eq!(json["changes"][0]["path"], "services.api.readiness");
+        assert_eq!(json["changes"][0]["after"]["kind"], "http");
+        assert_eq!(json["changes"][0]["after"]["path"], "/health");
+    }
+
+    #[test]
+    fn assist_declare_readiness_refuses_ambiguous_managed_service_style_without_selector() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--service",
+            "postgres",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("managed service readiness style is ambiguous"));
+        assert!(stderr.contains("--style tcp"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_uses_selected_existing_listener_for_style_inference() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: admin
+        interval: 5s
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              primary: true
+              path: /
+        admin:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("listener: admin"));
+        assert!(!stdout.contains("path: /health"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_rejects_http_style_against_existing_tcp_listener() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: admin
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              primary: true
+              path: /
+        admin:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("does not fit that listener"));
+        assert!(stderr.contains("runtime.readiness.listener"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_text_preview_surfaces_current_readiness_before_replacement() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 43127
+    readiness:
+      from: host
+      run: curl -fsS http://127.0.0.1:43127/health
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--service",
+            "api",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Current readiness"));
+        assert!(stdout.contains("run: curl -fsS http://127.0.0.1:43127/health"));
+        assert!(stdout.contains("Proposed readiness"));
+        assert!(stdout.contains("path: /health"));
+    }
+
+    #[test]
+    fn assist_declare_service_previews_new_compose_service_with_tcp_readiness() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "postgres",
+            "--manager",
+            "compose",
+            "--compose-file",
+            "docker-compose.yml",
+            "--port",
+            "5432",
+            "--style",
+            "tcp",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST DECLARE-SERVICE"));
+        assert!(stdout.contains("services.postgres"));
+        assert!(stdout.contains("kind: compose"));
+        assert!(stdout.contains("port: 5432"));
+        assert!(stdout.contains("kind: tcp"));
+        assert!(stdout.contains("ota assist declare-service --name postgres --manager compose"));
+        assert!(!stdout.contains("depends_on: []"));
+        assert!(!stdout.contains("--required false"));
+    }
+
+    #[test]
+    fn assist_declare_service_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--member",
+            "api",
+            "--name",
+            "api",
+            "--manager",
+            "compose",
+            "--compose-file",
+            "docker-compose.yml",
+            "--port",
+            "3000",
+            "--style",
+            "http",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota doctor --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(!member_contract.contains("version: 1"));
+        assert!(member_contract.contains("services:"));
+        assert!(member_contract.contains("kind: compose"));
+        assert!(member_contract.contains("path: /health"));
+    }
+
+    #[test]
+    fn assist_declare_service_json_preview_supports_new_host_services() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--json",
+            "--name",
+            "cache",
+            "--manager",
+            "host",
+            "--port",
+            "6379",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "preview");
+        assert_eq!(json["operation"], "declare-service");
+        assert_eq!(json["subject"]["service"], "cache");
+        assert_eq!(json["inputs"]["manager"], "host");
+        assert_eq!(json["changes"][0]["path"], "services.cache");
+        assert_eq!(json["changes"][0]["after"]["manager"]["kind"], "host");
+        assert_eq!(
+            json["changes"][0]["after"]["endpoints"]["host"]["port"],
+            6379
+        );
+    }
+
+    #[test]
+    fn assist_declare_service_refuses_new_service_without_manager_kind() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "postgres",
+            "--port",
+            "5432",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("needs an explicit manager kind"));
+        assert!(stderr.contains("--manager compose"));
+    }
+
+    #[test]
+    fn assist_declare_service_refines_multi_endpoint_service_without_forcing_endpoint_selection() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    internal:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 3000
+      internal:
+        address: api
+        port: 8080
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "api",
+            "--required",
+            "true",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST DECLARE-SERVICE"));
+        assert!(stdout.contains("services.api"));
+        assert!(stdout.contains("required: true"));
+        assert!(!stdout.contains("cannot pick one service endpoint safely"));
+    }
+
+    #[test]
+    fn assist_declare_service_preview_hides_null_only_fields() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "api",
+            "--manager",
+            "compose",
+            "--compose-file",
+            "docker-compose.yml",
+            "--port",
+            "3000",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(!stdout.contains("provider: null"));
+        assert!(!stdout.contains("start: null"));
+        assert!(!stdout.contains("stop: null"));
+        assert!(!stdout.contains("healthcheck: null"));
+        assert!(!stdout.contains("timeout: null"));
+    }
+
+    #[test]
+    fn assist_wire_setup_previews_new_setup_with_pre_setup_services() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--run",
+            "test -f .env.local || cp .env.example .env.local",
+            "--service",
+            "postgres",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST WIRE-SETUP"));
+        assert!(stdout.contains("tasks.setup"));
+        assert!(stdout.contains("run: test -f .env.local || cp .env.example .env.local"));
+        assert!(stdout.contains("requires_services:"));
+        assert!(stdout.contains("- postgres"));
+        assert!(stdout.contains("ota up --dry-run"));
+        assert!(stdout.contains("ota assist wire-setup --run"));
+    }
+
+    #[test]
+    fn assist_wire_setup_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--member",
+            "api",
+            "--run",
+            "npm install",
+            "--service",
+            "postgres",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota up --dry-run --member api"));
+        assert!(stdout.contains("ota doctor --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(!member_contract.contains("version: 1"));
+        assert!(member_contract.contains("tasks:"));
+        assert!(member_contract.contains("setup:"));
+        assert!(member_contract.contains("run: npm install"));
+        assert!(member_contract.contains("requires_services:"));
+        assert!(member_contract.contains("- postgres"));
+    }
+
+    #[test]
+    fn assist_wire_setup_json_preview_reports_setup_change() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--json",
+            "--script",
+            "printf setup",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "preview");
+        assert_eq!(json["operation"], "wire-setup");
+        assert_eq!(json["subject"]["task"], "setup");
+        assert_eq!(json["inputs"]["script"], "printf setup");
+        assert_eq!(json["changes"][0]["path"], "tasks.setup");
+        assert_eq!(json["changes"][0]["after"]["script"], "printf setup");
+        assert_eq!(json["changes"][0]["after"]["category"], "setup");
+        assert_eq!(json["changes"][0]["after"]["internal"], true);
+    }
+
+    #[test]
+    fn assist_wire_setup_refuses_new_setup_without_body() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with(["ota", "assist", "wire-setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("needs an explicit `--run` or `--script` body"));
+        assert!(stderr.contains("--run '<command>'"));
+    }
+
+    #[test]
+    fn assist_wire_setup_member_preview_surfaces_inherited_root_setup() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: test -f .env.local || cp .env.example .env.local
+    requires_services:
+      - postgres
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--member",
+            "api",
+            "--internal",
+            "false",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Current setup"));
+        assert!(stdout.contains("run: test -f .env.local || cp .env.example .env.local"));
+        assert!(stdout.contains("requires_services:"));
+        assert!(stdout.contains("- postgres"));
+        assert!(stdout.contains("internal: false"));
+    }
+
+    #[test]
+    fn assist_wire_setup_member_write_can_replace_and_clear_inherited_root_setup_fields() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: test -f .env.local || cp .env.example .env.local
+    requires_services:
+      - postgres
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--member",
+            "api",
+            "--script",
+            "npm install\nnpm run build",
+            "--clear-services",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("script: |-") || member_contract.contains("script: |"));
+        assert!(member_contract.contains("run: null"));
+        assert!(member_contract.contains("requires_services: []"));
+
+        let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
+        assert_eq!(validate.exit_code, 0, "{validate:?}");
+    }
+
+    #[test]
+    fn assist_bind_task_previews_new_runtime_target_binding() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev:http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST BIND-TASK"));
+        assert!(stdout.contains("tasks.smoke.targets.api"));
+        assert!(stdout.contains("task: dev"));
+        assert!(stdout.contains("listener: http"));
+        assert!(stdout.contains("address_view: topology"));
+        assert!(stdout.contains("ota execution topology"));
+    }
+
+    #[test]
+    fn assist_bind_task_json_preview_infers_one_listener() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--json",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "preview");
+        assert_eq!(json["operation"], "bind-task");
+        assert_eq!(json["subject"]["task"], "smoke");
+        assert_eq!(json["subject"]["target"], "api");
+        assert_eq!(json["changes"][0]["path"], "tasks.smoke.targets.api");
+        assert_eq!(json["changes"][0]["after"]["service"]["task"], "dev");
+        assert_eq!(json["changes"][0]["after"]["service"]["listener"], "http");
+    }
+
+    #[test]
+    fn assist_bind_task_refuses_ambiguous_listener_selection() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+        metrics:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("declares multiple listeners"));
+        assert!(stderr.contains("--to <task>:<listener>"));
+    }
+
+    #[test]
+    fn assist_bind_task_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--member",
+            "api",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev:http",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota execution topology --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("targets:"));
+        assert!(member_contract.contains("service:"));
+        assert!(member_contract.contains("task: dev"));
+        assert!(member_contract.contains("listener: http"));
+    }
+
+    #[test]
+    fn assist_bind_task_member_write_clears_inherited_cross_member_producer_binding() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+    - backend
+tasks:
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+    targets:
+      api:
+        service:
+          member: backend
+          task: dev
+          listener: http
+          address_view: host
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        );
+        fixture.write(
+            "backend/ota.yaml",
+            r#"
+project:
+  name: backend
+tasks:
+  dev:
+    run: python app.py
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--member",
+            "api",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev:http",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("member: null"));
+
+        let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
+        assert_eq!(validate.exit_code, 0, "{validate:?}");
+    }
+
+    #[test]
+    fn assist_declare_env_previews_root_env_requirement() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--name",
+            "APP_PORT",
+            "--required",
+            "true",
+            "--default",
+            "8080",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST DECLARE-ENV"));
+        assert!(stdout.contains("env.vars.APP_PORT"));
+        assert!(stdout.contains("required: true"));
+        assert!(
+            stdout.contains("default: \"8080\"")
+                || stdout.contains("default: '8080'")
+                || stdout.contains("default: 8080")
+        );
+        assert!(stdout.contains("ota env"));
+    }
+
+    #[test]
+    fn assist_declare_env_json_preview_supports_declared_source() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--json",
+            "--source-kind",
+            "dotenv",
+            "--source-path",
+            ".env.local",
+            "--must-exist",
+            "true",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["operation"], "declare-env");
+        assert_eq!(json["subject"]["kind"], "source");
+        assert_eq!(json["subject"]["source_kind"], "dotenv");
+        assert_eq!(json["subject"]["source_path"], ".env.local");
+        assert_eq!(json["inputs"]["must_exist"], "true");
+    }
+
+    #[test]
+    fn assist_declare_env_member_write_updates_task_local_env_and_keeps_member_validation_context()
+    {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  smoke:
+    run: curl -fsS "$API_BASE"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--member",
+            "api",
+            "--task",
+            "smoke",
+            "--name",
+            "API_BASE",
+            "--value",
+            "http://127.0.0.1:3000",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota env --member api --task smoke"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("env:"));
+        assert!(member_contract.contains("API_BASE: http://127.0.0.1:3000"));
+    }
+
+    #[test]
+    fn assist_declare_env_refuses_task_local_mode_without_value() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  smoke:
+    run: curl -fsS "$API_BASE"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--task",
+            "smoke",
+            "--name",
+            "API_BASE",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("task-local env declaration needs `--value`"));
+    }
+
+    #[test]
+    fn assist_add_task_previews_new_command_task() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST ADD-TASK"));
+        assert!(stdout.contains("tasks.smoke"));
+        assert!(stdout.contains("run: cargo test"));
+        assert!(stdout.contains("ota tasks"));
+    }
+
+    #[test]
+    fn assist_add_task_json_preview_supports_new_service_task() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--json",
+            "--name",
+            "dev",
+            "--kind",
+            "service",
+            "--run",
+            "npm run dev",
+            "--listener",
+            "http",
+            "--protocol",
+            "http",
+            "--port",
+            "3000",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["operation"], "add-task");
+        assert_eq!(json["subject"]["task"], "dev");
+        assert_eq!(json["inputs"]["kind"], "service");
+        assert_eq!(json["inputs"]["protocol"], "http");
+        assert_eq!(json["inputs"]["port"], "3000");
+    }
+
+    #[test]
+    fn assist_add_task_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--member",
+            "api",
+            "--name",
+            "smoke",
+            "--run",
+            "npm test",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota tasks --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("tasks:"));
+        assert!(member_contract.contains("smoke:"));
+        assert!(member_contract.contains("run: npm test"));
+
+        let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
+        assert_eq!(validate.exit_code, 0, "{validate:?}");
+    }
+
+    #[test]
+    fn assist_add_task_refuses_existing_task_name() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  smoke:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("task `smoke` is already declared"));
+    }
+
+    #[test]
+    fn assist_add_task_setup_uses_up_dry_run_follow_up_instead_of_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "setup",
+            "--kind",
+            "setup",
+            "--run",
+            "npm install",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota up --dry-run"));
+        assert!(!stdout.contains("ota tasks"));
+    }
+
+    #[test]
+    fn assist_add_task_preview_separates_validation_from_apply() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Validate:"));
+        assert!(stdout.contains("Apply:"));
+        assert_eq!(stdout.matches("Next:").count(), 0);
+    }
+
+    #[test]
+    fn assist_add_task_preview_uses_clean_relative_contract_path() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            "ota.yaml",
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST ADD-TASK ./ota.yaml"));
+        assert!(!stdout.contains(".//"));
+    }
+
+    #[test]
+    fn assist_normalize_previews_task_into_setup() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST NORMALIZE"));
+        assert!(stdout.contains("bootstrap"));
+        assert!(stdout.contains("tasks.setup"));
+        assert!(stdout.contains("ota up --dry-run"));
+    }
+
+    #[test]
+    fn assist_normalize_json_reports_delete_and_set_changes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        let changes = json["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0]["path"], "tasks.bootstrap");
+        assert_eq!(changes[0]["action"], "delete");
+        assert_eq!(changes[0]["before"]["run"], "npm install");
+        assert!(changes[0]["after"].is_null());
+        assert_eq!(changes[1]["path"], "tasks.setup");
+        assert_eq!(changes[1]["action"], "set");
+        assert!(changes[1]["before"].is_null());
+        assert_eq!(changes[1]["after"]["run"], "npm install");
+        assert_eq!(changes[1]["after"]["internal"], true);
+    }
+
+    #[test]
+    fn assist_normalize_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--member",
+            "api",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota up --member api --dry-run"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("setup:"));
+        assert!(!member_contract.contains("bootstrap:"));
+        assert!(member_contract.contains("internal: true"));
+    }
+
+    #[test]
+    fn assist_normalize_refuses_inherited_member_task_without_overlay_ownership() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--member",
+            "api",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("not declared in the selected member overlay"));
     }
 
     struct WorkspaceFixture {
