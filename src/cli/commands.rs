@@ -5860,7 +5860,10 @@ fn run_doctor_fix(
 
 fn render_doctor_fix_text(summary: &DoctorFixSummary) -> String {
     let mut stdout = String::new();
-    stdout.push_str(&format!("\n\n{}", paint_section_title("Fixes")));
+    stdout.push_str(&format!(
+        "\n\n{}",
+        paint_section_title("Fixes (repo hygiene)")
+    ));
 
     if summary.fixable_count == 0 {
         let note = summary
@@ -5886,7 +5889,7 @@ fn render_doctor_fix_text(summary: &DoctorFixSummary) -> String {
         ));
     } else if summary.errors.is_empty() {
         stdout.push_str(&format!(
-            "\n  {} applied {} safe fix{}",
+            "\n  {} applied {} safe repo-hygiene fix{}",
             list_bullet(),
             summary.applied_count,
             if summary.applied_count == 1 { "" } else { "es" }

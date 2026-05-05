@@ -31,7 +31,7 @@ metadata:
   repo_class: open-core
 execution:
   preferred: container
-  lifecycle: ephemeral
+  lifecycle: persistent
   supported:
     - native
     - container
@@ -215,9 +215,10 @@ tasks:
       - setup
     safe_for_agent: true
   bump:version:
-    description: Bump Cargo.toml to a new release version
+    description: Bump the repo release version surfaces
     notes: |
-      Use this when preparing a release and you need to update Cargo.toml consistently.
+      Use this when preparing a release and you need to update Cargo.toml, CHANGELOG.md,
+      and the readiness workflow pin consistently.
     category: release
     script: |
       ./scripts/bump-version.sh
@@ -239,8 +240,6 @@ tasks:
       - when:
           os: windows
         run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
-    depends_on:
-      - ci
   install:from:source:
     description: Reinstall ota from the local workspace source
     notes: |
