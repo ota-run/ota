@@ -24,6 +24,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/assist-bind-task.json](json-schemas/assist-bind-task.json)
 - [json-schemas/assist-declare-env.json](json-schemas/assist-declare-env.json)
 - [json-schemas/assist-add-task.json](json-schemas/assist-add-task.json)
+- [json-schemas/assist-normalize.json](json-schemas/assist-normalize.json)
 - [json-schemas/assist-wire-setup.json](json-schemas/assist-wire-setup.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
@@ -64,6 +65,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota assist bind-task --json` when you want a deterministic target-binding proposal or apply result without scraping review text
 - use `ota assist declare-env --json` when you want a deterministic env proposal or apply result without scraping review text
 - use `ota assist add-task --json` when you want a deterministic new-task proposal or apply result without scraping review text
+- use `ota assist normalize --json` when you want a deterministic canonical-setup normalization proposal or apply result without scraping review text
 - use `ota assist wire-setup --json` when you want a deterministic setup-wiring proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
@@ -94,6 +96,7 @@ human text output:
 - `ota assist bind-task --json`: use `mode`, `subject.task`, `subject.target`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist declare-env --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist add-task --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist normalize --json`: use `mode`, `subject.task`, `subject.into`, `changes`, `validation`, and `next`
 - `ota assist wire-setup --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
@@ -826,6 +829,81 @@ Failure:
   },
   "why": "task `smoke` is already declared",
   "next": "choose a new task name, or use `ota tasks` to inspect the current inventory"
+}
+```
+
+## `ota assist normalize --json`
+
+Assist normalize output reports one deterministic proposal or apply result for moving one existing
+task into the canonical `tasks.setup` slot.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "normalize",
+  "subject": {
+    "task": "bootstrap",
+    "into": "setup"
+  },
+  "inputs": {
+    "into": "setup"
+  },
+  "assumptions": [
+    "`tasks.bootstrap` will move into the canonical `tasks.setup` slot",
+    "`tasks.setup` will be normalized to `internal: true` so setup stays an `ota up` support task by default"
+  ],
+  "changes": [
+    {
+      "path": "tasks.bootstrap",
+      "action": "delete",
+      "before": {
+        "run": "npm install"
+      },
+      "after": null
+    },
+    {
+      "path": "tasks.setup",
+      "action": "set",
+      "before": null,
+      "after": {
+        "run": "npm install",
+        "internal": true
+      }
+    }
+  ],
+  "diff": "normalize task bootstrap\n- run: npm install\n+ run: npm install ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota up --dry-run /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist normalize --task bootstrap --into setup --write /abs/path/to/ota.yaml` to apply this normalization"
+}
+```
+
+Notes:
+
+- `subject.into` is currently fixed to `setup` in the shipped slice
+- `changes[0]` records deletion of the original `tasks.<name>` slot
+- `changes[1]` records creation of the canonical `tasks.setup` slot
+- apply removes the original `tasks.<name>` entry and writes the moved declaration under `tasks.setup`
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "normalize",
+  "subject": {
+    "task": "bootstrap"
+  },
+  "why": "the contract already declares `tasks.setup`",
+  "next": "use `ota assist wire-setup` to refine setup instead of normalizing another task into it"
 }
 ```
 

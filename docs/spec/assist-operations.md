@@ -24,7 +24,7 @@
 
 # Assist Operations
 
-Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness`, `ota assist declare-service`, `ota assist bind-task`, `ota assist declare-env`, `ota assist add-task`, and `ota assist wire-setup`.
+Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness`, `ota assist declare-service`, `ota assist bind-task`, `ota assist declare-env`, `ota assist add-task`, `ota assist wire-setup`, and `ota assist normalize`.
 
 This document defines the long-term product contract for `ota assist`.
 
@@ -47,6 +47,7 @@ The currently shipped assist operations are:
 - `ota assist declare-env`
 - `ota assist add-task`
 - `ota assist wire-setup`
+- `ota assist normalize`
 
 Current scope:
 
@@ -61,6 +62,7 @@ Current scope:
 - previews or applies one deterministic env requirement, env source, or task-local env mutation
 - previews or applies one deterministic new-task declaration with explicit execution input
 - previews or applies one deterministic `tasks.setup` mutation with explicit setup body, `setup.requires_services`, and `internal` ownership
+- previews or applies one deterministic normalization that moves one existing setup-like task into the canonical `tasks.setup` slot
 
 Current trust boundaries:
 
@@ -69,6 +71,7 @@ Current trust boundaries:
 - assist refuses ambiguous listener selection instead of guessing
 - text preview must show destructive readiness replacement honestly
 - `add-task` creates only new tasks and requires explicit runtime listener inputs for service tasks
+- `normalize` only operates on tasks declared in the current write target and currently ships only the `--into setup` intent
 - `wire-setup` owns only `tasks.setup` plus the phased `setup.requires_services` boundary; it is not a broad task authoring command
 
 For the operator guide and concrete examples, see [assist-workflow.md](assist-workflow.md).
@@ -425,8 +428,10 @@ Purpose:
 
 Behavior:
 
-- may move misplaced or redundant declarations into the correct contract section
-- may normalize execution-context placement, readiness ownership, or setup wiring
+- current shipped scope moves one existing setup-like task into the canonical `tasks.setup` slot
+- removes the original `tasks.<name>` entry in the same write target
+- normalizes the resulting `tasks.setup` to `internal: true`
+- must refuse inherited member-overlay source tasks it cannot safely delete
 - must remain bounded to one normalization intent at a time
 - must not act as an arbitrary beautifier or formatter-only command
 

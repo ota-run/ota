@@ -844,6 +844,26 @@ enum AssistCommands {
         /// Path to a repo root, ota.yaml file, or directory containing one.
         path: Option<PathBuf>,
     },
+    /// Normalize one existing task into the canonical setup slot.
+    Normalize {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed normalization.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Existing task name to normalize.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: String,
+        /// Canonical destination for the normalization intent.
+        #[arg(long, value_enum)]
+        into: AssistNormalizeIntoArg,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -897,6 +917,11 @@ enum AssistTaskKindArg {
 enum AssistTaskListenerProtocolArg {
     Http,
     Tcp,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistNormalizeIntoArg {
+    Setup,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -4266,6 +4291,26 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Assist {
+            command:
+                AssistCommands::Normalize {
+                    json,
+                    write,
+                    member,
+                    task,
+                    into,
+                    path,
+                },
+        } => commands::assist_normalize(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            &task,
+            into,
+            write,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Studio {
             open,
             serve,
@@ -4987,6 +5032,11 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         } => {
             "rerun `ota assist add-task --name <task>` with one explicit task body and any required service listener inputs"
         }
+        Commands::Assist {
+            command: AssistCommands::Normalize { .. },
+        } => {
+            "rerun `ota assist normalize --task <name> --into setup` when one existing setup-like task should move into the canonical `tasks.setup` slot"
+        }
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
@@ -5194,6 +5244,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Assist {
             command: AssistCommands::AddTask { json, .. },
         }
+        | Commands::Assist {
+            command: AssistCommands::Normalize { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
@@ -5276,6 +5329,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Assist {
             command: AssistCommands::AddTask { .. },
         } => "ota assist add-task",
+        Commands::Assist {
+            command: AssistCommands::Normalize { .. },
+        } => "ota assist normalize",
         Commands::Env { .. } => "ota env",
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
@@ -35552,6 +35608,181 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("ota up --dry-run"));
         assert!(!stdout.contains("ota tasks"));
+    }
+
+    #[test]
+    fn assist_normalize_previews_task_into_setup() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST NORMALIZE"));
+        assert!(stdout.contains("bootstrap"));
+        assert!(stdout.contains("tasks.setup"));
+        assert!(stdout.contains("ota up --dry-run"));
+    }
+
+    #[test]
+    fn assist_normalize_json_reports_delete_and_set_changes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        let changes = json["changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0]["path"], "tasks.bootstrap");
+        assert_eq!(changes[0]["action"], "delete");
+        assert_eq!(changes[0]["before"]["run"], "npm install");
+        assert!(changes[0]["after"].is_null());
+        assert_eq!(changes[1]["path"], "tasks.setup");
+        assert_eq!(changes[1]["action"], "set");
+        assert!(changes[1]["before"].is_null());
+        assert_eq!(changes[1]["after"]["run"], "npm install");
+        assert_eq!(changes[1]["after"]["internal"], true);
+    }
+
+    #[test]
+    fn assist_normalize_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--member",
+            "api",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota up --member api --dry-run"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("setup:"));
+        assert!(!member_contract.contains("bootstrap:"));
+        assert!(member_contract.contains("internal: true"));
+    }
+
+    #[test]
+    fn assist_normalize_refuses_inherited_member_task_without_overlay_ownership() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  bootstrap:
+    run: npm install
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "normalize",
+            "--member",
+            "api",
+            "--task",
+            "bootstrap",
+            "--into",
+            "setup",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("not declared in the selected member overlay"));
     }
 
     struct WorkspaceFixture {

@@ -60,6 +60,7 @@ The currently shipped assist operations are:
 - `ota assist declare-env`
 - `ota assist add-task`
 - `ota assist wire-setup`
+- `ota assist normalize`
 
 It can target:
 
@@ -94,6 +95,12 @@ It can currently propose:
 - set one explicit `run` or `script` body, or the bounded `echo sandbox` starter body for sandbox tasks
 - create `command`, `service`, `setup`, `check`, or `sandbox` task starters
 - create one fixed service listener and matching fixed host projection when `--kind service` is explicit
+
+`ota assist normalize` can:
+
+- move one existing setup-like task into the canonical `tasks.setup` slot
+- remove the original `tasks.<name>` entry in the same write target
+- normalize the moved setup task to `internal: true`
 
 ## Canonical examples
 
@@ -217,6 +224,18 @@ Setup wiring apply:
 ota assist wire-setup --member api --run "npm install" --service postgres --write
 ```
 
+Normalize a setup-like task:
+
+```bash
+ota assist normalize --task bootstrap --into setup
+```
+
+Normalize a member-scoped setup-like task:
+
+```bash
+ota assist normalize --member api --task bootstrap --into setup --write
+```
+
 ## Task versus managed service behavior
 
 Task runtime targeting is allowed only when the task already declares a runtime service surface.
@@ -283,6 +302,23 @@ It intentionally does not yet:
 - declare service-task readiness inline
 - infer a repo-specific execution body when the user did not supply one
 
+## Normalize behavior
+
+`normalize` is the current assist slice for one canonical setup-task move at a time.
+
+It currently:
+
+- moves one existing task into `tasks.setup`
+- deletes the original `tasks.<name>` entry in the same write target
+- forces the resulting `tasks.setup` to `internal: true`
+- validates the resulting contract through the normal `validate`, `up --dry-run`, and `doctor` surfaces
+
+It intentionally does not yet:
+
+- normalize arbitrary task names into arbitrary other destinations
+- move inherited root tasks from a member overlay that does not own the source declaration
+- perform broad cross-section cleanup in one step
+
 ## Setup wiring behavior
 
 `wire-setup` is intentionally narrow:
@@ -328,6 +364,8 @@ Assist should refuse instead of guessing when:
 - a `service` task request is missing `--listener`, `--protocol`, or `--port`
 - a `setup` task request does not target `--name setup`
 - a new `tasks.setup` declaration is requested without an explicit `--run` or `--script` body
+- a `normalize --task <name> --into setup` request when `tasks.setup` already exists
+- a member-scoped `normalize` request where the selected task is inherited from the root contract instead of declared in the member overlay
 - `wire-setup` names a managed service that is not already declared under `services`
 
 Refusal is part of the trust model, not a UX bug.
