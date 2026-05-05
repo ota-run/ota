@@ -20051,11 +20051,19 @@ extensions:
         printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
         printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
         ;;
+      activation_probe)
+        sh -lc "$OTA_BACKEND_PROVIDER_COMMAND" >/dev/null 2>&1
+        status=$?
+        printf '{{"ok":true,"result":{{"exit_code":%s,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}' "$status"
+        ;;
       activation_cleanup)
         if [ -f "${{PWD}}/backend-provider.pid" ]; then
           kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
           rm -f "${{PWD}}/backend-provider.pid"
         fi
+        for pid in $(lsof -ti TCP:{port} -sTCP:LISTEN 2>/dev/null || true); do
+          kill "$pid" 2>/dev/null || true
+        done
         printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
         ;;
       *)
