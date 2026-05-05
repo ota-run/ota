@@ -4218,7 +4218,10 @@ impl AssistAddTaskProposal {
             inputs.insert("listener", listener.clone());
         }
         if let Some(protocol) = self.protocol {
-            inputs.insert("protocol", assist_task_listener_protocol_name(protocol).to_string());
+            inputs.insert(
+                "protocol",
+                assist_task_listener_protocol_name(protocol).to_string(),
+            );
         }
         if let Some(address) = &self.address {
             inputs.insert("address", address.clone());
@@ -4926,7 +4929,10 @@ fn render_assist_env_text(
         ));
         let before_yaml =
             serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
-        output.push_str(&format!("\n{}", stylize_yaml_preview(before_yaml.trim_end())));
+        output.push_str(&format!(
+            "\n{}",
+            stylize_yaml_preview(before_yaml.trim_end())
+        ));
     }
     output.push_str(&format!("\n\n{}:", paint_section_title("Proposed env")));
     output.push_str(&format!(
@@ -4936,7 +4942,10 @@ fn render_assist_env_text(
     ));
     let after_yaml =
         serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
-    output.push_str(&format!("\n{}", stylize_yaml_preview(after_yaml.trim_end())));
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(after_yaml.trim_end())
+    ));
     output.push_str(&format_next_timeline(
         &validation
             .iter()
@@ -4994,7 +5003,10 @@ fn render_assist_add_task_text(
     ));
     let after_yaml =
         serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
-    output.push_str(&format!("\n{}", stylize_yaml_preview(after_yaml.trim_end())));
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(after_yaml.trim_end())
+    ));
     output.push_str(&format_next_timeline(
         &validation
             .iter()
@@ -6054,8 +6066,8 @@ pub fn assist_bind_task(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -6065,8 +6077,8 @@ pub fn assist_bind_task(
                                     next: String::from(
                                         "repair the contract path, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -6080,8 +6092,8 @@ pub fn assist_bind_task(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -6091,17 +6103,15 @@ pub fn assist_bind_task(
                                     next: String::from(
                                         "repair the existing contract, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
 
-                let overlay_before_value = get_yaml_path_value(
-                    &document,
-                    &["tasks", task, "targets", target_name],
-                )
-                .unwrap_or(YamlValue::Null);
+                let overlay_before_value =
+                    get_yaml_path_value(&document, &["tasks", task, "targets", target_name])
+                        .unwrap_or(YamlValue::Null);
                 let before_value = if member.is_some() {
                     let root_contents = match fs::read_to_string(&resolved_path) {
                         Ok(contents) => contents,
@@ -6113,8 +6123,8 @@ pub fn assist_bind_task(
                             );
                             return match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -6124,13 +6134,14 @@ pub fn assist_bind_task(
                                         next: String::from(
                                             "repair the contract path, then rerun the assist command",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             };
                         }
                     };
-                    let mut effective_document: YamlValue = match serde_yaml::from_str(&root_contents)
-                    {
+                    let mut effective_document: YamlValue = match serde_yaml::from_str(
+                        &root_contents,
+                    ) {
                         Ok(document) => document,
                         Err(error) => {
                             let why = format!(
@@ -6140,8 +6151,8 @@ pub fn assist_bind_task(
                             );
                             return match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -6151,14 +6162,17 @@ pub fn assist_bind_task(
                                         next: String::from(
                                             "repair the existing contract, then rerun the assist command",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             };
                         }
                     };
                     merge_yaml_value(&mut effective_document, document.clone());
-                    get_yaml_path_value(&effective_document, &["tasks", task, "targets", target_name])
-                        .unwrap_or(YamlValue::Null)
+                    get_yaml_path_value(
+                        &effective_document,
+                        &["tasks", task, "targets", target_name],
+                    )
+                    .unwrap_or(YamlValue::Null)
                 } else {
                     overlay_before_value.clone()
                 };
@@ -6177,8 +6191,8 @@ pub fn assist_bind_task(
                                 paint_key("Next:"),
                                 next
                             )),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -6186,15 +6200,16 @@ pub fn assist_bind_task(
                                     subject: assist_bind_task_subject_map(task, target_name),
                                     why,
                                     next,
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
                 let existing_target = consumer_task.targets.get(target_name);
 
                 let (producer_task_name, explicit_listener) = parse_assist_bind_target_selector(to);
-                let producer_target = if producer_member.is_some_and(|producer| Some(producer) != member)
+                let producer_target = if producer_member
+                    .is_some_and(|producer| Some(producer) != member)
                 {
                     match load_and_validate_target(&resolved_path, producer_member) {
                         Ok(target) => target,
@@ -6215,8 +6230,8 @@ pub fn assist_bind_task(
                                     paint_key("Next:"),
                                     next
                                 )),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -6224,8 +6239,8 @@ pub fn assist_bind_task(
                                         subject: assist_bind_task_subject_map(task, target_name),
                                         why,
                                         next,
-                                    },
-                                )),
+                                    }))
+                                }
                             };
                         }
                     }
@@ -6235,7 +6250,11 @@ pub fn assist_bind_task(
                         contract_path: target.contract_path.clone(),
                     }
                 };
-                let producer_task = match producer_target.contract.tasks.get(producer_task_name.as_str()) {
+                let producer_task = match producer_target
+                    .contract
+                    .tasks
+                    .get(producer_task_name.as_str())
+                {
                     Some(task_spec) => task_spec,
                     None => {
                         let why = match producer_member {
@@ -6243,7 +6262,9 @@ pub fn assist_bind_task(
                                 "producer task `{}` is not declared under member `{producer_member}`",
                                 producer_task_name
                             ),
-                            None => format!("producer task `{}` is not declared", producer_task_name),
+                            None => {
+                                format!("producer task `{}` is not declared", producer_task_name)
+                            }
                         };
                         let next = if let Some(producer_member) = producer_member {
                             format!(
@@ -6261,8 +6282,8 @@ pub fn assist_bind_task(
                                 paint_key("Next:"),
                                 next
                             )),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -6270,14 +6291,19 @@ pub fn assist_bind_task(
                                     subject: assist_bind_task_subject_map(task, target_name),
                                     why,
                                     next,
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
 
-                let producer_member_value =
-                    producer_member.and_then(|value| if Some(value) == member { None } else { Some(value) });
+                let producer_member_value = producer_member.and_then(|value| {
+                    if Some(value) == member {
+                        None
+                    } else {
+                        Some(value)
+                    }
+                });
                 let listener = match resolve_assist_bind_task_listener(
                     producer_task,
                     existing_target.and_then(|target| target.service.as_ref()),
@@ -6296,8 +6322,8 @@ pub fn assist_bind_task(
                                 paint_key("Next:"),
                                 next
                             )),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -6305,8 +6331,8 @@ pub fn assist_bind_task(
                                     subject: assist_bind_task_subject_map(task, target_name),
                                     why,
                                     next,
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -6353,8 +6379,8 @@ pub fn assist_bind_task(
                                     paint_key("Next:"),
                                     next
                                 )),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -6362,8 +6388,8 @@ pub fn assist_bind_task(
                                         subject: assist_bind_task_subject_map(task, target_name),
                                         why,
                                         next,
-                                    },
-                                )),
+                                    }))
+                                }
                             };
                         }
                     };
@@ -6384,8 +6410,8 @@ pub fn assist_bind_task(
                             );
                             return match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -6395,8 +6421,8 @@ pub fn assist_bind_task(
                                         next: String::from(
                                             "rerun the assist command after fixing the repo contract",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             };
                         }
                     };
@@ -6439,8 +6465,8 @@ pub fn assist_bind_task(
                             paint_key("Next:"),
                             next
                         )),
-                        OutputFormat::Json => CommandOutput::failure(to_json(
-                            &AssistProposalFailure {
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&AssistProposalFailure {
                                 ok: false,
                                 path: &path_display,
                                 member,
@@ -6448,25 +6474,30 @@ pub fn assist_bind_task(
                                 subject: assist_bind_task_subject_map(task, target_name),
                                 why,
                                 next,
-                            },
-                        )),
+                            }))
+                        }
                     };
                 };
 
-                let validation =
-                    assist_bind_task_validation_commands(&resolved_path, &target.contract_path, member);
+                let validation = assist_bind_task_validation_commands(
+                    &resolved_path,
+                    &target.contract_path,
+                    member,
+                );
                 let after_value = proposal.after_value.clone();
 
                 if write {
                     match fs::write(&target.contract_path, yaml) {
                         Ok(()) => match format {
-                            OutputFormat::Text => CommandOutput::success(render_assist_bind_task_text(
-                                &text_path_display,
-                                &proposal,
-                                "write",
-                                &validation,
-                                None,
-                            )),
+                            OutputFormat::Text => {
+                                CommandOutput::success(render_assist_bind_task_text(
+                                    &text_path_display,
+                                    &proposal,
+                                    "write",
+                                    &validation,
+                                    None,
+                                ))
+                            }
                             OutputFormat::Json => {
                                 CommandOutput::success(to_json(&AssistProposalSuccess {
                                     ok: true,
@@ -6502,8 +6533,8 @@ pub fn assist_bind_task(
                             );
                             match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -6513,8 +6544,8 @@ pub fn assist_bind_task(
                                         next: String::from(
                                             "repair the contract path or permissions, then rerun with `--write`",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             }
                         }
                     }
@@ -6704,7 +6735,9 @@ pub fn assist_declare_env(
                 &resolved_path,
                 "Wrong command target",
                 &[
-                    String::from("`ota assist declare-env` reads repo contracts such as `ota.yaml`"),
+                    String::from(
+                        "`ota assist declare-env` reads repo contracts such as `ota.yaml`",
+                    ),
                     format!(
                         "{} is an org policy pack, not a repo contract",
                         paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
@@ -6731,19 +6764,23 @@ pub fn assist_declare_env(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
                                     operation: "declare-env",
-                                    subject: assist_declare_env_subject_map(task, name, source_path),
+                                    subject: assist_declare_env_subject_map(
+                                        task,
+                                        name,
+                                        source_path,
+                                    ),
                                     why,
                                     next: String::from(
                                         "repair the contract path, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -6757,19 +6794,23 @@ pub fn assist_declare_env(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
                                     operation: "declare-env",
-                                    subject: assist_declare_env_subject_map(task, name, source_path),
+                                    subject: assist_declare_env_subject_map(
+                                        task,
+                                        name,
+                                        source_path,
+                                    ),
                                     why,
                                     next: String::from(
                                         "repair the existing contract, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -6785,19 +6826,23 @@ pub fn assist_declare_env(
                             );
                             return match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
                                         operation: "declare-env",
-                                        subject: assist_declare_env_subject_map(task, name, source_path),
+                                        subject: assist_declare_env_subject_map(
+                                            task,
+                                            name,
+                                            source_path,
+                                        ),
                                         why,
                                         next: String::from(
                                             "repair the contract path, then rerun the assist command",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             };
                         }
                     };
@@ -6811,19 +6856,23 @@ pub fn assist_declare_env(
                             );
                             return match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
                                         operation: "declare-env",
-                                        subject: assist_declare_env_subject_map(task, name, source_path),
+                                        subject: assist_declare_env_subject_map(
+                                            task,
+                                            name,
+                                            source_path,
+                                        ),
                                         why,
                                         next: String::from(
                                             "repair the existing contract, then rerun the assist command",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             };
                         }
                     };
@@ -6861,28 +6910,37 @@ pub fn assist_declare_env(
                                 paint_key("Next:"),
                                 next
                             )),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
                                     operation: "declare-env",
-                                    subject: assist_declare_env_subject_map(task, name, source_path),
+                                    subject: assist_declare_env_subject_map(
+                                        task,
+                                        name,
+                                        source_path,
+                                    ),
                                     why,
                                     next,
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
 
-                let yaml = match build_assist_env_yaml(&document, &effective_document, member.is_some(), &proposal) {
+                let yaml = match build_assist_env_yaml(
+                    &document,
+                    &effective_document,
+                    member.is_some(),
+                    &proposal,
+                ) {
                     Ok(yaml) => yaml,
                     Err(error) => {
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -6892,8 +6950,8 @@ pub fn assist_declare_env(
                                     next: String::from(
                                         "rerun the assist command after fixing the repo contract",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -6906,8 +6964,8 @@ pub fn assist_declare_env(
                 ) {
                     return match format {
                         OutputFormat::Text => CommandOutput::failure(error.clone()),
-                        OutputFormat::Json => CommandOutput::failure(to_json(
-                            &AssistProposalFailure {
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&AssistProposalFailure {
                                 ok: false,
                                 path: &path_display,
                                 member,
@@ -6917,8 +6975,8 @@ pub fn assist_declare_env(
                                 next: String::from(
                                     "adjust the env inputs, then rerun the assist command",
                                 ),
-                            },
-                        )),
+                            }))
+                        }
                     };
                 }
 
@@ -6940,8 +6998,8 @@ pub fn assist_declare_env(
                                 &validation,
                                 None,
                             )),
-                            OutputFormat::Json => CommandOutput::success(to_json(
-                                &AssistProposalSuccess {
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&AssistProposalSuccess {
                                     ok: true,
                                     path: &path_display,
                                     member,
@@ -6961,8 +7019,8 @@ pub fn assist_declare_env(
                                     next: String::from(
                                         "rerun `ota env` to inspect the updated env contract",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         },
                         Err(error) => {
                             let why = format!(
@@ -6972,8 +7030,8 @@ pub fn assist_declare_env(
                             );
                             match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -6983,8 +7041,8 @@ pub fn assist_declare_env(
                                         next: String::from(
                                             "repair the contract path or permissions, then rerun with `--write`",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             }
                         }
                     }
@@ -7002,25 +7060,27 @@ pub fn assist_declare_env(
                             &validation,
                             Some(&proposal.preview_next_command(member, preview_target_path)),
                         )),
-                        OutputFormat::Json => CommandOutput::success(to_json(&AssistProposalSuccess {
-                            ok: true,
-                            path: &path_display,
-                            member,
-                            mode: "preview",
-                            operation: "declare-env",
-                            subject: proposal.subject_json(),
-                            inputs: proposal.inputs_json(),
-                            assumptions: proposal.assumptions.clone(),
-                            changes: vec![AssistProposalChange {
-                                path: &proposal.change_path,
-                                action: "set",
-                                before: proposal.before_value.clone(),
-                                after: after_value,
-                            }],
-                            diff: proposal.diff(),
-                            validation,
-                            next: proposal.preview_next_command(member, preview_target_path),
-                        })),
+                        OutputFormat::Json => {
+                            CommandOutput::success(to_json(&AssistProposalSuccess {
+                                ok: true,
+                                path: &path_display,
+                                member,
+                                mode: "preview",
+                                operation: "declare-env",
+                                subject: proposal.subject_json(),
+                                inputs: proposal.inputs_json(),
+                                assumptions: proposal.assumptions.clone(),
+                                changes: vec![AssistProposalChange {
+                                    path: &proposal.change_path,
+                                    action: "set",
+                                    before: proposal.before_value.clone(),
+                                    after: after_value,
+                                }],
+                                diff: proposal.diff(),
+                                validation,
+                                next: proposal.preview_next_command(member, preview_target_path),
+                            }))
+                        }
                     }
                 }
             }
@@ -7028,7 +7088,11 @@ pub fn assist_declare_env(
                 OutputFormat::Text => invalid_repo_contract_output(
                     "ASSIST DECLARE-ENV",
                     &resolved_path,
-                    &errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
                     vec![
                         format!(
                             "repair {}",
@@ -7179,8 +7243,8 @@ pub fn assist_add_task(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7190,8 +7254,8 @@ pub fn assist_add_task(
                                     next: String::from(
                                         "repair the contract path, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7205,8 +7269,8 @@ pub fn assist_add_task(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7216,8 +7280,8 @@ pub fn assist_add_task(
                                     next: String::from(
                                         "repair the existing contract, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7246,8 +7310,8 @@ pub fn assist_add_task(
                                 paint_key("Next:"),
                                 next
                             )),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7255,8 +7319,8 @@ pub fn assist_add_task(
                                     subject: assist_add_task_subject_map(name),
                                     why,
                                     next,
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7266,8 +7330,8 @@ pub fn assist_add_task(
                     Err(error) => {
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7277,8 +7341,8 @@ pub fn assist_add_task(
                                     next: String::from(
                                         "rerun the assist command after fixing the repo contract",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7291,8 +7355,8 @@ pub fn assist_add_task(
                 ) {
                     return match format {
                         OutputFormat::Text => CommandOutput::failure(error.clone()),
-                        OutputFormat::Json => CommandOutput::failure(to_json(
-                            &AssistProposalFailure {
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&AssistProposalFailure {
                                 ok: false,
                                 path: &path_display,
                                 member,
@@ -7302,27 +7366,30 @@ pub fn assist_add_task(
                                 next: String::from(
                                     "adjust the task inputs, then rerun the assist command",
                                 ),
-                            },
-                        )),
+                            }))
+                        }
                     };
                 }
 
                 let validation =
                     assist_add_task_validation_commands(&resolved_path, member, proposal.kind);
+                let write_next = assist_add_task_write_next(&resolved_path, member, proposal.kind);
                 let after_value = proposal.after_value.clone();
 
                 if write {
                     match fs::write(&target.contract_path, yaml) {
                         Ok(()) => match format {
-                            OutputFormat::Text => CommandOutput::success(render_assist_add_task_text(
-                                &text_path_display,
-                                &proposal,
-                                "write",
-                                &validation,
-                                None,
-                            )),
-                            OutputFormat::Json => CommandOutput::success(to_json(
-                                &AssistProposalSuccess {
+                            OutputFormat::Text => {
+                                CommandOutput::success(render_assist_add_task_text(
+                                    &text_path_display,
+                                    &proposal,
+                                    "write",
+                                    &validation,
+                                    None,
+                                ))
+                            }
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&AssistProposalSuccess {
                                     ok: true,
                                     path: &path_display,
                                     member,
@@ -7339,11 +7406,9 @@ pub fn assist_add_task(
                                     }],
                                     diff: proposal.diff(),
                                     validation,
-                                    next: String::from(
-                                        "rerun `ota tasks` to inspect the updated task inventory",
-                                    ),
-                                },
-                            )),
+                                    next: write_next,
+                                }))
+                            }
                         },
                         Err(error) => {
                             let why = format!(
@@ -7353,8 +7418,8 @@ pub fn assist_add_task(
                             );
                             match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -7364,8 +7429,8 @@ pub fn assist_add_task(
                                         next: String::from(
                                             "repair the contract path or permissions, then rerun with `--write`",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             }
                         }
                     }
@@ -7383,25 +7448,27 @@ pub fn assist_add_task(
                             &validation,
                             Some(&proposal.preview_next_command(member, preview_target_path)),
                         )),
-                        OutputFormat::Json => CommandOutput::success(to_json(&AssistProposalSuccess {
-                            ok: true,
-                            path: &path_display,
-                            member,
-                            mode: "preview",
-                            operation: "add-task",
-                            subject: proposal.subject_json(),
-                            inputs: proposal.inputs_json(),
-                            assumptions: proposal.assumptions.clone(),
-                            changes: vec![AssistProposalChange {
-                                path: &format!("tasks.{}", proposal.name),
-                                action: "set",
-                                before: YamlValue::Null,
-                                after: after_value,
-                            }],
-                            diff: proposal.diff(),
-                            validation,
-                            next: proposal.preview_next_command(member, preview_target_path),
-                        })),
+                        OutputFormat::Json => {
+                            CommandOutput::success(to_json(&AssistProposalSuccess {
+                                ok: true,
+                                path: &path_display,
+                                member,
+                                mode: "preview",
+                                operation: "add-task",
+                                subject: proposal.subject_json(),
+                                inputs: proposal.inputs_json(),
+                                assumptions: proposal.assumptions.clone(),
+                                changes: vec![AssistProposalChange {
+                                    path: &format!("tasks.{}", proposal.name),
+                                    action: "set",
+                                    before: YamlValue::Null,
+                                    after: after_value,
+                                }],
+                                diff: proposal.diff(),
+                                validation,
+                                next: proposal.preview_next_command(member, preview_target_path),
+                            }))
+                        }
                     }
                 }
             }
@@ -7409,7 +7476,11 @@ pub fn assist_add_task(
                 OutputFormat::Text => invalid_repo_contract_output(
                     "ASSIST ADD-TASK",
                     &resolved_path,
-                    &errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
                     vec![
                         format!(
                             "repair {}",
@@ -7419,7 +7490,10 @@ pub fn assist_add_task(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_repo_contract_target("ota assist add-task", &resolved_path)
+                                command_for_repo_contract_target(
+                                    "ota assist add-task",
+                                    &resolved_path
+                                )
                             ))
                         ),
                     ],
@@ -7452,7 +7526,10 @@ pub fn assist_add_task(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_repo_contract_target("ota assist add-task", &resolved_path)
+                                command_for_repo_contract_target(
+                                    "ota assist add-task",
+                                    &resolved_path
+                                )
                             ))
                         ),
                     ],
@@ -7527,7 +7604,9 @@ fn assist_task_kind_name(kind: AssistTaskKindArg) -> &'static str {
     }
 }
 
-fn assist_task_listener_protocol_from_arg(value: AssistTaskListenerProtocolArg) -> TaskRuntimeProtocol {
+fn assist_task_listener_protocol_from_arg(
+    value: AssistTaskListenerProtocolArg,
+) -> TaskRuntimeProtocol {
     match value {
         AssistTaskListenerProtocolArg::Http => TaskRuntimeProtocol::Http,
         AssistTaskListenerProtocolArg::Tcp => TaskRuntimeProtocol::Tcp,
@@ -7580,7 +7659,9 @@ fn build_assist_env_proposal(
     let has_task_env_inputs = task.is_some() || value.is_some();
 
     if task.is_some() {
-        let Some(task_name) = task else { unreachable!() };
+        let Some(task_name) = task else {
+            unreachable!()
+        };
         let Some(name) = name else {
             return Err((
                 String::from("task-local env declaration needs `--name`"),
@@ -7620,14 +7701,13 @@ fn build_assist_env_proposal(
             effective_yaml_value_for_path(document, &["tasks", task_name, "env", name])
                 .unwrap_or(YamlValue::Null)
         } else {
-            get_yaml_path_value(document, &["tasks", task_name, "env", name])
-                .unwrap_or_else(|| {
-                    task_spec
-                        .env
-                        .get(name)
-                        .map(|value| YamlValue::String(value.clone()))
-                        .unwrap_or(YamlValue::Null)
-                })
+            get_yaml_path_value(document, &["tasks", task_name, "env", name]).unwrap_or_else(|| {
+                task_spec
+                    .env
+                    .get(name)
+                    .map(|value| YamlValue::String(value.clone()))
+                    .unwrap_or(YamlValue::Null)
+            })
         };
         let after_value = YamlValue::String(value.to_string());
         if after_value == before_value {
@@ -7662,7 +7742,11 @@ fn build_assist_env_proposal(
     }
 
     if has_source_inputs {
-        if has_task_env_inputs || has_root_var_inputs || value.is_some() || name.is_some() && !has_root_var_inputs {
+        if has_task_env_inputs
+            || has_root_var_inputs
+            || value.is_some()
+            || name.is_some() && !has_root_var_inputs
+        {
             return Err((
                 String::from("declared env source changes must target one source shape only"),
                 String::from(
@@ -7670,12 +7754,14 @@ fn build_assist_env_proposal(
                 ),
             ));
         }
-        let kind = source_kind.map(assist_env_source_kind_from_arg).ok_or_else(|| {
-            (
-                String::from("declared env source changes need `--source-kind`"),
-                String::from("rerun with `--source-kind <kind> --source-path <path>`"),
-            )
-        })?;
+        let kind = source_kind
+            .map(assist_env_source_kind_from_arg)
+            .ok_or_else(|| {
+                (
+                    String::from("declared env source changes need `--source-kind`"),
+                    String::from("rerun with `--source-kind <kind> --source-path <path>`"),
+                )
+            })?;
         let source_path = source_path.ok_or_else(|| {
             (
                 String::from("declared env source changes need `--source-path`"),
@@ -7704,7 +7790,9 @@ fn build_assist_env_proposal(
         let source = EnvSource {
             kind,
             path: source_path.to_string(),
-            must_exist: must_exist.or(existing.as_ref().map(|source| source.must_exist)).unwrap_or(false),
+            must_exist: must_exist
+                .or(existing.as_ref().map(|source| source.must_exist))
+                .unwrap_or(false),
         };
         let after_value = serde_yaml::to_value(&source).map_err(|error| {
             (
@@ -7733,7 +7821,11 @@ fn build_assist_env_proposal(
             "source `{}` at `{}` will be {}",
             kind,
             source_path,
-            if existing.is_some() { "refined" } else { "declared" }
+            if existing.is_some() {
+                "refined"
+            } else {
+                "declared"
+            }
         ));
         return Ok(AssistEnvProposal {
             subject: AssistEnvProposalSubject::RootSource {
@@ -7758,7 +7850,9 @@ fn build_assist_env_proposal(
 
     let Some(name) = name else {
         return Err((
-            String::from("root env declaration needs `--name`, or choose one explicit source or task-local env target"),
+            String::from(
+                "root env declaration needs `--name`, or choose one explicit source or task-local env target",
+            ),
             String::from(
                 "rerun with `--name <ENV>` for `env.vars`, `--source-kind ... --source-path ...` for `env.sources`, or `--task <name> --name <ENV> --value <value>` for task-local env",
             ),
@@ -7767,13 +7861,19 @@ fn build_assist_env_proposal(
 
     if value.is_some() {
         return Err((
-            String::from("root env requirements do not accept `--value`; use `--default` or task-local `--task ... --value ...`"),
-            String::from("rerun with `--default <value>` for root env or `--task <name> --value <value>` for task-local env"),
+            String::from(
+                "root env requirements do not accept `--value`; use `--default` or task-local `--task ... --value ...`",
+            ),
+            String::from(
+                "rerun with `--default <value>` for root env or `--task <name> --value <value>` for task-local env",
+            ),
         ));
     }
     if name != "PATH" && (!prepend.is_empty() || !append.is_empty()) {
         return Err((
-            format!("env `{name}` cannot declare `prepend` or `append`; those are reserved for `PATH`"),
+            format!(
+                "env `{name}` cannot declare `prepend` or `append`; those are reserved for `PATH`"
+            ),
             String::from("rerun without `--prepend` or `--append`, or target `--name PATH`"),
         ));
     }
@@ -7846,9 +7946,19 @@ fn build_assist_env_proposal(
     let mut assumptions = Vec::new();
     assumptions.push(format!(
         "root env requirement `{name}` will {} under `env.vars`",
-        if existing.is_some() { "be refined" } else { "be declared" }
+        if existing.is_some() {
+            "be refined"
+        } else {
+            "be declared"
+        }
     ));
-    if secret == Some(true) && existing.as_ref().and_then(|req| req.default.as_ref()).is_some() && default.is_none() {
+    if secret == Some(true)
+        && existing
+            .as_ref()
+            .and_then(|req| req.default.as_ref())
+            .is_some()
+        && default.is_none()
+    {
         assumptions.push(format!(
             "the inherited default for `{name}` will be cleared because secret env values cannot declare defaults"
         ));
@@ -7887,7 +7997,11 @@ fn build_assist_env_yaml(
     let mut document = raw_document.clone();
     match &proposal.subject {
         AssistEnvProposalSubject::RootVar { name } => {
-            set_yaml_path(&mut document, &["env", "vars", name], proposal.after_value.clone());
+            set_yaml_path(
+                &mut document,
+                &["env", "vars", name],
+                proposal.after_value.clone(),
+            );
         }
         AssistEnvProposalSubject::TaskEnv { task, name } => {
             set_yaml_path(
@@ -7918,7 +8032,10 @@ fn build_assist_env_yaml(
                         let existing_path = mapping
                             .get(YamlValue::String(String::from("path")))
                             .and_then(YamlValue::as_str);
-                        Some(existing_kind == Some(assist_env_source_kind_name(*kind)) && existing_path == Some(path.as_str()))
+                        Some(
+                            existing_kind == Some(assist_env_source_kind_name(*kind))
+                                && existing_path == Some(path.as_str()),
+                        )
                     })
                     .unwrap_or(false);
                 if matches {
@@ -7935,9 +8052,8 @@ fn build_assist_env_yaml(
         }
     }
 
-    serde_yaml::to_string(&document).map_err(|error| {
-        format!("failed to serialize assist proposal: {error}")
-    })
+    serde_yaml::to_string(&document)
+        .map_err(|error| format!("failed to serialize assist proposal: {error}"))
 }
 
 fn effective_yaml_value_for_path(document: &YamlValue, path: &[&str]) -> Option<YamlValue> {
@@ -7960,7 +8076,9 @@ fn build_assist_add_task_proposal(
     if contract.tasks.contains_key(name) {
         return Err((
             format!("task `{name}` is already declared"),
-            String::from("choose a new task name, or use `ota tasks` to inspect the current inventory"),
+            String::from(
+                "choose a new task name, or use `ota tasks` to inspect the current inventory",
+            ),
         ));
     }
 
@@ -7980,9 +8098,7 @@ fn build_assist_add_task_proposal(
         }
         (None, None) => {
             return Err((
-                format!(
-                    "task `{name}` needs an explicit execution body via `--run` or `--script`"
-                ),
+                format!("task `{name}` needs an explicit execution body via `--run` or `--script`"),
                 String::from("rerun with `--run <command>` or `--script <body>`"),
             ));
         }
@@ -8033,87 +8149,83 @@ fn build_assist_add_task_proposal(
         task.script = Some(execution_body.clone());
     }
 
-    let (listener_name, protocol_value, bind_address, fixed_port) =
-        if matches!(kind, AssistTaskKindArg::Service) {
-            let listener_name = listener.ok_or_else(|| {
-                (
-                    format!("service task `{name}` needs `--listener`"),
-                    String::from(
-                        "rerun with `--listener <name> --protocol http|tcp --port <port>`",
-                    ),
-                )
-            })?;
-            let protocol_value = protocol.ok_or_else(|| {
-                (
-                    format!("service task `{name}` needs `--protocol`"),
-                    String::from(
-                        "rerun with `--listener <name> --protocol http|tcp --port <port>`",
-                    ),
-                )
-            })?;
-            let fixed_port = port.ok_or_else(|| {
-                (
-                    format!("service task `{name}` needs `--port`"),
-                    String::from(
-                        "rerun with `--listener <name> --protocol http|tcp --port <port>`",
-                    ),
-                )
-            })?;
-            let bind_address = address.unwrap_or("127.0.0.1").to_string();
-            let protocol_value = assist_task_listener_protocol_from_arg(protocol_value);
-            let mut listeners = BTreeMap::new();
-            listeners.insert(
-                listener_name.to_string(),
-                TaskRuntimeListenerSpec {
-                    protocol: protocol_value,
-                    bind: TaskRuntimeBindSpec {
-                        address: bind_address.clone(),
-                        port: TaskRuntimePortSpec {
-                            mode: TaskRuntimePortMode::Fixed,
-                            value: Some(fixed_port),
-                        },
-                    },
-                    project: TaskRuntimeProjectionSpec {
-                        host: Some(TaskRuntimeHostProjectionSpec {
-                            address: bind_address.clone(),
-                            port: TaskRuntimeHostPortSpec {
-                                mode: TaskRuntimeHostPortMode::Fixed,
-                                value: Some(fixed_port),
-                            },
-                            primary: true,
-                            path: None,
-                        }),
+    let (listener_name, protocol_value, bind_address, fixed_port) = if matches!(
+        kind,
+        AssistTaskKindArg::Service
+    ) {
+        let listener_name = listener.ok_or_else(|| {
+            (
+                format!("service task `{name}` needs `--listener`"),
+                String::from("rerun with `--listener <name> --protocol http|tcp --port <port>`"),
+            )
+        })?;
+        let protocol_value = protocol.ok_or_else(|| {
+            (
+                format!("service task `{name}` needs `--protocol`"),
+                String::from("rerun with `--listener <name> --protocol http|tcp --port <port>`"),
+            )
+        })?;
+        let fixed_port = port.ok_or_else(|| {
+            (
+                format!("service task `{name}` needs `--port`"),
+                String::from("rerun with `--listener <name> --protocol http|tcp --port <port>`"),
+            )
+        })?;
+        let bind_address = address.unwrap_or("127.0.0.1").to_string();
+        let protocol_value = assist_task_listener_protocol_from_arg(protocol_value);
+        let mut listeners = BTreeMap::new();
+        listeners.insert(
+            listener_name.to_string(),
+            TaskRuntimeListenerSpec {
+                protocol: protocol_value,
+                bind: TaskRuntimeBindSpec {
+                    address: bind_address.clone(),
+                    port: TaskRuntimePortSpec {
+                        mode: TaskRuntimePortMode::Fixed,
+                        value: Some(fixed_port),
                     },
                 },
-            );
-            task.runtime = Some(TaskRuntimeSpec {
-                kind: TaskRuntimeKind::Service,
-                backend_binding: None,
-                readiness: None,
-                listeners,
-            });
-            assumptions.push(String::from(
+                project: TaskRuntimeProjectionSpec {
+                    host: Some(TaskRuntimeHostProjectionSpec {
+                        address: bind_address.clone(),
+                        port: TaskRuntimeHostPortSpec {
+                            mode: TaskRuntimeHostPortMode::Fixed,
+                            value: Some(fixed_port),
+                        },
+                        primary: true,
+                        path: None,
+                    }),
+                },
+            },
+        );
+        task.runtime = Some(TaskRuntimeSpec {
+            kind: TaskRuntimeKind::Service,
+            backend_binding: None,
+            readiness: None,
+            listeners,
+        });
+        assumptions.push(String::from(
                 "service task creation only declares one fixed listener and matching host projection; declare readiness separately if the app needs deeper truth",
             ));
-            (
-                Some(listener_name.to_string()),
-                Some(protocol_value),
-                Some(bind_address),
-                Some(fixed_port),
-            )
-        } else {
-            if matches!(kind, AssistTaskKindArg::Sandbox) && run.is_none() && script.is_none() {
-                assumptions.push(String::from(
+        (
+            Some(listener_name.to_string()),
+            Some(protocol_value),
+            Some(bind_address),
+            Some(fixed_port),
+        )
+    } else {
+        if matches!(kind, AssistTaskKindArg::Sandbox) && run.is_none() && script.is_none() {
+            assumptions.push(String::from(
                     "sandbox task used the bounded starter run body `echo sandbox`; replace it later if the repo needs a real sandbox command",
                 ));
-            }
-            if matches!(kind, AssistTaskKindArg::Setup) && internal.is_none() {
-                assumptions.push(String::from(
+        }
+        if matches!(kind, AssistTaskKindArg::Setup) && internal.is_none() {
+            assumptions.push(String::from(
                     "setup tasks default to `internal: true` in this slice because they exist to support `ota up`, not the public task list",
                 ));
-            }
-            (None, None, None, None)
-        };
+        }
+        (None, None, None, None)
+    };
 
     let mut after_value = YamlValue::Mapping(Mapping::new());
     if let Some(description) = &task.description {
@@ -8127,7 +8239,11 @@ fn build_assist_add_task_proposal(
         set_yaml_path(&mut after_value, &["run"], YamlValue::String(run.clone()));
     }
     if let Some(script) = &task.script {
-        set_yaml_path(&mut after_value, &["script"], YamlValue::String(script.clone()));
+        set_yaml_path(
+            &mut after_value,
+            &["script"],
+            YamlValue::String(script.clone()),
+        );
     }
     if task.internal {
         set_yaml_path(&mut after_value, &["internal"], YamlValue::Bool(true));
@@ -8183,14 +8299,29 @@ fn assist_add_task_validation_commands(
     } else {
         String::from("ota validate")
     };
-    commands.push(command_for_repo_from_contract_path(&validate, resolved_path));
+    commands.push(command_for_repo_from_contract_path(
+        &validate,
+        resolved_path,
+    ));
 
-    let tasks = if let Some(member) = member {
-        format!("ota tasks --member {member}")
-    } else {
-        String::from("ota tasks")
-    };
-    commands.push(command_for_repo_from_contract_path(&tasks, resolved_path));
+    match kind {
+        AssistTaskKindArg::Setup => {
+            let up = if let Some(member) = member {
+                format!("ota up --member {member} --dry-run")
+            } else {
+                String::from("ota up --dry-run")
+            };
+            commands.push(command_for_repo_from_contract_path(&up, resolved_path));
+        }
+        _ => {
+            let tasks = if let Some(member) = member {
+                format!("ota tasks --member {member}")
+            } else {
+                String::from("ota tasks")
+            };
+            commands.push(command_for_repo_from_contract_path(&tasks, resolved_path));
+        }
+    }
 
     if matches!(kind, AssistTaskKindArg::Service) {
         let topology = if let Some(member) = member {
@@ -8198,10 +8329,47 @@ fn assist_add_task_validation_commands(
         } else {
             String::from("ota execution topology")
         };
-        commands.push(command_for_repo_from_contract_path(&topology, resolved_path));
+        commands.push(command_for_repo_from_contract_path(
+            &topology,
+            resolved_path,
+        ));
     }
 
     commands
+}
+
+fn assist_add_task_write_next(
+    resolved_path: &Path,
+    member: Option<&str>,
+    kind: AssistTaskKindArg,
+) -> String {
+    let command = match kind {
+        AssistTaskKindArg::Setup => {
+            if let Some(member) = member {
+                format!("ota up --member {member} --dry-run")
+            } else {
+                String::from("ota up --dry-run")
+            }
+        }
+        AssistTaskKindArg::Service => {
+            if let Some(member) = member {
+                format!("ota execution topology --member {member}")
+            } else {
+                String::from("ota execution topology")
+            }
+        }
+        _ => {
+            if let Some(member) = member {
+                format!("ota tasks --member {member}")
+            } else {
+                String::from("ota tasks")
+            }
+        }
+    };
+    format!(
+        "rerun `{}` to inspect the updated task contract",
+        command_for_repo_from_contract_path(&command, resolved_path)
+    )
 }
 
 fn parse_assist_bind_target_selector(value: &str) -> (String, Option<String>) {
@@ -8305,9 +8473,7 @@ fn resolve_assist_bind_task_listener(
             return Ok(listener.to_string());
         }
         return Err((
-            format!(
-                "producer task `{producer_task_name}` does not declare listener `{listener}`"
-            ),
+            format!("producer task `{producer_task_name}` does not declare listener `{listener}`"),
             String::from("run `ota execution topology` to inspect the producer listeners"),
         ));
     }
@@ -8319,7 +8485,8 @@ fn resolve_assist_bind_task_listener(
                 .listener
                 .as_deref()
                 .is_some_and(|listener| {
-                    task_declared_service_listener_names_for_assist(producer_task).contains(listener)
+                    task_declared_service_listener_names_for_assist(producer_task)
+                        .contains(listener)
                 })
         {
             return Ok(existing_service.listener.clone().expect("checked above"));
@@ -8330,7 +8497,9 @@ fn resolve_assist_bind_task_listener(
     match listeners.len() {
         0 => Err((
             format!("producer task `{producer_task_name}` does not declare any service listeners"),
-            String::from("declare the producer runtime listener first, then rerun the assist command"),
+            String::from(
+                "declare the producer runtime listener first, then rerun the assist command",
+            ),
         )),
         1 => Ok(listeners
             .into_iter()
@@ -8340,7 +8509,9 @@ fn resolve_assist_bind_task_listener(
             format!(
                 "producer task `{producer_task_name}` declares multiple listeners, so assist cannot pick one safely"
             ),
-            String::from("rerun with `--to <task>:<listener>` after checking `ota execution topology`"),
+            String::from(
+                "rerun with `--to <task>:<listener>` after checking `ota execution topology`",
+            ),
         )),
     }
 }
@@ -9626,7 +9797,10 @@ fn assist_env_validation_commands(
                 &format!("ota validate --member {member}"),
                 resolved_path,
             ),
-            command_for_repo_from_contract_path(&format!("ota env --member {member}"), resolved_path),
+            command_for_repo_from_contract_path(
+                &format!("ota env --member {member}"),
+                resolved_path,
+            ),
             command_for_repo_from_contract_path(
                 &format!("ota doctor --member {member}"),
                 resolved_path,
@@ -9636,7 +9810,10 @@ fn assist_env_validation_commands(
         .collect(),
         (None, Some(task)) => vec![
             command_for_repo_contract_target("ota validate", target_contract_path),
-            command_for_repo_contract_target(&format!("ota env --task {task}"), target_contract_path),
+            command_for_repo_contract_target(
+                &format!("ota env --task {task}"),
+                target_contract_path,
+            ),
             command_for_repo_contract_target("ota doctor", target_contract_path),
         ],
         (None, None) => vec![

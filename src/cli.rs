@@ -35242,7 +35242,11 @@ project:
         assert!(stdout.contains("ASSIST DECLARE-ENV"));
         assert!(stdout.contains("env.vars.APP_PORT"));
         assert!(stdout.contains("required: true"));
-        assert!(stdout.contains("default: \"8080\"") || stdout.contains("default: '8080'") || stdout.contains("default: 8080"));
+        assert!(
+            stdout.contains("default: \"8080\"")
+                || stdout.contains("default: '8080'")
+                || stdout.contains("default: 8080")
+        );
         assert!(stdout.contains("ota env"));
     }
 
@@ -35281,7 +35285,8 @@ project:
     }
 
     #[test]
-    fn assist_declare_env_member_write_updates_task_local_env_and_keeps_member_validation_context() {
+    fn assist_declare_env_member_write_updates_task_local_env_and_keeps_member_validation_context()
+    {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -35518,6 +35523,35 @@ tasks:
         let stderr =
             normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
         assert!(stderr.contains("task `smoke` is already declared"));
+    }
+
+    #[test]
+    fn assist_add_task_setup_uses_up_dry_run_follow_up_instead_of_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "setup",
+            "--kind",
+            "setup",
+            "--run",
+            "npm install",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota up --dry-run"));
+        assert!(!stdout.contains("ota tasks"));
     }
 
     struct WorkspaceFixture {
