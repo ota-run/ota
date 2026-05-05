@@ -9435,6 +9435,11 @@ execution:
 version: 1
 project:
   name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 workspace:
   type: monorepo
   members:
@@ -33712,6 +33717,11 @@ tasks:
 version: 1
 project:
   name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 workspace:
   type: monorepo
   members:
@@ -34426,6 +34436,135 @@ project:
             normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
         assert!(stderr.contains("needs an explicit `--run` or `--script` body"));
         assert!(stderr.contains("--run '<command>'"));
+    }
+
+    #[test]
+    fn assist_wire_setup_member_preview_surfaces_inherited_root_setup() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: test -f .env.local || cp .env.example .env.local
+    requires_services:
+      - postgres
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--member",
+            "api",
+            "--internal",
+            "false",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Current setup"));
+        assert!(stdout.contains("run: test -f .env.local || cp .env.example .env.local"));
+        assert!(stdout.contains("requires_services:"));
+        assert!(stdout.contains("- postgres"));
+        assert!(stdout.contains("internal: false"));
+    }
+
+    #[test]
+    fn assist_wire_setup_member_write_can_replace_and_clear_inherited_root_setup_fields() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: test -f .env.local || cp .env.example .env.local
+    requires_services:
+      - postgres
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--member",
+            "api",
+            "--script",
+            "npm install\nnpm run build",
+            "--clear-services",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("script: |-") || member_contract.contains("script: |"));
+        assert!(member_contract.contains("run: null"));
+        assert!(member_contract.contains("requires_services: []"));
+
+        let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
+        assert_eq!(validate.exit_code, 0, "{validate:?}");
     }
 
     struct WorkspaceFixture {
