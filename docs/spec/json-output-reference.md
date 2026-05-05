@@ -8,6 +8,8 @@ operator guidance added where useful.
 
 The goal is stability for humans, CI, editors, and agents.
 
+For the operator guide to the currently shipped assist flow, see [assist-workflow.md](assist-workflow.md).
+
 Editor and CI integrations should treat the JSON surfaces in this document as the stable contract
 and avoid scraping human-readable text output.
 
@@ -461,6 +463,7 @@ Notes:
 - `path` is the resolved repo contract path
 - `member` is present only when `--member` targeted a merged monorepo member contract
 - `subject` contains exactly one selector key today: `task` or `service`
+- `changes[*].before` is present when assist is refining or replacing an existing readiness block, including legacy top-level readiness shapes
 - `changes[*].after` uses the canonical readiness contract shape Ota would write
 - `mode` is `preview` by default and `write` when `--write` succeeded
 

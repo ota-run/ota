@@ -29,6 +29,7 @@ This document describes the current shipped CLI surface.
 ota's canonical repo contract is `ota.yaml`. This reference covers the current repo-level CLI surface only.
 
 For machine-readable command contracts, see [json-output-reference.md](json-output-reference.md).
+For the shipped assist workflow and refusal rules, see [assist-workflow.md](assist-workflow.md).
 For canonical exit-code behavior, see [exit-codes.md](exit-codes.md).
 For service behavior across commands, see [service-behavior.md](service-behavior.md).
 For platform shell behavior, see [shell-semantics.md](shell-semantics.md).
@@ -467,8 +468,24 @@ Current behavior:
 - supports `--service` for `services.<name>.readiness`
 - supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
 - supports `spring-http`, `http`, and `tcp` styles
-- refuses when the target is ambiguous, unknown, or missing the runtime/service surface needed for a truthful readiness declaration
+- task targeting can infer from existing runtime and listener truth when that choice is unique
+- managed service targeting requires explicit `--style` unless the service already has a structured readiness kind that assist is refining
+- refuses when the target is ambiguous, unknown, missing the runtime/service surface needed for a truthful readiness declaration, or when the requested style conflicts with the selected listener protocol
+- text preview shows both current and proposed readiness when an existing readiness block would be replaced
 - `--json` emits the stable assist proposal/apply result shape described in [assist-operations.md](assist-operations.md)
+
+Examples:
+
+```bash
+ota assist declare-readiness --task dev
+ota assist declare-readiness --task dev --style spring-http --write
+ota assist declare-readiness --service api --style http
+ota assist declare-readiness --service postgres --style tcp
+ota assist declare-readiness --member api --task dev --json
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
 
 ## `ota diff`
 
