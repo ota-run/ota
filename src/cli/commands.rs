@@ -42,7 +42,7 @@ use signal_hook::flag as signal_flag;
 use time::OffsetDateTime;
 use time::macros::format_description;
 
-use super::{AnnotationFormat, AnnotationMode, AssistReadinessStyleArg};
+use super::{AnnotationFormat, AnnotationMode, AssistReadinessStyleArg, AssistServiceManagerArg};
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
@@ -3917,6 +3917,97 @@ impl AssistReadinessProposal {
     }
 }
 
+struct AssistServiceProposal {
+    subject_name: String,
+    manager: AssistServiceManagerArg,
+    manager_name: Option<String>,
+    compose_file: Option<String>,
+    compose_service: Option<String>,
+    endpoint: String,
+    address: String,
+    port: u16,
+    required: bool,
+    style: Option<AssistReadinessStyleArg>,
+    assumptions: Vec<String>,
+    change_path: String,
+    yaml_path: Vec<String>,
+    before_value: YamlValue,
+    after_value: YamlValue,
+}
+
+impl AssistServiceProposal {
+    fn subject_json(&self) -> BTreeMap<&'static str, &str> {
+        let mut subject = BTreeMap::new();
+        subject.insert("service", self.subject_name.as_str());
+        subject
+    }
+
+    fn inputs_json(&self) -> BTreeMap<&'static str, String> {
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            "manager",
+            assist_service_manager_name(self.manager).to_string(),
+        );
+        inputs.insert("endpoint", self.endpoint.clone());
+        inputs.insert("address", self.address.clone());
+        inputs.insert("port", self.port.to_string());
+        inputs.insert("required", self.required.to_string());
+        if let Some(style) = self.style {
+            inputs.insert("style", assist_readiness_style_name(style).to_string());
+        }
+        if let Some(name) = &self.manager_name {
+            inputs.insert("manager_name", name.clone());
+        }
+        if let Some(file) = &self.compose_file {
+            inputs.insert("compose_file", file.clone());
+        }
+        if let Some(service) = &self.compose_service {
+            inputs.insert("compose_service", service.clone());
+        }
+        inputs
+    }
+
+    fn diff(&self) -> String {
+        format!(
+            "{}\n- {}\n+ {}",
+            self.change_path,
+            compact_yaml_inline(&self.before_value),
+            compact_yaml_inline(&self.after_value)
+        )
+    }
+
+    fn preview_next_command(&self, member: Option<&str>, contract_path: &Path) -> String {
+        let mut command = String::from("ota assist declare-service");
+        if let Some(member) = member {
+            command.push_str(&format!(" --member {member}"));
+        }
+        command.push_str(&format!(" --name {}", self.subject_name));
+        command.push_str(&format!(
+            " --manager {}",
+            assist_service_manager_name(self.manager)
+        ));
+        command.push_str(&format!(" --endpoint {}", self.endpoint));
+        command.push_str(&format!(" --address {}", self.address));
+        command.push_str(&format!(" --port {}", self.port));
+        command.push_str(&format!(" --required {}", self.required));
+        if let Some(name) = &self.manager_name {
+            command.push_str(&format!(" --manager-name {}", shell_quote(name)));
+        }
+        if let Some(file) = &self.compose_file {
+            command.push_str(&format!(" --compose-file {}", shell_quote(file)));
+        }
+        if let Some(service) = &self.compose_service {
+            command.push_str(&format!(" --compose-service {}", shell_quote(service)));
+        }
+        if let Some(style) = self.style {
+            command.push_str(&format!(" --style {}", assist_readiness_style_name(style)));
+        }
+        command.push_str(" --write");
+        let command = command_for_repo_from_contract_path(&command, contract_path);
+        format!("rerun with `{command}` to apply this service change")
+    }
+}
+
 fn is_http_readiness_style(style: AssistReadinessStyleArg) -> bool {
     matches!(
         style,
@@ -3943,6 +4034,13 @@ fn assist_readiness_style_name(style: AssistReadinessStyleArg) -> &'static str {
         AssistReadinessStyleArg::SpringHttp => "spring-http",
         AssistReadinessStyleArg::Http => "http",
         AssistReadinessStyleArg::Tcp => "tcp",
+    }
+}
+
+fn assist_service_manager_name(manager: AssistServiceManagerArg) -> &'static str {
+    match manager {
+        AssistServiceManagerArg::Compose => "compose",
+        AssistServiceManagerArg::Host => "host",
     }
 }
 
@@ -4032,6 +4130,867 @@ fn render_assist_readiness_text(
         ));
     }
     output
+}
+
+fn render_assist_service_text(
+    path: &str,
+    proposal: &AssistServiceProposal,
+    mode: &str,
+    validation: &[String],
+    preview_next: Option<&str>,
+) -> String {
+    let mut output = format_command_header("ASSIST DECLARE-SERVICE", path);
+    output.push_str(&format!("\n\n{} {}", mode_icon(), paint_key("Mode:")));
+    output.push_str(&format!(
+        " {}",
+        if mode == "write" { "write" } else { "preview" }
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Subject:"),
+        paint_named_drift_label("Service", &proposal.subject_name)
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Manager:"),
+        assist_service_manager_name(proposal.manager)
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Endpoint:"),
+        proposal.endpoint
+    ));
+    if let Some(style) = proposal.style {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Readiness style:"),
+            assist_readiness_style_name(style)
+        ));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    for assumption in &proposal.assumptions {
+        output.push_str(&format!("\n{} {}", info_bullet(), assumption));
+    }
+    if !proposal.before_value.is_null() {
+        output.push_str(&format!("\n\n{}:", paint_section_title("Current service")));
+        output.push_str(&format!(
+            "\n{} {}",
+            info_bullet(),
+            paint_backticked_code(&proposal.change_path)
+        ));
+        let before_yaml =
+            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        output.push_str(&format!(
+            "\n{}",
+            stylize_yaml_preview(before_yaml.trim_end())
+        ));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed service")));
+    output.push_str(&format!(
+        "\n{} {}",
+        info_bullet(),
+        paint_backticked_code(&proposal.change_path)
+    ));
+    let after_yaml =
+        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(after_yaml.trim_end())
+    ));
+    output.push_str(&format_next_timeline(
+        &validation
+            .iter()
+            .map(|command| format!("run `{}`", command))
+            .collect::<Vec<_>>(),
+    ));
+    if mode == "preview" {
+        if let Some(preview_next) = preview_next {
+            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+        }
+    } else {
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code(&proposal.change_path))
+        ));
+    }
+    output
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return String::from("''");
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+pub fn assist_declare_service(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    name: &str,
+    manager: Option<AssistServiceManagerArg>,
+    manager_name: Option<&str>,
+    compose_file: Option<&str>,
+    compose_service: Option<&str>,
+    endpoint: Option<&str>,
+    address: Option<&str>,
+    port: Option<u16>,
+    required: Option<bool>,
+    style: Option<AssistReadinessStyleArg>,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=assist declare-service")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=assist declare-service"),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG service={name}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(manager) = manager {
+        debug_lines.push(format!(
+            "DEBUG manager={}",
+            assist_service_manager_name(manager)
+        ));
+    }
+    if let Some(endpoint) = endpoint {
+        debug_lines.push(format!("DEBUG endpoint={endpoint}"));
+    }
+    if let Some(address) = address {
+        debug_lines.push(format!("DEBUG address={address}"));
+    }
+    if let Some(port) = port {
+        debug_lines.push(format!("DEBUG port={port}"));
+    }
+    if let Some(required) = required {
+        debug_lines.push(format!("DEBUG required={required}"));
+    }
+    if let Some(style) = style {
+        debug_lines.push(format!(
+            "DEBUG style={}",
+            assist_readiness_style_name(style)
+        ));
+    }
+    if write {
+        debug_lines.push(String::from("DEBUG mode=write"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "ASSIST DECLARE-SERVICE",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from(
+                        "`ota assist declare-service` reads repo contracts such as `ota.yaml`",
+                    ),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command(
+                    "ota assist declare-service",
+                    &resolved_path,
+                ),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let source_contents = match fs::read_to_string(&target.contract_path) {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to read `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-service",
+                                    subject: {
+                                        let mut subject = BTreeMap::new();
+                                        subject.insert("service", name);
+                                        subject
+                                    },
+                                    why,
+                                    next: String::from(
+                                        "repair the contract path, then rerun the assist command",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+                let mut document: YamlValue = match serde_yaml::from_str(&source_contents) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to parse `{}` for assist preview: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-service",
+                                    subject: {
+                                        let mut subject = BTreeMap::new();
+                                        subject.insert("service", name);
+                                        subject
+                                    },
+                                    why,
+                                    next: String::from(
+                                        "repair the existing contract, then rerun the assist command",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                let proposal = match build_assist_service_proposal(
+                    &target.contract,
+                    name,
+                    manager,
+                    manager_name,
+                    compose_file,
+                    compose_service,
+                    endpoint,
+                    address,
+                    port,
+                    required,
+                    style,
+                ) {
+                    Ok(proposal) => proposal,
+                    Err((why, next)) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST DECLARE-SERVICE", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-service",
+                                    subject: proposal_service_subject_map(name),
+                                    why,
+                                    next,
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                let after_value = proposal.after_value.clone();
+                set_yaml_path(
+                    &mut document,
+                    &proposal
+                        .yaml_path
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                    after_value.clone(),
+                );
+                let yaml = match serde_yaml::to_string(&document) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to serialize assist proposal for `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-service",
+                                    subject: proposal.subject_json(),
+                                    why,
+                                    next: String::from(
+                                        "rerun the assist command after fixing the repo contract",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                if let Err(error) = validate_assist_contract_update(
+                    &resolved_path,
+                    member,
+                    &target.contract_path,
+                    &yaml,
+                ) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(error.clone()),
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&AssistProposalFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                operation: "declare-service",
+                                subject: proposal.subject_json(),
+                                why: error,
+                                next: String::from(
+                                    "adjust the service inputs, then rerun the assist command",
+                                ),
+                            }))
+                        }
+                    };
+                }
+
+                let validation =
+                    assist_validation_commands(&resolved_path, &target.contract_path, member);
+
+                if write {
+                    match fs::write(&target.contract_path, yaml) {
+                        Ok(()) => match format {
+                            OutputFormat::Text => {
+                                CommandOutput::success(render_assist_service_text(
+                                    &text_path_display,
+                                    &proposal,
+                                    "write",
+                                    &validation,
+                                    None,
+                                ))
+                            }
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&AssistProposalSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    member,
+                                    mode: "write",
+                                    operation: "declare-service",
+                                    subject: proposal.subject_json(),
+                                    inputs: proposal.inputs_json(),
+                                    assumptions: proposal.assumptions.clone(),
+                                    changes: vec![AssistProposalChange {
+                                        path: &proposal.change_path,
+                                        action: "set",
+                                        before: proposal.before_value.clone(),
+                                        after: after_value,
+                                    }],
+                                    diff: proposal.diff(),
+                                    validation,
+                                    next: String::from(
+                                        "rerun `ota doctor` to inspect the updated service declaration",
+                                    ),
+                                }))
+                            }
+                        },
+                        Err(error) => {
+                            let why = format!(
+                                "failed to write `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "declare-service",
+                                        subject: proposal.subject_json(),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path or permissions, then rerun with `--write`",
+                                        ),
+                                    }))
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let preview_target_path = if member.is_some() {
+                        &resolved_path
+                    } else {
+                        &target.contract_path
+                    };
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_assist_service_text(
+                            &text_path_display,
+                            &proposal,
+                            "preview",
+                            &validation,
+                            Some(&proposal.preview_next_command(member, preview_target_path)),
+                        )),
+                        OutputFormat::Json => {
+                            CommandOutput::success(to_json(&AssistProposalSuccess {
+                                ok: true,
+                                path: &path_display,
+                                member,
+                                mode: "preview",
+                                operation: "declare-service",
+                                subject: proposal.subject_json(),
+                                inputs: proposal.inputs_json(),
+                                assumptions: proposal.assumptions.clone(),
+                                changes: vec![AssistProposalChange {
+                                    path: &proposal.change_path,
+                                    action: "set",
+                                    before: proposal.before_value.clone(),
+                                    after: after_value,
+                                }],
+                                diff: proposal.diff(),
+                                validation,
+                                next: proposal.preview_next_command(member, preview_target_path),
+                            }))
+                        }
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ASSIST DECLARE-SERVICE",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist declare-service",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "declare-service",
+                    subject: proposal_service_subject_map(name),
+                    why: errors.to_string(),
+                    next: String::from(
+                        "repair the existing contract, then rerun the assist command",
+                    ),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ASSIST DECLARE-SERVICE",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist declare-service",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "declare-service",
+                    subject: proposal_service_subject_map(name),
+                    why: error.to_string(),
+                    next: String::from("repair the contract path, then rerun the assist command"),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn proposal_service_subject_map(service: &str) -> BTreeMap<&'static str, &str> {
+    let mut subject = BTreeMap::new();
+    subject.insert("service", service);
+    subject
+}
+
+fn build_assist_service_proposal(
+    contract: &Contract,
+    name: &str,
+    manager: Option<AssistServiceManagerArg>,
+    manager_name: Option<&str>,
+    compose_file: Option<&str>,
+    compose_service: Option<&str>,
+    endpoint: Option<&str>,
+    address: Option<&str>,
+    port: Option<u16>,
+    required: Option<bool>,
+    style: Option<AssistReadinessStyleArg>,
+) -> Result<AssistServiceProposal, (String, String)> {
+    let existing = contract.services.get(name).cloned();
+    let before_value = existing
+        .as_ref()
+        .map(serde_yaml::to_value)
+        .transpose()
+        .map_err(|error| {
+            (
+                format!("failed to capture existing service for preview: {error}"),
+                String::from("rerun the assist command after repairing the contract"),
+            )
+        })?
+        .unwrap_or(YamlValue::Null);
+
+    if compose_file.is_some() || compose_service.is_some() {
+        let effective_manager = manager.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|service| service.manager.as_ref())
+                .map(|manager| match manager.kind {
+                    crate::schema::ServiceManagerKind::Compose => AssistServiceManagerArg::Compose,
+                    crate::schema::ServiceManagerKind::Host => AssistServiceManagerArg::Host,
+                })
+        });
+        if !matches!(effective_manager, Some(AssistServiceManagerArg::Compose)) {
+            return Err((
+                String::from(
+                    "`--compose-file` and `--compose-service` require `--manager compose`",
+                ),
+                String::from("rerun with `--manager compose`, or drop the compose-specific flags"),
+            ));
+        }
+    }
+
+    let endpoint_name =
+        resolve_assist_service_endpoint_name(existing.as_ref(), endpoint, address, port, style)?;
+    let endpoint_spec = existing
+        .as_ref()
+        .and_then(|service| service.endpoints.get(&endpoint_name));
+    let address = address
+        .map(str::to_string)
+        .or_else(|| endpoint_spec.map(|endpoint| endpoint.address.clone()))
+        .unwrap_or_else(|| String::from("127.0.0.1"));
+    let port = match port.or_else(|| endpoint_spec.map(|endpoint| endpoint.port)) {
+        Some(port) => port,
+        None => {
+            return Err((
+                format!("service `{name}` needs an explicit endpoint port"),
+                String::from("rerun with `--port <number>` to declare the service endpoint"),
+            ));
+        }
+    };
+
+    let manager_kind = manager
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|service| service.manager.as_ref())
+                .map(|manager| match manager.kind {
+                    crate::schema::ServiceManagerKind::Compose => AssistServiceManagerArg::Compose,
+                    crate::schema::ServiceManagerKind::Host => AssistServiceManagerArg::Host,
+                })
+        })
+        .ok_or_else(|| {
+            (
+                format!("service `{name}` needs an explicit manager kind"),
+                String::from("rerun with `--manager compose` or `--manager host`"),
+            )
+        })?;
+
+    let existing_manager = existing
+        .as_ref()
+        .and_then(|service| service.manager.as_ref());
+    let manager_name_value = manager_name
+        .map(str::to_string)
+        .or_else(|| existing_manager.and_then(|manager| manager.name.clone()));
+    let compose_file_value = match manager_kind {
+        AssistServiceManagerArg::Compose => compose_file
+            .map(str::to_string)
+            .or_else(|| existing_manager.and_then(|manager| manager.file.clone())),
+        AssistServiceManagerArg::Host => None,
+    };
+    let compose_service_value = match manager_kind {
+        AssistServiceManagerArg::Compose => compose_service
+            .map(str::to_string)
+            .or_else(|| existing_manager.and_then(|manager| manager.service.clone())),
+        AssistServiceManagerArg::Host => None,
+    };
+    let manager_name_value = match manager_kind {
+        AssistServiceManagerArg::Compose => {
+            Some(manager_name_value.unwrap_or_else(|| String::from("local")))
+        }
+        AssistServiceManagerArg::Host => manager_name_value,
+    };
+    let compose_service_value = match manager_kind {
+        AssistServiceManagerArg::Compose => {
+            Some(compose_service_value.unwrap_or_else(|| String::from(name)))
+        }
+        AssistServiceManagerArg::Host => None,
+    };
+
+    let readiness = match style {
+        Some(style) => Some(build_assist_service_readiness(&endpoint_name, style)),
+        None => existing
+            .as_ref()
+            .and_then(|service| service.readiness.clone()),
+    };
+
+    let mut after = existing.clone().unwrap_or_default();
+    after.required = required.unwrap_or(after.required);
+    after.manager = Some(crate::schema::ServiceManagerSpec {
+        kind: match manager_kind {
+            AssistServiceManagerArg::Compose => crate::schema::ServiceManagerKind::Compose,
+            AssistServiceManagerArg::Host => crate::schema::ServiceManagerKind::Host,
+        },
+        name: manager_name_value.clone(),
+        file: compose_file_value.clone(),
+        service: compose_service_value.clone(),
+    });
+    after.endpoints.insert(
+        endpoint_name.clone(),
+        crate::schema::ServiceEndpointSpec {
+            address: address.clone(),
+            port,
+        },
+    );
+    after.readiness = readiness;
+
+    let after_value = serde_yaml::to_value(&after).map_err(|error| {
+        (
+            format!("failed to build service proposal: {error}"),
+            String::from("rerun the assist command after repairing the contract"),
+        )
+    })?;
+
+    if before_value == after_value {
+        return Err((
+            format!("service `{name}` already matches the requested declaration"),
+            String::from("change one explicit service input, or skip the assist command"),
+        ));
+    }
+
+    let mut assumptions = Vec::new();
+    if existing.is_some() {
+        assumptions.push(format!(
+            "service `{name}` already exists and will be refined in place"
+        ));
+    } else {
+        assumptions.push(format!("service `{name}` will be created under `services`"));
+    }
+    assumptions.push(format!(
+        "endpoint `{endpoint_name}` is the service projection boundary"
+    ));
+    assumptions.push(format!(
+        "manager `{}` is the service owner",
+        assist_service_manager_name(manager_kind)
+    ));
+    if let Some(style) = style {
+        assumptions.push(format!(
+            "structured readiness will anchor to endpoint `{endpoint_name}` with style `{}`",
+            assist_readiness_style_name(style)
+        ));
+    }
+
+    Ok(AssistServiceProposal {
+        subject_name: String::from(name),
+        manager: manager_kind,
+        manager_name: manager_name_value,
+        compose_file: compose_file_value,
+        compose_service: compose_service_value,
+        endpoint: endpoint_name,
+        address,
+        port,
+        required: after.required,
+        style,
+        assumptions,
+        change_path: format!("services.{name}"),
+        yaml_path: vec![String::from("services"), String::from(name)],
+        before_value,
+        after_value,
+    })
+}
+
+fn resolve_assist_service_endpoint_name(
+    existing: Option<&crate::schema::ServiceSpec>,
+    requested_endpoint: Option<&str>,
+    address: Option<&str>,
+    port: Option<u16>,
+    style: Option<AssistReadinessStyleArg>,
+) -> Result<String, (String, String)> {
+    if let Some(endpoint) = requested_endpoint {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            return Err((
+                String::from("`--endpoint` must not be empty"),
+                String::from("rerun with a non-empty endpoint name such as `host`"),
+            ));
+        }
+        return Ok(endpoint.to_string());
+    }
+
+    let Some(existing) = existing else {
+        return Ok(String::from("host"));
+    };
+
+    if let Some(from) = existing
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.from.clone())
+    {
+        return Ok(from);
+    }
+
+    if existing.endpoints.contains_key("host") {
+        return Ok(String::from("host"));
+    }
+
+    if existing.endpoints.len() == 1 {
+        return Ok(existing
+            .endpoints
+            .keys()
+            .next()
+            .cloned()
+            .expect("single endpoint"));
+    }
+
+    if existing.endpoints.is_empty() {
+        return Ok(String::from("host"));
+    }
+
+    if address.is_none() && port.is_none() && style.is_none() {
+        return Ok(existing
+            .endpoints
+            .keys()
+            .next()
+            .cloned()
+            .expect("at least one endpoint"));
+    }
+
+    if address.is_some() || port.is_some() || style.is_some() {
+        return Err((
+            String::from(
+                "service has multiple endpoints; assist cannot pick one service endpoint safely",
+            ),
+            String::from(
+                "rerun with `--endpoint <name>` to pick the service projection explicitly",
+            ),
+        ));
+    }
+
+    Err((
+        String::from(
+            "service has multiple endpoints; assist cannot pick one service endpoint safely",
+        ),
+        String::from("rerun with `--endpoint <name>` to pick the service projection explicitly"),
+    ))
+}
+
+fn build_assist_service_readiness(
+    endpoint: &str,
+    style: AssistReadinessStyleArg,
+) -> crate::schema::ServiceReadinessSpec {
+    match style {
+        AssistReadinessStyleArg::SpringHttp => crate::schema::ServiceReadinessSpec {
+            from: Some(endpoint.to_string()),
+            run: None,
+            kind: Some(TaskRuntimeReadinessKind::Http),
+            method: Some(TaskRuntimeReadinessHttpMethod::Get),
+            path: Some(String::from("/actuator/health")),
+            headers: BTreeMap::from([(String::from("Accept"), String::from("application/json"))]),
+            success: Some(TaskRuntimeReadinessHttpSuccessSpec { status: vec![200] }),
+            body: Some(TaskRuntimeReadinessHttpBodySpec {
+                contains: String::from("\"status\":\"UP\""),
+            }),
+            interval: Some(String::from("5s")),
+            timeout: Some(String::from("3s")),
+            retries: Some(5),
+            start_period: Some(String::from("10s")),
+        },
+        AssistReadinessStyleArg::Http => crate::schema::ServiceReadinessSpec {
+            from: Some(endpoint.to_string()),
+            run: None,
+            kind: Some(TaskRuntimeReadinessKind::Http),
+            method: Some(TaskRuntimeReadinessHttpMethod::Get),
+            path: Some(String::from("/health")),
+            headers: BTreeMap::new(),
+            success: Some(TaskRuntimeReadinessHttpSuccessSpec { status: vec![200] }),
+            body: None,
+            interval: Some(String::from("5s")),
+            timeout: Some(String::from("3s")),
+            retries: Some(5),
+            start_period: Some(String::from("10s")),
+        },
+        AssistReadinessStyleArg::Tcp => crate::schema::ServiceReadinessSpec {
+            from: Some(endpoint.to_string()),
+            run: None,
+            kind: Some(TaskRuntimeReadinessKind::Tcp),
+            method: None,
+            path: None,
+            headers: BTreeMap::new(),
+            success: None,
+            body: None,
+            interval: Some(String::from("5s")),
+            timeout: Some(String::from("3s")),
+            retries: Some(5),
+            start_period: Some(String::from("10s")),
+        },
+    }
 }
 
 fn build_assist_readiness_proposal(

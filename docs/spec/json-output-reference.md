@@ -20,6 +20,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/execution.json](json-schemas/execution.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
+- [json-schemas/assist-declare-service.json](json-schemas/assist-declare-service.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
 - [json-schemas/check.json](json-schemas/check.json)
@@ -55,6 +56,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
 - use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything
 - use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
+- use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
@@ -80,6 +82,7 @@ human text output:
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `services`, and `tasks`
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
+- `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
@@ -479,6 +482,94 @@ Failure:
   },
   "why": "task `dev` has multiple readiness candidate listeners; assist cannot pick one safely",
   "next": "rerun with `--style <spring-http|http|tcp>` after narrowing the runtime surface"
+}
+```
+
+## `ota assist declare-service --json`
+
+Assist service output reports one deterministic proposal or apply result for one top-level managed
+service declaration.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "declare-service",
+  "subject": {
+    "service": "postgres"
+  },
+  "inputs": {
+    "manager": "compose",
+    "endpoint": "host",
+    "address": "127.0.0.1",
+    "port": "5432",
+    "required": "false",
+    "compose_file": "docker-compose.yml",
+    "compose_service": "postgres",
+    "style": "tcp"
+  },
+  "assumptions": [
+    "service `postgres` will be created under `services`",
+    "endpoint `host` is the service projection boundary",
+    "manager `compose` is the service owner"
+  ],
+  "changes": [
+    {
+      "path": "services.postgres",
+      "action": "set",
+      "before": null,
+      "after": {
+        "required": false,
+        "manager": {
+          "kind": "compose",
+          "name": "local",
+          "file": "docker-compose.yml",
+          "service": "postgres"
+        },
+        "endpoints": {
+          "host": {
+            "address": "127.0.0.1",
+            "port": 5432
+          }
+        },
+        "readiness": {
+          "from": "host",
+          "kind": "tcp"
+        }
+      }
+    }
+  ],
+  "diff": "services.postgres\n- <absent>\n+ required: false ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist declare-service --name postgres --manager compose --endpoint host --address 127.0.0.1 --port 5432 --required false --compose-file docker-compose.yml --compose-service postgres --style tcp --write /abs/path/to/ota.yaml` to apply this service change"
+}
+```
+
+Notes:
+
+- `subject.service` is the targeted top-level managed service name
+- `inputs` records the explicit or defaulted service declaration inputs used to build the proposal
+- `changes[*].before` is present when assist is refining an existing service block
+- `changes[*].after` is the exact service block Ota would write
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "declare-service",
+  "subject": {
+    "service": "postgres"
+  },
+  "why": "service `postgres` needs an explicit manager kind",
+  "next": "rerun with `--manager compose` or `--manager host`"
 }
 ```
 

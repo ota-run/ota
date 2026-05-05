@@ -82,6 +82,7 @@ ota currently ships these commands:
 - `ota execution plan`
 - `ota execution topology`
 - `ota assist declare-readiness`
+- `ota assist declare-service`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -482,6 +483,48 @@ ota assist declare-readiness --task dev --style spring-http --write
 ota assist declare-readiness --service api --style http
 ota assist declare-readiness --service postgres --style tcp
 ota assist declare-readiness --member api --task dev --json
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist declare-service`
+
+Declare or refine one top-level managed service.
+
+```bash
+ota assist declare-service --name <service> --manager compose|host --port <port> [PATH]
+ota assist declare-service --name <service> --manager compose --compose-file docker-compose.yml --style tcp [PATH]
+ota assist declare-service --member api --name <service> --manager compose --port <port> [PATH]
+ota assist declare-service --json --name <service> --manager host --port <port> [PATH]
+ota assist declare-service --write --name <service> --manager compose --port <port> [PATH]
+```
+
+Use it when the right next step is to create or refine a managed `services.<name>` block instead of
+hand-authoring manager, endpoint, and readiness YAML.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact service block, and the next validation commands
+- `--write` applies the proposed service mutation and revalidates the updated contract before returning success
+- `--name` is required and identifies the managed service block under `services`
+- `--manager compose|host` chooses the manager kind for a new service and can refine an existing manager
+- `--endpoint`, `--address`, and `--port` control the selected endpoint projection; when safe, ota defaults the endpoint to `host` and the address to `127.0.0.1`
+- `--required true|false` sets the service requirement flag explicitly
+- `--style spring-http|http|tcp` adds or replaces structured readiness anchored to the selected endpoint
+- `--compose-file`, `--compose-service`, and `--manager-name` refine compose-managed service metadata
+- compose-managed previews default `manager.name` to `local` and `manager.service` to the declared service name when those values are otherwise absent
+- supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
+- refuses when the requested service shape is ambiguous or under-specified, such as a new service without an explicit manager kind
+- `--json` emits the stable assist proposal/apply result for this service declaration
+
+Examples:
+
+```bash
+ota assist declare-service --name postgres --manager compose --compose-file docker-compose.yml --port 5432 --style tcp
+ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
+ota assist declare-service --name cache --manager host --port 6379 --json
+ota assist declare-service --member api --name api --manager compose --port 3000 --write
 ```
 
 Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
