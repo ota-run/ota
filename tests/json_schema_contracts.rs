@@ -231,6 +231,41 @@ fn policy_init_schema_includes_minimal_policy_pack_shape() {
 }
 
 #[test]
+fn assist_declare_service_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-declare-service.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+    let inputs = &success["inputs"]["properties"];
+
+    assert_eq!(
+        success["operation"]["const"],
+        serde_json::json!("declare-service")
+    );
+    assert_eq!(
+        success["subject"]["required"],
+        serde_json::json!(["service"])
+    );
+    assert!(inputs.get("manager").is_some());
+    assert!(inputs.get("endpoint").is_some());
+    assert!(inputs.get("address").is_some());
+    assert!(inputs.get("port").is_some());
+    assert!(inputs.get("required").is_some());
+    assert!(inputs.get("style").is_some());
+    assert!(inputs.get("compose_file").is_some());
+    assert!(inputs.get("compose_service").is_some());
+    assert_eq!(
+        failure["operation"]["const"],
+        serde_json::json!("declare-service")
+    );
+    assert_eq!(
+        failure["subject"]["required"],
+        serde_json::json!(["service"])
+    );
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];

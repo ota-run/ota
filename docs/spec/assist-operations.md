@@ -24,7 +24,7 @@
 
 # Assist Operations
 
-Status: active long-term spec, with the first shipped slice now covering `ota assist declare-readiness`.
+Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness` and `ota assist declare-service`.
 
 This document defines the long-term product contract for `ota assist`.
 
@@ -39,9 +39,10 @@ The goal is to reduce author burden without weakening trust.
 
 ## Current shipped slice
 
-The first shipped assist operation is:
+The currently shipped assist operations are:
 
 - `ota assist declare-readiness`
+- `ota assist declare-service`
 
 Current scope:
 
@@ -50,6 +51,8 @@ Current scope:
 - supports `--member` for monorepo overlays
 - supports `spring-http`, `http`, and `tcp`
 - emits a stable JSON proposal/apply result
+- previews or applies one deterministic managed-service mutation
+- can create or refine one `services.<name>` block with explicit manager, endpoint, and optional readiness inputs
 
 Current trust boundaries:
 
@@ -350,6 +353,9 @@ Behavior:
   - `endpoints`
   - `readiness`
 - must not invent undeclared topology outside the selected service
+- for new services, must require an explicit manager kind
+- when the selected service manager is `compose`, may default `manager.name` to `local` and `manager.service` to the declared service name if those values are otherwise absent
+- may attach structured readiness with the same shipped readiness templates as `declare-readiness`
 
 Typical validation:
 

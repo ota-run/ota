@@ -52,9 +52,10 @@ Preview is the default.
 
 ## Current shipped operation
 
-The first shipped assist slice is:
+The currently shipped assist operations are:
 
 - `ota assist declare-readiness`
+- `ota assist declare-service`
 
 It can target:
 
@@ -67,6 +68,14 @@ It can currently propose:
 - `spring-http`
 - `http`
 - `tcp`
+
+`ota assist declare-service` can:
+
+- create or refine one `services.<name>` block
+- set `manager.kind`, `manager.name`, `manager.file`, and `manager.service`
+- set one endpoint projection with `endpoint`, `address`, and `port`
+- set `required`
+- optionally attach structured readiness with `--style`
 
 ## Canonical examples
 
@@ -98,6 +107,18 @@ Managed TCP service:
 
 ```bash
 ota assist declare-readiness --service postgres --style tcp
+```
+
+Managed service declaration:
+
+```bash
+ota assist declare-service --name postgres --manager compose --compose-file docker-compose.yml --port 5432 --style tcp
+```
+
+Managed service apply:
+
+```bash
+ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
 ```
 
 Monorepo member write:
@@ -143,6 +164,8 @@ Assist should refuse instead of guessing when:
 - the selected task has no runtime service surface
 - the selected service has no protocol signal and no explicit `--style`
 - the selected listener protocol conflicts with the requested style
+- a new managed service does not declare an explicit manager kind
+- a service endpoint is ambiguous and `--endpoint` was not given
 
 Refusal is part of the trust model, not a UX bug.
 
