@@ -33639,6 +33639,8 @@ services:
             "--json",
             "--service",
             "api",
+            "--style",
+            "http",
             fixture.path(),
         ]);
 
@@ -33652,6 +33654,220 @@ services:
         assert_eq!(json["changes"][0]["path"], "services.api.readiness");
         assert_eq!(json["changes"][0]["after"]["kind"], "http");
         assert_eq!(json["changes"][0]["after"]["path"], "/health");
+    }
+
+    #[test]
+    fn assist_declare_readiness_refuses_ambiguous_managed_service_style_without_selector() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--service",
+            "postgres",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("managed service readiness style is ambiguous"));
+        assert!(stderr.contains("--style tcp"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_uses_selected_existing_listener_for_style_inference() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: admin
+        interval: 5s
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              primary: true
+              path: /
+        admin:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("listener: admin"));
+        assert!(!stdout.contains("path: /health"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_rejects_http_style_against_existing_tcp_listener() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: admin
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              primary: true
+              path: /
+        admin:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 9000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("does not fit that listener"));
+        assert!(stderr.contains("runtime.readiness.listener"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_text_preview_surfaces_current_readiness_before_replacement() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 43127
+    readiness:
+      from: host
+      run: curl -fsS http://127.0.0.1:43127/health
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--service",
+            "api",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Current readiness"));
+        assert!(stdout.contains("run: curl -fsS http://127.0.0.1:43127/health"));
+        assert!(stdout.contains("Proposed readiness"));
+        assert!(stdout.contains("path: /health"));
     }
 
     struct WorkspaceFixture {
