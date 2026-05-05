@@ -24,7 +24,7 @@
 
 # Assist Operations
 
-Status: planned, with the first shipped slice now covering `ota assist declare-readiness`.
+Status: active long-term spec, with the first shipped slice now covering `ota assist declare-readiness`.
 
 This document defines the long-term product contract for `ota assist`.
 
@@ -36,6 +36,29 @@ deterministic contract-operation layer above Ota's existing repo truth:
 - `ota assist` proposes bounded contract changes against that same truth
 
 The goal is to reduce author burden without weakening trust.
+
+## Current shipped slice
+
+The first shipped assist operation is:
+
+- `ota assist declare-readiness`
+
+Current scope:
+
+- previews or applies one deterministic readiness mutation
+- targets either an existing task runtime service or an existing top-level managed service
+- supports `--member` for monorepo overlays
+- supports `spring-http`, `http`, and `tcp`
+- emits a stable JSON proposal/apply result
+
+Current trust boundaries:
+
+- preview is the default
+- managed services require explicit `--style` unless assist is refining an existing structured readiness kind
+- assist refuses ambiguous listener selection instead of guessing
+- text preview must show destructive readiness replacement honestly
+
+For the operator guide and concrete examples, see [assist-workflow.md](assist-workflow.md).
 
 ## Product model
 
@@ -298,6 +321,10 @@ Behavior:
 - may still preserve legacy top-level `readiness.run` when the user asked only for review and Ota
   cannot express the existing probe shape structurally
 - must refuse contradictory output such as `method: HEAD` plus `body.contains`
+- must refuse a managed-service proposal when protocol truth cannot be inferred and the user did not
+  pass `--style`
+- must derive task style inference from the selected readiness listener, not from the runtime in the
+  abstract
 
 Typical validation:
 
