@@ -43,9 +43,10 @@ use time::OffsetDateTime;
 use time::macros::format_description;
 
 use super::{
-    AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistReadinessStyleArg,
-    AssistNormalizeIntoArg, AssistServiceManagerArg, AssistTaskKindArg, AssistTaskListenerProtocolArg,
-    AssistTaskTargetActivationModeArg, AssistTaskTargetAddressViewArg,
+    AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistNormalizeIntoArg,
+    AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
+    AssistTaskListenerProtocolArg, AssistTaskTargetActivationModeArg,
+    AssistTaskTargetAddressViewArg,
 };
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
@@ -407,6 +408,27 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         stylize_inline_text,
     );
     append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
+    out
+}
+
+fn assist_text_failure(where_label: &str, contract_path: &str, why: &str, next: &str) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Operation failed", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_label)
+    ));
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Contract:"),
+        paint_code(contract_path)
+    ));
+    out.push_str(&format!("\n{} {}", error_key("Why:"), why));
+    out.push_str(&format!("\n{} {}", paint_key("Next:"), next));
     out
 }
 
@@ -3612,16 +3634,11 @@ pub fn assist_declare_readiness(
                         Ok(proposal) => proposal,
                         Err((why, next)) => {
                             return match format {
-                                OutputFormat::Text => CommandOutput::failure(format!(
-                                    "{}\n{} {}\n{} {}",
-                                    format_command_header(
-                                        "ASSIST DECLARE-READINESS",
-                                        &text_path_display
-                                    ),
-                                    error_key("Why:"),
-                                    why,
-                                    paint_key("Next:"),
-                                    next
+                                OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                    "ota assist declare-readiness",
+                                    &text_path_display,
+                                    &why,
+                                    &next,
                                 )),
                                 OutputFormat::Json => {
                                     CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -4596,8 +4613,7 @@ fn render_assist_readiness_text(
             info_bullet(),
             paint_backticked_code(&proposal.change_path)
         ));
-        let before_yaml =
-            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        let before_yaml = assist_preview_yaml(&proposal.before_value);
         output.push_str(&format!(
             "\n{}",
             stylize_yaml_preview(before_yaml.trim_end())
@@ -4612,13 +4628,12 @@ fn render_assist_readiness_text(
         info_bullet(),
         paint_backticked_code(&proposal.change_path)
     ));
-    let after_yaml =
-        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    let after_yaml = assist_preview_yaml(&proposal.after_value);
     output.push_str(&format!(
         "\n{}",
         stylize_yaml_preview(after_yaml.trim_end())
     ));
-    output.push_str(&format_next_timeline(
+    output.push_str(&format_validation_timeline(
         &validation
             .iter()
             .map(|command| format!("run `{}`", command))
@@ -4626,7 +4641,7 @@ fn render_assist_readiness_text(
     ));
     if mode == "preview" {
         if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
         }
     } else {
         output.push_str(&format!(
@@ -4688,8 +4703,7 @@ fn render_assist_service_text(
             info_bullet(),
             paint_backticked_code(&proposal.change_path)
         ));
-        let before_yaml =
-            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        let before_yaml = assist_preview_yaml(&proposal.before_value);
         output.push_str(&format!(
             "\n{}",
             stylize_yaml_preview(before_yaml.trim_end())
@@ -4701,13 +4715,12 @@ fn render_assist_service_text(
         info_bullet(),
         paint_backticked_code(&proposal.change_path)
     ));
-    let after_yaml =
-        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    let after_yaml = assist_preview_yaml(&proposal.after_value);
     output.push_str(&format!(
         "\n{}",
         stylize_yaml_preview(after_yaml.trim_end())
     ));
-    output.push_str(&format_next_timeline(
+    output.push_str(&format_validation_timeline(
         &validation
             .iter()
             .map(|command| format!("run `{}`", command))
@@ -4715,7 +4728,7 @@ fn render_assist_service_text(
     ));
     if mode == "preview" {
         if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
         }
     } else {
         output.push_str(&format!(
@@ -4757,8 +4770,7 @@ fn render_assist_setup_text(
             info_bullet(),
             paint_backticked_code("tasks.setup")
         ));
-        let before_yaml =
-            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        let before_yaml = assist_preview_yaml(&proposal.before_value);
         output.push_str(&format!(
             "\n{}",
             stylize_yaml_preview(before_yaml.trim_end())
@@ -4770,13 +4782,12 @@ fn render_assist_setup_text(
         info_bullet(),
         paint_backticked_code("tasks.setup")
     ));
-    let after_yaml =
-        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    let after_yaml = assist_preview_yaml(&proposal.after_value);
     output.push_str(&format!(
         "\n{}",
         stylize_yaml_preview(after_yaml.trim_end())
     ));
-    output.push_str(&format_next_timeline(
+    output.push_str(&format_validation_timeline(
         &validation
             .iter()
             .map(|command| format!("run `{}`", command))
@@ -4784,7 +4795,7 @@ fn render_assist_setup_text(
     ));
     if mode == "preview" {
         if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
         }
     } else {
         output.push_str(&format!(
@@ -4870,8 +4881,7 @@ fn render_assist_bind_task_text(
                 proposal.consumer_task, proposal.target_name
             ))
         ));
-        let before_yaml =
-            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        let before_yaml = assist_preview_yaml(&proposal.before_value);
         output.push_str(&format!(
             "\n{}",
             stylize_yaml_preview(before_yaml.trim_end())
@@ -4886,13 +4896,12 @@ fn render_assist_bind_task_text(
             proposal.consumer_task, proposal.target_name
         ))
     ));
-    let after_yaml =
-        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    let after_yaml = assist_preview_yaml(&proposal.after_value);
     output.push_str(&format!(
         "\n{}",
         stylize_yaml_preview(after_yaml.trim_end())
     ));
-    output.push_str(&format_next_timeline(
+    output.push_str(&format_validation_timeline(
         &validation
             .iter()
             .map(|command| format!("run `{}`", command))
@@ -4900,7 +4909,7 @@ fn render_assist_bind_task_text(
     ));
     if mode == "preview" {
         if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
         }
     } else {
         output.push_str(&format!(
@@ -4970,8 +4979,7 @@ fn render_assist_env_text(
             info_bullet(),
             paint_backticked_code(&proposal.change_path)
         ));
-        let before_yaml =
-            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        let before_yaml = assist_preview_yaml(&proposal.before_value);
         output.push_str(&format!(
             "\n{}",
             stylize_yaml_preview(before_yaml.trim_end())
@@ -4983,13 +4991,12 @@ fn render_assist_env_text(
         info_bullet(),
         paint_backticked_code(&proposal.change_path)
     ));
-    let after_yaml =
-        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    let after_yaml = assist_preview_yaml(&proposal.after_value);
     output.push_str(&format!(
         "\n{}",
         stylize_yaml_preview(after_yaml.trim_end())
     ));
-    output.push_str(&format_next_timeline(
+    output.push_str(&format_validation_timeline(
         &validation
             .iter()
             .map(|command| format!("run `{}`", command))
@@ -4997,7 +5004,7 @@ fn render_assist_env_text(
     ));
     if mode == "preview" {
         if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
         }
     } else {
         output.push_str(&format!(
@@ -5044,13 +5051,12 @@ fn render_assist_add_task_text(
         info_bullet(),
         paint_backticked_code(&format!("tasks.{}", proposal.name))
     ));
-    let after_yaml =
-        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    let after_yaml = assist_preview_yaml(&proposal.after_value);
     output.push_str(&format!(
         "\n{}",
         stylize_yaml_preview(after_yaml.trim_end())
     ));
-    output.push_str(&format_next_timeline(
+    output.push_str(&format_validation_timeline(
         &validation
             .iter()
             .map(|command| format!("run `{}`", command))
@@ -5058,7 +5064,7 @@ fn render_assist_add_task_text(
     ));
     if mode == "preview" {
         if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
         }
     } else {
         output.push_str(&format!(
@@ -5097,15 +5103,25 @@ fn render_assist_normalize_text(
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Current setup-like task")));
-    let before_yaml =
-        serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
-    output.push_str(&format!("\n{}", stylize_yaml_preview(before_yaml.trim_end())));
-    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed canonical setup task")));
-    let after_yaml =
-        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
-    output.push_str(&format!("\n{}", stylize_yaml_preview(after_yaml.trim_end())));
-    output.push_str(&format_next_timeline(
+    output.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Current setup-like task")
+    ));
+    let before_yaml = assist_preview_yaml(&proposal.before_value);
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(before_yaml.trim_end())
+    ));
+    output.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Proposed canonical setup task")
+    ));
+    let after_yaml = assist_preview_yaml(&proposal.after_value);
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(after_yaml.trim_end())
+    ));
+    output.push_str(&format_validation_timeline(
         &validation
             .iter()
             .map(|command| format!("run `{}`", command))
@@ -5113,7 +5129,7 @@ fn render_assist_normalize_text(
     ));
     if mode == "preview" {
         if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
         }
     } else {
         output.push_str(&format!(
@@ -5310,13 +5326,11 @@ pub fn assist_declare_service(
                     Ok(proposal) => proposal,
                     Err((why, next)) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST DECLARE-SERVICE", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist declare-service",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -5793,13 +5807,11 @@ pub fn assist_wire_setup(
                     Ok(proposal) => proposal,
                     Err((why, next)) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST WIRE-SETUP", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist wire-setup",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
                             OutputFormat::Json => {
                                 let mut subject = BTreeMap::new();
@@ -6282,13 +6294,11 @@ pub fn assist_bind_task(
                         let why = format!("task `{task}` is not declared");
                         let next = String::from("run `ota tasks` to inspect declared task names");
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST BIND-TASK", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist bind-task",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -6321,13 +6331,11 @@ pub fn assist_bind_task(
                                 "repair the producer member contract, then rerun the assist command",
                             );
                             return match format {
-                                OutputFormat::Text => CommandOutput::failure(format!(
-                                    "{}\n{} {}\n{} {}",
-                                    format_command_header("ASSIST BIND-TASK", &text_path_display),
-                                    error_key("Why:"),
-                                    why,
-                                    paint_key("Next:"),
-                                    next
+                                OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                    "ota assist bind-task",
+                                    &text_path_display,
+                                    &why,
+                                    &next,
                                 )),
                                 OutputFormat::Json => {
                                     CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -6373,13 +6381,11 @@ pub fn assist_bind_task(
                             String::from("run `ota tasks` to inspect producer task names")
                         };
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST BIND-TASK", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist bind-task",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -6413,13 +6419,11 @@ pub fn assist_bind_task(
                     Ok(listener) => listener,
                     Err((why, next)) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST BIND-TASK", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist bind-task",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -6470,13 +6474,11 @@ pub fn assist_bind_task(
                         Ok(proposal) => proposal,
                         Err((why, next)) => {
                             return match format {
-                                OutputFormat::Text => CommandOutput::failure(format!(
-                                    "{}\n{} {}\n{} {}",
-                                    format_command_header("ASSIST BIND-TASK", &text_path_display),
-                                    error_key("Why:"),
-                                    why,
-                                    paint_key("Next:"),
-                                    next
+                                OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                    "ota assist bind-task",
+                                    &text_path_display,
+                                    &why,
+                                    &next,
                                 )),
                                 OutputFormat::Json => {
                                     CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -6556,13 +6558,11 @@ pub fn assist_bind_task(
                         )
                     };
                     return match format {
-                        OutputFormat::Text => CommandOutput::failure(format!(
-                            "{}\n{} {}\n{} {}",
-                            format_command_header("ASSIST BIND-TASK", &text_path_display),
-                            error_key("Why:"),
-                            why,
-                            paint_key("Next:"),
-                            next
+                        OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                            "ota assist bind-task",
+                            &text_path_display,
+                            &why,
+                            &next,
                         )),
                         OutputFormat::Json => {
                             CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -7001,13 +7001,11 @@ pub fn assist_declare_env(
                     Ok(proposal) => proposal,
                     Err((why, next)) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST DECLARE-ENV", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist declare-env",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -7401,13 +7399,11 @@ pub fn assist_add_task(
                     Ok(proposal) => proposal,
                     Err((why, next)) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST ADD-TASK", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist add-task",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&AssistProposalFailure {
@@ -7699,8 +7695,8 @@ pub fn assist_normalize(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7710,8 +7706,8 @@ pub fn assist_normalize(
                                     next: String::from(
                                         "repair the contract path, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7725,8 +7721,8 @@ pub fn assist_normalize(
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(why.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7736,8 +7732,8 @@ pub fn assist_normalize(
                                     next: String::from(
                                         "repair the existing contract, then rerun the assist command",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7752,16 +7748,14 @@ pub fn assist_normalize(
                     Ok(proposal) => proposal,
                     Err((why, next)) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(format!(
-                                "{}\n{} {}\n{} {}",
-                                format_command_header("ASSIST NORMALIZE", &text_path_display),
-                                error_key("Why:"),
-                                why,
-                                paint_key("Next:"),
-                                next
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist normalize",
+                                &text_path_display,
+                                &why,
+                                &next,
                             )),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7769,8 +7763,8 @@ pub fn assist_normalize(
                                     subject: assist_normalize_subject_map(task),
                                     why,
                                     next,
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7780,8 +7774,8 @@ pub fn assist_normalize(
                     Err(error) => {
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error.clone()),
-                            OutputFormat::Json => CommandOutput::failure(to_json(
-                                &AssistProposalFailure {
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
                                     ok: false,
                                     path: &path_display,
                                     member,
@@ -7791,8 +7785,8 @@ pub fn assist_normalize(
                                     next: String::from(
                                         "rerun the assist command after fixing the repo contract",
                                     ),
-                                },
-                            )),
+                                }))
+                            }
                         };
                     }
                 };
@@ -7805,8 +7799,8 @@ pub fn assist_normalize(
                 ) {
                     return match format {
                         OutputFormat::Text => CommandOutput::failure(error.clone()),
-                        OutputFormat::Json => CommandOutput::failure(to_json(
-                            &AssistProposalFailure {
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&AssistProposalFailure {
                                 ok: false,
                                 path: &path_display,
                                 member,
@@ -7816,8 +7810,8 @@ pub fn assist_normalize(
                                 next: String::from(
                                     "adjust the normalization target, then rerun the assist command",
                                 ),
-                            },
-                        )),
+                            }))
+                        }
                     };
                 }
 
@@ -7826,15 +7820,17 @@ pub fn assist_normalize(
                 if write {
                     match fs::write(&target.contract_path, yaml) {
                         Ok(()) => match format {
-                            OutputFormat::Text => CommandOutput::success(render_assist_normalize_text(
-                                &text_path_display,
-                                &proposal,
-                                "write",
-                                &validation,
-                                None,
-                            )),
-                            OutputFormat::Json => CommandOutput::success(to_json(
-                                &AssistProposalSuccess {
+                            OutputFormat::Text => {
+                                CommandOutput::success(render_assist_normalize_text(
+                                    &text_path_display,
+                                    &proposal,
+                                    "write",
+                                    &validation,
+                                    None,
+                                ))
+                            }
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&AssistProposalSuccess {
                                     ok: true,
                                     path: &path_display,
                                     member,
@@ -7860,8 +7856,8 @@ pub fn assist_normalize(
                                     diff: proposal.diff(),
                                     validation,
                                     next: assist_normalize_write_next(&resolved_path, member),
-                                },
-                            )),
+                                }))
+                            }
                         },
                         Err(error) => {
                             let why = format!(
@@ -7871,8 +7867,8 @@ pub fn assist_normalize(
                             );
                             match format {
                                 OutputFormat::Text => CommandOutput::failure(why.clone()),
-                                OutputFormat::Json => CommandOutput::failure(to_json(
-                                    &AssistProposalFailure {
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
                                         ok: false,
                                         path: &path_display,
                                         member,
@@ -7882,8 +7878,8 @@ pub fn assist_normalize(
                                         next: String::from(
                                             "repair the contract path or permissions, then rerun with `--write`",
                                         ),
-                                    },
-                                )),
+                                    }))
+                                }
                             }
                         }
                     }
@@ -7901,33 +7897,35 @@ pub fn assist_normalize(
                             &validation,
                             Some(&proposal.preview_next_command(member, preview_target_path)),
                         )),
-                        OutputFormat::Json => CommandOutput::success(to_json(&AssistProposalSuccess {
-                            ok: true,
-                            path: &path_display,
-                            member,
-                            mode: "preview",
-                            operation: "normalize",
-                            subject: proposal.subject_json(),
-                            inputs: proposal.inputs_json(),
-                            assumptions: proposal.assumptions.clone(),
-                            changes: vec![
-                                AssistProposalChange {
-                                    path: &proposal.source_change_path,
-                                    action: "delete",
-                                    before: proposal.before_value.clone(),
-                                    after: YamlValue::Null,
-                                },
-                                AssistProposalChange {
-                                    path: "tasks.setup",
-                                    action: "set",
-                                    before: YamlValue::Null,
-                                    after: after_value,
-                                },
-                            ],
-                            diff: proposal.diff(),
-                            validation,
-                            next: proposal.preview_next_command(member, preview_target_path),
-                        })),
+                        OutputFormat::Json => {
+                            CommandOutput::success(to_json(&AssistProposalSuccess {
+                                ok: true,
+                                path: &path_display,
+                                member,
+                                mode: "preview",
+                                operation: "normalize",
+                                subject: proposal.subject_json(),
+                                inputs: proposal.inputs_json(),
+                                assumptions: proposal.assumptions.clone(),
+                                changes: vec![
+                                    AssistProposalChange {
+                                        path: &proposal.source_change_path,
+                                        action: "delete",
+                                        before: proposal.before_value.clone(),
+                                        after: YamlValue::Null,
+                                    },
+                                    AssistProposalChange {
+                                        path: "tasks.setup",
+                                        action: "set",
+                                        before: YamlValue::Null,
+                                        after: after_value,
+                                    },
+                                ],
+                                diff: proposal.diff(),
+                                validation,
+                                next: proposal.preview_next_command(member, preview_target_path),
+                            }))
+                        }
                     }
                 }
             }
@@ -7935,7 +7933,11 @@ pub fn assist_normalize(
                 OutputFormat::Text => invalid_repo_contract_output(
                     "ASSIST NORMALIZE",
                     &resolved_path,
-                    &errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
                     vec![
                         format!(
                             "repair {}",
@@ -7945,7 +7947,10 @@ pub fn assist_normalize(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_repo_contract_target("ota assist normalize", &resolved_path)
+                                command_for_repo_contract_target(
+                                    "ota assist normalize",
+                                    &resolved_path
+                                )
                             ))
                         ),
                     ],
@@ -7978,7 +7983,10 @@ pub fn assist_normalize(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_repo_contract_target("ota assist normalize", &resolved_path)
+                                command_for_repo_contract_target(
+                                    "ota assist normalize",
+                                    &resolved_path
+                                )
                             ))
                         ),
                     ],
@@ -8846,9 +8854,7 @@ fn build_assist_normalize_proposal(
     if task == "setup" {
         return Err((
             String::from("`tasks.setup` is already the canonical setup slot"),
-            String::from(
-                "use `ota assist wire-setup` when the setup task itself needs refinement",
-            ),
+            String::from("use `ota assist wire-setup` when the setup task itself needs refinement"),
         ));
     }
     if contract.tasks.contains_key("setup") {
@@ -8918,7 +8924,11 @@ fn build_assist_normalize_yaml(
 ) -> Result<String, String> {
     let mut document = raw_document.clone();
     remove_yaml_path(&mut document, &["tasks", proposal.source_task.as_str()]);
-    set_yaml_path(&mut document, &["tasks", "setup"], proposal.after_value.clone());
+    set_yaml_path(
+        &mut document,
+        &["tasks", "setup"],
+        proposal.after_value.clone(),
+    );
     serde_yaml::to_string(&document)
         .map_err(|error| format!("failed to serialize assist proposal: {error}"))
 }
@@ -8930,7 +8940,10 @@ fn assist_normalize_validation_commands(resolved_path: &Path, member: Option<&st
     } else {
         String::from("ota validate")
     };
-    commands.push(command_for_repo_from_contract_path(&validate, resolved_path));
+    commands.push(command_for_repo_from_contract_path(
+        &validate,
+        resolved_path,
+    ));
 
     let up = if let Some(member) = member {
         format!("ota up --member {member} --dry-run")
@@ -31068,6 +31081,9 @@ fn compact_contract_file_path_relative_to(
     let Some(parent) = path.parent() else {
         return compact_path_relative_to(path, fallback, current_dir);
     };
+    if parent.as_os_str().is_empty() {
+        return compact_path_relative_to(path, fallback, current_dir);
+    }
     let Some(current_dir) = current_dir else {
         return path.display().to_string();
     };
@@ -31090,6 +31106,35 @@ fn compact_contract_file_path_relative_to(
         }
     }
     absolute.display().to_string()
+}
+
+fn prune_yaml_nulls(value: &mut YamlValue) {
+    match value {
+        YamlValue::Mapping(mapping) => {
+            let keys_to_remove: Vec<YamlValue> = mapping
+                .iter()
+                .filter_map(|(key, child)| child.is_null().then_some(key.clone()))
+                .collect();
+            for child in mapping.values_mut() {
+                prune_yaml_nulls(child);
+            }
+            for key in keys_to_remove {
+                mapping.remove(&key);
+            }
+        }
+        YamlValue::Sequence(sequence) => {
+            for child in sequence.iter_mut() {
+                prune_yaml_nulls(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn assist_preview_yaml(value: &YamlValue) -> String {
+    let mut preview = value.clone();
+    prune_yaml_nulls(&mut preview);
+    serde_yaml::to_string(&preview).unwrap_or_else(|_| String::from("---\n"))
 }
 
 fn describe_adapter_bootstrap_request(
@@ -49369,6 +49414,18 @@ fn format_next_timeline(items: &[String]) -> String {
     }
 
     let mut output = format!("\n\n{}", paint_next_header());
+    for item in items {
+        output.push_str(&format_next_timeline_step(item));
+    }
+    output
+}
+
+fn format_validation_timeline(items: &[String]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+
+    let mut output = format!("\n\n{}", paint_key("Validate:"));
     for item in items {
         output.push_str(&format_next_timeline_step(item));
     }
