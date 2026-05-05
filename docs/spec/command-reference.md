@@ -83,6 +83,7 @@ ota currently ships these commands:
 - `ota execution topology`
 - `ota assist declare-readiness`
 - `ota assist declare-service`
+- `ota assist bind-task`
 - `ota assist wire-setup`
 - `ota detect`
 - `ota validate`
@@ -526,6 +527,46 @@ ota assist declare-service --name postgres --manager compose --compose-file dock
 ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
 ota assist declare-service --name cache --manager host --port 6379 --json
 ota assist declare-service --member api --name api --manager compose --port 3000 --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist bind-task`
+
+Create or refine one `tasks.<consumer>.targets.<name>` binding to a producer task runtime.
+
+```bash
+ota assist bind-task --task <consumer> --target <name> --to <producer>[:listener] [PATH]
+ota assist bind-task --task <consumer> --target <name> --to <producer>:<listener> --address-view topology|host|internal [PATH]
+ota assist bind-task --task <consumer> --target <name> --to <producer>:<listener> --activation ensure_ready [PATH]
+ota assist bind-task --member api --task <consumer> --target <name> --to <producer>:<listener> --write [PATH]
+ota assist bind-task --json --task <consumer> --target <name> --to <producer> [PATH]
+```
+
+Use it when the producer task runtime already exists and the correct next move is to wire one
+consumer target edge truthfully instead of hand-authoring `targets`.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact target block, and the next validation commands
+- `--write` applies the proposed `tasks.<consumer>.targets.<name>` mutation and revalidates it before returning success
+- `--to <producer>` works only when the producer exposes exactly one declared service listener or the existing target already pins one safe listener
+- `--to <producer>:<listener>` is the explicit selector when the producer exposes multiple listeners
+- currently binds only to producer task runtimes, not directly to top-level managed service endpoints
+- `--producer-member <name>` selects a producer task from another declared monorepo member
+- `--address-view` and `--activation` refine the shipped target contract directly instead of hiding those fields behind heuristics
+- preserves an existing `override_input` unless a new one is supplied
+- refuses when the consumer task, producer task, or selected listener does not exist, or when assist cannot pick one listener safely
+- `--json` emits the stable assist proposal/apply result for this target-binding change
+
+Examples:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev:http
+ota assist bind-task --task smoke --target api --to dev --json
+ota assist bind-task --task smoke --target api --to dev:http --activation ensure_ready
+ota assist bind-task --member api --task smoke --target api --to dev:http --write
 ```
 
 Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,

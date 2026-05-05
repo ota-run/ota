@@ -289,6 +289,29 @@ fn assist_wire_setup_schema_covers_preview_and_failure_contract() {
 }
 
 #[test]
+fn assist_bind_task_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-bind-task.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("bind-task"));
+    assert!(subject.get("task").is_some());
+    assert!(subject.get("target").is_some());
+    assert!(inputs.get("to").is_some());
+    assert!(inputs.get("producer_member").is_some());
+    assert!(inputs.get("address_view").is_some());
+    assert!(inputs.get("activation").is_some());
+    assert!(inputs.get("override_input").is_some());
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];

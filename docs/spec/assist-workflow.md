@@ -56,6 +56,7 @@ The currently shipped assist operations are:
 
 - `ota assist declare-readiness`
 - `ota assist declare-service`
+- `ota assist bind-task`
 - `ota assist wire-setup`
 
 It can target:
@@ -129,6 +130,24 @@ Managed service apply:
 ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
 ```
 
+Task binding preview:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev:http
+```
+
+Task binding apply:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev:http --write
+```
+
+Task binding with inferred single listener:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev --json
+```
+
 Monorepo member write:
 
 ```bash
@@ -164,6 +183,24 @@ Managed service targeting is stricter:
 - if the service does not already carry structured readiness, pass `--style` explicitly
 
 This is intentional. Assist must not quietly propose an HTTP readiness path for a plain TCP service.
+
+## Task binding behavior
+
+`bind-task` is the current shipped assist slice for `tasks.<consumer>.targets.<name>`.
+
+It currently:
+
+- binds one consumer task to one producer task runtime listener
+- proposes a reviewed `service` target block, not a literal guessed URL
+- supports `--producer-member` for cross-member producer tasks already declared under the root monorepo contract
+- preserves an existing `override_input` unless a new one is explicitly supplied
+- validates the proposed edge through the normal contract rules before preview or write succeeds
+
+It intentionally does not yet:
+
+- bind directly to top-level managed service endpoints
+- guess a listener when multiple producer listeners are equally valid
+- hide `address_view` or `activation.mode` as non-reviewable internal defaults
 
 ## Setup wiring behavior
 
@@ -201,6 +238,8 @@ Assist should refuse instead of guessing when:
 - the selected listener protocol conflicts with the requested style
 - a new managed service does not declare an explicit manager kind
 - a service endpoint is ambiguous and `--endpoint` was not given
+- a producer task binding is ambiguous because multiple listeners are available and no safe existing selection can be reused
+- a producer task does not declare any service listener runtime surface
 - a new `tasks.setup` declaration is requested without an explicit `--run` or `--script` body
 - `wire-setup` names a managed service that is not already declared under `services`
 

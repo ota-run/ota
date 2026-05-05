@@ -715,6 +715,41 @@ enum AssistCommands {
         /// Path to a repo root, ota.yaml file, or directory containing one.
         path: Option<PathBuf>,
     },
+    /// Bind one declared task to a producer task runtime target.
+    BindTask {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed task-target mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Consumer task name to mutate.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: String,
+        /// Consumer-local target name such as `api`.
+        #[arg(long)]
+        target: String,
+        /// Producer task selector in `<task>` or `<task>:<listener>` form.
+        #[arg(long)]
+        to: String,
+        /// Optional producer member when the producer task lives in another monorepo member.
+        #[arg(long = "producer-member", add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        producer_member: Option<String>,
+        /// Explicit address view for the bound target.
+        #[arg(long = "address-view", value_enum)]
+        address_view: Option<AssistTaskTargetAddressViewArg>,
+        /// Explicit activation mode for the bound target.
+        #[arg(long, value_enum)]
+        activation: Option<AssistTaskTargetActivationModeArg>,
+        /// Optional consumer task input name to use as the explicit override channel.
+        #[arg(long = "override-input")]
+        override_input: Option<String>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -728,6 +763,22 @@ enum AssistReadinessStyleArg {
 enum AssistServiceManagerArg {
     Compose,
     Host,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskTargetAddressViewArg {
+    Topology,
+    Host,
+    Internal,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskTargetActivationModeArg {
+    Manual,
+    EnsureStarted,
+    RestartReady,
+    EnsureReady,
+    EnsureRunning,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -3991,6 +4042,36 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Assist {
+            command:
+                AssistCommands::BindTask {
+                    json,
+                    write,
+                    member,
+                    task,
+                    target,
+                    to,
+                    producer_member,
+                    address_view,
+                    activation,
+                    override_input,
+                    path,
+                },
+        } => commands::assist_bind_task(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            &task,
+            &target,
+            &to,
+            producer_member.as_deref(),
+            address_view,
+            activation,
+            override_input.as_deref(),
+            write,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Studio {
             open,
             serve,
@@ -4697,6 +4778,11 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Assist {
             command: AssistCommands::WireSetup { .. },
         } => "rerun `ota assist wire-setup --run '<command>'` with any pre-setup services you need",
+        Commands::Assist {
+            command: AssistCommands::BindTask { .. },
+        } => {
+            "rerun `ota assist bind-task --task <consumer> --target <name> --to <producer>:<listener>` with one explicit producer edge"
+        }
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
@@ -4895,6 +4981,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Assist {
             command: AssistCommands::WireSetup { json, .. },
         }
+        | Commands::Assist {
+            command: AssistCommands::BindTask { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
@@ -4968,6 +5057,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Assist {
             command: AssistCommands::WireSetup { .. },
         } => "ota assist wire-setup",
+        Commands::Assist {
+            command: AssistCommands::BindTask { .. },
+        } => "ota assist bind-task",
         Commands::Env { .. } => "ota env",
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
@@ -34562,6 +34654,345 @@ project:
         assert!(member_contract.contains("script: |-") || member_contract.contains("script: |"));
         assert!(member_contract.contains("run: null"));
         assert!(member_contract.contains("requires_services: []"));
+
+        let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
+        assert_eq!(validate.exit_code, 0, "{validate:?}");
+    }
+
+    #[test]
+    fn assist_bind_task_previews_new_runtime_target_binding() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev:http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST BIND-TASK"));
+        assert!(stdout.contains("tasks.smoke.targets.api"));
+        assert!(stdout.contains("task: dev"));
+        assert!(stdout.contains("listener: http"));
+        assert!(stdout.contains("address_view: topology"));
+        assert!(stdout.contains("ota execution topology"));
+    }
+
+    #[test]
+    fn assist_bind_task_json_preview_infers_one_listener() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--json",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "preview");
+        assert_eq!(json["operation"], "bind-task");
+        assert_eq!(json["subject"]["task"], "smoke");
+        assert_eq!(json["subject"]["target"], "api");
+        assert_eq!(json["changes"][0]["path"], "tasks.smoke.targets.api");
+        assert_eq!(json["changes"][0]["after"]["service"]["task"], "dev");
+        assert_eq!(json["changes"][0]["after"]["service"]["listener"], "http");
+    }
+
+    #[test]
+    fn assist_bind_task_refuses_ambiguous_listener_selection() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+        metrics:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("declares multiple listeners"));
+        assert!(stderr.contains("--to <task>:<listener>"));
+    }
+
+    #[test]
+    fn assist_bind_task_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--member",
+            "api",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev:http",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota execution topology --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("targets:"));
+        assert!(member_contract.contains("service:"));
+        assert!(member_contract.contains("task: dev"));
+        assert!(member_contract.contains("listener: http"));
+    }
+
+    #[test]
+    fn assist_bind_task_member_write_clears_inherited_cross_member_producer_binding() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+    - backend
+tasks:
+  smoke:
+    run: curl -fsS "$OTA_TARGET_API/health"
+    targets:
+      api:
+        service:
+          member: backend
+          task: dev
+          listener: http
+          address_view: host
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        );
+        fixture.write(
+            "backend/ota.yaml",
+            r#"
+project:
+  name: backend
+tasks:
+  dev:
+    run: python app.py
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9090
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 9090
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "bind-task",
+            "--member",
+            "api",
+            "--task",
+            "smoke",
+            "--target",
+            "api",
+            "--to",
+            "dev:http",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("member: null"));
 
         let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
         assert_eq!(validate.exit_code, 0, "{validate:?}");
