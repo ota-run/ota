@@ -4932,7 +4932,10 @@ fn render_assist_bind_task_text(
         ));
     }
     if mode == "write" {
-        let applied_path = format!("tasks.{}.targets.{}", proposal.consumer_task, proposal.target_name);
+        let applied_path = format!(
+            "tasks.{}.targets.{}",
+            proposal.consumer_task, proposal.target_name
+        );
         output.push_str(&format!(
             "\n{} {} {}",
             info_bullet(),
@@ -12974,7 +12977,7 @@ fn contractless_doctor_fix_summary(dry_run: bool) -> DoctorFixSummary {
         planned_count: 0,
         applied_count: 0,
         note: Some(String::from(
-            "no contract-aware fixes are available yet; run `ota detect --dry-run` or `ota init --bootstrap` first",
+            "no contract-aware repo-hygiene fixes are available yet; preview a first contract with `ota detect --dry-run` or `ota init --dry-run` first",
         )),
         actions: Vec::new(),
         errors: Vec::new(),
@@ -14766,7 +14769,7 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
             compact_repo_path(root)
         ),
         next: String::from(
-            "run `ota detect --dry-run` to review inferred fields, or run `ota init --bootstrap` to create a starter contract",
+            "run `ota detect --dry-run` to review inferred fields, or run `ota init --dry-run` to compare a starter contract",
         ),
     }];
 
@@ -14891,7 +14894,7 @@ fn append_contractless_repo_findings(
                 "`{}` did not expose obvious repo markers yet",
                 compact_repo_path(root)
             ),
-            next: String::from("run `ota init --bootstrap` or `ota detect --dry-run`"),
+            next: String::from("run `ota init --dry-run` or `ota detect --dry-run`"),
         });
     }
 }
@@ -28493,11 +28496,14 @@ fn render_report_section(
     report: &DoctorReport,
     summary: Option<&DoctorSummary>,
 ) -> String {
-    let mut stdout = format!(
-        "{}\n\n{}",
-        format_command_header(command, path),
+    let status = if command == "DOCTOR" {
+        summary
+            .map(|summary| render_doctor_readiness_status(summary.verdict))
+            .unwrap_or_else(|| render_readiness_status(report.ok))
+    } else {
         render_readiness_status(report.ok)
-    );
+    };
+    let mut stdout = format!("{}\n\n{}", format_command_header(command, path), status);
     if let Some(summary) = summary {
         stdout.push_str("\n\n");
         stdout.push_str(&format!("{}\n", paint_section_title("Verdict")));
@@ -28518,7 +28524,7 @@ fn render_report_section(
 
     let skip_primary_finding = summary
         .and_then(|summary| summary.primary_blocker.as_ref())
-        .filter(|finding| finding.severity == FindingSeverity::Error);
+        .filter(|finding| finding.severity != FindingSeverity::Info);
     if let Some(primary_blocker) = skip_primary_finding {
         if !stdout.ends_with("\n\n") {
             stdout.push_str("\n\n");
@@ -28684,10 +28690,6 @@ fn render_doctor_ready_next(
     contract_path: Option<&Path>,
 ) -> String {
     let mut items = Vec::new();
-    if let Some(path) = contract_path {
-        let up_command = command_for_repo_contract_target("ota up", path);
-        items.push(format!("run `{up_command}` to prepare the repo end to end"));
-    }
     if let Some(task) = agent
         .and_then(|agent| agent.default_task.or(agent.entrypoint))
         .filter(|task| !task.trim().is_empty())
@@ -29911,10 +29913,26 @@ fn doctor_finding_group_item_text(
 fn render_doctor_verdict(verdict: DoctorVerdict) -> String {
     match verdict {
         DoctorVerdict::Ready => paint("ready", "1;38;2;0;255;120"),
-        DoctorVerdict::Risky => paint("risky", "1;33"),
-        DoctorVerdict::NotReady => paint("not ready", "1;38;2;255;235;59"),
-        DoctorVerdict::PolicyBlocked => paint("policy blocked", "1;31"),
-        DoctorVerdict::AgentBlocked => paint("agent blocked", "1;31"),
+        DoctorVerdict::Risky => paint("ready with warnings", "1;33"),
+        DoctorVerdict::NotReady => paint("blocked", "1;38;2;255;235;59"),
+        DoctorVerdict::PolicyBlocked => paint("blocked by policy", "1;31"),
+        DoctorVerdict::AgentBlocked => paint("blocked for agents", "1;31"),
+    }
+}
+
+fn render_doctor_readiness_status(verdict: DoctorVerdict) -> String {
+    match verdict {
+        DoctorVerdict::Ready => {
+            render_named_status("READY", primary_success_marker(), "1;38;2;0;255;120")
+        }
+        DoctorVerdict::Risky => render_named_status(
+            "READY WITH WARNINGS",
+            primary_warn_marker(),
+            "1;38;2;255;214;95",
+        ),
+        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
+            render_named_status("BLOCKED", primary_error_marker(), "1;38;2;255;122;122")
+        }
     }
 }
 
@@ -31271,7 +31289,8 @@ fn prune_yaml_nulls(value: &mut YamlValue) {
                         return Some(key.clone());
                     }
                     let key_name = key.as_str();
-                    let empty_sequence = matches!(child, YamlValue::Sequence(sequence) if sequence.is_empty());
+                    let empty_sequence =
+                        matches!(child, YamlValue::Sequence(sequence) if sequence.is_empty());
                     if empty_sequence && matches!(key_name, Some("depends_on")) {
                         return Some(key.clone());
                     }
@@ -36737,6 +36756,66 @@ execution:
         let agent_index = text.find("\nAgent\n").expect("agent");
         assert!(verdict < next);
         assert!(next < agent_index);
+    }
+
+    #[test]
+    fn doctor_warning_text_surfaces_ready_with_warnings_and_primary_finding() {
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Required service cannot be verified: postgres"),
+                why: String::from(
+                    "service `postgres` is required but no `healthcheck` is configured, so Ota cannot verify readiness",
+                ),
+                next: String::from(
+                    "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`",
+                ),
+            }],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::Risky,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 1,
+            info_count: 0,
+            primary_blocker: Some(super::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Required service cannot be verified: postgres"),
+                why: String::from(
+                    "service `postgres` is required but no `healthcheck` is configured, so Ota cannot verify readiness",
+                ),
+                next: String::from(
+                    "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`",
+                ),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            None,
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(text.contains("READY WITH WARNINGS"));
+        assert!(text.contains("Repo: ready with warnings"));
+        assert!(text.contains("➤ WARN Required service cannot be verified: postgres"));
+        assert_eq!(
+            text.matches("Required service cannot be verified: postgres")
+                .count(),
+            1
+        );
+        assert_eq!(text.matches("Next:").count(), 1);
     }
 
     #[test]
