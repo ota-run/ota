@@ -32,9 +32,12 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
     Write-Host "Usage:"
-    Write-Host "  .\scripts\bump-version.ps1 <new-version>"
+    Write-Host "  .\scripts\bump-version.ps1 <new-version|patch|minor|major>"
     Write-Host ""
     Write-Host "Example:"
+    Write-Host "  .\scripts\bump-version.ps1 patch"
+    Write-Host "  .\scripts\bump-version.ps1 minor"
+    Write-Host "  .\scripts\bump-version.ps1 major"
     Write-Host "  .\scripts\bump-version.ps1 0.2.0"
     Write-Host "  .\scripts\bump-version.ps1 0.2.0-rc.1"
 }
@@ -46,11 +49,6 @@ if ($Help) {
 
 if (-not $Version) {
     Show-Usage
-    exit 2
-}
-
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$') {
-    Write-Error "version must look like semver (for example 0.2.0 or 0.2.0-rc.1)"
     exit 2
 }
 
@@ -87,21 +85,71 @@ for ($i = 0; $i -lt $lines.Count; $i++) {
     }
     if ($inPackage -and -not $found -and $line -match '^version = "([^"]+)"$') {
         $currentVersion = $Matches[1]
-        $lines[$i] = "version = `"$Version`""
         $found = $true
     }
 }
 
 if (-not $found -or -not $currentVersion) {
-    Write-Error "failed to update [package] version in Cargo.toml"
+    Write-Error "failed to locate [package] version in Cargo.toml"
     exit 1
+}
+
+function Resolve-TargetVersion {
+    param(
+        [string]$CurrentVersion,
+        [string]$RequestedVersion
+    )
+
+    switch ($RequestedVersion) {
+        "patch" {
+            $core = ($CurrentVersion -split '[+-]')[0]
+            $parts = $core -split '\.'
+            return "{0}.{1}.{2}" -f [int]$parts[0], [int]$parts[1], ([int]$parts[2] + 1)
+        }
+        "minor" {
+            $core = ($CurrentVersion -split '[+-]')[0]
+            $parts = $core -split '\.'
+            return "{0}.{1}.0" -f [int]$parts[0], ([int]$parts[1] + 1)
+        }
+        "major" {
+            $core = ($CurrentVersion -split '[+-]')[0]
+            $parts = $core -split '\.'
+            return "{0}.0.0" -f ([int]$parts[0] + 1)
+        }
+        default {
+            if ($RequestedVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$') {
+                Write-Error "version must be patch, minor, major, or look like semver (for example 0.2.0 or 0.2.0-rc.1)"
+                exit 2
+            }
+            return $RequestedVersion
+        }
+    }
+}
+
+$TargetVersion = Resolve-TargetVersion -CurrentVersion $currentVersion -RequestedVersion $Version
+$lines = Get-Content -Path $cargoToml
+$inPackage = $false
+$found = $false
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    $line = $lines[$i]
+    if ($line -match '^\[package\]$') {
+        $inPackage = $true
+        continue
+    }
+    if ($line -match '^\[' -and $line -notmatch '^\[package\]$') {
+        $inPackage = $false
+    }
+    if ($inPackage -and -not $found -and $line -match '^version = "([^"]+)"$') {
+        $lines[$i] = "version = `"$TargetVersion`""
+        $found = $true
+    }
 }
 
 $changelogLines = [System.Collections.Generic.List[string]]::new()
 $changelogLines.AddRange([string[]](Get-Content -Path $changelog))
 
-if ($changelogLines.Contains("## $Version")) {
-    Write-Error "CHANGELOG.md already contains ## $Version"
+if ($changelogLines.Contains("## $TargetVersion")) {
+    Write-Error "CHANGELOG.md already contains ## $TargetVersion"
     exit 1
 }
 
@@ -117,7 +165,7 @@ $workflowLines = Get-Content -Path $readinessWorkflow
 $updatedWorkflow = $false
 for ($i = 0; $i -lt $workflowLines.Count; $i++) {
     if (-not $updatedWorkflow -and $workflowLines[$i] -match '^(\s*ota-version:\s*)(\S+)\s*$') {
-        $workflowLines[$i] = "$($Matches[1])$Version"
+        $workflowLines[$i] = "$($Matches[1])$TargetVersion"
         $updatedWorkflow = $true
     }
 }
@@ -130,16 +178,16 @@ if (-not $updatedWorkflow) {
 Set-Content -Path $readinessWorkflow -Value $workflowLines
 
 $changelogLines.Insert($unreleasedIndex + 1, "")
-$changelogLines.Insert($unreleasedIndex + 2, "## $Version")
+$changelogLines.Insert($unreleasedIndex + 2, "## $TargetVersion")
 
 Set-Content -Path $changelog -Value $changelogLines
 
 Write-Host "🦦 VERSION BUMP" -ForegroundColor Cyan
 Write-Host "Updated: Cargo.toml, CHANGELOG.md, .github/workflows/ota-readiness.yml"
 Write-Host "From: $currentVersion"
-Write-Host "To:   $Version"
+Write-Host "To:   $TargetVersion"
 Write-Host ""
 Write-Host "Next:"
 Write-Host '▸  run `cargo test`'
-Write-Host ('▸  commit with message like `release: v{0}`' -f $Version)
-Write-Host ('▸  push to `main`; GitHub Actions will create `v{0}` after the gate passes' -f $Version)
+Write-Host ('▸  commit with message like `release: v{0}`' -f $TargetVersion)
+Write-Host ('▸  push to `main`; GitHub Actions will create `v{0}` after the gate passes' -f $TargetVersion)

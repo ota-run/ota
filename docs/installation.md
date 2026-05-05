@@ -114,12 +114,16 @@ ota validate --help
 
 ## Maintainer version bump
 
-Use the dedicated bump scripts to update the repo release version surfaces consistently:
+Use the Ota task surface to update the repo release version surfaces consistently:
 
 ```bash
-./scripts/bump-version.sh 0.2.0
+ota run bump:version --version patch
+ota run bump:version --version minor
+ota run bump:version --version major
+ota run bump:version --version 0.2.0
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\bump-version.ps1 0.2.0
+ota run bump:version --version patch
+ota run bump:version --version 0.2.0
 ```
