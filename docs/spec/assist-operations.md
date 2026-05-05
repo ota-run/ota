@@ -24,7 +24,7 @@
 
 # Assist Operations
 
-Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness` and `ota assist declare-service`.
+Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness`, `ota assist declare-service`, and `ota assist wire-setup`.
 
 This document defines the long-term product contract for `ota assist`.
 
@@ -43,6 +43,7 @@ The currently shipped assist operations are:
 
 - `ota assist declare-readiness`
 - `ota assist declare-service`
+- `ota assist wire-setup`
 
 Current scope:
 
@@ -53,6 +54,7 @@ Current scope:
 - emits a stable JSON proposal/apply result
 - previews or applies one deterministic managed-service mutation
 - can create or refine one `services.<name>` block with explicit manager, endpoint, and optional readiness inputs
+- previews or applies one deterministic `tasks.setup` mutation with explicit setup body, `setup.requires_services`, and `internal` ownership
 
 Current trust boundaries:
 
@@ -60,6 +62,7 @@ Current trust boundaries:
 - managed services require explicit `--style` unless assist is refining an existing structured readiness kind
 - assist refuses ambiguous listener selection instead of guessing
 - text preview must show destructive readiness replacement honestly
+- `wire-setup` owns only `tasks.setup` plus the phased `setup.requires_services` boundary; it is not a broad task authoring command
 
 For the operator guide and concrete examples, see [assist-workflow.md](assist-workflow.md).
 

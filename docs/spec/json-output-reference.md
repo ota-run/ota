@@ -21,6 +21,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
 - [json-schemas/assist-declare-service.json](json-schemas/assist-declare-service.json)
+- [json-schemas/assist-wire-setup.json](json-schemas/assist-wire-setup.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
 - [json-schemas/check.json](json-schemas/check.json)
@@ -57,6 +58,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything
 - use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
 - use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
+- use `ota assist wire-setup --json` when you want a deterministic setup-wiring proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
@@ -83,6 +85,7 @@ human text output:
 - `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `services`, and `tasks`
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
 - `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist wire-setup --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
@@ -570,6 +573,77 @@ Failure:
   },
   "why": "service `postgres` needs an explicit manager kind",
   "next": "rerun with `--manager compose` or `--manager host`"
+}
+```
+
+## `ota assist wire-setup --json`
+
+Assist setup output reports one deterministic proposal or apply result for `tasks.setup`.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "wire-setup",
+  "subject": {
+    "task": "setup"
+  },
+  "inputs": {
+    "run": "test -f .env.local || cp .env.example .env.local",
+    "services": "postgres"
+  },
+  "assumptions": [
+    "a new `tasks.setup` declaration will be created",
+    "new setup tasks default to `category: setup` and `internal: true` unless overridden",
+    "setup will execute through a single `run` command",
+    "`setup.requires_services` will define the pre-setup service phase: `postgres`"
+  ],
+  "changes": [
+    {
+      "path": "tasks.setup",
+      "action": "set",
+      "before": null,
+      "after": {
+        "category": "setup",
+        "internal": true,
+        "run": "test -f .env.local || cp .env.example .env.local",
+        "requires_services": ["postgres"]
+      }
+    }
+  ],
+  "diff": "tasks.setup\n- <absent>\n+ category: setup ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota up --dry-run /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist wire-setup --run 'test -f .env.local || cp .env.example .env.local' --service postgres --write /abs/path/to/ota.yaml` to apply this setup change"
+}
+```
+
+Notes:
+
+- `subject.task` is always `setup`
+- `inputs` records only the explicit setup inputs the operator passed to assist
+- `changes[*].before` is present when assist is refining an existing `tasks.setup` block
+- `changes[*].after` is the exact setup block Ota would write, including `setup.requires_services` ordering when that input was provided
+- validation includes `ota up --dry-run` because setup wiring changes phased repo preparation behavior directly
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "wire-setup",
+  "subject": {
+    "task": "setup"
+  },
+  "why": "creating `tasks.setup` needs an explicit `--run` or `--script` body",
+  "next": "rerun with `--run '<command>'` or `--script '<body>'` to declare the setup task"
 }
 ```
 

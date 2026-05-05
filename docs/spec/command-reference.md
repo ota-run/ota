@@ -83,6 +83,7 @@ ota currently ships these commands:
 - `ota execution topology`
 - `ota assist declare-readiness`
 - `ota assist declare-service`
+- `ota assist wire-setup`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -525,6 +526,46 @@ ota assist declare-service --name postgres --manager compose --compose-file dock
 ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
 ota assist declare-service --name cache --manager host --port 6379 --json
 ota assist declare-service --member api --name api --manager compose --port 3000 --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist wire-setup`
+
+Create or refine the `setup` task and its pre-setup service phase for `ota up`.
+
+```bash
+ota assist wire-setup --run "<command>" [PATH]
+ota assist wire-setup --script "<body>" [PATH]
+ota assist wire-setup --run "<command>" --service <name> [--service <name> ...] [PATH]
+ota assist wire-setup --member api --run "<command>" --write [PATH]
+ota assist wire-setup --json --script "<body>" [PATH]
+```
+
+Use it when the contract needs one truthful `tasks.setup` declaration or when `setup.requires_services`
+should define which managed services must start before setup runs.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact `tasks.setup` block, and the next validation commands
+- `--write` applies the proposed setup mutation and revalidates the updated contract before returning success
+- `--run` and `--script` set the setup body explicitly; a new setup task requires one of them
+- `--service <name>` sets `setup.requires_services` in the provided order as the pre-setup service phase
+- `--clear-services` removes `setup.requires_services`
+- `--internal true|false` refines `tasks.setup.internal` directly
+- supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
+- preserves unrelated existing `tasks.setup` fields instead of rewriting the whole task
+- refuses when a new setup task has no explicit body, when no actual setup change was requested, or when a named managed service does not exist
+- `--json` emits the stable assist proposal/apply result for this setup wiring change
+
+Examples:
+
+```bash
+ota assist wire-setup --run "test -f .env.local || cp .env.example .env.local"
+ota assist wire-setup --run "npm install" --service postgres
+ota assist wire-setup --script "cargo fetch\ncargo build" --json
+ota assist wire-setup --member api --run "npm install" --service postgres --write
 ```
 
 Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
