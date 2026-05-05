@@ -114,7 +114,7 @@ ota validate --help
 
 ## Maintainer version bump
 
-Use the dedicated bump scripts to update `Cargo.toml` safely:
+Use the dedicated bump scripts to update the repo release version surfaces consistently:
 
 ```bash
 ./scripts/bump-version.sh 0.2.0

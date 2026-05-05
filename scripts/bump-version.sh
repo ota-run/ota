@@ -54,9 +54,31 @@ fi
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cargo_toml="$repo_root/Cargo.toml"
+changelog="$repo_root/CHANGELOG.md"
+readiness_workflow="$repo_root/.github/workflows/ota-readiness.yml"
 
 if [ ! -f "$cargo_toml" ]; then
   echo "error: Cargo.toml not found at $cargo_toml" >&2
+  exit 1
+fi
+
+if [ ! -f "$changelog" ]; then
+  echo "error: CHANGELOG.md not found at $changelog" >&2
+  exit 1
+fi
+
+if [ ! -f "$readiness_workflow" ]; then
+  echo "error: readiness workflow not found at $readiness_workflow" >&2
+  exit 1
+fi
+
+if grep -Eq "^## ${new_version}$" "$changelog"; then
+  echo "error: CHANGELOG.md already contains ## $new_version" >&2
+  exit 1
+fi
+
+if ! grep -Eq '^## Unreleased$' "$changelog"; then
+  echo "error: failed to locate ## Unreleased in $changelog" >&2
   exit 1
 fi
 
@@ -105,8 +127,63 @@ awk -v new_version="$new_version" '
 
 mv "$tmp_file" "$cargo_toml"
 
+tmp_file="$readiness_workflow.tmp.$$"
+awk -v new_version="$new_version" '
+  BEGIN { replaced=0 }
+  /^[[:space:]]*ota-version:[[:space:]]*/ && !replaced {
+    sub(/[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$/, new_version)
+    replaced=1
+  }
+  { print }
+  END {
+    if (!replaced) {
+      exit 3
+    }
+  }
+' "$readiness_workflow" > "$tmp_file" || {
+  rc=$?
+  rm -f "$tmp_file"
+  if [ "$rc" -eq 3 ]; then
+    echo "error: failed to update ota-version in $readiness_workflow" >&2
+    exit 1
+  fi
+  exit "$rc"
+}
+
+mv "$tmp_file" "$readiness_workflow"
+
+tmp_file="$changelog.tmp.$$"
+awk -v new_version="$new_version" '
+  BEGIN {
+    inserted=0
+  }
+  /^## Unreleased$/ {
+    print
+    print ""
+    print "## " new_version
+    inserted=1
+    next
+  }
+  { print }
+  END {
+    if (!inserted) {
+      exit 3
+    }
+  }
+' "$changelog" > "$tmp_file" || {
+  rc=$?
+  rm -f "$tmp_file"
+  if [ "$rc" -eq 3 ]; then
+    echo "error: failed to roll CHANGELOG.md Unreleased into ## $new_version" >&2
+    exit 1
+  fi
+  exit "$rc"
+}
+
+mv "$tmp_file" "$changelog"
+
 printf '🦦 VERSION BUMP\n'
-printf 'Updated: Cargo.toml\n'
+printf 'Updated: Cargo.toml, CHANGELOG.md, .github/workflows/ota-readiness.yml\n'
 printf 'From: %s\n' "$current_version"
 printf 'To:   %s\n' "$new_version"
 printf '\nNext:\n'
