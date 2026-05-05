@@ -379,6 +379,7 @@ Behavior:
   - `env.vars`
   - `env.sources`
   - task-level env only when explicitly requested
+- current shipped task-level env support is explicit `tasks.<name>.env.<KEY> = <value>` only
 - should prefer canonical declared source kinds over opaque shell glue
 - must preserve existing deterministic precedence rules
 

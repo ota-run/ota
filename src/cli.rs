@@ -750,6 +750,56 @@ enum AssistCommands {
         /// Path to a repo root, ota.yaml file, or directory containing one.
         path: Option<PathBuf>,
     },
+    /// Declare or refine repo env requirements, env sources, or one explicit task-local env value.
+    DeclareEnv {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed env mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Target one task-local env override instead of root env contract truth.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: Option<String>,
+        /// Env variable name for root `env.vars` or task-local `tasks.<name>.env`.
+        #[arg(long)]
+        name: Option<String>,
+        /// Explicit task-local env value. Only valid with `--task`.
+        #[arg(long)]
+        value: Option<String>,
+        /// Explicit required flag for root `env.vars.<NAME>`.
+        #[arg(long)]
+        required: Option<bool>,
+        /// Explicit secret flag for root `env.vars.<NAME>`.
+        #[arg(long)]
+        secret: Option<bool>,
+        /// Explicit default value for root `env.vars.<NAME>`.
+        #[arg(long)]
+        default: Option<String>,
+        /// Allowed root env values. Repeat to set the ordered list.
+        #[arg(long = "allowed")]
+        allowed: Vec<String>,
+        /// PATH entries to prepend for root `env.vars.PATH`. Repeat to set the ordered list.
+        #[arg(long = "prepend")]
+        prepend: Vec<String>,
+        /// PATH entries to append for root `env.vars.PATH`. Repeat to set the ordered list.
+        #[arg(long = "append")]
+        append: Vec<String>,
+        /// Declared root env source kind.
+        #[arg(long = "source-kind", value_enum)]
+        source_kind: Option<AssistEnvSourceKindArg>,
+        /// Declared root env source path, relative to the contract.
+        #[arg(long = "source-path")]
+        source_path: Option<String>,
+        /// Explicit must-exist flag for the declared env source.
+        #[arg(long = "must-exist")]
+        must_exist: Option<bool>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -779,6 +829,15 @@ enum AssistTaskTargetActivationModeArg {
     RestartReady,
     EnsureReady,
     EnsureRunning,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistEnvSourceKindArg {
+    Dotenv,
+    Properties,
+    Json,
+    Yaml,
+    Toml,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -4072,6 +4131,46 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Assist {
+            command:
+                AssistCommands::DeclareEnv {
+                    json,
+                    write,
+                    member,
+                    task,
+                    name,
+                    value,
+                    required,
+                    secret,
+                    default,
+                    allowed,
+                    prepend,
+                    append,
+                    source_kind,
+                    source_path,
+                    must_exist,
+                    path,
+                },
+        } => commands::assist_declare_env(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            task.as_deref(),
+            name.as_deref(),
+            value.as_deref(),
+            required,
+            secret,
+            default.as_deref(),
+            &allowed,
+            &prepend,
+            &append,
+            source_kind,
+            source_path.as_deref(),
+            must_exist,
+            write,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Studio {
             open,
             serve,
@@ -4783,6 +4882,11 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         } => {
             "rerun `ota assist bind-task --task <consumer> --target <name> --to <producer>:<listener>` with one explicit producer edge"
         }
+        Commands::Assist {
+            command: AssistCommands::DeclareEnv { .. },
+        } => {
+            "rerun `ota assist declare-env` with one explicit env var, env source, or task-local env target"
+        }
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
@@ -4984,6 +5088,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Assist {
             command: AssistCommands::BindTask { json, .. },
         }
+        | Commands::Assist {
+            command: AssistCommands::DeclareEnv { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
@@ -5060,6 +5167,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Assist {
             command: AssistCommands::BindTask { .. },
         } => "ota assist bind-task",
+        Commands::Assist {
+            command: AssistCommands::DeclareEnv { .. },
+        } => "ota assist declare-env",
         Commands::Env { .. } => "ota env",
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
@@ -34996,6 +35106,158 @@ tasks:
 
         let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
         assert_eq!(validate.exit_code, 0, "{validate:?}");
+    }
+
+    #[test]
+    fn assist_declare_env_previews_root_env_requirement() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--name",
+            "APP_PORT",
+            "--required",
+            "true",
+            "--default",
+            "8080",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST DECLARE-ENV"));
+        assert!(stdout.contains("env.vars.APP_PORT"));
+        assert!(stdout.contains("required: true"));
+        assert!(stdout.contains("default: \"8080\"") || stdout.contains("default: '8080'") || stdout.contains("default: 8080"));
+        assert!(stdout.contains("ota env"));
+    }
+
+    #[test]
+    fn assist_declare_env_json_preview_supports_declared_source() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--json",
+            "--source-kind",
+            "dotenv",
+            "--source-path",
+            ".env.local",
+            "--must-exist",
+            "true",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["operation"], "declare-env");
+        assert_eq!(json["subject"]["kind"], "source");
+        assert_eq!(json["subject"]["source_kind"], "dotenv");
+        assert_eq!(json["subject"]["source_path"], ".env.local");
+        assert_eq!(json["inputs"]["must_exist"], "true");
+    }
+
+    #[test]
+    fn assist_declare_env_member_write_updates_task_local_env_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  smoke:
+    run: curl -fsS "$API_BASE"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--member",
+            "api",
+            "--task",
+            "smoke",
+            "--name",
+            "API_BASE",
+            "--value",
+            "http://127.0.0.1:3000",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota env --member api --task smoke"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("env:"));
+        assert!(member_contract.contains("API_BASE: http://127.0.0.1:3000"));
+    }
+
+    #[test]
+    fn assist_declare_env_refuses_task_local_mode_without_value() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  smoke:
+    run: curl -fsS "$API_BASE"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-env",
+            "--task",
+            "smoke",
+            "--name",
+            "API_BASE",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("task-local env declaration needs `--value`"));
     }
 
     struct WorkspaceFixture {

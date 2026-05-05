@@ -22,6 +22,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
 - [json-schemas/assist-declare-service.json](json-schemas/assist-declare-service.json)
 - [json-schemas/assist-bind-task.json](json-schemas/assist-bind-task.json)
+- [json-schemas/assist-declare-env.json](json-schemas/assist-declare-env.json)
 - [json-schemas/assist-wire-setup.json](json-schemas/assist-wire-setup.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
@@ -60,6 +61,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
 - use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
 - use `ota assist bind-task --json` when you want a deterministic target-binding proposal or apply result without scraping review text
+- use `ota assist declare-env --json` when you want a deterministic env proposal or apply result without scraping review text
 - use `ota assist wire-setup --json` when you want a deterministic setup-wiring proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
@@ -88,6 +90,7 @@ human text output:
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
 - `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist bind-task --json`: use `mode`, `subject.task`, `subject.target`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist declare-env --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist wire-setup --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
@@ -654,6 +657,75 @@ Failure:
   },
   "why": "producer task `dev` declares multiple listeners, so assist cannot pick one safely",
   "next": "rerun with `--to <task>:<listener>` after checking `ota execution topology`"
+}
+```
+
+## `ota assist declare-env --json`
+
+Assist env output reports one deterministic proposal or apply result for one root env requirement,
+one declared env source, or one explicit task-local env override.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "declare-env",
+  "subject": {
+    "kind": "root_var",
+    "name": "APP_PORT"
+  },
+  "inputs": {
+    "required": "true",
+    "default": "8080"
+  },
+  "assumptions": [
+    "root env requirement `APP_PORT` will be declared under `env.vars`"
+  ],
+  "changes": [
+    {
+      "path": "env.vars.APP_PORT",
+      "action": "set",
+      "before": null,
+      "after": {
+        "required": true,
+        "default": "8080"
+      }
+    }
+  ],
+  "diff": "env.vars.APP_PORT\n- <absent>\n+ required: true ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota env /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist declare-env --name APP_PORT --required true --default 8080 --write /abs/path/to/ota.yaml` to apply this env change"
+}
+```
+
+Notes:
+
+- `subject.kind` distinguishes `root_var`, `source`, and `task_env`
+- `subject.task` is present only for task-local env writes
+- `subject.source_kind` and `subject.source_path` are present only for declared env sources
+- `inputs` records only the explicit assist inputs supplied for that one mutation
+- validation uses `ota env` or `ota env --task <name>` because env declaration changes should be reviewed through the same read path Ota already trusts
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "declare-env",
+  "subject": {
+    "task": "smoke",
+    "name": "API_BASE"
+  },
+  "why": "task-local env declaration needs `--value`",
+  "next": "rerun with `--task <name> --name <ENV> --value <value>`"
 }
 ```
 
