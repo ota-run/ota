@@ -56,7 +56,7 @@ use crate::runner::{
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
-    RequirementSurface, RuntimeRequirement, ServiceSpec, ToolRequirement,
+    RequirementSurface, RuntimeRequirement, ServiceReadinessSpec, ServiceSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, collect_contract_advisories};
@@ -2614,17 +2614,25 @@ fn service_finding(
     }
 
     if service.required {
-        let why = if service.start_command(name).is_some() {
+        let can_anchor_structured_readiness = service
+            .readiness
+            .as_ref()
+            .and_then(ServiceReadinessSpec::from_context)
+            .is_some()
+            || service.endpoints.contains_key("host")
+            || service.endpoints.len() == 1;
+
+        let why = if can_anchor_structured_readiness {
             format!(
                 "service `{name}` is required but no `healthcheck` is configured, so Ota cannot verify readiness"
             )
         } else {
             format!(
-                "service `{name}` is required but no `healthcheck` or `start` command is configured, so Ota cannot verify or prepare it"
+                "service `{name}` is required but the current managed service shape does not yet expose one truthful readiness surface, so Ota cannot verify readiness"
             )
         };
 
-        let next = if service.start_command(name).is_some() {
+        let next = if can_anchor_structured_readiness {
             format!(
                 "declare readiness with `ota assist declare-readiness --service {name} --style tcp` or `--style http`, then rerun `ota doctor`"
             )
@@ -8011,7 +8019,7 @@ tasks:
     }
 
     #[test]
-    fn warns_when_required_service_has_no_healthcheck() {
+    fn required_service_with_start_and_endpoint_routes_to_declare_readiness() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
@@ -8022,6 +8030,10 @@ services:
   postgres:
     required: true
     start: docker compose up -d postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
 tasks:
   setup:
     run: printf ready
@@ -8069,6 +8081,72 @@ tasks:
             report.findings[0].summary,
             "Required service cannot be verified: postgres"
         );
+        assert_eq!(
+            report.findings[0].next,
+            "refine the managed service with `ota assist declare-service --name postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn required_host_service_with_one_endpoint_routes_to_declare_readiness() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: host
+      name: local-postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].next,
+            "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn required_compose_service_without_endpoint_routes_to_declare_service() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
         assert_eq!(
             report.findings[0].next,
             "refine the managed service with `ota assist declare-service --name postgres --style tcp` or `--style http`, then rerun `ota doctor`"
