@@ -149,6 +149,12 @@ enum Commands {
         #[command(subcommand)]
         command: ExecutionCommands,
     },
+    #[command(display_order = 5)]
+    /// Propose reviewed contract mutations from bounded Ota intents.
+    Assist {
+        #[command(subcommand)]
+        command: AssistCommands,
+    },
     #[command(display_order = 10)]
     /// Export a read-only local Studio snapshot for the current repo.
     Studio {
@@ -609,6 +615,40 @@ enum ExecutionCommands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum AssistCommands {
+    /// Declare or refine structured readiness for a task runtime or managed service.
+    DeclareReadiness {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed readiness mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Target one declared task runtime service.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
+        task: Option<String>,
+        /// Target one declared managed service.
+        #[arg(long)]
+        service: Option<String>,
+        /// Use one explicit readiness template style.
+        #[arg(long, value_enum)]
+        style: Option<AssistReadinessStyleArg>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistReadinessStyleArg {
+    SpringHttp,
+    Http,
+    Tcp,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -3675,6 +3715,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Validate { json: true, .. }
             | Commands::Tasks { json: true, .. }
             | Commands::Services { json: true, .. }
+            | Commands::Assist {
+                command: AssistCommands::DeclareReadiness { json: true, .. },
+            }
             | Commands::Doctor { json: true, .. }
             | Commands::Explain { json: true, .. }
             | Commands::Check { json: true, .. }
@@ -3782,6 +3825,28 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Assist {
+            command:
+                AssistCommands::DeclareReadiness {
+                    json,
+                    write,
+                    member,
+                    task,
+                    service,
+                    style,
+                    path,
+                },
+        } => commands::assist_declare_readiness(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            task.as_deref(),
+            service.as_deref(),
+            style,
+            write,
             format_from_json(json),
             debug,
         ),
@@ -4478,6 +4543,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Validate { .. } => "run `ota init` to create a starter contract",
         Commands::Tasks { .. } => "run `ota tasks` to inspect available task names",
         Commands::Services { .. } => "run `ota services` to inspect declared services",
+        Commands::Assist { .. } => {
+            "rerun `ota assist declare-readiness --task <name>` or `--service <name>` with one explicit target"
+        }
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
@@ -4667,6 +4735,9 @@ fn command_requests_json(command: &Commands) -> bool {
         Commands::Validate { json, .. }
         | Commands::Tasks { json, .. }
         | Commands::Services { json, .. }
+        | Commands::Assist {
+            command: AssistCommands::DeclareReadiness { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
@@ -4731,6 +4802,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Validate { .. } => "ota validate",
         Commands::Tasks { .. } => "ota tasks",
         Commands::Services { .. } => "ota services",
+        Commands::Assist {
+            command: AssistCommands::DeclareReadiness { .. },
+        } => "ota assist declare-readiness",
         Commands::Env { .. } => "ota env",
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
@@ -33369,6 +33443,215 @@ tasks:
             }
             fs::write(path, contents).unwrap();
         }
+    }
+
+    #[test]
+    fn assist_declare_readiness_previews_task_runtime_http_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST DECLARE-READINESS"));
+        assert!(stdout.contains("tasks.dev.runtime.readiness"));
+        assert!(stdout.contains("path: /health"));
+        assert!(stdout.contains("ota validate"));
+        assert!(stdout.contains("ota doctor"));
+        assert!(stdout.contains("ota assist declare-readiness --task dev --style http --write"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_write_updates_task_runtime_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: ./gradlew bootRun
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            "--style",
+            "spring-http",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("readiness:"));
+        assert!(written.contains("path: /actuator/health"));
+        assert!(written.contains("contains: '\"status\":\"UP\"'"));
+        assert!(written.contains("start_period: 10s"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--member",
+            "api",
+            "--task",
+            "dev",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota doctor --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(!member_contract.contains("version: 1"));
+        assert!(member_contract.contains("readiness:"));
+        assert!(member_contract.contains("path: /health"));
+    }
+
+    #[test]
+    fn assist_declare_readiness_json_preview_supports_managed_service_targets() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 43127
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--json",
+            "--service",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["path"], fixture.file_path().display().to_string());
+        assert_eq!(json["mode"], "preview");
+        assert_eq!(json["operation"], "declare-readiness");
+        assert_eq!(json["subject"]["service"], "api");
+        assert_eq!(json["changes"][0]["path"], "services.api.readiness");
+        assert_eq!(json["changes"][0]["after"]["kind"], "http");
+        assert_eq!(json["changes"][0]["after"]["path"], "/health");
     }
 
     struct WorkspaceFixture {

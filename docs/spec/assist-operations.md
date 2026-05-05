@@ -24,7 +24,7 @@
 
 # Assist Operations
 
-Status: planned.
+Status: planned, with the first shipped slice now covering `ota assist declare-readiness`.
 
 This document defines the long-term product contract for `ota assist`.
 
@@ -443,4 +443,3 @@ Reason:
 - readiness, topology binding, and setup orchestration already have strong shipped primitives
 - these operations solve immediate adoption pain
 - they exercise the full preview/apply/validate model without needing a general-purpose mutator
-

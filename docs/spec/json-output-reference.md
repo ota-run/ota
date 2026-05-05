@@ -17,6 +17,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/env.json](json-schemas/env.json)
 - [json-schemas/execution.json](json-schemas/execution.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
+- [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
 - [json-schemas/check.json](json-schemas/check.json)
@@ -51,6 +52,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
 - use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything
+- use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
@@ -75,6 +77,7 @@ human text output:
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `services`, and `tasks`
+- `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
@@ -405,6 +408,74 @@ Failure:
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
   "errors": ["..."]
+}
+```
+
+## `ota assist declare-readiness --json`
+
+Assist readiness output reports one deterministic proposal or apply result for an existing task
+runtime service or managed service.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "declare-readiness",
+  "subject": {
+    "task": "dev"
+  },
+  "inputs": {
+    "style": "spring-http"
+  },
+  "assumptions": [
+    "task `dev` already declares a service runtime",
+    "listener `http` is the readiness surface"
+  ],
+  "changes": [
+    {
+      "path": "tasks.dev.runtime.readiness",
+      "action": "set",
+      "before": null,
+      "after": {
+        "kind": "http",
+        "listener": "http",
+        "method": "GET",
+        "path": "/actuator/health"
+      }
+    }
+  ],
+  "diff": "tasks.dev.runtime.readiness\n- <absent>\n+ kind: http ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist declare-readiness --task dev --style spring-http --write /abs/path/to/ota.yaml` to apply this readiness change"
+}
+```
+
+Notes:
+
+- `path` is the resolved repo contract path
+- `member` is present only when `--member` targeted a merged monorepo member contract
+- `subject` contains exactly one selector key today: `task` or `service`
+- `changes[*].after` uses the canonical readiness contract shape Ota would write
+- `mode` is `preview` by default and `write` when `--write` succeeded
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "declare-readiness",
+  "subject": {
+    "task": "dev"
+  },
+  "why": "task `dev` has multiple readiness candidate listeners; assist cannot pick one safely",
+  "next": "rerun with `--style <spring-http|http|tcp>` after narrowing the runtime surface"
 }
 ```
 
