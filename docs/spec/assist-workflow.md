@@ -57,6 +57,7 @@ The currently shipped assist operations are:
 - `ota assist declare-readiness`
 - `ota assist declare-service`
 - `ota assist bind-task`
+- `ota assist declare-env`
 - `ota assist wire-setup`
 
 It can target:
@@ -148,6 +149,24 @@ Task binding with inferred single listener:
 ota assist bind-task --task smoke --target api --to dev --json
 ```
 
+Root env requirement preview:
+
+```bash
+ota assist declare-env --name APP_PORT --required true --default 8080
+```
+
+Declared env source preview:
+
+```bash
+ota assist declare-env --source-kind dotenv --source-path .env.local --must-exist true --json
+```
+
+Task-local env write:
+
+```bash
+ota assist declare-env --task smoke --name API_BASE --value http://127.0.0.1:3000 --write
+```
+
 Monorepo member write:
 
 ```bash
@@ -202,6 +221,24 @@ It intentionally does not yet:
 - guess a listener when multiple producer listeners are equally valid
 - hide `address_view` or `activation.mode` as non-reviewable internal defaults
 
+## Env declaration behavior
+
+`declare-env` is the current assist slice for root env requirements, declared env sources, and one
+explicit task-local env override.
+
+It currently:
+
+- declares or refines `env.vars.<NAME>` with `required`, `secret`, `default`, `allowed`, `prepend`, and `append`
+- declares or refines one curated `env.sources[]` entry with `kind`, `path`, and optional `must_exist`
+- writes task-local env only through explicit `--task <name> --name <ENV> --value <value>`
+- preserves precedence truth instead of inventing `.env` shell glue outside the contract
+
+It intentionally does not yet:
+
+- infer env names or source kinds from arbitrary repo files
+- perform broad env normalization across many vars at once
+- widen task-local env into a second root env requirement model
+
 ## Setup wiring behavior
 
 `wire-setup` is intentionally narrow:
@@ -240,6 +277,9 @@ Assist should refuse instead of guessing when:
 - a service endpoint is ambiguous and `--endpoint` was not given
 - a producer task binding is ambiguous because multiple listeners are available and no safe existing selection can be reused
 - a producer task does not declare any service listener runtime surface
+- a task-local env declaration is missing its explicit `--value`
+- a root env declaration tries to use `prepend` or `append` on a non-`PATH` key
+- a root env declaration combines `secret: true` with a new default value
 - a new `tasks.setup` declaration is requested without an explicit `--run` or `--script` body
 - `wire-setup` names a managed service that is not already declared under `services`
 

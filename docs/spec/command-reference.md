@@ -84,6 +84,7 @@ ota currently ships these commands:
 - `ota assist declare-readiness`
 - `ota assist declare-service`
 - `ota assist bind-task`
+- `ota assist declare-env`
 - `ota assist wire-setup`
 - `ota detect`
 - `ota validate`
@@ -567,6 +568,46 @@ ota assist bind-task --task smoke --target api --to dev:http
 ota assist bind-task --task smoke --target api --to dev --json
 ota assist bind-task --task smoke --target api --to dev:http --activation ensure_ready
 ota assist bind-task --member api --task smoke --target api --to dev:http --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist declare-env`
+
+Create or refine one root env requirement, one declared env source, or one explicit task-local env override.
+
+```bash
+ota assist declare-env --name <ENV> [--required true|false] [--secret true|false] [--default <value>] [PATH]
+ota assist declare-env --name PATH [--prepend <path> ...] [--append <path> ...] [PATH]
+ota assist declare-env --source-kind dotenv|properties|json|yaml|toml --source-path <path> [--must-exist true|false] [PATH]
+ota assist declare-env --task <name> --name <ENV> --value <value> [PATH]
+ota assist declare-env --member api --task <name> --name <ENV> --value <value> --write [PATH]
+ota assist declare-env --json --source-kind dotenv --source-path .env.local [PATH]
+```
+
+Use it when the contract already knows which env surface should exist and the next safe move is one reviewed env mutation instead of broad contract inference.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact env block or task-local value, and the next validation commands
+- `--write` applies the proposed env mutation and revalidates it before returning success
+- root env requirements target `env.vars.<NAME>` with `required`, `secret`, `default`, `allowed`, `prepend`, and `append`
+- declared env sources target one curated `env.sources[]` entry with `kind`, `path`, and optional `must_exist`
+- task-local env targets only one explicit `tasks.<name>.env.<KEY> = <value>` write
+- `prepend` and `append` are allowed only for `PATH`
+- `secret: true` may not be combined with a new default value
+- supports `--member` through the merged monorepo contract path while writing only to the selected member overlay file
+- `--json` emits the stable assist proposal/apply result for this env mutation
+
+Examples:
+
+```bash
+ota assist declare-env --name APP_PORT --required true --default 8080
+ota assist declare-env --name PATH --prepend ./node_modules/.bin --append /opt/ota/bin
+ota assist declare-env --source-kind dotenv --source-path .env.local --must-exist true --json
+ota assist declare-env --task smoke --name API_BASE --value http://127.0.0.1:3000
+ota assist declare-env --member api --task smoke --name API_BASE --value http://127.0.0.1:3000 --write
 ```
 
 Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,

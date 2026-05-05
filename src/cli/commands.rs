@@ -43,8 +43,8 @@ use time::OffsetDateTime;
 use time::macros::format_description;
 
 use super::{
-    AnnotationFormat, AnnotationMode, AssistReadinessStyleArg, AssistServiceManagerArg,
-    AssistTaskTargetActivationModeArg, AssistTaskTargetAddressViewArg,
+    AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistReadinessStyleArg,
+    AssistServiceManagerArg, AssistTaskTargetActivationModeArg, AssistTaskTargetAddressViewArg,
 };
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
@@ -129,12 +129,13 @@ use crate::runner::{
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
 };
 use crate::schema::{
-    Backend, ContainerBackend, Contract, EnvRequirement, ExecutionSharedBackend, ExtensionSpec,
-    Lifecycle, RequirementSurface, ServiceReadinessSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
-    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
-    TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec, TaskTargetAddressView,
-    TaskTargetServiceRefSpec, TaskTargetSpec, format_memory_size_bytes,
+    Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
+    ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
+    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec,
+    TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
+    format_memory_size_bytes,
     parse_memory_size_bytes,
 };
 use crate::update;
@@ -4180,6 +4181,188 @@ impl AssistBindTaskProposal {
     }
 }
 
+enum AssistEnvProposalSubject {
+    RootVar { name: String },
+    RootSource { kind: EnvSourceKind, path: String },
+    TaskEnv { task: String, name: String },
+}
+
+enum AssistEnvProposalMode {
+    RootVar {
+        required: Option<bool>,
+        secret: Option<bool>,
+        default: Option<String>,
+        allowed: Vec<String>,
+        prepend: Vec<String>,
+        append: Vec<String>,
+    },
+    RootSource {
+        kind: EnvSourceKind,
+        path: String,
+        must_exist: Option<bool>,
+    },
+    TaskEnv {
+        task: String,
+        name: String,
+        value: String,
+    },
+}
+
+struct AssistEnvProposal {
+    subject: AssistEnvProposalSubject,
+    mode: AssistEnvProposalMode,
+    assumptions: Vec<String>,
+    change_path: String,
+    before_value: YamlValue,
+    after_value: YamlValue,
+    write_value: YamlValue,
+}
+
+impl AssistEnvProposal {
+    fn subject_json(&self) -> BTreeMap<&'static str, &str> {
+        let mut subject = BTreeMap::new();
+        match &self.subject {
+            AssistEnvProposalSubject::RootVar { name } => {
+                subject.insert("kind", "root_var");
+                subject.insert("name", name.as_str());
+            }
+            AssistEnvProposalSubject::RootSource { kind, path } => {
+                subject.insert("kind", "source");
+                subject.insert("source_kind", assist_env_source_kind_name(*kind));
+                subject.insert("source_path", path.as_str());
+            }
+            AssistEnvProposalSubject::TaskEnv { task, name } => {
+                subject.insert("kind", "task_env");
+                subject.insert("task", task.as_str());
+                subject.insert("name", name.as_str());
+            }
+        }
+        subject
+    }
+
+    fn inputs_json(&self) -> BTreeMap<&'static str, String> {
+        let mut inputs = BTreeMap::new();
+        match &self.mode {
+            AssistEnvProposalMode::RootVar {
+                required,
+                secret,
+                default,
+                allowed,
+                prepend,
+                append,
+            } => {
+                if let Some(required) = required {
+                    inputs.insert("required", required.to_string());
+                }
+                if let Some(secret) = secret {
+                    inputs.insert("secret", secret.to_string());
+                }
+                if let Some(default) = default {
+                    inputs.insert("default", default.clone());
+                }
+                if !allowed.is_empty() {
+                    inputs.insert("allowed", allowed.join(","));
+                }
+                if !prepend.is_empty() {
+                    inputs.insert("prepend", prepend.join(","));
+                }
+                if !append.is_empty() {
+                    inputs.insert("append", append.join(","));
+                }
+            }
+            AssistEnvProposalMode::RootSource {
+                kind,
+                path,
+                must_exist,
+            } => {
+                inputs.insert("source_kind", kind.to_string());
+                inputs.insert("source_path", path.clone());
+                if let Some(must_exist) = must_exist {
+                    inputs.insert("must_exist", must_exist.to_string());
+                }
+            }
+            AssistEnvProposalMode::TaskEnv { value, .. } => {
+                inputs.insert("value", value.clone());
+            }
+        }
+        inputs
+    }
+
+    fn diff(&self) -> String {
+        format!(
+            "{}\n- {}\n+ {}",
+            self.change_path,
+            compact_yaml_inline(&self.before_value),
+            compact_yaml_inline(&self.after_value)
+        )
+    }
+
+    fn preview_next_command(&self, member: Option<&str>, contract_path: &Path) -> String {
+        let mut command = String::from("ota assist declare-env");
+        if let Some(member) = member {
+            command.push_str(&format!(" --member {member}"));
+        }
+        match &self.mode {
+            AssistEnvProposalMode::RootVar {
+                required,
+                secret,
+                default,
+                allowed,
+                prepend,
+                append,
+            } => {
+                if let AssistEnvProposalSubject::RootVar { name } = &self.subject {
+                    command.push_str(&format!(" --name {name}"));
+                }
+                if let Some(required) = required {
+                    command.push_str(&format!(" --required {required}"));
+                }
+                if let Some(secret) = secret {
+                    command.push_str(&format!(" --secret {secret}"));
+                }
+                if let Some(default) = default {
+                    command.push_str(&format!(" --default {}", shell_quote(default)));
+                }
+                for allowed in allowed {
+                    command.push_str(&format!(" --allowed {}", shell_quote(allowed)));
+                }
+                for prepend in prepend {
+                    command.push_str(&format!(" --prepend {}", shell_quote(prepend)));
+                }
+                for append in append {
+                    command.push_str(&format!(" --append {}", shell_quote(append)));
+                }
+            }
+            AssistEnvProposalMode::RootSource {
+                kind,
+                path,
+                must_exist,
+            } => {
+                command.push_str(&format!(" --source-kind {}", kind));
+                command.push_str(&format!(" --source-path {}", shell_quote(path)));
+                if let Some(must_exist) = must_exist {
+                    command.push_str(&format!(" --must-exist {must_exist}"));
+                }
+            }
+            AssistEnvProposalMode::TaskEnv { task, name, value } => {
+                command.push_str(&format!(" --task {task}"));
+                command.push_str(&format!(" --name {name}"));
+                command.push_str(&format!(" --value {}", shell_quote(value)));
+            }
+        }
+        command.push_str(" --write");
+        let command = command_for_repo_from_contract_path(&command, contract_path);
+        format!("rerun with `{command}` to apply this env change")
+    }
+
+    fn task_name_for_validation(&self) -> Option<&str> {
+        match &self.subject {
+            AssistEnvProposalSubject::TaskEnv { task, .. } => Some(task.as_str()),
+            _ => None,
+        }
+    }
+}
+
 fn is_http_readiness_style(style: AssistReadinessStyleArg) -> bool {
     matches!(
         style,
@@ -4591,6 +4774,91 @@ fn render_assist_bind_task_text(
                     proposal.consumer_task, proposal.target_name
                 ))
             )
+        ));
+    }
+    output
+}
+
+fn render_assist_env_text(
+    path: &str,
+    proposal: &AssistEnvProposal,
+    mode: &str,
+    validation: &[String],
+    preview_next: Option<&str>,
+) -> String {
+    let mut output = format_command_header("ASSIST DECLARE-ENV", path);
+    output.push_str(&format!("\n\n{} {}", mode_icon(), paint_key("Mode:")));
+    output.push_str(&format!(
+        " {}",
+        if mode == "write" { "write" } else { "preview" }
+    ));
+    match &proposal.subject {
+        AssistEnvProposalSubject::RootVar { name } => {
+            output.push_str(&format!(
+                "\n{} {} {}",
+                info_bullet(),
+                paint_key("Subject:"),
+                paint_named_drift_label("Env", name)
+            ));
+        }
+        AssistEnvProposalSubject::RootSource { kind, path } => {
+            output.push_str(&format!(
+                "\n{} {} {} {}",
+                info_bullet(),
+                paint_key("Subject:"),
+                paint_named_drift_label("Env source", &kind.to_string()),
+                path
+            ));
+        }
+        AssistEnvProposalSubject::TaskEnv { task, name } => {
+            output.push_str(&format!(
+                "\n{} {} {} / {}",
+                info_bullet(),
+                paint_key("Subject:"),
+                paint_named_drift_label("Task", task),
+                name
+            ));
+        }
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    for assumption in &proposal.assumptions {
+        output.push_str(&format!("\n{} {}", info_bullet(), assumption));
+    }
+    if !proposal.before_value.is_null() {
+        output.push_str(&format!("\n\n{}:", paint_section_title("Current env")));
+        output.push_str(&format!(
+            "\n{} {}",
+            info_bullet(),
+            paint_backticked_code(&proposal.change_path)
+        ));
+        let before_yaml =
+            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        output.push_str(&format!("\n{}", stylize_yaml_preview(before_yaml.trim_end())));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed env")));
+    output.push_str(&format!(
+        "\n{} {}",
+        info_bullet(),
+        paint_backticked_code(&proposal.change_path)
+    ));
+    let after_yaml =
+        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!("\n{}", stylize_yaml_preview(after_yaml.trim_end())));
+    output.push_str(&format_next_timeline(
+        &validation
+            .iter()
+            .map(|command| format!("run `{}`", command))
+            .collect::<Vec<_>>(),
+    ));
+    if mode == "preview" {
+        if let Some(preview_next) = preview_next {
+            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+        }
+    } else {
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code(&proposal.change_path))
         ));
     }
     output
@@ -6215,6 +6483,505 @@ pub fn assist_bind_task(
     )
 }
 
+pub fn assist_declare_env(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    task: Option<&str>,
+    name: Option<&str>,
+    value: Option<&str>,
+    required: Option<bool>,
+    secret: Option<bool>,
+    default: Option<&str>,
+    allowed: &[String],
+    prepend: &[String],
+    append: &[String],
+    source_kind: Option<AssistEnvSourceKindArg>,
+    source_path: Option<&str>,
+    must_exist: Option<bool>,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=assist declare-env")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=assist declare-env"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(task) = task {
+        debug_lines.push(format!("DEBUG task={task}"));
+    }
+    if let Some(name) = name {
+        debug_lines.push(format!("DEBUG name={name}"));
+    }
+    if let Some(source_kind) = source_kind {
+        debug_lines.push(format!(
+            "DEBUG source_kind={}",
+            assist_env_source_kind_name(assist_env_source_kind_from_arg(source_kind))
+        ));
+    }
+    if let Some(source_path) = source_path {
+        debug_lines.push(format!("DEBUG source_path={source_path}"));
+    }
+    if write {
+        debug_lines.push(String::from("DEBUG mode=write"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "ASSIST DECLARE-ENV",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota assist declare-env` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota assist declare-env", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let source_contents = match fs::read_to_string(&target.contract_path) {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to read `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-env",
+                                    subject: assist_declare_env_subject_map(task, name, source_path),
+                                    why,
+                                    next: String::from(
+                                        "repair the contract path, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+                let document: YamlValue = match serde_yaml::from_str(&source_contents) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to parse `{}` for assist preview: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-env",
+                                    subject: assist_declare_env_subject_map(task, name, source_path),
+                                    why,
+                                    next: String::from(
+                                        "repair the existing contract, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let effective_document = if member.is_some() {
+                    let root_contents = match fs::read_to_string(&resolved_path) {
+                        Ok(contents) => contents,
+                        Err(error) => {
+                            let why = format!(
+                                "failed to read `{}`: {}",
+                                compact_contract_path(&resolved_path),
+                                error
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "declare-env",
+                                        subject: assist_declare_env_subject_map(task, name, source_path),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path, then rerun the assist command",
+                                        ),
+                                    },
+                                )),
+                            };
+                        }
+                    };
+                    let mut merged: YamlValue = match serde_yaml::from_str(&root_contents) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            let why = format!(
+                                "failed to parse `{}` for assist preview: {}",
+                                compact_contract_path(&resolved_path),
+                                error
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "declare-env",
+                                        subject: assist_declare_env_subject_map(task, name, source_path),
+                                        why,
+                                        next: String::from(
+                                            "repair the existing contract, then rerun the assist command",
+                                        ),
+                                    },
+                                )),
+                            };
+                        }
+                    };
+                    merge_yaml_value(&mut merged, document.clone());
+                    merged
+                } else {
+                    document.clone()
+                };
+
+                let proposal = match build_assist_env_proposal(
+                    &target.contract,
+                    &effective_document,
+                    member,
+                    task,
+                    name,
+                    value,
+                    required,
+                    secret,
+                    default,
+                    allowed,
+                    prepend,
+                    append,
+                    source_kind,
+                    source_path,
+                    must_exist,
+                ) {
+                    Ok(proposal) => proposal,
+                    Err((why, next)) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST DECLARE-ENV", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-env",
+                                    subject: assist_declare_env_subject_map(task, name, source_path),
+                                    why,
+                                    next,
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let yaml = match build_assist_env_yaml(&document, &effective_document, member.is_some(), &proposal) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-env",
+                                    subject: proposal.subject_json(),
+                                    why: error,
+                                    next: String::from(
+                                        "rerun the assist command after fixing the repo contract",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                if let Err(error) = validate_assist_contract_update(
+                    &resolved_path,
+                    member,
+                    &target.contract_path,
+                    &yaml,
+                ) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(error.clone()),
+                        OutputFormat::Json => CommandOutput::failure(to_json(
+                            &AssistProposalFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                operation: "declare-env",
+                                subject: proposal.subject_json(),
+                                why: error,
+                                next: String::from(
+                                    "adjust the env inputs, then rerun the assist command",
+                                ),
+                            },
+                        )),
+                    };
+                }
+
+                let validation = assist_env_validation_commands(
+                    &resolved_path,
+                    &target.contract_path,
+                    member,
+                    proposal.task_name_for_validation(),
+                );
+                let after_value = proposal.after_value.clone();
+
+                if write {
+                    match fs::write(&target.contract_path, yaml) {
+                        Ok(()) => match format {
+                            OutputFormat::Text => CommandOutput::success(render_assist_env_text(
+                                &text_path_display,
+                                &proposal,
+                                "write",
+                                &validation,
+                                None,
+                            )),
+                            OutputFormat::Json => CommandOutput::success(to_json(
+                                &AssistProposalSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    member,
+                                    mode: "write",
+                                    operation: "declare-env",
+                                    subject: proposal.subject_json(),
+                                    inputs: proposal.inputs_json(),
+                                    assumptions: proposal.assumptions.clone(),
+                                    changes: vec![AssistProposalChange {
+                                        path: &proposal.change_path,
+                                        action: "set",
+                                        before: proposal.before_value.clone(),
+                                        after: after_value,
+                                    }],
+                                    diff: proposal.diff(),
+                                    validation,
+                                    next: String::from(
+                                        "rerun `ota env` to inspect the updated env contract",
+                                    ),
+                                },
+                            )),
+                        },
+                        Err(error) => {
+                            let why = format!(
+                                "failed to write `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "declare-env",
+                                        subject: proposal.subject_json(),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path or permissions, then rerun with `--write`",
+                                        ),
+                                    },
+                                )),
+                            }
+                        }
+                    }
+                } else {
+                    let preview_target_path = if member.is_some() {
+                        &resolved_path
+                    } else {
+                        &target.contract_path
+                    };
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_assist_env_text(
+                            &text_path_display,
+                            &proposal,
+                            "preview",
+                            &validation,
+                            Some(&proposal.preview_next_command(member, preview_target_path)),
+                        )),
+                        OutputFormat::Json => CommandOutput::success(to_json(&AssistProposalSuccess {
+                            ok: true,
+                            path: &path_display,
+                            member,
+                            mode: "preview",
+                            operation: "declare-env",
+                            subject: proposal.subject_json(),
+                            inputs: proposal.inputs_json(),
+                            assumptions: proposal.assumptions.clone(),
+                            changes: vec![AssistProposalChange {
+                                path: &proposal.change_path,
+                                action: "set",
+                                before: proposal.before_value.clone(),
+                                after: after_value,
+                            }],
+                            diff: proposal.diff(),
+                            validation,
+                            next: proposal.preview_next_command(member, preview_target_path),
+                        })),
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ASSIST DECLARE-ENV",
+                    &resolved_path,
+                    &errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist declare-env",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "declare-env",
+                    subject: assist_declare_env_subject_map(task, name, source_path),
+                    why: errors.to_string(),
+                    next: String::from(
+                        "repair the existing contract, then rerun the assist command",
+                    ),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ASSIST DECLARE-ENV",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist declare-env",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "declare-env",
+                    subject: assist_declare_env_subject_map(task, name, source_path),
+                    why: error.to_string(),
+                    next: String::from("repair the contract path, then rerun the assist command"),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn assist_declare_env_subject_map<'a>(
+    task: Option<&'a str>,
+    name: Option<&'a str>,
+    source_path: Option<&'a str>,
+) -> BTreeMap<&'static str, &'a str> {
+    let mut subject = BTreeMap::new();
+    if let Some(task) = task {
+        subject.insert("task", task);
+    }
+    if let Some(name) = name {
+        subject.insert("name", name);
+    }
+    if let Some(source_path) = source_path {
+        subject.insert("source_path", source_path);
+    }
+    subject
+}
+
+fn assist_env_source_kind_from_arg(value: AssistEnvSourceKindArg) -> EnvSourceKind {
+    match value {
+        AssistEnvSourceKindArg::Dotenv => EnvSourceKind::Dotenv,
+        AssistEnvSourceKindArg::Properties => EnvSourceKind::Properties,
+        AssistEnvSourceKindArg::Json => EnvSourceKind::Json,
+        AssistEnvSourceKindArg::Yaml => EnvSourceKind::Yaml,
+        AssistEnvSourceKindArg::Toml => EnvSourceKind::Toml,
+    }
+}
+
+fn assist_env_source_kind_name(kind: EnvSourceKind) -> &'static str {
+    match kind {
+        EnvSourceKind::Dotenv => "dotenv",
+        EnvSourceKind::Properties => "properties",
+        EnvSourceKind::Json => "json",
+        EnvSourceKind::Yaml => "yaml",
+        EnvSourceKind::Toml => "toml",
+    }
+}
+
 fn assist_bind_task_subject_map<'a>(
     task: &'a str,
     target_name: &'a str,
@@ -6223,6 +6990,398 @@ fn assist_bind_task_subject_map<'a>(
     subject.insert("task", task);
     subject.insert("target", target_name);
     subject
+}
+
+fn build_assist_env_proposal(
+    contract: &Contract,
+    document: &YamlValue,
+    member: Option<&str>,
+    task: Option<&str>,
+    name: Option<&str>,
+    value: Option<&str>,
+    required: Option<bool>,
+    secret: Option<bool>,
+    default: Option<&str>,
+    allowed: &[String],
+    prepend: &[String],
+    append: &[String],
+    source_kind: Option<AssistEnvSourceKindArg>,
+    source_path: Option<&str>,
+    must_exist: Option<bool>,
+) -> Result<AssistEnvProposal, (String, String)> {
+    let has_source_inputs = source_kind.is_some() || source_path.is_some() || must_exist.is_some();
+    let has_root_var_inputs = name.is_some()
+        && (required.is_some()
+            || secret.is_some()
+            || default.is_some()
+            || !allowed.is_empty()
+            || !prepend.is_empty()
+            || !append.is_empty());
+    let has_task_env_inputs = task.is_some() || value.is_some();
+
+    if task.is_some() {
+        let Some(task_name) = task else { unreachable!() };
+        let Some(name) = name else {
+            return Err((
+                String::from("task-local env declaration needs `--name`"),
+                String::from("rerun with `--task <name> --name <ENV> --value <value>`"),
+            ));
+        };
+        let Some(value) = value else {
+            return Err((
+                String::from("task-local env declaration needs `--value`"),
+                String::from("rerun with `--task <name> --name <ENV> --value <value>`"),
+            ));
+        };
+        if has_source_inputs
+            || required.is_some()
+            || secret.is_some()
+            || default.is_some()
+            || !allowed.is_empty()
+            || !prepend.is_empty()
+            || !append.is_empty()
+        {
+            return Err((
+                String::from(
+                    "task-local env declarations only support `--task`, `--name`, and `--value`",
+                ),
+                String::from(
+                    "rerun with only `--task <name> --name <ENV> --value <value>` for a task-local env override",
+                ),
+            ));
+        }
+        let task_spec = contract.tasks.get(task_name).ok_or_else(|| {
+            (
+                format!("task `{task_name}` is not declared"),
+                String::from("run `ota tasks` to inspect declared task names"),
+            )
+        })?;
+        let before_value = if member.is_some() {
+            effective_yaml_value_for_path(document, &["tasks", task_name, "env", name])
+                .unwrap_or(YamlValue::Null)
+        } else {
+            get_yaml_path_value(document, &["tasks", task_name, "env", name])
+                .unwrap_or_else(|| {
+                    task_spec
+                        .env
+                        .get(name)
+                        .map(|value| YamlValue::String(value.clone()))
+                        .unwrap_or(YamlValue::Null)
+                })
+        };
+        let after_value = YamlValue::String(value.to_string());
+        if after_value == before_value {
+            return Err((
+                format!("the requested task env would not change `tasks.{task_name}.env.{name}`"),
+                String::from("change the value, then rerun the assist command"),
+            ));
+        }
+        return Ok(AssistEnvProposal {
+            subject: AssistEnvProposalSubject::TaskEnv {
+                task: task_name.to_string(),
+                name: name.to_string(),
+            },
+            mode: AssistEnvProposalMode::TaskEnv {
+                task: task_name.to_string(),
+                name: name.to_string(),
+                value: value.to_string(),
+            },
+            assumptions: vec![
+                format!(
+                    "task `{task_name}` will receive one explicit task-local env override for `{name}`"
+                ),
+                String::from(
+                    "task-local env stays scoped to that task and does not widen repo-level env requirements",
+                ),
+            ],
+            change_path: format!("tasks.{task_name}.env.{name}"),
+            before_value,
+            after_value,
+            write_value: YamlValue::String(value.to_string()),
+        });
+    }
+
+    if has_source_inputs {
+        if has_task_env_inputs || has_root_var_inputs || value.is_some() || name.is_some() && !has_root_var_inputs {
+            return Err((
+                String::from("declared env source changes must target one source shape only"),
+                String::from(
+                    "rerun with only `--source-kind <kind> --source-path <path>` plus optional `--must-exist`",
+                ),
+            ));
+        }
+        let kind = source_kind.map(assist_env_source_kind_from_arg).ok_or_else(|| {
+            (
+                String::from("declared env source changes need `--source-kind`"),
+                String::from("rerun with `--source-kind <kind> --source-path <path>`"),
+            )
+        })?;
+        let source_path = source_path.ok_or_else(|| {
+            (
+                String::from("declared env source changes need `--source-path`"),
+                String::from("rerun with `--source-kind <kind> --source-path <path>`"),
+            )
+        })?;
+        let existing_index = contract
+            .env
+            .sources
+            .iter()
+            .position(|source| source.kind == kind && source.path == source_path);
+        let existing = existing_index
+            .and_then(|index| contract.env.sources.get(index))
+            .cloned();
+        let before_value = existing
+            .as_ref()
+            .map(serde_yaml::to_value)
+            .transpose()
+            .map_err(|error| {
+                (
+                    format!("failed to capture existing env source for preview: {error}"),
+                    String::from("rerun the assist command after repairing the contract"),
+                )
+            })?
+            .unwrap_or(YamlValue::Null);
+        let source = EnvSource {
+            kind,
+            path: source_path.to_string(),
+            must_exist: must_exist.or(existing.as_ref().map(|source| source.must_exist)).unwrap_or(false),
+        };
+        let after_value = serde_yaml::to_value(&source).map_err(|error| {
+            (
+                format!("failed to build env source preview: {error}"),
+                String::from("rerun the assist command after repairing the contract"),
+            )
+        })?;
+        if after_value == before_value {
+            return Err((
+                format!(
+                    "the requested env source would not change `env.sources` for `{}` source `{}`",
+                    kind, source_path
+                ),
+                String::from("change the source inputs, then rerun the assist command"),
+            ));
+        }
+        let mut assumptions = vec![String::from(
+            "declared env sources stay ordered and keep their current precedence in env resolution",
+        )];
+        if member.is_some() {
+            assumptions.push(String::from(
+                "member overlays replace the effective `env.sources` list when they declare sources explicitly",
+            ));
+        }
+        assumptions.push(format!(
+            "source `{}` at `{}` will be {}",
+            kind,
+            source_path,
+            if existing.is_some() { "refined" } else { "declared" }
+        ));
+        return Ok(AssistEnvProposal {
+            subject: AssistEnvProposalSubject::RootSource {
+                kind,
+                path: source_path.to_string(),
+            },
+            mode: AssistEnvProposalMode::RootSource {
+                kind,
+                path: source_path.to_string(),
+                must_exist,
+            },
+            assumptions,
+            change_path: match existing_index {
+                Some(index) => format!("env.sources[{index}]"),
+                None => String::from("env.sources[+]"),
+            },
+            before_value,
+            after_value,
+            write_value: YamlValue::Null,
+        });
+    }
+
+    let Some(name) = name else {
+        return Err((
+            String::from("root env declaration needs `--name`, or choose one explicit source or task-local env target"),
+            String::from(
+                "rerun with `--name <ENV>` for `env.vars`, `--source-kind ... --source-path ...` for `env.sources`, or `--task <name> --name <ENV> --value <value>` for task-local env",
+            ),
+        ));
+    };
+
+    if value.is_some() {
+        return Err((
+            String::from("root env requirements do not accept `--value`; use `--default` or task-local `--task ... --value ...`"),
+            String::from("rerun with `--default <value>` for root env or `--task <name> --value <value>` for task-local env"),
+        ));
+    }
+    if name != "PATH" && (!prepend.is_empty() || !append.is_empty()) {
+        return Err((
+            format!("env `{name}` cannot declare `prepend` or `append`; those are reserved for `PATH`"),
+            String::from("rerun without `--prepend` or `--append`, or target `--name PATH`"),
+        ));
+    }
+    if secret == Some(true) && default.is_some() {
+        return Err((
+            format!("env `{name}` cannot declare both `secret: true` and a `default` value"),
+            String::from("rerun without `--default`, or set `--secret false`"),
+        ));
+    }
+    if required.is_none()
+        && secret.is_none()
+        && default.is_none()
+        && allowed.is_empty()
+        && prepend.is_empty()
+        && append.is_empty()
+    {
+        return Err((
+            format!("no env requirement change was requested for `{name}`"),
+            String::from(
+                "rerun with one of `--required`, `--secret`, `--default`, `--allowed`, `--prepend`, or `--append`",
+            ),
+        ));
+    }
+    let existing = contract.env.vars.get(name).cloned();
+    let before_value = existing
+        .as_ref()
+        .map(serde_yaml::to_value)
+        .transpose()
+        .map_err(|error| {
+            (
+                format!("failed to capture existing env requirement for preview: {error}"),
+                String::from("rerun the assist command after repairing the contract"),
+            )
+        })?
+        .unwrap_or(YamlValue::Null);
+    let mut requirement = existing.clone().unwrap_or_default();
+    if let Some(required) = required {
+        requirement.required = required;
+    }
+    if let Some(secret) = secret {
+        requirement.secret = secret;
+        if secret && default.is_none() && requirement.default.is_some() {
+            requirement.default = None;
+        }
+    }
+    if let Some(default) = default {
+        requirement.default = Some(default.to_string());
+    }
+    if !allowed.is_empty() {
+        requirement.allowed = allowed.to_vec();
+    }
+    if !prepend.is_empty() {
+        requirement.prepend = prepend.to_vec();
+    }
+    if !append.is_empty() {
+        requirement.append = append.to_vec();
+    }
+    let after_value = serde_yaml::to_value(&requirement).map_err(|error| {
+        (
+            format!("failed to build env requirement preview: {error}"),
+            String::from("rerun the assist command after repairing the contract"),
+        )
+    })?;
+    if after_value == before_value {
+        return Err((
+            format!("the requested env requirement would not change `env.vars.{name}`"),
+            String::from("change one of the env inputs, then rerun the assist command"),
+        ));
+    }
+    let mut assumptions = Vec::new();
+    assumptions.push(format!(
+        "root env requirement `{name}` will {} under `env.vars`",
+        if existing.is_some() { "be refined" } else { "be declared" }
+    ));
+    if secret == Some(true) && existing.as_ref().and_then(|req| req.default.as_ref()).is_some() && default.is_none() {
+        assumptions.push(format!(
+            "the inherited default for `{name}` will be cleared because secret env values cannot declare defaults"
+        ));
+    }
+    if name == "PATH" && (!prepend.is_empty() || !append.is_empty()) {
+        assumptions.push(String::from(
+            "`PATH` composition remains deterministic around the resolved base value",
+        ));
+    }
+    Ok(AssistEnvProposal {
+        subject: AssistEnvProposalSubject::RootVar {
+            name: name.to_string(),
+        },
+        mode: AssistEnvProposalMode::RootVar {
+            required,
+            secret,
+            default: default.map(str::to_string),
+            allowed: allowed.to_vec(),
+            prepend: prepend.to_vec(),
+            append: append.to_vec(),
+        },
+        assumptions,
+        change_path: format!("env.vars.{name}"),
+        before_value,
+        after_value,
+        write_value: YamlValue::Null,
+    })
+}
+
+fn build_assist_env_yaml(
+    raw_document: &YamlValue,
+    effective_document: &YamlValue,
+    member_mode: bool,
+    proposal: &AssistEnvProposal,
+) -> Result<String, String> {
+    let mut document = raw_document.clone();
+    match &proposal.subject {
+        AssistEnvProposalSubject::RootVar { name } => {
+            set_yaml_path(&mut document, &["env", "vars", name], proposal.after_value.clone());
+        }
+        AssistEnvProposalSubject::TaskEnv { task, name } => {
+            set_yaml_path(
+                &mut document,
+                &["tasks", task, "env", name],
+                proposal.write_value.clone(),
+            );
+        }
+        AssistEnvProposalSubject::RootSource { kind, path } => {
+            let key_path = ["env", "sources"];
+            let source_document = if member_mode {
+                effective_document
+            } else {
+                &document
+            };
+            let existing_sources = effective_yaml_value_for_path(source_document, &key_path)
+                .and_then(|value| value.as_sequence().cloned())
+                .unwrap_or_default();
+            let mut updated = Vec::new();
+            let mut replaced = false;
+            for entry in existing_sources {
+                let matches = entry
+                    .as_mapping()
+                    .and_then(|mapping| {
+                        let existing_kind = mapping
+                            .get(YamlValue::String(String::from("kind")))
+                            .and_then(YamlValue::as_str);
+                        let existing_path = mapping
+                            .get(YamlValue::String(String::from("path")))
+                            .and_then(YamlValue::as_str);
+                        Some(existing_kind == Some(assist_env_source_kind_name(*kind)) && existing_path == Some(path.as_str()))
+                    })
+                    .unwrap_or(false);
+                if matches {
+                    updated.push(proposal.after_value.clone());
+                    replaced = true;
+                } else {
+                    updated.push(entry);
+                }
+            }
+            if !replaced {
+                updated.push(proposal.after_value.clone());
+            }
+            set_yaml_path(&mut document, &key_path, YamlValue::Sequence(updated));
+        }
+    }
+
+    serde_yaml::to_string(&document).map_err(|error| {
+        format!("failed to serialize assist proposal: {error}")
+    })
+}
+
+fn effective_yaml_value_for_path(document: &YamlValue, path: &[&str]) -> Option<YamlValue> {
+    get_yaml_path_value(document, path)
 }
 
 fn parse_assist_bind_target_selector(value: &str) -> (String, Option<String>) {
@@ -7615,6 +8774,55 @@ fn assist_bind_task_validation_commands(
         None => vec![
             command_for_repo_contract_target("ota validate", target_contract_path),
             command_for_repo_contract_target("ota execution topology", target_contract_path),
+        ],
+    }
+}
+
+fn assist_env_validation_commands(
+    resolved_path: &Path,
+    target_contract_path: &Path,
+    member: Option<&str>,
+    task: Option<&str>,
+) -> Vec<String> {
+    match (member, task) {
+        (Some(member), Some(task)) => [
+            command_for_repo_from_contract_path(
+                &format!("ota validate --member {member}"),
+                resolved_path,
+            ),
+            command_for_repo_from_contract_path(
+                &format!("ota env --member {member} --task {task}"),
+                resolved_path,
+            ),
+            command_for_repo_from_contract_path(
+                &format!("ota doctor --member {member}"),
+                resolved_path,
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        (Some(member), None) => [
+            command_for_repo_from_contract_path(
+                &format!("ota validate --member {member}"),
+                resolved_path,
+            ),
+            command_for_repo_from_contract_path(&format!("ota env --member {member}"), resolved_path),
+            command_for_repo_from_contract_path(
+                &format!("ota doctor --member {member}"),
+                resolved_path,
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        (None, Some(task)) => vec![
+            command_for_repo_contract_target("ota validate", target_contract_path),
+            command_for_repo_contract_target(&format!("ota env --task {task}"), target_contract_path),
+            command_for_repo_contract_target("ota doctor", target_contract_path),
+        ],
+        (None, None) => vec![
+            command_for_repo_contract_target("ota validate", target_contract_path),
+            command_for_repo_contract_target("ota env", target_contract_path),
+            command_for_repo_contract_target("ota doctor", target_contract_path),
         ],
     }
 }

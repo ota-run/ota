@@ -312,6 +312,37 @@ fn assist_bind_task_schema_covers_preview_and_failure_contract() {
 }
 
 #[test]
+fn assist_declare_env_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-declare-env.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("declare-env"));
+    assert!(subject.get("kind").is_some());
+    assert!(subject.get("name").is_some());
+    assert!(subject.get("task").is_some());
+    assert!(subject.get("source_kind").is_some());
+    assert!(subject.get("source_path").is_some());
+    assert!(inputs.get("required").is_some());
+    assert!(inputs.get("secret").is_some());
+    assert!(inputs.get("default").is_some());
+    assert!(inputs.get("allowed").is_some());
+    assert!(inputs.get("prepend").is_some());
+    assert!(inputs.get("append").is_some());
+    assert!(inputs.get("source_kind").is_some());
+    assert!(inputs.get("source_path").is_some());
+    assert!(inputs.get("must_exist").is_some());
+    assert!(inputs.get("value").is_some());
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];
