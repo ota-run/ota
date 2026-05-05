@@ -8543,7 +8543,7 @@ env:
         );
         assert_eq!(
             json["gate"]["blocking_next"],
-            "set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
+            "run `ota env` to inspect the current precedence, then set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
         );
         assert_eq!(json["gate"]["blocking_provenance"], "repo contract");
         assert_eq!(json["gate"]["blocking_provenance_key"], "repo_contract");
@@ -9524,7 +9524,7 @@ env:
         assert!(stdout.contains("Blocker: Missing environment variable: OTA_BASELINE_REQUIRED"));
         assert!(stdout.contains("Provenance: repo contract"));
         assert!(stdout.contains(
-            "Next: set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
+            "Next: run `ota env` to inspect the current precedence, then set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
         ));
     }
 
@@ -14592,7 +14592,7 @@ agent:
         );
         assert_eq!(
             doctor_json["summary"]["primary_blocker"]["next"],
-            "set FOO in policy env, the shell, or a declared env source before running tasks"
+            "run `ota env` to inspect the current precedence, then set FOO in policy env, the shell, or a declared env source before running tasks"
         );
         assert_eq!(
             doctor_json["finding_groups"][0]["action_key"],
@@ -14614,7 +14614,7 @@ agent:
         assert_eq!(doctor_json["findings"][0]["severity"], "error");
         assert_eq!(
             doctor_json["findings"][0]["next"],
-            "set FOO in policy env, the shell, or a declared env source before running tasks"
+            "run `ota env` to inspect the current precedence, then set FOO in policy env, the shell, or a declared env source before running tasks"
         );
         assert_eq!(
             doctor_json["findings"][0]["provenance_key"],
@@ -14683,11 +14683,11 @@ agent:
         assert_eq!(receipt_json["findings"][0]["code"], "OTA_ENV_MISSING");
         assert_eq!(
             receipt_json["receipt"]["next"],
-            "set FOO in policy env, the shell, or a declared env source before running tasks"
+            "run `ota env` to inspect the current precedence, then set FOO in policy env, the shell, or a declared env source before running tasks"
         );
         assert_eq!(
             receipt_json["findings"][0]["next"],
-            "set FOO in policy env, the shell, or a declared env source before running tasks"
+            "run `ota env` to inspect the current precedence, then set FOO in policy env, the shell, or a declared env source before running tasks"
         );
     }
 
@@ -22480,7 +22480,7 @@ project:
         assert!(stdout.contains("Host tool available: cargo"));
         assert!(stdout.contains("Missing container execution backend CLI: docker, podman"));
         assert!(stdout.contains("ota detect --dry-run"));
-        assert!(stdout.contains("ota init --bootstrap"));
+        assert!(stdout.contains("ota init --dry-run"));
         assert!(
             stdout.matches("Provenance: repo signals").count() >= 2,
             "expected provenance on secondary contractless findings, not only the primary blocker"
@@ -22513,7 +22513,7 @@ project:
             severity: FindingSeverity::Info,
             summary: String::from("No repo signals detected"),
             why: String::from("`./repo` did not expose obvious repo markers yet"),
-            next: String::from("run `ota init --bootstrap` or `ota detect --dry-run`"),
+            next: String::from("run `ota init --dry-run` or `ota detect --dry-run`"),
         };
 
         assert_eq!(finding.provenance().as_deref(), Some("repo signals"));
@@ -24974,7 +24974,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("No `ota.yaml` found"));
         assert!(stdout.contains(
-            "no contract-aware fixes are available yet; run `ota detect --dry-run` or `ota init --bootstrap` first"
+            "no contract-aware repo-hygiene fixes are available yet; preview a first contract with `ota detect --dry-run` or `ota init --dry-run` first"
         ));
         assert!(!stdout.contains("Repo local runtime state is not ignored by git"));
         assert!(!stdout.contains(".ota/state/"));
@@ -25002,7 +25002,7 @@ tasks:
         assert_eq!(json["fix"]["planned_count"], 0);
         assert_eq!(
             json["fix"]["note"],
-            "no contract-aware fixes are available yet; run `ota detect --dry-run` or `ota init --bootstrap` first"
+            "no contract-aware repo-hygiene fixes are available yet; preview a first contract with `ota detect --dry-run` or `ota init --dry-run` first"
         );
         assert!(
             json["findings"]

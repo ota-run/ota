@@ -2062,7 +2062,7 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
             "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
         ),
         next: String::from(
-            "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate",
+            "run `ota assist add-task --name dev --kind command` to add a runnable task, or run `ota detect --dry-run` and `ota detect --write` to regenerate",
         ),
     });
 }
@@ -2625,9 +2625,13 @@ fn service_finding(
         };
 
         let next = if service.start_command(name).is_some() {
-            format!("add `services.{name}.healthcheck` so `ota doctor` can verify readiness")
+            format!(
+                "declare readiness with `ota assist declare-readiness --service {name} --style tcp` or `--style http`, then rerun `ota doctor`"
+            )
         } else {
-            format!("add `services.{name}.healthcheck` and optionally `services.{name}.start`")
+            format!(
+                "refine the managed service with `ota assist declare-service --name {name} --style tcp` or `--style http`, then rerun `ota doctor`"
+            )
         };
 
         return Some(Finding {
@@ -3061,7 +3065,10 @@ fn diagnose_env(
                         why: format!(
                             "{name} resolved to `{value}`, which is outside the allowed values"
                         ),
-                        next: format!("set {name} to one of: {}", requirement.allowed.join(", ")),
+                        next: format!(
+                            "run `ota env` to inspect the resolved source for {name}, then set {name} to one of: {}",
+                            requirement.allowed.join(", ")
+                        ),
                     });
                 }
             }
@@ -3070,7 +3077,7 @@ fn diagnose_env(
                 summary: format!("Missing environment variable: {name}"),
                 why: format!("{name} is required by this repo contract"),
                 next: format!(
-                    "set {name} in policy env, the shell, or a declared env source before running tasks"
+                    "run `ota env` to inspect the current precedence, then set {name} in policy env, the shell, or a declared env source before running tasks"
                 ),
             }),
             None => {}
@@ -4872,7 +4879,9 @@ fn failed_check_next(contract: &Contract, check: &crate::schema::CheckSpec) -> S
                 "run `ota up` or `ota run setup` to create `{path}`, then rerun `ota doctor`"
             );
         }
-        return format!("create `{path}`, then rerun `ota doctor`");
+        return format!(
+            "create `{path}` now, or declare a setup path with `ota assist wire-setup --run '<command>'`, then rerun `ota doctor`"
+        );
     }
 
     format!(
@@ -7424,6 +7433,39 @@ tasks:
     }
 
     #[test]
+    fn diagnose_checks_points_missing_file_precondition_to_wire_setup_when_setup_missing() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: env-local-present
+    kind: precondition
+    severity: error
+    run: test -f .env.local
+tasks:
+  dev:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, synthetic_contract_path());
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].summary,
+            "Check failed: env-local-present"
+        );
+        assert_eq!(
+            report.findings[0].next,
+            "create `.env.local` now, or declare a setup path with `ota assist wire-setup --run '<command>'`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
     fn reports_optional_tool_version_mismatches_as_warnings() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
@@ -7995,6 +8037,42 @@ tasks:
             report.findings[0].summary,
             "Required service cannot be verified: postgres"
         );
+        assert_eq!(
+            report.findings[0].next,
+            "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn warns_when_required_service_has_no_start_or_healthcheck() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(
+            report.findings[0].summary,
+            "Required service cannot be verified: postgres"
+        );
+        assert_eq!(
+            report.findings[0].next,
+            "refine the managed service with `ota assist declare-service --name postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+        );
     }
 
     #[test]
@@ -8014,6 +8092,10 @@ project:
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
         assert_eq!(report.findings[0].summary, "No tasks defined in contract");
+        assert_eq!(
+            report.findings[0].next,
+            "run `ota assist add-task --name dev --kind command` to add a runnable task, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+        );
     }
 
     #[test]
