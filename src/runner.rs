@@ -20001,12 +20001,111 @@ tasks:
         assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
     }
 
+    fn remote_activation_backend_demo_contract(
+        task_name: &str,
+        port: u16,
+        readiness_kind: &str,
+        address_view: &str,
+        include_host_projection: bool,
+    ) -> String {
+        let readiness = match readiness_kind {
+            "tcp" => String::from("      readiness:\n        kind: tcp\n        listener: http\n"),
+            "http" => String::from(
+                "      readiness:\n        kind: http\n        listener: http\n        path: /\n",
+            ),
+            other => panic!("unsupported readiness kind: {other}"),
+        };
+        let host_projection = if include_host_projection {
+            format!(
+                "          project:\n            host:\n              address: 127.0.0.1\n              port:\n                mode: fixed\n                value: {port}\n"
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      log_file="${{PWD}}/backend-provider-contexts.log"
+      printf '%s\n' "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" >> "$log_file"
+      case "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" in
+      activation)
+        python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 &
+        printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
+        printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+        ;;
+      activation_cleanup)
+        if [ -f "${{PWD}}/backend-provider.pid" ]; then
+          kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
+          rm -f "${{PWD}}/backend-provider.pid"
+        fi
+        printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+        ;;
+      *)
+        printf '{{"ok":false,"errors":["unexpected command context"]}}'
+        ;;
+      esac
+    api_version: 1
+    activation:
+      provider_managed_cleanup: true
+execution:
+  default_context: remote_app
+  contexts:
+    remote_app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+  shared_backends:
+    workbench:
+      scope: remote
+      backend: remote
+      lifecycle: persistent
+      context: remote_app
+tasks:
+  {task_name}:
+    run: echo {task_name}
+    runtime:
+      kind: service
+      backend_binding: workbench
+{readiness}      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+{host_projection}  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+    targets:
+      api:
+        service:
+          task: {task_name}
+          listener: http
+          address_view: {address_view}
+        activation:
+          mode: ensure_ready
+"#,
+            task_name = task_name,
+            port = port,
+            readiness = readiness,
+            host_projection = host_projection,
+            address_view = address_view,
+        )
+    }
+
     #[cfg(unix)]
     #[test]
     fn ensure_ready_activation_starts_and_cleans_up_shared_remote_internal_target() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
@@ -20016,90 +20115,10 @@ tasks:
             .port();
         drop(listener);
 
-        let contents = format!(
-            r#"
-version: 1
-project:
-  name: ota
-execution:
-  default_context: remote_app
-  contexts:
-    remote_app:
-      backend: remote
-      remote:
-        provider: ssh
-        target: sandbox-dev
-        cwd: {}
-  shared_backends:
-    workbench:
-      scope: remote
-      backend: remote
-      lifecycle: persistent
-      context: remote_app
-tasks:
-  dev_internal:
-    run: python3 -m http.server {port} --bind 127.0.0.1
-    runtime:
-      kind: service
-      backend_binding: workbench
-      readiness:
-        kind: tcp
-        listener: http
-      listeners:
-        http:
-          protocol: http
-          bind:
-            address: 127.0.0.1
-            port:
-              mode: fixed
-              value: {port}
-  sandbox:
-    run: echo sandbox
-    runtime:
-      kind: service
-      backend_binding: workbench
-      listeners:
-        web:
-          protocol: http
-          bind:
-            address: 127.0.0.1
-            port:
-              mode: fixed
-              value: 3000
-    targets:
-      api:
-        service:
-          task: dev_internal
-          listener: http
-          address_view: internal
-        activation:
-          mode: ensure_ready
-"#,
-            dir.path().display()
-        );
+        let contents =
+            remote_activation_backend_demo_contract("dev_internal", port, "tcp", "internal", false);
         fs::write(&file_path, contents.trim_start()).unwrap();
         let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
-
-        let bin_dir = dir.path().join("bin");
-        fs::create_dir_all(&bin_dir).unwrap();
-        let ssh_path = bin_dir.join("ssh");
-        install_fake_ssh(&ssh_path);
-        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&ssh_path, permissions).unwrap();
-
-        let log_path = dir.path().join("ssh-log.txt");
-        let original_path = env::var_os("PATH");
-        let original_log = env::var_os("OTA_SSH_LOG");
-        let mut path_entries = vec![bin_dir.clone()];
-        if let Some(existing) = original_path.as_ref() {
-            path_entries.extend(env::split_paths(existing));
-        }
-        let joined_path = env::join_paths(path_entries).unwrap();
-        unsafe {
-            env::set_var("PATH", &joined_path);
-            env::set_var("OTA_SSH_LOG", &log_path);
-        }
 
         let task = contract
             .tasks
@@ -20136,33 +20155,14 @@ tasks:
         assert!(
             cleanup_note
                 .as_deref()
-                .is_some_and(|note| note.contains("remote service workload cleaned up")),
+                .is_some_and(|note| note.contains("workload cleaned up after interrupt")),
             "{cleanup_note:?}"
         );
-        match original_path {
-            Some(path) => unsafe {
-                env::set_var("PATH", path);
-            },
-            None => unsafe {
-                env::remove_var("PATH");
-            },
-        }
-        match original_log {
-            Some(value) => unsafe {
-                env::set_var("OTA_SSH_LOG", value);
-            },
-            None => unsafe {
-                env::remove_var("OTA_SSH_LOG");
-            },
-        }
     }
 
     #[cfg(unix)]
     #[test]
     fn ensure_ready_activation_starts_and_cleans_up_shared_remote_host_target() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
@@ -20172,88 +20172,10 @@ tasks:
             .port();
         drop(listener);
 
-        let contents = format!(
-            r#"
-version: 1
-project:
-  name: ota
-execution:
-  default_context: remote_app
-  contexts:
-    remote_app:
-      backend: remote
-      remote:
-        provider: ssh
-        target: sandbox-dev
-        cwd: {}
-  shared_backends:
-    workbench:
-      scope: remote
-      backend: remote
-      lifecycle: persistent
-      context: remote_app
-tasks:
-  dev_host:
-    run: python3 -m http.server {port} --bind 127.0.0.1
-    runtime:
-      kind: service
-      backend_binding: workbench
-      readiness:
-        kind: tcp
-        listener: http
-      listeners:
-        http:
-          protocol: http
-          bind:
-            address: 127.0.0.1
-            port:
-              mode: fixed
-              value: {port}
-          project:
-            host:
-              address: 127.0.0.1
-              port:
-                mode: fixed
-                value: {port}
-  sandbox:
-    run: echo sandbox
-    runtime:
-      kind: service
-      backend_binding: workbench
-    targets:
-      api:
-        service:
-          task: dev_host
-          listener: http
-          address_view: host
-        activation:
-          mode: ensure_ready
-"#,
-            dir.path().display()
-        );
+        let contents =
+            remote_activation_backend_demo_contract("dev_host", port, "tcp", "host", true);
         fs::write(&file_path, contents.trim_start()).unwrap();
         let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
-
-        let bin_dir = dir.path().join("bin");
-        fs::create_dir_all(&bin_dir).unwrap();
-        let ssh_path = bin_dir.join("ssh");
-        install_fake_ssh(&ssh_path);
-        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&ssh_path, permissions).unwrap();
-
-        let log_path = dir.path().join("ssh-log.txt");
-        let original_path = env::var_os("PATH");
-        let original_log = env::var_os("OTA_SSH_LOG");
-        let mut path_entries = vec![bin_dir.clone()];
-        if let Some(existing) = original_path.as_ref() {
-            path_entries.extend(env::split_paths(existing));
-        }
-        let joined_path = env::join_paths(path_entries).unwrap();
-        unsafe {
-            env::set_var("PATH", &joined_path);
-            env::set_var("OTA_SSH_LOG", &log_path);
-        }
 
         let task = contract
             .tasks
@@ -20290,47 +20212,15 @@ tasks:
         assert!(
             cleanup_note
                 .as_deref()
-                .is_some_and(|note| note.contains("remote service workload cleaned up")),
+                .is_some_and(|note| note.contains("workload cleaned up after interrupt")),
             "{cleanup_note:?}"
         );
 
         for _ in 0..30 {
             if !super::target_probe_endpoint_reachable("127.0.0.1", port) {
-                match original_path {
-                    Some(path) => unsafe {
-                        env::set_var("PATH", path);
-                    },
-                    None => unsafe {
-                        env::remove_var("PATH");
-                    },
-                }
-                match original_log {
-                    Some(value) => unsafe {
-                        env::set_var("OTA_SSH_LOG", value);
-                    },
-                    None => unsafe {
-                        env::remove_var("OTA_SSH_LOG");
-                    },
-                }
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        match original_path {
-            Some(path) => unsafe {
-                env::set_var("PATH", path);
-            },
-            None => unsafe {
-                env::remove_var("PATH");
-            },
-        }
-        match original_log {
-            Some(value) => unsafe {
-                env::set_var("OTA_SSH_LOG", value);
-            },
-            None => unsafe {
-                env::remove_var("OTA_SSH_LOG");
-            },
         }
         panic!("remote activation cleanup should free the producer port");
     }
@@ -20338,8 +20228,6 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn ensure_ready_activation_starts_and_cleans_up_shared_remote_internal_http_target() {
-        use std::os::unix::fs::PermissionsExt;
-
         let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
@@ -20350,83 +20238,15 @@ tasks:
             .port();
         drop(listener);
 
-        let contents = format!(
-            r#"
-version: 1
-project:
-  name: ota
-execution:
-  default_context: remote_app
-  contexts:
-    remote_app:
-      backend: remote
-      remote:
-        provider: ssh
-        target: sandbox-dev
-        cwd: {}
-  shared_backends:
-    workbench:
-      scope: remote
-      backend: remote
-      lifecycle: persistent
-      context: remote_app
-tasks:
-  dev_internal_http:
-    run: python3 -m http.server {port} --bind 127.0.0.1
-    runtime:
-      kind: service
-      backend_binding: workbench
-      readiness:
-        kind: http
-        listener: http
-        path: /
-      listeners:
-        http:
-          protocol: http
-          bind:
-            address: 127.0.0.1
-            port:
-              mode: fixed
-              value: {port}
-  sandbox:
-    run: echo sandbox
-    runtime:
-      kind: service
-      backend_binding: workbench
-    targets:
-      api:
-        service:
-          task: dev_internal_http
-          listener: http
-          address_view: internal
-        activation:
-          mode: ensure_ready
-"#,
-            dir.path().display()
+        let contents = remote_activation_backend_demo_contract(
+            "dev_internal_http",
+            port,
+            "http",
+            "internal",
+            false,
         );
         fs::write(&file_path, contents.trim_start()).unwrap();
         let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
-
-        let bin_dir = dir.path().join("bin");
-        fs::create_dir_all(&bin_dir).unwrap();
-        let ssh_path = bin_dir.join("ssh");
-        install_fake_ssh(&ssh_path);
-        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&ssh_path, permissions).unwrap();
-
-        let log_path = dir.path().join("ssh-log.txt");
-        let original_path = env::var_os("PATH");
-        let original_log = env::var_os("OTA_SSH_LOG");
-        let mut path_entries = vec![bin_dir.clone()];
-        if let Some(existing) = original_path.as_ref() {
-            path_entries.extend(env::split_paths(existing));
-        }
-        let joined_path = env::join_paths(path_entries).unwrap();
-        unsafe {
-            env::set_var("PATH", &joined_path);
-            env::set_var("OTA_SSH_LOG", &log_path);
-        }
 
         let task = contract
             .tasks
@@ -20453,23 +20273,6 @@ tasks:
         )
         .expect("shared remote internal http activation should succeed");
 
-        match original_path {
-            Some(path) => unsafe {
-                env::set_var("PATH", path);
-            },
-            None => unsafe {
-                env::remove_var("PATH");
-            },
-        }
-        match original_log {
-            Some(value) => unsafe {
-                env::set_var("OTA_SSH_LOG", value);
-            },
-            None => unsafe {
-                env::remove_var("OTA_SSH_LOG");
-            },
-        }
-
         assert_eq!(status, TaskTargetActivationStatus::StartedReady);
         let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
             &contract,
@@ -20480,7 +20283,7 @@ tasks:
         assert!(
             cleanup_note
                 .as_deref()
-                .is_some_and(|note| note.contains("remote service workload cleaned up")),
+                .is_some_and(|note| note.contains("workload cleaned up after interrupt")),
             "{cleanup_note:?}"
         );
     }
