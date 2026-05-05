@@ -27,9 +27,12 @@ set -eu
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/bump-version.sh <new-version>
+  ./scripts/bump-version.sh <new-version|patch|minor|major>
 
 Example:
+  ./scripts/bump-version.sh patch
+  ./scripts/bump-version.sh minor
+  ./scripts/bump-version.sh major
   ./scripts/bump-version.sh 0.2.0
   ./scripts/bump-version.sh 0.2.0-rc.1
 EOF
@@ -40,14 +43,9 @@ if [ "${1-}" = "-h" ] || [ "${1-}" = "--help" ]; then
   exit 0
 fi
 
-new_version="${OTA_INPUT_VERSION-${1-}}"
-if [ -z "${new_version}" ]; then
+requested_version="${OTA_INPUT_VERSION-${1-}}"
+if [ -z "${requested_version}" ]; then
   usage >&2
-  exit 2
-fi
-
-if ! printf '%s' "$new_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
-  echo "error: version must look like semver (for example 0.2.0 or 0.2.0-rc.1)" >&2
   exit 2
 fi
 
@@ -72,11 +70,6 @@ if [ ! -f "$readiness_workflow" ]; then
   exit 1
 fi
 
-if grep -Eq "^## ${new_version}$" "$changelog"; then
-  echo "error: CHANGELOG.md already contains ## $new_version" >&2
-  exit 1
-fi
-
 if ! grep -Eq '^## Unreleased$' "$changelog"; then
   echo "error: failed to locate ## Unreleased in $changelog" >&2
   exit 1
@@ -96,6 +89,57 @@ current_version=$(awk '
 
 if [ -z "$current_version" ]; then
   echo "error: could not locate [package] version in Cargo.toml" >&2
+  exit 1
+fi
+
+strip_version_suffix() {
+  printf '%s' "$1" | sed 's/[+-].*$//'
+}
+
+increment_version_part() {
+  version_core=$(strip_version_suffix "$1")
+  bump_kind="$2"
+  IFS=. read -r major minor patch <<EOF
+$version_core
+EOF
+
+  case "$bump_kind" in
+    patch)
+      patch=$((patch + 1))
+      ;;
+    minor)
+      minor=$((minor + 1))
+      patch=0
+      ;;
+    major)
+      major=$((major + 1))
+      minor=0
+      patch=0
+      ;;
+    *)
+      echo "error: unsupported bump kind: $bump_kind" >&2
+      exit 2
+      ;;
+  esac
+
+  printf '%s.%s.%s' "$major" "$minor" "$patch"
+}
+
+case "$requested_version" in
+  patch|minor|major)
+    new_version=$(increment_version_part "$current_version" "$requested_version")
+    ;;
+  *)
+    if ! printf '%s' "$requested_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
+      echo "error: version must be patch, minor, major, or look like semver (for example 0.2.0 or 0.2.0-rc.1)" >&2
+      exit 2
+    fi
+    new_version="$requested_version"
+    ;;
+esac
+
+if grep -Eq "^## ${new_version}$" "$changelog"; then
+  echo "error: CHANGELOG.md already contains ## $new_version" >&2
   exit 1
 fi
 

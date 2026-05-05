@@ -217,14 +217,15 @@ tasks:
   bump:version:
     description: Bump the repo release version surfaces
     notes: |
-      Use this when preparing a release and you need to update Cargo.toml, CHANGELOG.md,
-      and the readiness workflow pin consistently.
+      Use this through `ota run bump:version --version <patch|minor|major>` when preparing
+      a release and you need to update Cargo.toml, CHANGELOG.md, and the readiness workflow
+      pin consistently.
     category: release
     script: |
       ./scripts/bump-version.sh
     inputs:
       version:
-        description: New release version to apply
+        description: Release bump selector (`patch`, `minor`, `major`) or explicit semver version
         required: true
     depends_on:
       - ci

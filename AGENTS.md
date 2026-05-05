@@ -408,6 +408,7 @@ Avoid inventing overlapping terms if the above already fit.
 6. If touching command UX, think about human output, JSON output, and exit codes together
 7. **Consult `ota.yaml` for canonical task, test, and CI flows.**
 8. **Use scripts in `scripts/` (e.g., `bump-version.sh`, `install.sh`) for release/dev flows as defined in `ota.yaml` tasks.**
+9. **When updating the release version, use `ota run bump:version --version <patch|minor|major>` by default.** Use an explicit semver string only when you intentionally need a non-incremental release version.
 9. **Refer to example contracts in `examples/` for canonical authoring patterns.**
 
 ### Autonomous bug fixing
