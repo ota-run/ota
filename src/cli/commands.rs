@@ -29715,16 +29715,18 @@ fn doctor_finding_group_next(
             .map(|finding| compact_backticked_paths(&finding.next))
             .unwrap_or_else(|| String::from("rerun `ota up`")),
         DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
-            String::from("set the listed environment variables, then rerun `ota doctor`")
+            String::from(
+                "run `ota env` to inspect the current precedence, set the listed environment variables, then rerun `ota doctor`",
+            )
         }
         DoctorFindingGroupKind::EnvironmentValue if has_invalid_env && !has_missing_env => {
             String::from(
-                "set the listed environment variables to allowed values, then rerun `ota doctor`",
+                "run `ota env` to inspect the current precedence, set the listed environment variables to allowed values, then rerun `ota doctor`",
             )
         }
-        DoctorFindingGroupKind::EnvironmentValue => {
-            String::from("fix the listed environment values, then rerun `ota doctor`")
-        }
+        DoctorFindingGroupKind::EnvironmentValue => String::from(
+            "run `ota env` to inspect the current precedence, fix the listed environment values, then rerun `ota doctor`",
+        ),
         DoctorFindingGroupKind::ContractDrift => String::from(
             "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
         ),
