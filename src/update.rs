@@ -32,6 +32,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use semver::Version;
 use serde_json::Value as JsonValue;
 
 use crate::output::CommandOutput;
@@ -214,6 +215,13 @@ fn maybe_notice_for_latest(current_version: &str, latest: &str) -> Option<String
     let current = normalize_version(current_version);
     let latest = normalize_version(latest);
     if latest.is_empty() || latest == current {
+        return None;
+    }
+
+    if let (Ok(current_version), Ok(latest_version)) =
+        (Version::parse(&current), Version::parse(&latest))
+        && latest_version <= current_version
+    {
         return None;
     }
 
@@ -912,6 +920,17 @@ mod tests {
             maybe_update_notice_with_state("v1.0.0", Ok(String::from("9.9.9")), 100, &state_path);
 
         assert_eq!(notice, Some(super::render_update_available_notice("9.9.9")));
+    }
+
+    #[test]
+    fn does_not_report_update_notice_when_latest_release_is_older() {
+        let _guard = env_mutex_lock();
+        let temp = tempdir().unwrap();
+        let state_path = temp.path().join("update-notice-at.txt");
+        let notice =
+            maybe_update_notice_with_state("v1.6.7", Ok(String::from("1.6.6")), 100, &state_path);
+
+        assert_eq!(notice, None);
     }
 
     #[test]
