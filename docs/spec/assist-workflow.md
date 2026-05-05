@@ -1,0 +1,390 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# ota Assist Workflow
+
+This document is the operator guide for the currently shipped `ota assist` surface.
+
+For the long-term product contract, see [assist-operations.md](assist-operations.md).
+For exact CLI syntax, see [command-reference.md](command-reference.md).
+For the machine-readable payload, see [json-output-reference.md](json-output-reference.md).
+
+## What assist is
+
+`ota assist` is a reviewed contract mutation surface.
+
+It is not:
+
+- chat
+- freeform YAML generation
+- a second source of repo truth
+
+It works like this:
+
+1. inspect the existing repo and contract truth
+2. propose one bounded change
+3. show assumptions and the exact mutation
+4. write only when `--write` is explicit
+5. revalidate after apply
+
+Preview is the default.
+
+## Current shipped operation
+
+The currently shipped assist operations are:
+
+- `ota assist declare-readiness`
+- `ota assist declare-service`
+- `ota assist bind-task`
+- `ota assist declare-env`
+- `ota assist add-task`
+- `ota assist wire-setup`
+- `ota assist normalize`
+
+It can target:
+
+- `tasks.<name>.runtime.readiness` with `--task <name>`
+- `services.<name>.readiness` with `--service <name>`
+- a monorepo member overlay with `--member <name>`
+
+It can currently propose:
+
+- `spring-http`
+- `http`
+- `tcp`
+
+`ota assist declare-service` can:
+
+- create or refine one `services.<name>` block
+- set `manager.kind`, `manager.name`, `manager.file`, and `manager.service`
+- set one endpoint projection with `endpoint`, `address`, and `port`
+- set `required`
+- optionally attach structured readiness with `--style`
+
+`ota assist wire-setup` can:
+
+- create or refine `tasks.setup`
+- set the setup body through `--run` or `--script`
+- set or clear `setup.requires_services` as the pre-setup service phase for `ota up`
+- refine `tasks.setup.internal` without widening into general task authoring
+
+`ota assist add-task` can:
+
+- create one new `tasks.<name>` entry
+- set one explicit `run` or `script` body, or the bounded `echo sandbox` starter body for sandbox tasks
+- create `command`, `service`, `setup`, `check`, or `sandbox` task starters
+- create one fixed service listener and matching fixed host projection when `--kind service` is explicit
+
+`ota assist normalize` can:
+
+- move one existing setup-like task into the canonical `tasks.setup` slot
+- remove the original `tasks.<name>` entry in the same write target
+- normalize the moved setup task to `internal: true`
+
+## Canonical examples
+
+Task runtime preview:
+
+```bash
+ota assist declare-readiness --task dev
+```
+
+Task runtime apply:
+
+```bash
+ota assist declare-readiness --task dev --write
+```
+
+Explicit Spring-style task readiness:
+
+```bash
+ota assist declare-readiness --task dev --style spring-http
+```
+
+Managed HTTP service:
+
+```bash
+ota assist declare-readiness --service api --style http
+```
+
+Managed TCP service:
+
+```bash
+ota assist declare-readiness --service postgres --style tcp
+```
+
+Managed service declaration:
+
+```bash
+ota assist declare-service --name postgres --manager compose --compose-file docker-compose.yml --port 5432 --style tcp
+```
+
+Managed service apply:
+
+```bash
+ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
+```
+
+Task binding preview:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev:http
+```
+
+Task binding apply:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev:http --write
+```
+
+Task binding with inferred single listener:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev --json
+```
+
+Root env requirement preview:
+
+```bash
+ota assist declare-env --name APP_PORT --required true --default 8080
+```
+
+Declared env source preview:
+
+```bash
+ota assist declare-env --source-kind dotenv --source-path .env.local --must-exist true --json
+```
+
+Task-local env write:
+
+```bash
+ota assist declare-env --task smoke --name API_BASE --value http://127.0.0.1:3000 --write
+```
+
+New command task:
+
+```bash
+ota assist add-task --name smoke --run "cargo test"
+```
+
+New service task:
+
+```bash
+ota assist add-task --name dev --kind service --run "npm run dev" --listener http --protocol http --port 3000 --json
+```
+
+Member-scoped task creation:
+
+```bash
+ota assist add-task --member api --name smoke --run "npm test" --write
+```
+
+Monorepo member write:
+
+```bash
+ota assist declare-readiness --member api --task dev --style spring-http --write
+```
+
+Machine-readable preview:
+
+```bash
+ota assist declare-readiness --task dev --json
+```
+
+Setup wiring preview:
+
+```bash
+ota assist wire-setup --run "test -f .env.local || cp .env.example .env.local" --service postgres
+```
+
+Setup wiring apply:
+
+```bash
+ota assist wire-setup --member api --run "npm install" --service postgres --write
+```
+
+Normalize a setup-like task:
+
+```bash
+ota assist normalize --task bootstrap --into setup
+```
+
+Normalize a member-scoped setup-like task:
+
+```bash
+ota assist normalize --member api --task bootstrap --into setup --write
+```
+
+## Task versus managed service behavior
+
+Task runtime targeting is allowed only when the task already declares a runtime service surface.
+
+Managed service targeting is stricter:
+
+- a managed service endpoint only proves projected address and port
+- it does not prove protocol truth
+- if the service does not already carry structured readiness, pass `--style` explicitly
+
+This is intentional. Assist must not quietly propose an HTTP readiness path for a plain TCP service.
+
+## Task binding behavior
+
+`bind-task` is the current shipped assist slice for `tasks.<consumer>.targets.<name>`.
+
+It currently:
+
+- binds one consumer task to one producer task runtime listener
+- proposes a reviewed `service` target block, not a literal guessed URL
+- supports `--producer-member` for cross-member producer tasks already declared under the root monorepo contract
+- preserves an existing `override_input` unless a new one is explicitly supplied
+- validates the proposed edge through the normal contract rules before preview or write succeeds
+
+It intentionally does not yet:
+
+- bind directly to top-level managed service endpoints
+- guess a listener when multiple producer listeners are equally valid
+- hide `address_view` or `activation.mode` as non-reviewable internal defaults
+
+## Env declaration behavior
+
+`declare-env` is the current assist slice for root env requirements, declared env sources, and one
+explicit task-local env override.
+
+It currently:
+
+- declares or refines `env.vars.<NAME>` with `required`, `secret`, `default`, `allowed`, `prepend`, and `append`
+- declares or refines one curated `env.sources[]` entry with `kind`, `path`, and optional `must_exist`
+- writes task-local env only through explicit `--task <name> --name <ENV> --value <value>`
+- preserves precedence truth instead of inventing `.env` shell glue outside the contract
+
+It intentionally does not yet:
+
+- infer env names or source kinds from arbitrary repo files
+- perform broad env normalization across many vars at once
+- widen task-local env into a second root env requirement model
+
+## Task creation behavior
+
+`add-task` is the current assist slice for one new task declaration at a time.
+
+It currently:
+
+- creates only new tasks and refuses when the selected task name already exists in the effective contract
+- requires explicit `--run` or `--script` for every kind except `sandbox`
+- scopes `setup` to the canonical `tasks.setup` entry and defaults `internal: true` when you do not override it
+- requires `--listener`, `--protocol`, and `--port` for `service`, then declares one fixed listener and matching fixed host projection
+- leaves readiness, env, targets, and broader orchestration to the other assist slices instead of guessing them here
+
+It intentionally does not yet:
+
+- refine or replace an existing task body
+- declare service-task readiness inline
+- infer a repo-specific execution body when the user did not supply one
+
+## Normalize behavior
+
+`normalize` is the current assist slice for one canonical setup-task move at a time.
+
+It currently:
+
+- moves one existing task into `tasks.setup`
+- deletes the original `tasks.<name>` entry in the same write target
+- forces the resulting `tasks.setup` to `internal: true`
+- validates the resulting contract through the normal `validate`, `up --dry-run`, and `doctor` surfaces
+
+It intentionally does not yet:
+
+- normalize arbitrary task names into arbitrary other destinations
+- move inherited root tasks from a member overlay that does not own the source declaration
+- perform broad cross-section cleanup in one step
+
+## Setup wiring behavior
+
+`wire-setup` is intentionally narrow:
+
+- it only owns `tasks.setup`
+- it can create that task when you give an explicit `--run` or `--script`
+- it can set `setup.requires_services` to define the pre-setup service phase for `ota up`
+- it preserves unrelated existing setup fields instead of rewriting the whole task
+
+This is the current product model:
+
+- services named in `setup.requires_services` start before `setup`
+- other required managed services start after `setup`
+- `wire-setup` should help express that truth, not invent a second orchestration layer
+
+## Monorepo member behavior
+
+When `--member` is present:
+
+- ota resolves the merged member contract through the root monorepo contract
+- assist validates the proposal against that merged truth
+- assist writes only to the selected member overlay file
+
+This keeps writes narrow without pretending the member overlay is a standalone repo contract.
+
+## Refusal cases
+
+Assist should refuse instead of guessing when:
+
+- multiple candidate listeners exist and no safe selection is possible
+- the selected task or service does not exist
+- the selected task has no runtime service surface
+- the selected service has no protocol signal and no explicit `--style`
+- the selected listener protocol conflicts with the requested style
+- a new managed service does not declare an explicit manager kind
+- a service endpoint is ambiguous and `--endpoint` was not given
+- a producer task binding is ambiguous because multiple listeners are available and no safe existing selection can be reused
+- a producer task does not declare any service listener runtime surface
+- a task-local env declaration is missing its explicit `--value`
+- a root env declaration tries to use `prepend` or `append` on a non-`PATH` key
+- a root env declaration combines `secret: true` with a new default value
+- a new task name already exists in the effective contract
+- a `service` task request is missing `--listener`, `--protocol`, or `--port`
+- a `setup` task request does not target `--name setup`
+- a new `tasks.setup` declaration is requested without an explicit `--run` or `--script` body
+- a `normalize --task <name> --into setup` request when `tasks.setup` already exists
+- a member-scoped `normalize` request where the selected task is inherited from the root contract instead of declared in the member overlay
+- `wire-setup` names a managed service that is not already declared under `services`
+
+Refusal is part of the trust model, not a UX bug.
+
+## Replacement visibility
+
+When assist would replace an existing readiness block:
+
+- text preview must show the current readiness block first
+- then the proposed readiness block
+- JSON includes both `before` and `after` through `changes`
+
+This includes replacement of older legacy top-level readiness shapes such as `from` plus `run`.
+
+## After apply
+
+The canonical follow-up is:
+
+- `ota validate`
+- `ota doctor`
+
+`ota assist` should always point back into the same validator and diagnosis surfaces the rest of ota already trusts.

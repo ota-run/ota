@@ -29,6 +29,7 @@ This document describes the current shipped CLI surface.
 ota's canonical repo contract is `ota.yaml`. This reference covers the current repo-level CLI surface only.
 
 For machine-readable command contracts, see [json-output-reference.md](json-output-reference.md).
+For the shipped assist workflow and refusal rules, see [assist-workflow.md](assist-workflow.md).
 For canonical exit-code behavior, see [exit-codes.md](exit-codes.md).
 For service behavior across commands, see [service-behavior.md](service-behavior.md).
 For platform shell behavior, see [shell-semantics.md](shell-semantics.md).
@@ -80,6 +81,13 @@ ota currently ships these commands:
 - `ota env`
 - `ota execution plan`
 - `ota execution topology`
+- `ota assist declare-readiness`
+- `ota assist declare-service`
+- `ota assist bind-task`
+- `ota assist declare-env`
+- `ota assist add-task`
+- `ota assist wire-setup`
+- `ota assist normalize`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -441,6 +449,289 @@ JSON output:
 - task runtime entries may include `backend_binding`, `readiness`, and `listeners`
 - task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
+
+## `ota assist declare-readiness`
+
+Declare or refine structured readiness for one existing task runtime service or one existing managed
+service.
+
+```bash
+ota assist declare-readiness --task <name> [--style spring-http|http|tcp] [PATH]
+ota assist declare-readiness --service <name> [--style spring-http|http|tcp] [PATH]
+ota assist declare-readiness --member api --task <name> [PATH]
+ota assist declare-readiness --json --task <name> [PATH]
+ota assist declare-readiness --write --task <name> [PATH]
+```
+
+Use it when the runtime surface already exists and you want Ota to propose the readiness contract
+instead of hand-authoring it.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact readiness block, and the next validation commands
+- `--write` applies the proposed readiness mutation and revalidates the updated contract before returning success
+- supports `--task` for `tasks.<name>.runtime.readiness`
+- supports `--service` for `services.<name>.readiness`
+- supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
+- supports `spring-http`, `http`, and `tcp` styles
+- task targeting can infer from existing runtime and listener truth when that choice is unique
+- managed service targeting requires explicit `--style` unless the service already has a structured readiness kind that assist is refining
+- refuses when the target is ambiguous, unknown, missing the runtime/service surface needed for a truthful readiness declaration, or when the requested style conflicts with the selected listener protocol
+- text preview shows both current and proposed readiness when an existing readiness block would be replaced
+- `--json` emits the stable assist proposal/apply result shape described in [assist-operations.md](assist-operations.md)
+
+Examples:
+
+```bash
+ota assist declare-readiness --task dev
+ota assist declare-readiness --task dev --style spring-http --write
+ota assist declare-readiness --service api --style http
+ota assist declare-readiness --service postgres --style tcp
+ota assist declare-readiness --member api --task dev --json
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist declare-service`
+
+Declare or refine one top-level managed service.
+
+```bash
+ota assist declare-service --name <service> --manager compose|host --port <port> [PATH]
+ota assist declare-service --name <service> --manager compose --compose-file docker-compose.yml --style tcp [PATH]
+ota assist declare-service --member api --name <service> --manager compose --port <port> [PATH]
+ota assist declare-service --json --name <service> --manager host --port <port> [PATH]
+ota assist declare-service --write --name <service> --manager compose --port <port> [PATH]
+```
+
+Use it when the right next step is to create or refine a managed `services.<name>` block instead of
+hand-authoring manager, endpoint, and readiness YAML.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact service block, and the next validation commands
+- `--write` applies the proposed service mutation and revalidates the updated contract before returning success
+- `--name` is required and identifies the managed service block under `services`
+- `--manager compose|host` chooses the manager kind for a new service and can refine an existing manager
+- `--endpoint`, `--address`, and `--port` control the selected endpoint projection; when safe, ota defaults the endpoint to `host` and the address to `127.0.0.1`
+- `--required true|false` sets the service requirement flag explicitly
+- `--style spring-http|http|tcp` adds or replaces structured readiness anchored to the selected endpoint
+- `--compose-file`, `--compose-service`, and `--manager-name` refine compose-managed service metadata
+- compose-managed previews default `manager.name` to `local` and `manager.service` to the declared service name when those values are otherwise absent
+- supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
+- refuses when the requested service shape is ambiguous or under-specified, such as a new service without an explicit manager kind
+- `--json` emits the stable assist proposal/apply result for this service declaration
+
+Examples:
+
+```bash
+ota assist declare-service --name postgres --manager compose --compose-file docker-compose.yml --port 5432 --style tcp
+ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
+ota assist declare-service --name cache --manager host --port 6379 --json
+ota assist declare-service --member api --name api --manager compose --port 3000 --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist bind-task`
+
+Create or refine one `tasks.<consumer>.targets.<name>` binding to a producer task runtime.
+
+```bash
+ota assist bind-task --task <consumer> --target <name> --to <producer>[:listener] [PATH]
+ota assist bind-task --task <consumer> --target <name> --to <producer>:<listener> --address-view topology|host|internal [PATH]
+ota assist bind-task --task <consumer> --target <name> --to <producer>:<listener> --activation ensure_ready [PATH]
+ota assist bind-task --member api --task <consumer> --target <name> --to <producer>:<listener> --write [PATH]
+ota assist bind-task --json --task <consumer> --target <name> --to <producer> [PATH]
+```
+
+Use it when the producer task runtime already exists and the correct next move is to wire one
+consumer target edge truthfully instead of hand-authoring `targets`.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact target block, and the next validation commands
+- `--write` applies the proposed `tasks.<consumer>.targets.<name>` mutation and revalidates it before returning success
+- `--to <producer>` works only when the producer exposes exactly one declared service listener or the existing target already pins one safe listener
+- `--to <producer>:<listener>` is the explicit selector when the producer exposes multiple listeners
+- currently binds only to producer task runtimes, not directly to top-level managed service endpoints
+- `--producer-member <name>` selects a producer task from another declared monorepo member
+- `--address-view` and `--activation` refine the shipped target contract directly instead of hiding those fields behind heuristics
+- preserves an existing `override_input` unless a new one is supplied
+- refuses when the consumer task, producer task, or selected listener does not exist, or when assist cannot pick one listener safely
+- `--json` emits the stable assist proposal/apply result for this target-binding change
+
+Examples:
+
+```bash
+ota assist bind-task --task smoke --target api --to dev:http
+ota assist bind-task --task smoke --target api --to dev --json
+ota assist bind-task --task smoke --target api --to dev:http --activation ensure_ready
+ota assist bind-task --member api --task smoke --target api --to dev:http --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist declare-env`
+
+Create or refine one root env requirement, one declared env source, or one explicit task-local env override.
+
+```bash
+ota assist declare-env --name <ENV> [--required true|false] [--secret true|false] [--default <value>] [PATH]
+ota assist declare-env --name PATH [--prepend <path> ...] [--append <path> ...] [PATH]
+ota assist declare-env --source-kind dotenv|properties|json|yaml|toml --source-path <path> [--must-exist true|false] [PATH]
+ota assist declare-env --task <name> --name <ENV> --value <value> [PATH]
+ota assist declare-env --member api --task <name> --name <ENV> --value <value> --write [PATH]
+ota assist declare-env --json --source-kind dotenv --source-path .env.local [PATH]
+```
+
+Use it when the contract already knows which env surface should exist and the next safe move is one reviewed env mutation instead of broad contract inference.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact env block or task-local value, and the next validation commands
+- `--write` applies the proposed env mutation and revalidates it before returning success
+- root env requirements target `env.vars.<NAME>` with `required`, `secret`, `default`, `allowed`, `prepend`, and `append`
+- declared env sources target one curated `env.sources[]` entry with `kind`, `path`, and optional `must_exist`
+- task-local env targets only one explicit `tasks.<name>.env.<KEY> = <value>` write
+- `prepend` and `append` are allowed only for `PATH`
+- `secret: true` may not be combined with a new default value
+- supports `--member` through the merged monorepo contract path while writing only to the selected member overlay file
+- `--json` emits the stable assist proposal/apply result for this env mutation
+
+Examples:
+
+```bash
+ota assist declare-env --name APP_PORT --required true --default 8080
+ota assist declare-env --name PATH --prepend ./node_modules/.bin --append /opt/ota/bin
+ota assist declare-env --source-kind dotenv --source-path .env.local --must-exist true --json
+ota assist declare-env --task smoke --name API_BASE --value http://127.0.0.1:3000
+ota assist declare-env --member api --task smoke --name API_BASE --value http://127.0.0.1:3000 --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist add-task`
+
+Create one new declared task with an explicit execution body.
+
+```bash
+ota assist add-task --name <task> --run "<command>" [PATH]
+ota assist add-task --name <task> --script "<body>" [PATH]
+ota assist add-task --name <task> --kind sandbox [PATH]
+ota assist add-task --name <task> --kind service --run "<command>" --listener <name> --protocol http|tcp --port <port> [PATH]
+ota assist add-task --member api --name <task> --run "<command>" --write [PATH]
+ota assist add-task --json --name <task> --run "<command>" [PATH]
+```
+
+Use it when the contract needs one new task entry and the right next step is a reviewed starter task
+instead of hand-authoring `tasks.<name>`.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact new `tasks.<name>` block, and the next validation commands
+- `--write` applies the proposed task creation and revalidates the updated contract before returning success
+- creates only new tasks in this slice; it refuses when the selected task name already exists in the effective contract
+- supports `command`, `service`, `setup`, `check`, and `sandbox` task kinds
+- requires `--run` or `--script` for every kind except `sandbox`, which uses the bounded starter body `echo sandbox` when no body is supplied
+- `--kind setup` only applies to the canonical `--name setup` task and defaults `internal: true` when you do not override it
+- `--kind service` requires `--listener`, `--protocol`, and `--port`, and currently declares one fixed listener plus a matching fixed host projection without adding readiness
+- supports `--member` through the merged monorepo contract path while writing only to the selected member overlay file
+- refuses service-only listener inputs on non-service task kinds
+- `--json` emits the stable assist proposal/apply result for this task creation change
+
+Examples:
+
+```bash
+ota assist add-task --name smoke --run "cargo test"
+ota assist add-task --name setup --kind setup --run "npm install"
+ota assist add-task --name sandbox --kind sandbox
+ota assist add-task --name dev --kind service --run "npm run dev" --listener http --protocol http --port 3000 --json
+ota assist add-task --member api --name smoke --run "npm test" --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist wire-setup`
+
+Create or refine the `setup` task and its pre-setup service phase for `ota up`.
+
+```bash
+ota assist wire-setup --run "<command>" [PATH]
+ota assist wire-setup --script "<body>" [PATH]
+ota assist wire-setup --run "<command>" --service <name> [--service <name> ...] [PATH]
+ota assist wire-setup --member api --run "<command>" --write [PATH]
+ota assist wire-setup --json --script "<body>" [PATH]
+```
+
+Use it when the contract needs one truthful `tasks.setup` declaration or when `setup.requires_services`
+should define which managed services must start before setup runs.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact `tasks.setup` block, and the next validation commands
+- `--write` applies the proposed setup mutation and revalidates the updated contract before returning success
+- `--run` and `--script` set the setup body explicitly; a new setup task requires one of them
+- `--service <name>` sets `setup.requires_services` in the provided order as the pre-setup service phase
+- `--clear-services` removes `setup.requires_services`
+- `--internal true|false` refines `tasks.setup.internal` directly
+- supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
+- preserves unrelated existing `tasks.setup` fields instead of rewriting the whole task
+- refuses when a new setup task has no explicit body, when no actual setup change was requested, or when a named managed service does not exist
+- `--json` emits the stable assist proposal/apply result for this setup wiring change
+
+Examples:
+
+```bash
+ota assist wire-setup --run "test -f .env.local || cp .env.example .env.local"
+ota assist wire-setup --run "npm install" --service postgres
+ota assist wire-setup --script "cargo fetch\ncargo build" --json
+ota assist wire-setup --member api --run "npm install" --service postgres --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist normalize`
+
+Normalize one existing task into the canonical `tasks.setup` slot.
+
+```bash
+ota assist normalize --task <name> --into setup [PATH]
+ota assist normalize --member api --task <name> --into setup --write [PATH]
+ota assist normalize --json --task <name> --into setup [PATH]
+```
+
+Use it when the contract already has one setup-like task under the wrong task name and the right
+next step is to move that existing declaration into `tasks.setup` instead of hand-editing both the
+old and new task entries.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the current task block, the proposed canonical `tasks.setup` block, and the next validation commands
+- `--write` applies the normalization and revalidates the updated contract before returning success
+- the current shipped scope is one intent only: `--into setup`
+- removes the original `tasks.<name>` entry and writes the moved task under `tasks.setup`
+- normalizes the moved task to `internal: true` so setup stays an `ota up` support task by default
+- supports `--member` only when the selected task is declared in that member overlay file; it refuses inherited root tasks because member overlays cannot delete those safely in this shipped slice
+- refuses when `tasks.setup` already exists, when the selected task does not exist, or when the selected task is already `setup`
+- `--json` emits the stable assist proposal/apply result for this normalization change
+
+Examples:
+
+```bash
+ota assist normalize --task bootstrap --into setup
+ota assist normalize --member api --task bootstrap --into setup --write
+ota assist normalize --json --task bootstrap --into setup
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
 
 ## `ota diff`
 

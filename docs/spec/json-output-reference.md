@@ -8,6 +8,8 @@ operator guidance added where useful.
 
 The goal is stability for humans, CI, editors, and agents.
 
+For the operator guide to the currently shipped assist flow, see [assist-workflow.md](assist-workflow.md).
+
 Editor and CI integrations should treat the JSON surfaces in this document as the stable contract
 and avoid scraping human-readable text output.
 
@@ -17,6 +19,13 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/env.json](json-schemas/env.json)
 - [json-schemas/execution.json](json-schemas/execution.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
+- [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
+- [json-schemas/assist-declare-service.json](json-schemas/assist-declare-service.json)
+- [json-schemas/assist-bind-task.json](json-schemas/assist-bind-task.json)
+- [json-schemas/assist-declare-env.json](json-schemas/assist-declare-env.json)
+- [json-schemas/assist-add-task.json](json-schemas/assist-add-task.json)
+- [json-schemas/assist-normalize.json](json-schemas/assist-normalize.json)
+- [json-schemas/assist-wire-setup.json](json-schemas/assist-wire-setup.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
 - [json-schemas/check.json](json-schemas/check.json)
@@ -51,6 +60,13 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
 - use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything
+- use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
+- use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
+- use `ota assist bind-task --json` when you want a deterministic target-binding proposal or apply result without scraping review text
+- use `ota assist declare-env --json` when you want a deterministic env proposal or apply result without scraping review text
+- use `ota assist add-task --json` when you want a deterministic new-task proposal or apply result without scraping review text
+- use `ota assist normalize --json` when you want a deterministic canonical-setup normalization proposal or apply result without scraping review text
+- use `ota assist wire-setup --json` when you want a deterministic setup-wiring proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
@@ -75,6 +91,13 @@ human text output:
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `services`, and `tasks`
+- `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
+- `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist bind-task --json`: use `mode`, `subject.task`, `subject.target`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist declare-env --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist add-task --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist normalize --json`: use `mode`, `subject.task`, `subject.into`, `changes`, `validation`, and `next`
+- `ota assist wire-setup --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
@@ -405,6 +428,553 @@ Failure:
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
   "errors": ["..."]
+}
+```
+
+## `ota assist declare-readiness --json`
+
+Assist readiness output reports one deterministic proposal or apply result for an existing task
+runtime service or managed service.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "declare-readiness",
+  "subject": {
+    "task": "dev"
+  },
+  "inputs": {
+    "style": "spring-http"
+  },
+  "assumptions": [
+    "task `dev` already declares a service runtime",
+    "listener `http` is the readiness surface"
+  ],
+  "changes": [
+    {
+      "path": "tasks.dev.runtime.readiness",
+      "action": "set",
+      "before": null,
+      "after": {
+        "kind": "http",
+        "listener": "http",
+        "method": "GET",
+        "path": "/actuator/health"
+      }
+    }
+  ],
+  "diff": "tasks.dev.runtime.readiness\n- <absent>\n+ kind: http ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist declare-readiness --task dev --style spring-http --write /abs/path/to/ota.yaml` to apply this readiness change"
+}
+```
+
+Notes:
+
+- `path` is the resolved repo contract path
+- `member` is present only when `--member` targeted a merged monorepo member contract
+- `subject` contains exactly one selector key today: `task` or `service`
+- `changes[*].before` is present when assist is refining or replacing an existing readiness block, including legacy top-level readiness shapes
+- `changes[*].after` uses the canonical readiness contract shape Ota would write
+- `mode` is `preview` by default and `write` when `--write` succeeded
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "declare-readiness",
+  "subject": {
+    "task": "dev"
+  },
+  "why": "task `dev` has multiple readiness candidate listeners; assist cannot pick one safely",
+  "next": "rerun with `--style <spring-http|http|tcp>` after narrowing the runtime surface"
+}
+```
+
+## `ota assist declare-service --json`
+
+Assist service output reports one deterministic proposal or apply result for one top-level managed
+service declaration.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "declare-service",
+  "subject": {
+    "service": "postgres"
+  },
+  "inputs": {
+    "manager": "compose",
+    "endpoint": "host",
+    "address": "127.0.0.1",
+    "port": "5432",
+    "required": "false",
+    "compose_file": "docker-compose.yml",
+    "compose_service": "postgres",
+    "style": "tcp"
+  },
+  "assumptions": [
+    "service `postgres` will be created under `services`",
+    "endpoint `host` is the service projection boundary",
+    "manager `compose` is the service owner"
+  ],
+  "changes": [
+    {
+      "path": "services.postgres",
+      "action": "set",
+      "before": null,
+      "after": {
+        "required": false,
+        "manager": {
+          "kind": "compose",
+          "name": "local",
+          "file": "docker-compose.yml",
+          "service": "postgres"
+        },
+        "endpoints": {
+          "host": {
+            "address": "127.0.0.1",
+            "port": 5432
+          }
+        },
+        "readiness": {
+          "from": "host",
+          "kind": "tcp"
+        }
+      }
+    }
+  ],
+  "diff": "services.postgres\n- <absent>\n+ required: false ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist declare-service --name postgres --manager compose --endpoint host --address 127.0.0.1 --port 5432 --required false --compose-file docker-compose.yml --compose-service postgres --style tcp --write /abs/path/to/ota.yaml` to apply this service change"
+}
+```
+
+Notes:
+
+- `subject.service` is the targeted top-level managed service name
+- `inputs` records the explicit or defaulted service declaration inputs used to build the proposal
+- `changes[*].before` is present when assist is refining an existing service block
+- `changes[*].after` is the exact service block Ota would write
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "declare-service",
+  "subject": {
+    "service": "postgres"
+  },
+  "why": "service `postgres` needs an explicit manager kind",
+  "next": "rerun with `--manager compose` or `--manager host`"
+}
+```
+
+## `ota assist bind-task --json`
+
+Assist target-binding output reports one deterministic proposal or apply result for
+`tasks.<consumer>.targets.<name>`.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "bind-task",
+  "subject": {
+    "task": "smoke",
+    "target": "api"
+  },
+  "inputs": {
+    "to": "dev:http",
+    "address_view": "topology",
+    "activation": "manual"
+  },
+  "assumptions": [
+    "a new target binding will be created under `tasks.smoke.targets.api`",
+    "task `smoke` will resolve `api` through producer task `dev` listener `http`",
+    "ota will resolve this edge with `address_view: topology`",
+    "`activation.mode` will be `manual`"
+  ],
+  "changes": [
+    {
+      "path": "tasks.smoke.targets.api",
+      "action": "set",
+      "before": null,
+      "after": {
+        "service": {
+          "task": "dev",
+          "listener": "http",
+          "address_view": "topology"
+        },
+        "activation": {
+          "mode": "manual"
+        }
+      }
+    }
+  ],
+  "diff": "tasks.smoke.targets.api\n- <absent>\n+ service: ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota execution topology /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist bind-task --task smoke --target api --to dev:http --address-view topology --activation manual --write /abs/path/to/ota.yaml` to apply this task binding"
+}
+```
+
+Notes:
+
+- `subject.task` and `subject.target` identify the consumer task and the target key being changed
+- `inputs.to` is normalized to the explicit `<producer>:<listener>` shape even when preview inferred the listener from a single-listener producer
+- `changes[*].before` is present when assist is refining an existing target binding
+- `changes[*].after` is the exact target block Ota would write, including `activation.mode` and any explicit `override_input`
+- validation includes `ota execution topology` because target bindings change the declared execution graph directly
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "bind-task",
+  "subject": {
+    "task": "smoke",
+    "target": "api"
+  },
+  "why": "producer task `dev` declares multiple listeners, so assist cannot pick one safely",
+  "next": "rerun with `--to <task>:<listener>` after checking `ota execution topology`"
+}
+```
+
+## `ota assist declare-env --json`
+
+Assist env output reports one deterministic proposal or apply result for one root env requirement,
+one declared env source, or one explicit task-local env override.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "declare-env",
+  "subject": {
+    "kind": "root_var",
+    "name": "APP_PORT"
+  },
+  "inputs": {
+    "required": "true",
+    "default": "8080"
+  },
+  "assumptions": [
+    "root env requirement `APP_PORT` will be declared under `env.vars`"
+  ],
+  "changes": [
+    {
+      "path": "env.vars.APP_PORT",
+      "action": "set",
+      "before": null,
+      "after": {
+        "required": true,
+        "default": "8080"
+      }
+    }
+  ],
+  "diff": "env.vars.APP_PORT\n- <absent>\n+ required: true ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota env /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist declare-env --name APP_PORT --required true --default 8080 --write /abs/path/to/ota.yaml` to apply this env change"
+}
+```
+
+Notes:
+
+- `subject.kind` distinguishes `root_var`, `source`, and `task_env`
+- `subject.task` is present only for task-local env writes
+- `subject.source_kind` and `subject.source_path` are present only for declared env sources
+- `inputs` records only the explicit assist inputs supplied for that one mutation
+- validation uses `ota env` or `ota env --task <name>` because env declaration changes should be reviewed through the same read path Ota already trusts
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "declare-env",
+  "subject": {
+    "task": "smoke",
+    "name": "API_BASE"
+  },
+  "why": "task-local env declaration needs `--value`",
+  "next": "rerun with `--task <name> --name <ENV> --value <value>`"
+}
+```
+
+## `ota assist add-task --json`
+
+Assist add-task output reports one deterministic proposal or apply result for one new
+`tasks.<name>` declaration.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "add-task",
+  "subject": {
+    "task": "dev"
+  },
+  "inputs": {
+    "kind": "service",
+    "run": "npm run dev",
+    "internal": "false",
+    "listener": "http",
+    "protocol": "http",
+    "address": "127.0.0.1",
+    "port": "3000"
+  },
+  "assumptions": [
+    "assist adds only one new task and does not infer env, targets, or readiness in this slice",
+    "service task creation only declares one fixed listener and matching host projection; declare readiness separately if the app needs deeper truth"
+  ],
+  "changes": [
+    {
+      "path": "tasks.dev",
+      "action": "set",
+      "before": null,
+      "after": {
+        "run": "npm run dev",
+        "runtime": {
+          "kind": "service",
+          "listeners": {
+            "http": {
+              "protocol": "http",
+              "bind": {
+                "address": "127.0.0.1",
+                "port": {
+                  "mode": "fixed",
+                  "value": 3000
+                }
+              },
+              "project": {
+                "host": {
+                  "address": "127.0.0.1",
+                  "port": {
+                    "mode": "fixed",
+                    "value": 3000
+                  },
+                  "primary": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "diff": "tasks.dev\n- null\n+ run: npm run dev ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota tasks /abs/path/to/ota.yaml",
+    "ota execution topology /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist add-task --name dev --kind service --run 'npm run dev' --internal false --listener http --protocol http --address 127.0.0.1 --port 3000 --write /abs/path/to/ota.yaml` to apply this task change"
+}
+```
+
+Notes:
+
+- `subject.task` is always the newly created task name
+- `inputs.kind` is one of `command`, `service`, `setup`, `check`, or `sandbox`
+- `inputs.run` or `inputs.script` records the explicit execution body; sandbox can use the bounded `echo sandbox` starter body
+- `inputs.listener`, `inputs.protocol`, `inputs.address`, and `inputs.port` appear only for `service`
+- `changes[0].before` is always `null` because this slice creates only new tasks
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "add-task",
+  "subject": {
+    "task": "smoke"
+  },
+  "why": "task `smoke` is already declared",
+  "next": "choose a new task name, or use `ota tasks` to inspect the current inventory"
+}
+```
+
+## `ota assist normalize --json`
+
+Assist normalize output reports one deterministic proposal or apply result for moving one existing
+task into the canonical `tasks.setup` slot.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "normalize",
+  "subject": {
+    "task": "bootstrap",
+    "into": "setup"
+  },
+  "inputs": {
+    "into": "setup"
+  },
+  "assumptions": [
+    "`tasks.bootstrap` will move into the canonical `tasks.setup` slot",
+    "`tasks.setup` will be normalized to `internal: true` so setup stays an `ota up` support task by default"
+  ],
+  "changes": [
+    {
+      "path": "tasks.bootstrap",
+      "action": "delete",
+      "before": {
+        "run": "npm install"
+      },
+      "after": null
+    },
+    {
+      "path": "tasks.setup",
+      "action": "set",
+      "before": null,
+      "after": {
+        "run": "npm install",
+        "internal": true
+      }
+    }
+  ],
+  "diff": "normalize task bootstrap\n- run: npm install\n+ run: npm install ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota up --dry-run /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist normalize --task bootstrap --into setup --write /abs/path/to/ota.yaml` to apply this normalization"
+}
+```
+
+Notes:
+
+- `subject.into` is currently fixed to `setup` in the shipped slice
+- `changes[0]` records deletion of the original `tasks.<name>` slot
+- `changes[1]` records creation of the canonical `tasks.setup` slot
+- apply removes the original `tasks.<name>` entry and writes the moved declaration under `tasks.setup`
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "normalize",
+  "subject": {
+    "task": "bootstrap"
+  },
+  "why": "the contract already declares `tasks.setup`",
+  "next": "use `ota assist wire-setup` to refine setup instead of normalizing another task into it"
+}
+```
+
+## `ota assist wire-setup --json`
+
+Assist setup output reports one deterministic proposal or apply result for `tasks.setup`.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "wire-setup",
+  "subject": {
+    "task": "setup"
+  },
+  "inputs": {
+    "run": "test -f .env.local || cp .env.example .env.local",
+    "services": "postgres"
+  },
+  "assumptions": [
+    "a new `tasks.setup` declaration will be created",
+    "new setup tasks default to `category: setup` and `internal: true` unless overridden",
+    "setup will execute through a single `run` command",
+    "`setup.requires_services` will define the pre-setup service phase: `postgres`"
+  ],
+  "changes": [
+    {
+      "path": "tasks.setup",
+      "action": "set",
+      "before": null,
+      "after": {
+        "category": "setup",
+        "internal": true,
+        "run": "test -f .env.local || cp .env.example .env.local",
+        "requires_services": ["postgres"]
+      }
+    }
+  ],
+  "diff": "tasks.setup\n- <absent>\n+ category: setup ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota up --dry-run /abs/path/to/ota.yaml",
+    "ota doctor /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist wire-setup --run 'test -f .env.local || cp .env.example .env.local' --service postgres --write /abs/path/to/ota.yaml` to apply this setup change"
+}
+```
+
+Notes:
+
+- `subject.task` is always `setup`
+- `inputs` records only the explicit setup inputs the operator passed to assist
+- `changes[*].before` is present when assist is refining an existing `tasks.setup` block
+- `changes[*].after` is the exact setup block Ota would write, including `setup.requires_services` ordering when that input was provided
+- validation includes `ota up --dry-run` because setup wiring changes phased repo preparation behavior directly
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "wire-setup",
+  "subject": {
+    "task": "setup"
+  },
+  "why": "creating `tasks.setup` needs an explicit `--run` or `--script` body",
+  "next": "rerun with `--run '<command>'` or `--script '<body>'` to declare the setup task"
 }
 ```
 
