@@ -686,6 +686,35 @@ enum AssistCommands {
         /// Path to a repo root, ota.yaml file, or directory containing one.
         path: Option<PathBuf>,
     },
+    /// Create or refine the setup task and pre-setup service phase for `ota up`.
+    WireSetup {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed setup mutation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Replace the setup task body with a single run command.
+        #[arg(long, conflicts_with = "script")]
+        run: Option<String>,
+        /// Replace the setup task body with a shell script body.
+        #[arg(long, conflicts_with = "run")]
+        script: Option<String>,
+        /// Declare one service that must be ready before setup runs. Repeat to set the ordered list.
+        #[arg(long = "service")]
+        services: Vec<String>,
+        /// Clear `setup.requires_services` explicitly.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "services")]
+        clear_services: bool,
+        /// Explicit internal flag value for `tasks.setup`.
+        #[arg(long)]
+        internal: Option<bool>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -3936,6 +3965,32 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Assist {
+            command:
+                AssistCommands::WireSetup {
+                    json,
+                    write,
+                    member,
+                    run,
+                    script,
+                    services,
+                    clear_services,
+                    internal,
+                    path,
+                },
+        } => commands::assist_wire_setup(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            run.as_deref(),
+            script.as_deref(),
+            &services,
+            clear_services,
+            internal,
+            write,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Studio {
             open,
             serve,
@@ -4639,6 +4694,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         } => {
             "rerun `ota assist declare-service --name <service>` with explicit manager or endpoint inputs"
         }
+        Commands::Assist {
+            command: AssistCommands::WireSetup { .. },
+        } => "rerun `ota assist wire-setup --run '<command>'` with any pre-setup services you need",
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
@@ -4834,6 +4892,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Assist {
             command: AssistCommands::DeclareService { json, .. },
         }
+        | Commands::Assist {
+            command: AssistCommands::WireSetup { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
@@ -4904,6 +4965,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Assist {
             command: AssistCommands::DeclareService { .. },
         } => "ota assist declare-service",
+        Commands::Assist {
+            command: AssistCommands::WireSetup { .. },
+        } => "ota assist wire-setup",
         Commands::Env { .. } => "ota env",
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
@@ -34195,6 +34259,173 @@ services:
         assert!(stdout.contains("services.api"));
         assert!(stdout.contains("required: true"));
         assert!(!stdout.contains("cannot pick one service endpoint safely"));
+    }
+
+    #[test]
+    fn assist_wire_setup_previews_new_setup_with_pre_setup_services() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--run",
+            "test -f .env.local || cp .env.example .env.local",
+            "--service",
+            "postgres",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST WIRE-SETUP"));
+        assert!(stdout.contains("tasks.setup"));
+        assert!(stdout.contains("run: test -f .env.local || cp .env.example .env.local"));
+        assert!(stdout.contains("requires_services:"));
+        assert!(stdout.contains("- postgres"));
+        assert!(stdout.contains("ota up --dry-run"));
+        assert!(stdout.contains("ota assist wire-setup --run"));
+    }
+
+    #[test]
+    fn assist_wire_setup_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--member",
+            "api",
+            "--run",
+            "npm install",
+            "--service",
+            "postgres",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota up --dry-run --member api"));
+        assert!(stdout.contains("ota doctor --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(!member_contract.contains("version: 1"));
+        assert!(member_contract.contains("tasks:"));
+        assert!(member_contract.contains("setup:"));
+        assert!(member_contract.contains("run: npm install"));
+        assert!(member_contract.contains("requires_services:"));
+        assert!(member_contract.contains("- postgres"));
+    }
+
+    #[test]
+    fn assist_wire_setup_json_preview_reports_setup_change() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--json",
+            "--script",
+            "printf setup",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "preview");
+        assert_eq!(json["operation"], "wire-setup");
+        assert_eq!(json["subject"]["task"], "setup");
+        assert_eq!(json["inputs"]["script"], "printf setup");
+        assert_eq!(json["changes"][0]["path"], "tasks.setup");
+        assert_eq!(json["changes"][0]["after"]["script"], "printf setup");
+        assert_eq!(json["changes"][0]["after"]["category"], "setup");
+        assert_eq!(json["changes"][0]["after"]["internal"], true);
+    }
+
+    #[test]
+    fn assist_wire_setup_refuses_new_setup_without_body() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with(["ota", "assist", "wire-setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("needs an explicit `--run` or `--script` body"));
+        assert!(stderr.contains("--run '<command>'"));
     }
 
     struct WorkspaceFixture {

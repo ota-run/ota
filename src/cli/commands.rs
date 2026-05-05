@@ -4008,6 +4008,85 @@ impl AssistServiceProposal {
     }
 }
 
+enum AssistSetupServicesMode {
+    Preserve,
+    Set(Vec<String>),
+    Clear,
+}
+
+struct AssistSetupProposal {
+    assumptions: Vec<String>,
+    before_value: YamlValue,
+    after_value: YamlValue,
+    body_input_kind: Option<&'static str>,
+    body_input: Option<String>,
+    services_mode: AssistSetupServicesMode,
+    internal_input: Option<bool>,
+}
+
+impl AssistSetupProposal {
+    fn subject_json(&self) -> BTreeMap<&'static str, &str> {
+        let mut subject = BTreeMap::new();
+        subject.insert("task", "setup");
+        subject
+    }
+
+    fn inputs_json(&self) -> BTreeMap<&'static str, String> {
+        let mut inputs = BTreeMap::new();
+        if let (Some(kind), Some(body)) = (self.body_input_kind, self.body_input.as_ref()) {
+            inputs.insert(kind, body.clone());
+        }
+        match &self.services_mode {
+            AssistSetupServicesMode::Preserve => {}
+            AssistSetupServicesMode::Set(services) => {
+                inputs.insert("services", services.join(","));
+            }
+            AssistSetupServicesMode::Clear => {
+                inputs.insert("clear_services", String::from("true"));
+            }
+        }
+        if let Some(internal) = self.internal_input {
+            inputs.insert("internal", internal.to_string());
+        }
+        inputs
+    }
+
+    fn diff(&self) -> String {
+        format!(
+            "tasks.setup\n- {}\n+ {}",
+            compact_yaml_inline(&self.before_value),
+            compact_yaml_inline(&self.after_value)
+        )
+    }
+
+    fn preview_next_command(&self, member: Option<&str>, contract_path: &Path) -> String {
+        let mut command = String::from("ota assist wire-setup");
+        if let Some(member) = member {
+            command.push_str(&format!(" --member {member}"));
+        }
+        if let (Some(kind), Some(body)) = (self.body_input_kind, self.body_input.as_ref()) {
+            command.push_str(&format!(" --{kind} {}", shell_quote(body)));
+        }
+        match &self.services_mode {
+            AssistSetupServicesMode::Preserve => {}
+            AssistSetupServicesMode::Set(services) => {
+                for service in services {
+                    command.push_str(&format!(" --service {service}"));
+                }
+            }
+            AssistSetupServicesMode::Clear => {
+                command.push_str(" --clear-services");
+            }
+        }
+        if let Some(internal) = self.internal_input {
+            command.push_str(&format!(" --internal {internal}"));
+        }
+        command.push_str(" --write");
+        let command = command_for_repo_from_contract_path(&command, contract_path);
+        format!("rerun with `{command}` to apply this setup change")
+    }
+}
+
 fn is_http_readiness_style(style: AssistReadinessStyleArg) -> bool {
     matches!(
         style,
@@ -4216,6 +4295,75 @@ fn render_assist_service_text(
             "\n{} {}",
             paint_key("Result:"),
             format!("applied {}", paint_backticked_code(&proposal.change_path))
+        ));
+    }
+    output
+}
+
+fn render_assist_setup_text(
+    path: &str,
+    proposal: &AssistSetupProposal,
+    mode: &str,
+    validation: &[String],
+    preview_next: Option<&str>,
+) -> String {
+    let mut output = format_command_header("ASSIST WIRE-SETUP", path);
+    output.push_str(&format!("\n\n{} {}", mode_icon(), paint_key("Mode:")));
+    output.push_str(&format!(
+        " {}",
+        if mode == "write" { "write" } else { "preview" }
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Subject:"),
+        paint_named_drift_label("Task", "setup")
+    ));
+    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    for assumption in &proposal.assumptions {
+        output.push_str(&format!("\n{} {}", info_bullet(), assumption));
+    }
+    if !proposal.before_value.is_null() {
+        output.push_str(&format!("\n\n{}:", paint_section_title("Current setup")));
+        output.push_str(&format!(
+            "\n{} {}",
+            info_bullet(),
+            paint_backticked_code("tasks.setup")
+        ));
+        let before_yaml =
+            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        output.push_str(&format!(
+            "\n{}",
+            stylize_yaml_preview(before_yaml.trim_end())
+        ));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed setup")));
+    output.push_str(&format!(
+        "\n{} {}",
+        info_bullet(),
+        paint_backticked_code("tasks.setup")
+    ));
+    let after_yaml =
+        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(after_yaml.trim_end())
+    ));
+    output.push_str(&format_next_timeline(
+        &validation
+            .iter()
+            .map(|command| format!("run `{}`", command))
+            .collect::<Vec<_>>(),
+    ));
+    if mode == "preview" {
+        if let Some(preview_next) = preview_next {
+            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+        }
+    } else {
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code("tasks.setup"))
         ));
     }
     output
@@ -4665,10 +4813,596 @@ pub fn assist_declare_service(
     )
 }
 
+pub fn assist_wire_setup(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    run: Option<&str>,
+    script: Option<&str>,
+    services: &[String],
+    clear_services: bool,
+    internal: Option<bool>,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=assist wire-setup")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=assist wire-setup"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(run) = run {
+        debug_lines.push(format!("DEBUG run={run}"));
+    }
+    if let Some(script) = script {
+        debug_lines.push(format!("DEBUG script={script}"));
+    }
+    if !services.is_empty() {
+        debug_lines.push(format!("DEBUG services={}", services.join(",")));
+    }
+    if clear_services {
+        debug_lines.push(String::from("DEBUG clear_services=true"));
+    }
+    if let Some(internal) = internal {
+        debug_lines.push(format!("DEBUG internal={internal}"));
+    }
+    if write {
+        debug_lines.push(String::from("DEBUG mode=write"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "ASSIST WIRE-SETUP",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota assist wire-setup` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota assist wire-setup", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let source_contents = match fs::read_to_string(&target.contract_path) {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to read `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "wire-setup",
+                                    subject: {
+                                        let mut subject = BTreeMap::new();
+                                        subject.insert("task", "setup");
+                                        subject
+                                    },
+                                    why,
+                                    next: String::from(
+                                        "repair the contract path, then rerun the assist command",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+                let mut document: YamlValue = match serde_yaml::from_str(&source_contents) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to parse `{}` for assist preview: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "wire-setup",
+                                    subject: {
+                                        let mut subject = BTreeMap::new();
+                                        subject.insert("task", "setup");
+                                        subject
+                                    },
+                                    why,
+                                    next: String::from(
+                                        "repair the existing contract, then rerun the assist command",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                let before_value =
+                    get_yaml_path_value(&document, &["tasks", "setup"]).unwrap_or(YamlValue::Null);
+                let proposal = match build_assist_setup_proposal(
+                    &target.contract,
+                    &before_value,
+                    run,
+                    script,
+                    services,
+                    clear_services,
+                    internal,
+                ) {
+                    Ok(proposal) => proposal,
+                    Err((why, next)) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST WIRE-SETUP", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => {
+                                let mut subject = BTreeMap::new();
+                                subject.insert("task", "setup");
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "wire-setup",
+                                    subject,
+                                    why,
+                                    next,
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                let after_value = proposal.after_value.clone();
+                set_yaml_path(&mut document, &["tasks", "setup"], after_value.clone());
+                let yaml = match serde_yaml::to_string(&document) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to serialize assist proposal for `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "wire-setup",
+                                    subject: proposal.subject_json(),
+                                    why,
+                                    next: String::from(
+                                        "rerun the assist command after fixing the repo contract",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                if let Err(error) = validate_assist_contract_update(
+                    &resolved_path,
+                    member,
+                    &target.contract_path,
+                    &yaml,
+                ) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(error.clone()),
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&AssistProposalFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                operation: "wire-setup",
+                                subject: proposal.subject_json(),
+                                why: error,
+                                next: String::from(
+                                    "adjust the setup inputs, then rerun the assist command",
+                                ),
+                            }))
+                        }
+                    };
+                }
+
+                let validation =
+                    assist_setup_validation_commands(&resolved_path, &target.contract_path, member);
+
+                if write {
+                    match fs::write(&target.contract_path, yaml) {
+                        Ok(()) => match format {
+                            OutputFormat::Text => CommandOutput::success(render_assist_setup_text(
+                                &text_path_display,
+                                &proposal,
+                                "write",
+                                &validation,
+                                None,
+                            )),
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&AssistProposalSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    member,
+                                    mode: "write",
+                                    operation: "wire-setup",
+                                    subject: proposal.subject_json(),
+                                    inputs: proposal.inputs_json(),
+                                    assumptions: proposal.assumptions.clone(),
+                                    changes: vec![AssistProposalChange {
+                                        path: "tasks.setup",
+                                        action: "set",
+                                        before: proposal.before_value.clone(),
+                                        after: after_value,
+                                    }],
+                                    diff: proposal.diff(),
+                                    validation,
+                                    next: String::from(
+                                        "rerun `ota up --dry-run` to inspect the phased setup plan",
+                                    ),
+                                }))
+                            }
+                        },
+                        Err(error) => {
+                            let why = format!(
+                                "failed to write `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "wire-setup",
+                                        subject: proposal.subject_json(),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path or permissions, then rerun with `--write`",
+                                        ),
+                                    }))
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let preview_target_path = if member.is_some() {
+                        &resolved_path
+                    } else {
+                        &target.contract_path
+                    };
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_assist_setup_text(
+                            &text_path_display,
+                            &proposal,
+                            "preview",
+                            &validation,
+                            Some(&proposal.preview_next_command(member, preview_target_path)),
+                        )),
+                        OutputFormat::Json => {
+                            CommandOutput::success(to_json(&AssistProposalSuccess {
+                                ok: true,
+                                path: &path_display,
+                                member,
+                                mode: "preview",
+                                operation: "wire-setup",
+                                subject: proposal.subject_json(),
+                                inputs: proposal.inputs_json(),
+                                assumptions: proposal.assumptions.clone(),
+                                changes: vec![AssistProposalChange {
+                                    path: "tasks.setup",
+                                    action: "set",
+                                    before: proposal.before_value.clone(),
+                                    after: after_value,
+                                }],
+                                diff: proposal.diff(),
+                                validation,
+                                next: proposal.preview_next_command(member, preview_target_path),
+                            }))
+                        }
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ASSIST WIRE-SETUP",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist wire-setup",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "wire-setup",
+                    subject: {
+                        let mut subject = BTreeMap::new();
+                        subject.insert("task", "setup");
+                        subject
+                    },
+                    why: errors.to_string(),
+                    next: String::from(
+                        "repair the existing contract, then rerun the assist command",
+                    ),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ASSIST WIRE-SETUP",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist wire-setup",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "wire-setup",
+                    subject: {
+                        let mut subject = BTreeMap::new();
+                        subject.insert("task", "setup");
+                        subject
+                    },
+                    why: error.to_string(),
+                    next: String::from("repair the contract path, then rerun the assist command"),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 fn proposal_service_subject_map(service: &str) -> BTreeMap<&'static str, &str> {
     let mut subject = BTreeMap::new();
     subject.insert("service", service);
     subject
+}
+
+fn build_assist_setup_proposal(
+    contract: &Contract,
+    before_value: &YamlValue,
+    run: Option<&str>,
+    script: Option<&str>,
+    services: &[String],
+    clear_services: bool,
+    internal: Option<bool>,
+) -> Result<AssistSetupProposal, (String, String)> {
+    let existing = contract.tasks.get("setup");
+    if existing.is_none() && run.is_none() && script.is_none() {
+        return Err((
+            String::from("creating `tasks.setup` needs an explicit `--run` or `--script` body"),
+            String::from(
+                "rerun with `--run '<command>'` or `--script '<body>'` to declare the setup task",
+            ),
+        ));
+    }
+
+    if run.is_none()
+        && script.is_none()
+        && services.is_empty()
+        && !clear_services
+        && internal.is_none()
+    {
+        return Err((
+            String::from("no setup change was requested"),
+            String::from(
+                "rerun with `--run`, `--script`, `--service`, `--clear-services`, or `--internal`",
+            ),
+        ));
+    }
+
+    let unknown_services = services
+        .iter()
+        .filter(|service| !contract.services.contains_key(service.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown_services.is_empty() {
+        return Err((
+            format!(
+                "unknown managed service{} {}",
+                if unknown_services.len() == 1 { "" } else { "s" },
+                unknown_services
+                    .iter()
+                    .map(|service| format!("`{service}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            String::from("run `ota services` to inspect declared managed services"),
+        ));
+    }
+
+    let body_input_kind = match (run, script) {
+        (Some(_), None) => Some("run"),
+        (None, Some(_)) => Some("script"),
+        _ => None,
+    };
+    let body_input = run.or(script).map(str::to_string);
+    let services_mode = if clear_services {
+        AssistSetupServicesMode::Clear
+    } else if !services.is_empty() {
+        AssistSetupServicesMode::Set(services.to_vec())
+    } else {
+        AssistSetupServicesMode::Preserve
+    };
+
+    let mut assumptions = Vec::new();
+    if existing.is_some() {
+        assumptions.push(String::from(
+            "the existing `setup` task will be refined in place",
+        ));
+    } else {
+        assumptions.push(String::from(
+            "a new `tasks.setup` declaration will be created",
+        ));
+        assumptions.push(String::from(
+            "new setup tasks default to `category: setup` and `internal: true` unless overridden",
+        ));
+    }
+    if let Some(kind) = body_input_kind {
+        assumptions.push(match kind {
+            "run" => String::from("setup will execute through a single `run` command"),
+            "script" => String::from("setup will execute through a multiline `script` body"),
+            _ => unreachable!(),
+        });
+    }
+    match &services_mode {
+        AssistSetupServicesMode::Preserve => {}
+        AssistSetupServicesMode::Set(services) => assumptions.push(format!(
+            "`setup.requires_services` will define the pre-setup service phase: {}",
+            services
+                .iter()
+                .map(|service| format!("`{service}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        AssistSetupServicesMode::Clear => assumptions.push(String::from(
+            "`setup` will no longer require any pre-setup managed services",
+        )),
+    }
+    if let Some(internal) = internal {
+        assumptions.push(format!(
+            "`tasks.setup.internal` will be set to `{internal}`"
+        ));
+    }
+
+    let mut after_mapping = before_value
+        .as_mapping()
+        .cloned()
+        .unwrap_or_else(Mapping::new);
+    let string_key = |key: &str| YamlValue::String(key.to_string());
+
+    if existing.is_none() {
+        after_mapping
+            .entry(string_key("category"))
+            .or_insert_with(|| YamlValue::String(String::from("setup")));
+        if internal.is_none() {
+            after_mapping.insert(string_key("internal"), YamlValue::Bool(true));
+        }
+    }
+
+    if let Some(run) = run {
+        after_mapping.insert(string_key("run"), YamlValue::String(run.to_string()));
+        after_mapping.remove(string_key("script"));
+    }
+    if let Some(script) = script {
+        after_mapping.insert(string_key("script"), YamlValue::String(script.to_string()));
+        after_mapping.remove(string_key("run"));
+    }
+    match &services_mode {
+        AssistSetupServicesMode::Preserve => {}
+        AssistSetupServicesMode::Set(services) => {
+            after_mapping.insert(
+                string_key("requires_services"),
+                YamlValue::Sequence(
+                    services
+                        .iter()
+                        .cloned()
+                        .map(YamlValue::String)
+                        .collect::<Vec<_>>(),
+                ),
+            );
+        }
+        AssistSetupServicesMode::Clear => {
+            after_mapping.remove(string_key("requires_services"));
+        }
+    }
+    if let Some(internal) = internal {
+        after_mapping.insert(string_key("internal"), YamlValue::Bool(internal));
+    }
+
+    let after_value = YamlValue::Mapping(after_mapping);
+    if &after_value == before_value {
+        return Err((
+            String::from("the requested setup inputs would not change `tasks.setup`"),
+            String::from("change one of the setup inputs, then rerun the assist command"),
+        ));
+    }
+
+    Ok(AssistSetupProposal {
+        assumptions,
+        before_value: before_value.clone(),
+        after_value,
+        body_input_kind,
+        body_input,
+        services_mode,
+        internal_input: internal,
+    })
 }
 
 fn build_assist_service_proposal(
@@ -5415,6 +6149,15 @@ fn compact_yaml_inline(value: &YamlValue) -> String {
         .replace('\n', " ")
 }
 
+fn get_yaml_path_value(document: &YamlValue, path: &[&str]) -> Option<YamlValue> {
+    let mut current = document;
+    for segment in path {
+        let mapping = current.as_mapping()?;
+        current = mapping.get(YamlValue::String((*segment).to_string()))?;
+    }
+    Some(current.clone())
+}
+
 fn set_yaml_path(document: &mut YamlValue, path: &[&str], value: YamlValue) {
     debug_assert!(!path.is_empty());
     let mut current = document;
@@ -5479,6 +6222,36 @@ fn assist_validation_commands(
         .collect(),
         None => vec![
             command_for_repo_contract_target("ota validate", target_contract_path),
+            command_for_repo_contract_target("ota doctor", target_contract_path),
+        ],
+    }
+}
+
+fn assist_setup_validation_commands(
+    resolved_path: &Path,
+    target_contract_path: &Path,
+    member: Option<&str>,
+) -> Vec<String> {
+    match member {
+        Some(member) => [
+            command_for_repo_from_contract_path(
+                &format!("ota validate --member {member}"),
+                resolved_path,
+            ),
+            command_for_repo_from_contract_path(
+                &format!("ota up --dry-run --member {member}"),
+                resolved_path,
+            ),
+            command_for_repo_from_contract_path(
+                &format!("ota doctor --member {member}"),
+                resolved_path,
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        None => vec![
+            command_for_repo_contract_target("ota validate", target_contract_path),
+            command_for_repo_contract_target("ota up --dry-run", target_contract_path),
             command_for_repo_contract_target("ota doctor", target_contract_path),
         ],
     }

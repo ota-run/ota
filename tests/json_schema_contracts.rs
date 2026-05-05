@@ -266,6 +266,29 @@ fn assist_declare_service_schema_covers_preview_and_failure_contract() {
 }
 
 #[test]
+fn assist_wire_setup_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-wire-setup.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("wire-setup"));
+    assert_eq!(subject["task"]["const"], json!("setup"));
+    assert!(inputs.get("run").is_some());
+    assert!(inputs.get("script").is_some());
+    assert!(inputs.get("services").is_some());
+    assert!(inputs.get("clear_services").is_some());
+    assert!(inputs.get("internal").is_some());
+    assert_eq!(change["path"]["const"], json!("tasks.setup"));
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];

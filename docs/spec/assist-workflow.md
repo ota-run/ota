@@ -56,6 +56,7 @@ The currently shipped assist operations are:
 
 - `ota assist declare-readiness`
 - `ota assist declare-service`
+- `ota assist wire-setup`
 
 It can target:
 
@@ -76,6 +77,13 @@ It can currently propose:
 - set one endpoint projection with `endpoint`, `address`, and `port`
 - set `required`
 - optionally attach structured readiness with `--style`
+
+`ota assist wire-setup` can:
+
+- create or refine `tasks.setup`
+- set the setup body through `--run` or `--script`
+- set or clear `setup.requires_services` as the pre-setup service phase for `ota up`
+- refine `tasks.setup.internal` without widening into general task authoring
 
 ## Canonical examples
 
@@ -133,6 +141,18 @@ Machine-readable preview:
 ota assist declare-readiness --task dev --json
 ```
 
+Setup wiring preview:
+
+```bash
+ota assist wire-setup --run "test -f .env.local || cp .env.example .env.local" --service postgres
+```
+
+Setup wiring apply:
+
+```bash
+ota assist wire-setup --member api --run "npm install" --service postgres --write
+```
+
 ## Task versus managed service behavior
 
 Task runtime targeting is allowed only when the task already declares a runtime service surface.
@@ -144,6 +164,21 @@ Managed service targeting is stricter:
 - if the service does not already carry structured readiness, pass `--style` explicitly
 
 This is intentional. Assist must not quietly propose an HTTP readiness path for a plain TCP service.
+
+## Setup wiring behavior
+
+`wire-setup` is intentionally narrow:
+
+- it only owns `tasks.setup`
+- it can create that task when you give an explicit `--run` or `--script`
+- it can set `setup.requires_services` to define the pre-setup service phase for `ota up`
+- it preserves unrelated existing setup fields instead of rewriting the whole task
+
+This is the current product model:
+
+- services named in `setup.requires_services` start before `setup`
+- other required managed services start after `setup`
+- `wire-setup` should help express that truth, not invent a second orchestration layer
 
 ## Monorepo member behavior
 
@@ -166,6 +201,8 @@ Assist should refuse instead of guessing when:
 - the selected listener protocol conflicts with the requested style
 - a new managed service does not declare an explicit manager kind
 - a service endpoint is ambiguous and `--endpoint` was not given
+- a new `tasks.setup` declaration is requested without an explicit `--run` or `--script` body
+- `wire-setup` names a managed service that is not already declared under `services`
 
 Refusal is part of the trust model, not a UX bug.
 

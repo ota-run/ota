@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/assist-wire-setup.json",
+  "title": "ota assist wire-setup --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "mode",
+        "operation",
+        "subject",
+        "inputs",
+        "assumptions",
+        "changes",
+        "diff",
+        "validation",
+        "next"
+      ],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "mode": { "enum": ["preview", "write"] },
+        "operation": { "const": "wire-setup" },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task"],
+          "properties": {
+            "task": { "const": "setup" }
+          }
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "run": { "type": "string" },
+            "script": { "type": "string" },
+            "services": { "type": "string" },
+            "clear_services": { "const": "true" },
+            "internal": { "enum": ["true", "false"] }
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "action", "before", "after"],
+            "properties": {
+              "path": { "const": "tasks.setup" },
+              "action": { "const": "set" },
+              "before": {},
+              "after": {}
+            }
+          }
+        },
+        "diff": { "type": "string" },
+        "validation": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "operation", "subject", "why", "next"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "operation": { "const": "wire-setup" },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task"],
+          "properties": {
+            "task": { "const": "setup" }
+          }
+        },
+        "why": { "type": "string" },
+        "next": { "type": "string" }
+      }
+    }
+  ]
+}
