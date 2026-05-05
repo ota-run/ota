@@ -94,6 +94,14 @@ pub fn load_contract_for_member(
     path: &Path,
     member: &str,
 ) -> Result<(Contract, PathBuf), LoadContractError> {
+    load_contract_for_member_with_contents(path, member, None)
+}
+
+pub fn load_contract_for_member_with_contents(
+    path: &Path,
+    member: &str,
+    member_contents_override: Option<&str>,
+) -> Result<(Contract, PathBuf), LoadContractError> {
     let root_contents = read_contract_contents(path)?;
     let mut root_value = parse_contract_value(path, &root_contents)?;
     let root_contract = parse_contract_str(path, &root_contents)?;
@@ -118,7 +126,10 @@ pub fn load_contract_for_member(
         .unwrap_or_else(|| Path::new("."))
         .join(member)
         .join("ota.yaml");
-    let member_contents = read_contract_contents(&member_path)?;
+    let member_contents = match member_contents_override {
+        Some(contents) => contents.to_string(),
+        None => read_contract_contents(&member_path)?,
+    };
     let member_value = parse_contract_value(&member_path, &member_contents)?;
 
     if member_declares_workspace(&member_value) {

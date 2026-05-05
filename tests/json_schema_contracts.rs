@@ -486,6 +486,28 @@ fn init_schema_includes_optional_next_on_failures() {
 }
 
 #[test]
+fn assist_declare_readiness_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-declare-readiness.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("declare-readiness"));
+    assert!(subject.get("task").is_some());
+    assert!(subject.get("service").is_some());
+    assert_eq!(
+        inputs["style"]["enum"],
+        json!(["spring-http", "http", "tcp"])
+    );
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-doctor.json");
     let repo = &schema["properties"]["repos"]["items"]["properties"];

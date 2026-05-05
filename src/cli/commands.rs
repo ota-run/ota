@@ -42,7 +42,7 @@ use signal_hook::flag as signal_flag;
 use time::OffsetDateTime;
 use time::macros::format_description;
 
-use super::{AnnotationFormat, AnnotationMode};
+use super::{AnnotationFormat, AnnotationMode, AssistReadinessStyleArg};
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
@@ -98,7 +98,7 @@ use crate::output::{
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
-    parse_contract_str,
+    load_contract_for_member_with_contents, parse_contract_str,
 };
 use crate::policy_pack::{
     LoadedOrgPolicyPack, load_org_policy_pack_auto, load_org_policy_pack_auto_details,
@@ -127,8 +127,10 @@ use crate::runner::{
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, ExecutionSharedBackend, ExtensionSpec,
-    Lifecycle, RequirementSurface, TaskRuntimeHostPortMode, TaskSpec, format_memory_size_bytes,
-    parse_memory_size_bytes,
+    Lifecycle, RequirementSurface, ServiceReadinessSpec, TaskRuntimeHostPortMode,
+    TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
+    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
+    TaskSpec, format_memory_size_bytes, parse_memory_size_bytes,
 };
 use crate::update;
 use crate::validator::{
@@ -3413,6 +3415,1114 @@ pub fn env(
         debug,
         debug_lines,
     )
+}
+
+#[derive(Debug, Serialize)]
+struct AssistProposalChange<'a> {
+    path: &'a str,
+    action: &'static str,
+    before: YamlValue,
+    after: YamlValue,
+}
+
+#[derive(Debug, Serialize)]
+struct AssistProposalSuccess<'a> {
+    ok: bool,
+    path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    member: Option<&'a str>,
+    mode: &'static str,
+    operation: &'static str,
+    subject: BTreeMap<&'static str, &'a str>,
+    inputs: BTreeMap<&'static str, String>,
+    assumptions: Vec<String>,
+    changes: Vec<AssistProposalChange<'a>>,
+    diff: String,
+    validation: Vec<String>,
+    next: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AssistProposalFailure<'a> {
+    ok: bool,
+    path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    member: Option<&'a str>,
+    operation: &'static str,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    subject: BTreeMap<&'static str, &'a str>,
+    why: String,
+    next: String,
+}
+
+enum ResolvedAssistReadinessTarget {
+    Task {
+        name: String,
+        listener: String,
+        existing: Option<TaskRuntimeReadinessSpec>,
+    },
+    Service {
+        name: String,
+        from: String,
+        existing: Option<ServiceReadinessSpec>,
+    },
+}
+
+pub fn assist_declare_readiness(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    task: Option<&str>,
+    service: Option<&str>,
+    style: Option<AssistReadinessStyleArg>,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=assist declare-readiness")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=assist declare-readiness"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(task) = task {
+        debug_lines.push(format!("DEBUG task={task}"));
+    }
+    if let Some(service) = service {
+        debug_lines.push(format!("DEBUG service={service}"));
+    }
+    if let Some(style) = style {
+        debug_lines.push(format!(
+            "DEBUG style={}",
+            assist_readiness_style_name(style)
+        ));
+    }
+    if write {
+        debug_lines.push(String::from("DEBUG mode=write"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "ASSIST DECLARE-READINESS",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from(
+                        "`ota assist declare-readiness` reads repo contracts such as `ota.yaml`",
+                    ),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command(
+                    "ota assist declare-readiness",
+                    &resolved_path,
+                ),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let source_contents = match fs::read_to_string(&target.contract_path) {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        let error = format!(
+                            "failed to read `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-readiness",
+                                    subject: assist_subject_map(task, service),
+                                    why: error,
+                                    next: String::from(
+                                        "repair the contract path, then rerun the assist command",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+                let mut document: YamlValue = match serde_yaml::from_str(&source_contents) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to parse `{}` for assist preview: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-readiness",
+                                    subject: assist_subject_map(task, service),
+                                    why,
+                                    next: String::from(
+                                        "repair the existing contract, then rerun the assist command",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                let proposal =
+                    match build_assist_readiness_proposal(&target.contract, task, service, style) {
+                        Ok(proposal) => proposal,
+                        Err((why, next)) => {
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(format!(
+                                    "{}\n{} {}\n{} {}",
+                                    format_command_header(
+                                        "ASSIST DECLARE-READINESS",
+                                        &text_path_display
+                                    ),
+                                    error_key("Why:"),
+                                    why,
+                                    paint_key("Next:"),
+                                    next
+                                )),
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "declare-readiness",
+                                        subject: assist_subject_map(task, service),
+                                        why,
+                                        next,
+                                    }))
+                                }
+                            };
+                        }
+                    };
+
+                let after_value = proposal.after_value.clone();
+                set_yaml_path(
+                    &mut document,
+                    &proposal
+                        .yaml_path
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
+                    after_value.clone(),
+                );
+                let yaml = match serde_yaml::to_string(&document) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        let error = format!(
+                            "failed to serialize assist proposal for `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error.clone()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-readiness",
+                                    subject: proposal.subject_json(),
+                                    why: error,
+                                    next: String::from(
+                                        "rerun the assist command after fixing the repo contract",
+                                    ),
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                if let Err(error) = validate_assist_contract_update(
+                    &resolved_path,
+                    member,
+                    &target.contract_path,
+                    &yaml,
+                ) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(error.clone()),
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&AssistProposalFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                operation: "declare-readiness",
+                                subject: proposal.subject_json(),
+                                why: error,
+                                next: String::from(
+                                    "adjust the selector or style, then rerun the assist command",
+                                ),
+                            }))
+                        }
+                    };
+                }
+
+                let validation =
+                    assist_validation_commands(&resolved_path, &target.contract_path, member);
+
+                if write {
+                    match fs::write(&target.contract_path, yaml) {
+                        Ok(()) => match format {
+                            OutputFormat::Text => {
+                                CommandOutput::success(render_assist_readiness_text(
+                                    &text_path_display,
+                                    &proposal,
+                                    "write",
+                                    &validation,
+                                    None,
+                                ))
+                            }
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&AssistProposalSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    member,
+                                    mode: "write",
+                                    operation: "declare-readiness",
+                                    subject: proposal.subject_json(),
+                                    inputs: proposal.inputs_json(),
+                                    assumptions: proposal.assumptions.clone(),
+                                    changes: vec![AssistProposalChange {
+                                        path: &proposal.change_path,
+                                        action: "set",
+                                        before: proposal.before_value.clone(),
+                                        after: after_value,
+                                    }],
+                                    diff: proposal.diff(),
+                                    validation,
+                                    next: String::from(
+                                        "rerun `ota doctor` to inspect the updated readiness contract",
+                                    ),
+                                }))
+                            }
+                        },
+                        Err(error) => {
+                            let error = format!(
+                                "failed to write `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(error.clone()),
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "declare-readiness",
+                                        subject: proposal.subject_json(),
+                                        why: error,
+                                        next: String::from(
+                                            "repair the contract path or permissions, then rerun with `--write`",
+                                        ),
+                                    }))
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let preview_target_path = if member.is_some() {
+                        &resolved_path
+                    } else {
+                        &target.contract_path
+                    };
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_assist_readiness_text(
+                            &text_path_display,
+                            &proposal,
+                            "preview",
+                            &validation,
+                            Some(&proposal.preview_next_command(member, preview_target_path)),
+                        )),
+                        OutputFormat::Json => {
+                            CommandOutput::success(to_json(&AssistProposalSuccess {
+                                ok: true,
+                                path: &path_display,
+                                member,
+                                mode: "preview",
+                                operation: "declare-readiness",
+                                subject: proposal.subject_json(),
+                                inputs: proposal.inputs_json(),
+                                assumptions: proposal.assumptions.clone(),
+                                changes: vec![AssistProposalChange {
+                                    path: &proposal.change_path,
+                                    action: "set",
+                                    before: proposal.before_value.clone(),
+                                    after: after_value,
+                                }],
+                                diff: proposal.diff(),
+                                validation,
+                                next: proposal.preview_next_command(member, preview_target_path),
+                            }))
+                        }
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ASSIST DECLARE-READINESS",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist declare-readiness",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "declare-readiness",
+                    subject: assist_subject_map(task, service),
+                    why: errors.to_string(),
+                    next: String::from(
+                        "repair the existing contract, then rerun the assist command",
+                    ),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ASSIST DECLARE-READINESS",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota assist declare-readiness",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "declare-readiness",
+                    subject: assist_subject_map(task, service),
+                    why: error.to_string(),
+                    next: String::from("repair the contract path, then rerun the assist command"),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+struct AssistReadinessProposal {
+    subject_kind: &'static str,
+    subject_name: String,
+    style: AssistReadinessStyleArg,
+    assumptions: Vec<String>,
+    change_path: String,
+    yaml_path: Vec<String>,
+    before_value: YamlValue,
+    after_value: YamlValue,
+}
+
+impl AssistReadinessProposal {
+    fn subject_json(&self) -> BTreeMap<&'static str, &str> {
+        let mut subject = BTreeMap::new();
+        subject.insert(self.subject_kind, self.subject_name.as_str());
+        subject
+    }
+
+    fn inputs_json(&self) -> BTreeMap<&'static str, String> {
+        let mut inputs = BTreeMap::new();
+        inputs.insert("style", assist_readiness_style_name(self.style).to_string());
+        inputs
+    }
+
+    fn diff(&self) -> String {
+        format!(
+            "{}\n- {}\n+ {}",
+            self.change_path,
+            compact_yaml_inline(&self.before_value),
+            compact_yaml_inline(&self.after_value)
+        )
+    }
+
+    fn preview_next_command(&self, member: Option<&str>, contract_path: &Path) -> String {
+        let mut command = String::from("ota assist declare-readiness");
+        if let Some(member) = member {
+            command.push_str(&format!(" --member {member}"));
+        }
+        command.push_str(&format!(" --{} {}", self.subject_kind, self.subject_name));
+        command.push_str(&format!(
+            " --style {} --write",
+            assist_readiness_style_name(self.style)
+        ));
+        let command = command_for_repo_from_contract_path(&command, contract_path);
+        format!("rerun with `{command}` to apply this readiness change")
+    }
+}
+
+fn is_http_readiness_style(style: AssistReadinessStyleArg) -> bool {
+    matches!(
+        style,
+        AssistReadinessStyleArg::SpringHttp | AssistReadinessStyleArg::Http
+    )
+}
+
+fn assist_subject_map<'a>(
+    task: Option<&'a str>,
+    service: Option<&'a str>,
+) -> BTreeMap<&'static str, &'a str> {
+    let mut subject = BTreeMap::new();
+    if let Some(task) = task {
+        subject.insert("task", task);
+    }
+    if let Some(service) = service {
+        subject.insert("service", service);
+    }
+    subject
+}
+
+fn assist_readiness_style_name(style: AssistReadinessStyleArg) -> &'static str {
+    match style {
+        AssistReadinessStyleArg::SpringHttp => "spring-http",
+        AssistReadinessStyleArg::Http => "http",
+        AssistReadinessStyleArg::Tcp => "tcp",
+    }
+}
+
+fn render_assist_readiness_text(
+    path: &str,
+    proposal: &AssistReadinessProposal,
+    mode: &str,
+    validation: &[String],
+    preview_next: Option<&str>,
+) -> String {
+    let mut output = format_command_header("ASSIST DECLARE-READINESS", path);
+    output.push_str(&format!("\n\n{} {}", mode_icon(), paint_key("Mode:")));
+    output.push_str(&format!(
+        " {}",
+        if mode == "write" { "write" } else { "preview" }
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Subject:"),
+        paint_named_drift_label(
+            if proposal.subject_kind == "service" {
+                "Service"
+            } else {
+                "Task"
+            },
+            &proposal.subject_name,
+        )
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Style:"),
+        assist_readiness_style_name(proposal.style)
+    ));
+    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    for assumption in &proposal.assumptions {
+        output.push_str(&format!("\n{} {}", info_bullet(), assumption));
+    }
+    if !proposal.before_value.is_null() {
+        output.push_str(&format!(
+            "\n\n{}:",
+            paint_section_title("Current readiness")
+        ));
+        output.push_str(&format!(
+            "\n{} {}",
+            info_bullet(),
+            paint_backticked_code(&proposal.change_path)
+        ));
+        let before_yaml =
+            serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+        output.push_str(&format!(
+            "\n{}",
+            stylize_yaml_preview(before_yaml.trim_end())
+        ));
+    }
+    output.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Proposed readiness")
+    ));
+    output.push_str(&format!(
+        "\n{} {}",
+        info_bullet(),
+        paint_backticked_code(&proposal.change_path)
+    ));
+    let after_yaml =
+        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!(
+        "\n{}",
+        stylize_yaml_preview(after_yaml.trim_end())
+    ));
+    output.push_str(&format_next_timeline(
+        &validation
+            .iter()
+            .map(|command| format!("run `{}`", command))
+            .collect::<Vec<_>>(),
+    ));
+    if mode == "preview" {
+        if let Some(preview_next) = preview_next {
+            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+        }
+    } else {
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!("applied {}", paint_backticked_code(&proposal.change_path))
+        ));
+    }
+    output
+}
+
+fn build_assist_readiness_proposal(
+    contract: &Contract,
+    task: Option<&str>,
+    service: Option<&str>,
+    requested_style: Option<AssistReadinessStyleArg>,
+) -> Result<AssistReadinessProposal, (String, String)> {
+    match (task, service) {
+        (Some(_), Some(_)) => {
+            return Err((
+                String::from("select either `--task` or `--service`, not both"),
+                String::from(
+                    "rerun `ota assist declare-readiness` with exactly one target selector",
+                ),
+            ));
+        }
+        (None, None) => {
+            return Err((
+                String::from("one target selector is required"),
+                String::from("rerun with `--task <name>` or `--service <name>`"),
+            ));
+        }
+        _ => {}
+    }
+
+    match resolve_assist_readiness_target(contract, task, service, requested_style) {
+        Ok(ResolvedAssistReadinessTarget::Task {
+            name,
+            listener,
+            existing,
+        }) => {
+            let style = resolve_assist_style_for_task(contract, &name, &listener, requested_style)?;
+            let after = match style {
+                AssistReadinessStyleArg::SpringHttp => TaskRuntimeReadinessSpec {
+                    kind: TaskRuntimeReadinessKind::Http,
+                    listener: Some(listener.clone()),
+                    method: Some(TaskRuntimeReadinessHttpMethod::Get),
+                    path: Some(String::from("/actuator/health")),
+                    headers: BTreeMap::from([(
+                        String::from("Accept"),
+                        String::from("application/json"),
+                    )]),
+                    success: Some(TaskRuntimeReadinessHttpSuccessSpec { status: vec![200] }),
+                    body: Some(TaskRuntimeReadinessHttpBodySpec {
+                        contains: String::from("\"status\":\"UP\""),
+                    }),
+                    interval: Some(String::from("5s")),
+                    timeout: Some(String::from("3s")),
+                    retries: Some(5),
+                    start_period: Some(String::from("10s")),
+                },
+                AssistReadinessStyleArg::Http => TaskRuntimeReadinessSpec {
+                    kind: TaskRuntimeReadinessKind::Http,
+                    listener: Some(listener.clone()),
+                    method: Some(TaskRuntimeReadinessHttpMethod::Get),
+                    path: Some(String::from("/health")),
+                    headers: BTreeMap::new(),
+                    success: Some(TaskRuntimeReadinessHttpSuccessSpec { status: vec![200] }),
+                    body: None,
+                    interval: Some(String::from("5s")),
+                    timeout: Some(String::from("3s")),
+                    retries: Some(5),
+                    start_period: Some(String::from("10s")),
+                },
+                AssistReadinessStyleArg::Tcp => TaskRuntimeReadinessSpec {
+                    kind: TaskRuntimeReadinessKind::Tcp,
+                    listener: Some(listener.clone()),
+                    method: None,
+                    path: None,
+                    headers: BTreeMap::new(),
+                    success: None,
+                    body: None,
+                    interval: Some(String::from("5s")),
+                    timeout: Some(String::from("3s")),
+                    retries: Some(5),
+                    start_period: Some(String::from("10s")),
+                },
+            };
+            let before_value = existing
+                .as_ref()
+                .map(serde_yaml::to_value)
+                .transpose()
+                .map_err(|error| {
+                    (
+                        format!("failed to capture existing readiness for preview: {error}"),
+                        String::from("rerun the assist command after repairing the contract"),
+                    )
+                })?
+                .unwrap_or(YamlValue::Null);
+            let after_value = serde_yaml::to_value(&after).map_err(|error| {
+                (
+                    format!("failed to build readiness proposal: {error}"),
+                    String::from("rerun the assist command after repairing the contract"),
+                )
+            })?;
+            Ok(AssistReadinessProposal {
+                subject_kind: "task",
+                subject_name: name.clone(),
+                style,
+                assumptions: vec![
+                    format!("task `{name}` already declares a service runtime"),
+                    format!("listener `{listener}` is the readiness surface"),
+                ],
+                change_path: format!("tasks.{name}.runtime.readiness"),
+                yaml_path: vec![
+                    String::from("tasks"),
+                    name,
+                    String::from("runtime"),
+                    String::from("readiness"),
+                ],
+                before_value,
+                after_value,
+            })
+        }
+        Ok(ResolvedAssistReadinessTarget::Service {
+            name,
+            from,
+            existing,
+        }) => {
+            let style = resolve_assist_style_for_service(existing.as_ref(), requested_style)?;
+            let after = match style {
+                AssistReadinessStyleArg::SpringHttp => ServiceReadinessSpec {
+                    from: Some(from.clone()),
+                    run: None,
+                    kind: Some(TaskRuntimeReadinessKind::Http),
+                    method: Some(TaskRuntimeReadinessHttpMethod::Get),
+                    path: Some(String::from("/actuator/health")),
+                    headers: BTreeMap::from([(
+                        String::from("Accept"),
+                        String::from("application/json"),
+                    )]),
+                    success: Some(TaskRuntimeReadinessHttpSuccessSpec { status: vec![200] }),
+                    body: Some(TaskRuntimeReadinessHttpBodySpec {
+                        contains: String::from("\"status\":\"UP\""),
+                    }),
+                    interval: Some(String::from("5s")),
+                    timeout: Some(String::from("3s")),
+                    retries: Some(5),
+                    start_period: Some(String::from("10s")),
+                },
+                AssistReadinessStyleArg::Http => ServiceReadinessSpec {
+                    from: Some(from.clone()),
+                    run: None,
+                    kind: Some(TaskRuntimeReadinessKind::Http),
+                    method: Some(TaskRuntimeReadinessHttpMethod::Get),
+                    path: Some(String::from("/health")),
+                    headers: BTreeMap::new(),
+                    success: Some(TaskRuntimeReadinessHttpSuccessSpec { status: vec![200] }),
+                    body: None,
+                    interval: Some(String::from("5s")),
+                    timeout: Some(String::from("3s")),
+                    retries: Some(5),
+                    start_period: Some(String::from("10s")),
+                },
+                AssistReadinessStyleArg::Tcp => ServiceReadinessSpec {
+                    from: Some(from.clone()),
+                    run: None,
+                    kind: Some(TaskRuntimeReadinessKind::Tcp),
+                    method: None,
+                    path: None,
+                    headers: BTreeMap::new(),
+                    success: None,
+                    body: None,
+                    interval: Some(String::from("5s")),
+                    timeout: Some(String::from("3s")),
+                    retries: Some(5),
+                    start_period: Some(String::from("10s")),
+                },
+            };
+            let before_value = existing
+                .as_ref()
+                .map(serde_yaml::to_value)
+                .transpose()
+                .map_err(|error| {
+                    (
+                        format!(
+                            "failed to capture existing service readiness for preview: {error}"
+                        ),
+                        String::from("rerun the assist command after repairing the contract"),
+                    )
+                })?
+                .unwrap_or(YamlValue::Null);
+            let after_value = serde_yaml::to_value(&after).map_err(|error| {
+                (
+                    format!("failed to build service readiness proposal: {error}"),
+                    String::from("rerun the assist command after repairing the contract"),
+                )
+            })?;
+            Ok(AssistReadinessProposal {
+                subject_kind: "service",
+                subject_name: name.clone(),
+                style,
+                assumptions: vec![
+                    format!("service `{name}` already declares endpoint `{from}`"),
+                    format!("structured readiness should anchor to endpoint `{from}`"),
+                ],
+                change_path: format!("services.{name}.readiness"),
+                yaml_path: vec![String::from("services"), name, String::from("readiness")],
+                before_value,
+                after_value,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn resolve_assist_style_for_task(
+    contract: &Contract,
+    task: &str,
+    listener_name: &str,
+    requested_style: Option<AssistReadinessStyleArg>,
+) -> Result<AssistReadinessStyleArg, (String, String)> {
+    let runtime = contract
+        .tasks
+        .get(task)
+        .and_then(|task| task.runtime.as_ref())
+        .ok_or_else(|| {
+            (
+                format!("task `{task}` does not declare a runtime service"),
+                String::from(
+                    "declare `tasks.<name>.runtime` first, then rerun this assist command",
+                ),
+            )
+        })?;
+
+    let listener = runtime.listeners.get(listener_name).ok_or_else(|| {
+        (
+            format!(
+                "task `{task}` readiness target `{listener_name}` is no longer a declared listener"
+            ),
+            String::from("repair the runtime listener declaration, then rerun this assist command"),
+        )
+    })?;
+    let inferred = match listener.protocol {
+        TaskRuntimeProtocol::Tcp => AssistReadinessStyleArg::Tcp,
+        TaskRuntimeProtocol::Http | TaskRuntimeProtocol::Https => AssistReadinessStyleArg::Http,
+    };
+
+    if let Some(style) = requested_style {
+        let requested_http = is_http_readiness_style(style);
+        let listener_http = is_http_readiness_style(inferred);
+        if requested_http != listener_http {
+            return Err((
+                format!(
+                    "task `{task}` readiness listener `{listener_name}` uses `protocol: {}`, so `--style {}` does not fit that listener",
+                    match listener.protocol {
+                        TaskRuntimeProtocol::Http => "http",
+                        TaskRuntimeProtocol::Https => "https",
+                        TaskRuntimeProtocol::Tcp => "tcp",
+                    },
+                    assist_readiness_style_name(style)
+                ),
+                String::from(
+                    "rerun with a style that matches the selected listener protocol, or change `runtime.readiness.listener` first",
+                ),
+            ));
+        }
+        return Ok(style);
+    }
+
+    Ok(inferred)
+}
+
+fn resolve_assist_style_for_service(
+    existing: Option<&ServiceReadinessSpec>,
+    requested_style: Option<AssistReadinessStyleArg>,
+) -> Result<AssistReadinessStyleArg, (String, String)> {
+    if let Some(style) = requested_style {
+        return Ok(style);
+    }
+
+    match existing.and_then(ServiceReadinessSpec::structured_kind) {
+        Some(TaskRuntimeReadinessKind::Tcp) => Ok(AssistReadinessStyleArg::Tcp),
+        Some(TaskRuntimeReadinessKind::Http) => Ok(AssistReadinessStyleArg::Http),
+        None => Err((
+            String::from(
+                "managed service readiness style is ambiguous without an explicit `--style`",
+            ),
+            String::from(
+                "rerun with `--style tcp` for raw port checks or `--style http` / `spring-http` for HTTP health endpoints",
+            ),
+        )),
+    }
+}
+
+fn resolve_assist_readiness_target(
+    contract: &Contract,
+    task: Option<&str>,
+    service: Option<&str>,
+    requested_style: Option<AssistReadinessStyleArg>,
+) -> Result<ResolvedAssistReadinessTarget, (String, String)> {
+    if let Some(task) = task {
+        let task_spec = contract.tasks.get(task).ok_or_else(|| {
+            (
+                format!("unknown task `{task}`"),
+                String::from("run `ota tasks --use` to inspect runnable task usage"),
+            )
+        })?;
+        let runtime = task_spec.runtime.as_ref().ok_or_else(|| {
+            (
+                format!("task `{task}` does not declare `runtime`"),
+                String::from(
+                    "declare a task runtime service first, then rerun this assist command",
+                ),
+            )
+        })?;
+        let listener = select_assist_task_listener(task, runtime, requested_style)?;
+        return Ok(ResolvedAssistReadinessTarget::Task {
+            name: task.to_string(),
+            listener,
+            existing: runtime.readiness.clone(),
+        });
+    }
+
+    let service = service.expect("service target required when task is absent");
+    let spec = contract.services.get(service).ok_or_else(|| {
+        (
+            format!("unknown service `{service}`"),
+            String::from("run `ota services` to inspect declared managed services"),
+        )
+    })?;
+    let from = if let Some(existing) = spec
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.from.clone())
+    {
+        existing
+    } else if spec.endpoints.contains_key("host") {
+        String::from("host")
+    } else if spec.endpoints.len() == 1 {
+        spec.endpoints
+            .keys()
+            .next()
+            .cloned()
+            .expect("single endpoint")
+    } else {
+        return Err((
+            format!(
+                "service `{service}` has multiple endpoints; assist cannot pick readiness.from safely"
+            ),
+            String::from(
+                "declare `readiness.from` manually or reduce the endpoint choice before rerunning",
+            ),
+        ));
+    };
+    Ok(ResolvedAssistReadinessTarget::Service {
+        name: service.to_string(),
+        from,
+        existing: spec.readiness.clone(),
+    })
+}
+
+fn select_assist_task_listener(
+    task: &str,
+    runtime: &crate::schema::TaskRuntimeSpec,
+    requested_style: Option<AssistReadinessStyleArg>,
+) -> Result<String, (String, String)> {
+    if let Some(existing) = runtime
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.listener.clone())
+    {
+        return Ok(existing);
+    }
+
+    let desired_http = matches!(
+        requested_style,
+        Some(AssistReadinessStyleArg::SpringHttp | AssistReadinessStyleArg::Http)
+    );
+    let desired_tcp = matches!(requested_style, Some(AssistReadinessStyleArg::Tcp));
+
+    if let Some(listener) = runtime.listeners.get("http") {
+        if !desired_tcp
+            && matches!(
+                listener.protocol,
+                TaskRuntimeProtocol::Http | TaskRuntimeProtocol::Https
+            )
+        {
+            return Ok(String::from("http"));
+        }
+    }
+
+    let matching = runtime
+        .listeners
+        .iter()
+        .filter(|(_, listener)| {
+            if desired_http {
+                matches!(
+                    listener.protocol,
+                    TaskRuntimeProtocol::Http | TaskRuntimeProtocol::Https
+                )
+            } else if desired_tcp {
+                matches!(listener.protocol, TaskRuntimeProtocol::Tcp)
+            } else {
+                true
+            }
+        })
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+
+    if matching.len() == 1 {
+        return Ok(matching[0].clone());
+    }
+
+    Err((
+        format!("task `{task}` does not expose one unambiguous listener for readiness declaration"),
+        String::from(
+            "declare `runtime.readiness.listener` manually or rerun with a narrower style",
+        ),
+    ))
+}
+
+fn compact_yaml_inline(value: &YamlValue) -> String {
+    if value.is_null() {
+        return String::from("<absent>");
+    }
+
+    serde_yaml::to_string(value)
+        .unwrap_or_else(|_| String::from("<unavailable>"))
+        .trim()
+        .replace('\n', " ")
+}
+
+fn set_yaml_path(document: &mut YamlValue, path: &[&str], value: YamlValue) {
+    debug_assert!(!path.is_empty());
+    let mut current = document;
+    for segment in &path[..path.len() - 1] {
+        if !matches!(current, YamlValue::Mapping(_)) {
+            *current = YamlValue::Mapping(Mapping::new());
+        }
+        let mapping = current.as_mapping_mut().expect("mapping");
+        current = mapping
+            .entry(YamlValue::String((*segment).to_string()))
+            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
+    }
+    if !matches!(current, YamlValue::Mapping(_)) {
+        *current = YamlValue::Mapping(Mapping::new());
+    }
+    current
+        .as_mapping_mut()
+        .expect("mapping")
+        .insert(YamlValue::String(path[path.len() - 1].to_string()), value);
+}
+
+fn validate_assist_contract_update(
+    resolved_path: &Path,
+    member: Option<&str>,
+    target_contract_path: &Path,
+    yaml: &str,
+) -> Result<(), String> {
+    match member {
+        Some(member) => load_contract_for_member_with_contents(resolved_path, member, Some(yaml))
+            .map(|(contract, _)| contract)
+            .map_err(|error| error.to_string())
+            .and_then(|contract| {
+                validate_contract_with_path(&contract, Some(target_contract_path))
+                    .map_err(|error| error.to_string())
+            }),
+        None => parse_contract_str(target_contract_path, yaml)
+            .map_err(|error| error.to_string())
+            .and_then(|contract| {
+                validate_contract_with_path(&contract, Some(target_contract_path))
+                    .map_err(|error| error.to_string())
+            }),
+    }
+}
+
+fn assist_validation_commands(
+    resolved_path: &Path,
+    target_contract_path: &Path,
+    member: Option<&str>,
+) -> Vec<String> {
+    match member {
+        Some(member) => [
+            command_for_repo_from_contract_path(
+                &format!("ota validate --member {member}"),
+                resolved_path,
+            ),
+            command_for_repo_from_contract_path(
+                &format!("ota doctor --member {member}"),
+                resolved_path,
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        None => vec![
+            command_for_repo_contract_target("ota validate", target_contract_path),
+            command_for_repo_contract_target("ota doctor", target_contract_path),
+        ],
+    }
 }
 
 fn build_env_report(

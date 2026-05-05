@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added the first shipped `ota assist` operation with `ota assist declare-readiness`: it previews or applies deterministic readiness declarations for existing task runtime services and top-level managed services, supports monorepo `--member` targeting, emits a stable proposal/apply JSON shape, and validates writes through the same contract rules as the rest of Ota
 - added `docs/spec/assist-operations.md` to formalize the long-term `ota assist` direction as a deterministic contract-operation surface with a stable command catalog, stable preview/apply proposal model, explicit AI boundary, and canonical first implementation order
 - expanded the maintainer version bump scripts so one bump now updates `Cargo.toml`, rolls `CHANGELOG.md` from `Unreleased` into the requested version heading, and repins the readiness workflow's `ota-version` consistently
 - tightened the adoption path around Ota's own dogfood and first-run UX: the readiness workflow now pins `1.6.7`, root help now emphasizes `doctor -> detect/init -> explain -> up -> run`, `doctor --fix` explicitly presents its current repo-hygiene-only scope, and the repo's own contract now avoids warning-producing install drift and execution-only ephemeral lifecycle advice during self-hosted readiness checks

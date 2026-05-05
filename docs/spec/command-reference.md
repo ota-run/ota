@@ -80,6 +80,7 @@ ota currently ships these commands:
 - `ota env`
 - `ota execution plan`
 - `ota execution topology`
+- `ota assist declare-readiness`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -441,6 +442,33 @@ JSON output:
 - task runtime entries may include `backend_binding`, `readiness`, and `listeners`
 - task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
+
+## `ota assist declare-readiness`
+
+Declare or refine structured readiness for one existing task runtime service or one existing managed
+service.
+
+```bash
+ota assist declare-readiness --task <name> [--style spring-http|http|tcp] [PATH]
+ota assist declare-readiness --service <name> [--style spring-http|http|tcp] [PATH]
+ota assist declare-readiness --member api --task <name> [PATH]
+ota assist declare-readiness --json --task <name> [PATH]
+ota assist declare-readiness --write --task <name> [PATH]
+```
+
+Use it when the runtime surface already exists and you want Ota to propose the readiness contract
+instead of hand-authoring it.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact readiness block, and the next validation commands
+- `--write` applies the proposed readiness mutation and revalidates the updated contract before returning success
+- supports `--task` for `tasks.<name>.runtime.readiness`
+- supports `--service` for `services.<name>.readiness`
+- supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
+- supports `spring-http`, `http`, and `tcp` styles
+- refuses when the target is ambiguous, unknown, or missing the runtime/service surface needed for a truthful readiness declaration
+- `--json` emits the stable assist proposal/apply result shape described in [assist-operations.md](assist-operations.md)
 
 ## `ota diff`
 
