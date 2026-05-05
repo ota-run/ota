@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- added `docs/spec/assist-operations.md` to formalize the long-term `ota assist` direction as a deterministic contract-operation surface with a stable command catalog, stable preview/apply proposal model, explicit AI boundary, and canonical first implementation order
+
 ## 1.6.7
 
 - expanded structured readiness across both task runtime services and top-level managed services: repos can now declare HTTP/TCP readiness with probe `method`, request `headers`, accepted `success.status` codes, a required `body.contains` substring, and timing controls (`interval`, `timeout`, `retries`, `start_period`); validation, doctor/runtime probing, topology/output summaries, and canonical docs/examples now follow the same richer readiness contract while legacy top-level `readiness.run` remains supported, and omitted `retries` now means ota keeps waiting by default on both surfaces instead of doing a shallow one-shot service probe
