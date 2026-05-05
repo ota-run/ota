@@ -34636,6 +34636,47 @@ services:
     }
 
     #[test]
+    fn assist_declare_service_preview_hides_null_only_fields() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "api",
+            "--manager",
+            "compose",
+            "--compose-file",
+            "docker-compose.yml",
+            "--port",
+            "3000",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(!stdout.contains("provider: null"));
+        assert!(!stdout.contains("start: null"));
+        assert!(!stdout.contains("stop: null"));
+        assert!(!stdout.contains("healthcheck: null"));
+        assert!(!stdout.contains("timeout: null"));
+    }
+
+    #[test]
     fn assist_wire_setup_previews_new_setup_with_pre_setup_services() {
         let fixture = ContractFixture::new(
             r#"
@@ -35608,6 +35649,62 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("ota up --dry-run"));
         assert!(!stdout.contains("ota tasks"));
+    }
+
+    #[test]
+    fn assist_add_task_preview_separates_validation_from_apply() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Validate:"));
+        assert!(stdout.contains("Apply:"));
+        assert_eq!(stdout.matches("Next:").count(), 0);
+    }
+
+    #[test]
+    fn assist_add_task_preview_uses_clean_relative_contract_path() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            "ota.yaml",
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST ADD-TASK ./ota.yaml"));
+        assert!(!stdout.contains(".//"));
     }
 
     #[test]
