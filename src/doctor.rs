@@ -2062,7 +2062,7 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
             "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
         ),
         next: String::from(
-            "run `ota assist add-task --name dev --kind command` to add a runnable task, or run `ota detect --dry-run` and `ota detect --write` to regenerate",
+            "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task",
         ),
     });
 }
@@ -8094,7 +8094,7 @@ project:
         assert_eq!(report.findings[0].summary, "No tasks defined in contract");
         assert_eq!(
             report.findings[0].next,
-            "run `ota assist add-task --name dev --kind command` to add a runnable task, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+            "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
         );
     }
 

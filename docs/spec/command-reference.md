@@ -1054,6 +1054,7 @@ ota doctor --member api --member web --json [PATH]
 - environment blockers now point through `ota env` first so operators can inspect precedence before changing shell values, policy env, or declared sources
 - unverifiable required services now route into `ota assist declare-readiness` when only the probe is missing, or `ota assist declare-service` when the managed service shape itself still lacks a start path
 - missing-file precondition failures now point to `ota up` / `ota run setup` when `tasks.setup` already exists, or to `ota assist wire-setup` when the repo still needs a contract-first setup path
+- when a contract has no tasks, doctor now keeps that path preview-first too: it suggests `ota detect --dry-run` before any detect write, while still offering `ota assist add-task` when the right fix is clearly one explicit task
 - checks configured env requirements, declared checks, and service healthchecks in native mode
 - checks required execution backends for the selected `--mode` and resolved contexts
 - `--mode native` diagnoses host/native readiness; `--mode container` diagnoses selected container context requirements

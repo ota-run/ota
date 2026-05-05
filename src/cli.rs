@@ -8639,7 +8639,7 @@ project:
                         "severity": "error",
                         "summary": "No tasks defined in contract",
                         "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
-                        "next": "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+                        "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
                     }
                 ]
             }))
@@ -8810,7 +8810,7 @@ project:
                         "severity": "error",
                         "summary": "No tasks defined in contract",
                         "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
-                        "next": "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+                        "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
                     }
                 ]
             }))
@@ -9086,7 +9086,7 @@ project:
                         "severity": "error",
                         "summary": "No tasks defined in contract",
                         "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
-                        "next": "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+                        "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
                     }
                 ]
             }))
@@ -14604,7 +14604,7 @@ agent:
         );
         assert_eq!(
             doctor_json["finding_groups"][0]["action_next"],
-            "set the listed environment variables, then rerun `ota doctor`"
+            "run `ota env` to inspect the current precedence, set the listed environment variables, then rerun `ota doctor`"
         );
         assert_eq!(doctor_json["execution"]["preferred"], "native");
         assert_eq!(doctor_json["execution"]["env"][0]["name"], "FOO");
