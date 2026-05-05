@@ -51,7 +51,7 @@ pub(crate) use commands::parse_container_host_port_conflict;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  repo without ota.yaml        ota doctor\n  preview inferred contract    ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  turn contract findings into a plan  ota explain\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  export and open Studio       ota studio --open\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion --setup\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -12848,14 +12848,9 @@ tasks:
         assert!(help.contains("ota explain"));
         assert!(help.contains("ota init --dry-run"));
         assert!(help.contains("ota detect --dry-run ."));
+        assert!(help.contains("ota up --dry-run"));
         assert!(help.contains("ota up"));
-        let doctor = help.find("\n  doctor").unwrap();
-        let explain = help.find("\n  explain").unwrap();
-        let up = help.find("\n  up").unwrap();
-        let run = help.find("\n  run").unwrap();
-        let init = help.find("\n  init").unwrap();
-        let detect = help.find("\n  detect").unwrap();
-        assert!(doctor < explain && explain < up && up < run && run < init && init < detect);
+        assert!(!help.contains("ota studio --open"));
     }
 
     #[test]

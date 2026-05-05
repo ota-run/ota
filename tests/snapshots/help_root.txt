@@ -42,26 +42,21 @@ Options:
   -V, --version      Print version
 
 
-Choose a flow:
-  existing repo with ota.yaml  ota doctor
-  repo without ota.yaml        ota doctor
+Start here:
+  diagnose repo readiness      ota doctor
   preview inferred contract    ota detect --dry-run .
   review a starter contract    ota init --dry-run
-  turn contract findings into a plan  ota explain
+  explain current blockers     ota explain
+  preview repo preparation     ota up --dry-run
+  prepare the repo             ota up
+  inspect runnable tasks       ota tasks --use
+  run a declared task          ota run ci
+
+More:
   inspect execution choice     ota execution plan
   inspect declared topology    ota execution topology
-  export and open Studio       ota studio --open
-  prepare the repo             ota up
   inspect env requirements     ota env
-  scaffold org policy          ota policy init --dry-run
   review policy boundary       ota policy review
   generate agent guidance      ota agents
-  list runnable tasks          ota tasks --use
-  run a declared task          ota run ci
+  workspace readiness          ota workspace doctor .
   enable shell completion      ota completion --setup
-
-Workspace:
-  inspect readiness            ota workspace doctor .
-  inspect execution choice     ota workspace execution plan .
-  explain blockers             ota workspace explain .
-  prepare the workspace        ota workspace up
