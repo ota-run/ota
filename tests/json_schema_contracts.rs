@@ -343,6 +343,32 @@ fn assist_declare_env_schema_covers_preview_and_failure_contract() {
 }
 
 #[test]
+fn assist_add_task_schema_covers_preview_and_failure_contract() {
+    let schema = load_schema("docs/spec/json-schemas/assist-add-task.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let subject = &success["subject"]["properties"];
+    let inputs = &success["inputs"]["properties"];
+    let change = &success["changes"]["items"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["enum"], json!(["preview", "write"]));
+    assert_eq!(success["operation"]["const"], json!("add-task"));
+    assert!(subject.get("task").is_some());
+    assert!(inputs.get("kind").is_some());
+    assert!(inputs.get("run").is_some());
+    assert!(inputs.get("script").is_some());
+    assert!(inputs.get("description").is_some());
+    assert!(inputs.get("internal").is_some());
+    assert!(inputs.get("listener").is_some());
+    assert!(inputs.get("protocol").is_some());
+    assert!(inputs.get("address").is_some());
+    assert!(inputs.get("port").is_some());
+    assert_eq!(change["action"]["const"], json!("set"));
+    assert!(failure.get("why").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];

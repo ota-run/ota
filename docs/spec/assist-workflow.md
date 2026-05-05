@@ -58,6 +58,7 @@ The currently shipped assist operations are:
 - `ota assist declare-service`
 - `ota assist bind-task`
 - `ota assist declare-env`
+- `ota assist add-task`
 - `ota assist wire-setup`
 
 It can target:
@@ -86,6 +87,13 @@ It can currently propose:
 - set the setup body through `--run` or `--script`
 - set or clear `setup.requires_services` as the pre-setup service phase for `ota up`
 - refine `tasks.setup.internal` without widening into general task authoring
+
+`ota assist add-task` can:
+
+- create one new `tasks.<name>` entry
+- set one explicit `run` or `script` body, or the bounded `echo sandbox` starter body for sandbox tasks
+- create `command`, `service`, `setup`, `check`, or `sandbox` task starters
+- create one fixed service listener and matching fixed host projection when `--kind service` is explicit
 
 ## Canonical examples
 
@@ -167,6 +175,24 @@ Task-local env write:
 ota assist declare-env --task smoke --name API_BASE --value http://127.0.0.1:3000 --write
 ```
 
+New command task:
+
+```bash
+ota assist add-task --name smoke --run "cargo test"
+```
+
+New service task:
+
+```bash
+ota assist add-task --name dev --kind service --run "npm run dev" --listener http --protocol http --port 3000 --json
+```
+
+Member-scoped task creation:
+
+```bash
+ota assist add-task --member api --name smoke --run "npm test" --write
+```
+
 Monorepo member write:
 
 ```bash
@@ -239,6 +265,24 @@ It intentionally does not yet:
 - perform broad env normalization across many vars at once
 - widen task-local env into a second root env requirement model
 
+## Task creation behavior
+
+`add-task` is the current assist slice for one new task declaration at a time.
+
+It currently:
+
+- creates only new tasks and refuses when the selected task name already exists in the effective contract
+- requires explicit `--run` or `--script` for every kind except `sandbox`
+- scopes `setup` to the canonical `tasks.setup` entry and defaults `internal: true` when you do not override it
+- requires `--listener`, `--protocol`, and `--port` for `service`, then declares one fixed listener and matching fixed host projection
+- leaves readiness, env, targets, and broader orchestration to the other assist slices instead of guessing them here
+
+It intentionally does not yet:
+
+- refine or replace an existing task body
+- declare service-task readiness inline
+- infer a repo-specific execution body when the user did not supply one
+
 ## Setup wiring behavior
 
 `wire-setup` is intentionally narrow:
@@ -280,6 +324,9 @@ Assist should refuse instead of guessing when:
 - a task-local env declaration is missing its explicit `--value`
 - a root env declaration tries to use `prepend` or `append` on a non-`PATH` key
 - a root env declaration combines `secret: true` with a new default value
+- a new task name already exists in the effective contract
+- a `service` task request is missing `--listener`, `--protocol`, or `--port`
+- a `setup` task request does not target `--name setup`
 - a new `tasks.setup` declaration is requested without an explicit `--run` or `--script` body
 - `wire-setup` names a managed service that is not already declared under `services`
 
