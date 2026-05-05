@@ -44,7 +44,8 @@ use time::macros::format_description;
 
 use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistReadinessStyleArg,
-    AssistServiceManagerArg, AssistTaskTargetActivationModeArg, AssistTaskTargetAddressViewArg,
+    AssistServiceManagerArg, AssistTaskKindArg, AssistTaskListenerProtocolArg,
+    AssistTaskTargetActivationModeArg, AssistTaskTargetAddressViewArg,
 };
 use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
@@ -131,11 +132,13 @@ use crate::runner::{
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
     ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
-    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec,
-    TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    format_memory_size_bytes,
+    TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
+    TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
+    TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
+    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, format_memory_size_bytes,
     parse_memory_size_bytes,
 };
 use crate::update;
@@ -4181,6 +4184,96 @@ impl AssistBindTaskProposal {
     }
 }
 
+struct AssistAddTaskProposal {
+    name: String,
+    kind: AssistTaskKindArg,
+    execution_kind: &'static str,
+    execution_body: String,
+    description: Option<String>,
+    internal: bool,
+    listener: Option<String>,
+    protocol: Option<TaskRuntimeProtocol>,
+    address: Option<String>,
+    port: Option<u16>,
+    assumptions: Vec<String>,
+    after_value: YamlValue,
+}
+
+impl AssistAddTaskProposal {
+    fn subject_json(&self) -> BTreeMap<&'static str, &str> {
+        let mut subject = BTreeMap::new();
+        subject.insert("task", self.name.as_str());
+        subject
+    }
+
+    fn inputs_json(&self) -> BTreeMap<&'static str, String> {
+        let mut inputs = BTreeMap::new();
+        inputs.insert("kind", assist_task_kind_name(self.kind).to_string());
+        inputs.insert(self.execution_kind, self.execution_body.clone());
+        if let Some(description) = &self.description {
+            inputs.insert("description", description.clone());
+        }
+        inputs.insert("internal", self.internal.to_string());
+        if let Some(listener) = &self.listener {
+            inputs.insert("listener", listener.clone());
+        }
+        if let Some(protocol) = self.protocol {
+            inputs.insert("protocol", assist_task_listener_protocol_name(protocol).to_string());
+        }
+        if let Some(address) = &self.address {
+            inputs.insert("address", address.clone());
+        }
+        if let Some(port) = self.port {
+            inputs.insert("port", port.to_string());
+        }
+        inputs
+    }
+
+    fn diff(&self) -> String {
+        format!(
+            "tasks.{}\n- null\n+ {}",
+            self.name,
+            compact_yaml_inline(&self.after_value)
+        )
+    }
+
+    fn preview_next_command(&self, member: Option<&str>, contract_path: &Path) -> String {
+        let mut command = String::from("ota assist add-task");
+        if let Some(member) = member {
+            command.push_str(&format!(" --member {member}"));
+        }
+        command.push_str(&format!(" --name {}", self.name));
+        command.push_str(&format!(" --kind {}", assist_task_kind_name(self.kind)));
+        command.push_str(&format!(
+            " --{} {}",
+            self.execution_kind,
+            shell_quote(&self.execution_body)
+        ));
+        if let Some(description) = &self.description {
+            command.push_str(&format!(" --description {}", shell_quote(description)));
+        }
+        command.push_str(&format!(" --internal {}", self.internal));
+        if let Some(listener) = &self.listener {
+            command.push_str(&format!(" --listener {listener}"));
+        }
+        if let Some(protocol) = self.protocol {
+            command.push_str(&format!(
+                " --protocol {}",
+                assist_task_listener_protocol_name(protocol)
+            ));
+        }
+        if let Some(address) = &self.address {
+            command.push_str(&format!(" --address {}", shell_quote(address)));
+        }
+        if let Some(port) = self.port {
+            command.push_str(&format!(" --port {port}"));
+        }
+        command.push_str(" --write");
+        let command = command_for_repo_from_contract_path(&command, contract_path);
+        format!("rerun with `{command}` to apply this task change")
+    }
+}
+
 enum AssistEnvProposalSubject {
     RootVar { name: String },
     RootSource { kind: EnvSourceKind, path: String },
@@ -4859,6 +4952,67 @@ fn render_assist_env_text(
             "\n{} {}",
             paint_key("Result:"),
             format!("applied {}", paint_backticked_code(&proposal.change_path))
+        ));
+    }
+    output
+}
+
+fn render_assist_add_task_text(
+    path: &str,
+    proposal: &AssistAddTaskProposal,
+    mode: &str,
+    validation: &[String],
+    preview_next: Option<&str>,
+) -> String {
+    let mut output = format_command_header("ASSIST ADD-TASK", path);
+    output.push_str(&format!("\n\n{} {}", mode_icon(), paint_key("Mode:")));
+    output.push_str(&format!(
+        " {}",
+        if mode == "write" { "write" } else { "preview" }
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Subject:"),
+        paint_named_drift_label("Task", &proposal.name)
+    ));
+    output.push_str(&format!(
+        "\n{} {} {}",
+        info_bullet(),
+        paint_key("Kind:"),
+        assist_task_kind_name(proposal.kind)
+    ));
+    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    for assumption in &proposal.assumptions {
+        output.push_str(&format!("\n{} {}", info_bullet(), assumption));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed task")));
+    output.push_str(&format!(
+        "\n{} {}",
+        info_bullet(),
+        paint_backticked_code(&format!("tasks.{}", proposal.name))
+    ));
+    let after_yaml =
+        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!("\n{}", stylize_yaml_preview(after_yaml.trim_end())));
+    output.push_str(&format_next_timeline(
+        &validation
+            .iter()
+            .map(|command| format!("run `{}`", command))
+            .collect::<Vec<_>>(),
+    ));
+    if mode == "preview" {
+        if let Some(preview_next) = preview_next {
+            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+        }
+    } else {
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!(
+                "created {}",
+                paint_backticked_code(&format!("tasks.{}", proposal.name))
+            )
         ));
     }
     output
@@ -6944,6 +7098,387 @@ pub fn assist_declare_env(
     )
 }
 
+pub fn assist_add_task(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    name: &str,
+    kind: Option<AssistTaskKindArg>,
+    run: Option<&str>,
+    script: Option<&str>,
+    description: Option<&str>,
+    internal: Option<bool>,
+    listener: Option<&str>,
+    protocol: Option<AssistTaskListenerProtocolArg>,
+    address: Option<&str>,
+    port: Option<u16>,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=assist add-task")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=assist add-task"),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG name={name}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(kind) = kind {
+        debug_lines.push(format!("DEBUG kind={}", assist_task_kind_name(kind)));
+    }
+    if write {
+        debug_lines.push(String::from("DEBUG mode=write"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "ASSIST ADD-TASK",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota assist add-task` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota assist add-task", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let source_contents = match fs::read_to_string(&target.contract_path) {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to read `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "add-task",
+                                    subject: assist_add_task_subject_map(name),
+                                    why,
+                                    next: String::from(
+                                        "repair the contract path, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+                let document: YamlValue = match serde_yaml::from_str(&source_contents) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to parse `{}` for assist preview: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "add-task",
+                                    subject: assist_add_task_subject_map(name),
+                                    why,
+                                    next: String::from(
+                                        "repair the existing contract, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let proposal = match build_assist_add_task_proposal(
+                    &target.contract,
+                    name,
+                    kind,
+                    run,
+                    script,
+                    description,
+                    internal,
+                    listener,
+                    protocol,
+                    address,
+                    port,
+                ) {
+                    Ok(proposal) => proposal,
+                    Err((why, next)) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST ADD-TASK", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "add-task",
+                                    subject: assist_add_task_subject_map(name),
+                                    why,
+                                    next,
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let yaml = match build_assist_add_task_yaml(&document, &proposal) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "add-task",
+                                    subject: proposal.subject_json(),
+                                    why: error,
+                                    next: String::from(
+                                        "rerun the assist command after fixing the repo contract",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                if let Err(error) = validate_assist_contract_update(
+                    &resolved_path,
+                    member,
+                    &target.contract_path,
+                    &yaml,
+                ) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(error.clone()),
+                        OutputFormat::Json => CommandOutput::failure(to_json(
+                            &AssistProposalFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                operation: "add-task",
+                                subject: proposal.subject_json(),
+                                why: error,
+                                next: String::from(
+                                    "adjust the task inputs, then rerun the assist command",
+                                ),
+                            },
+                        )),
+                    };
+                }
+
+                let validation =
+                    assist_add_task_validation_commands(&resolved_path, member, proposal.kind);
+                let after_value = proposal.after_value.clone();
+
+                if write {
+                    match fs::write(&target.contract_path, yaml) {
+                        Ok(()) => match format {
+                            OutputFormat::Text => CommandOutput::success(render_assist_add_task_text(
+                                &text_path_display,
+                                &proposal,
+                                "write",
+                                &validation,
+                                None,
+                            )),
+                            OutputFormat::Json => CommandOutput::success(to_json(
+                                &AssistProposalSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    member,
+                                    mode: "write",
+                                    operation: "add-task",
+                                    subject: proposal.subject_json(),
+                                    inputs: proposal.inputs_json(),
+                                    assumptions: proposal.assumptions.clone(),
+                                    changes: vec![AssistProposalChange {
+                                        path: &format!("tasks.{}", proposal.name),
+                                        action: "set",
+                                        before: YamlValue::Null,
+                                        after: after_value,
+                                    }],
+                                    diff: proposal.diff(),
+                                    validation,
+                                    next: String::from(
+                                        "rerun `ota tasks` to inspect the updated task inventory",
+                                    ),
+                                },
+                            )),
+                        },
+                        Err(error) => {
+                            let why = format!(
+                                "failed to write `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "add-task",
+                                        subject: proposal.subject_json(),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path or permissions, then rerun with `--write`",
+                                        ),
+                                    },
+                                )),
+                            }
+                        }
+                    }
+                } else {
+                    let preview_target_path = if member.is_some() {
+                        &resolved_path
+                    } else {
+                        &target.contract_path
+                    };
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_assist_add_task_text(
+                            &text_path_display,
+                            &proposal,
+                            "preview",
+                            &validation,
+                            Some(&proposal.preview_next_command(member, preview_target_path)),
+                        )),
+                        OutputFormat::Json => CommandOutput::success(to_json(&AssistProposalSuccess {
+                            ok: true,
+                            path: &path_display,
+                            member,
+                            mode: "preview",
+                            operation: "add-task",
+                            subject: proposal.subject_json(),
+                            inputs: proposal.inputs_json(),
+                            assumptions: proposal.assumptions.clone(),
+                            changes: vec![AssistProposalChange {
+                                path: &format!("tasks.{}", proposal.name),
+                                action: "set",
+                                before: YamlValue::Null,
+                                after: after_value,
+                            }],
+                            diff: proposal.diff(),
+                            validation,
+                            next: proposal.preview_next_command(member, preview_target_path),
+                        })),
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ASSIST ADD-TASK",
+                    &resolved_path,
+                    &errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota assist add-task", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "add-task",
+                    subject: assist_add_task_subject_map(name),
+                    why: errors.to_string(),
+                    next: String::from(
+                        "repair the existing contract, then rerun the assist command",
+                    ),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ASSIST ADD-TASK",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota assist add-task", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "add-task",
+                    subject: assist_add_task_subject_map(name),
+                    why: error.to_string(),
+                    next: String::from("repair the contract path, then rerun the assist command"),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn assist_add_task_subject_map(name: &str) -> BTreeMap<&'static str, &str> {
+    let mut subject = BTreeMap::new();
+    subject.insert("task", name);
+    subject
+}
+
 fn assist_declare_env_subject_map<'a>(
     task: Option<&'a str>,
     name: Option<&'a str>,
@@ -6979,6 +7514,31 @@ fn assist_env_source_kind_name(kind: EnvSourceKind) -> &'static str {
         EnvSourceKind::Json => "json",
         EnvSourceKind::Yaml => "yaml",
         EnvSourceKind::Toml => "toml",
+    }
+}
+
+fn assist_task_kind_name(kind: AssistTaskKindArg) -> &'static str {
+    match kind {
+        AssistTaskKindArg::Command => "command",
+        AssistTaskKindArg::Service => "service",
+        AssistTaskKindArg::Setup => "setup",
+        AssistTaskKindArg::Check => "check",
+        AssistTaskKindArg::Sandbox => "sandbox",
+    }
+}
+
+fn assist_task_listener_protocol_from_arg(value: AssistTaskListenerProtocolArg) -> TaskRuntimeProtocol {
+    match value {
+        AssistTaskListenerProtocolArg::Http => TaskRuntimeProtocol::Http,
+        AssistTaskListenerProtocolArg::Tcp => TaskRuntimeProtocol::Tcp,
+    }
+}
+
+fn assist_task_listener_protocol_name(protocol: TaskRuntimeProtocol) -> &'static str {
+    match protocol {
+        TaskRuntimeProtocol::Http => "http",
+        TaskRuntimeProtocol::Https => "https",
+        TaskRuntimeProtocol::Tcp => "tcp",
     }
 }
 
@@ -7382,6 +7942,266 @@ fn build_assist_env_yaml(
 
 fn effective_yaml_value_for_path(document: &YamlValue, path: &[&str]) -> Option<YamlValue> {
     get_yaml_path_value(document, path)
+}
+
+fn build_assist_add_task_proposal(
+    contract: &Contract,
+    name: &str,
+    kind: Option<AssistTaskKindArg>,
+    run: Option<&str>,
+    script: Option<&str>,
+    description: Option<&str>,
+    internal: Option<bool>,
+    listener: Option<&str>,
+    protocol: Option<AssistTaskListenerProtocolArg>,
+    address: Option<&str>,
+    port: Option<u16>,
+) -> Result<AssistAddTaskProposal, (String, String)> {
+    if contract.tasks.contains_key(name) {
+        return Err((
+            format!("task `{name}` is already declared"),
+            String::from("choose a new task name, or use `ota tasks` to inspect the current inventory"),
+        ));
+    }
+
+    let kind = kind.unwrap_or(AssistTaskKindArg::Command);
+    if matches!(kind, AssistTaskKindArg::Setup) && name != "setup" {
+        return Err((
+            String::from("task kind `setup` only applies to the canonical `tasks.setup` entry"),
+            String::from("rerun with `--name setup`, or choose another task kind"),
+        ));
+    }
+
+    let (execution_kind, execution_body) = match (run, script) {
+        (Some(run), None) => ("run", run.to_string()),
+        (None, Some(script)) => ("script", script.to_string()),
+        (None, None) if matches!(kind, AssistTaskKindArg::Sandbox) => {
+            ("run", String::from("echo sandbox"))
+        }
+        (None, None) => {
+            return Err((
+                format!(
+                    "task `{name}` needs an explicit execution body via `--run` or `--script`"
+                ),
+                String::from("rerun with `--run <command>` or `--script <body>`"),
+            ));
+        }
+        (Some(_), Some(_)) => unreachable!(),
+    };
+
+    if !matches!(kind, AssistTaskKindArg::Service)
+        && (listener.is_some() || protocol.is_some() || address.is_some() || port.is_some())
+    {
+        return Err((
+            format!(
+                "task kind `{}` does not accept service listener inputs",
+                assist_task_kind_name(kind)
+            ),
+            String::from(
+                "rerun without `--listener`, `--protocol`, `--address`, or `--port`, or choose `--kind service`",
+            ),
+        ));
+    }
+
+    let mut assumptions = vec![String::from(
+        "assist adds only one new task and does not infer env, targets, or readiness in this slice",
+    )];
+    let mut task = TaskSpec {
+        description: description.map(ToOwned::to_owned),
+        notes: None,
+        category: None,
+        context: None,
+        env: BTreeMap::new(),
+        inputs: BTreeMap::new(),
+        targets: BTreeMap::new(),
+        run: None,
+        script: None,
+        depends_on: Vec::new(),
+        requires_services: Vec::new(),
+        runtime: None,
+        after_success: Vec::new(),
+        after_failure: Vec::new(),
+        after_always: Vec::new(),
+        safe_for_agent: false,
+        internal: internal.unwrap_or(matches!(kind, AssistTaskKindArg::Setup)),
+        variants: Vec::new(),
+        execution: None,
+    };
+    if execution_kind == "run" {
+        task.run = Some(execution_body.clone());
+    } else {
+        task.script = Some(execution_body.clone());
+    }
+
+    let (listener_name, protocol_value, bind_address, fixed_port) =
+        if matches!(kind, AssistTaskKindArg::Service) {
+            let listener_name = listener.ok_or_else(|| {
+                (
+                    format!("service task `{name}` needs `--listener`"),
+                    String::from(
+                        "rerun with `--listener <name> --protocol http|tcp --port <port>`",
+                    ),
+                )
+            })?;
+            let protocol_value = protocol.ok_or_else(|| {
+                (
+                    format!("service task `{name}` needs `--protocol`"),
+                    String::from(
+                        "rerun with `--listener <name> --protocol http|tcp --port <port>`",
+                    ),
+                )
+            })?;
+            let fixed_port = port.ok_or_else(|| {
+                (
+                    format!("service task `{name}` needs `--port`"),
+                    String::from(
+                        "rerun with `--listener <name> --protocol http|tcp --port <port>`",
+                    ),
+                )
+            })?;
+            let bind_address = address.unwrap_or("127.0.0.1").to_string();
+            let protocol_value = assist_task_listener_protocol_from_arg(protocol_value);
+            let mut listeners = BTreeMap::new();
+            listeners.insert(
+                listener_name.to_string(),
+                TaskRuntimeListenerSpec {
+                    protocol: protocol_value,
+                    bind: TaskRuntimeBindSpec {
+                        address: bind_address.clone(),
+                        port: TaskRuntimePortSpec {
+                            mode: TaskRuntimePortMode::Fixed,
+                            value: Some(fixed_port),
+                        },
+                    },
+                    project: TaskRuntimeProjectionSpec {
+                        host: Some(TaskRuntimeHostProjectionSpec {
+                            address: bind_address.clone(),
+                            port: TaskRuntimeHostPortSpec {
+                                mode: TaskRuntimeHostPortMode::Fixed,
+                                value: Some(fixed_port),
+                            },
+                            primary: true,
+                            path: None,
+                        }),
+                    },
+                },
+            );
+            task.runtime = Some(TaskRuntimeSpec {
+                kind: TaskRuntimeKind::Service,
+                backend_binding: None,
+                readiness: None,
+                listeners,
+            });
+            assumptions.push(String::from(
+                "service task creation only declares one fixed listener and matching host projection; declare readiness separately if the app needs deeper truth",
+            ));
+            (
+                Some(listener_name.to_string()),
+                Some(protocol_value),
+                Some(bind_address),
+                Some(fixed_port),
+            )
+        } else {
+            if matches!(kind, AssistTaskKindArg::Sandbox) && run.is_none() && script.is_none() {
+                assumptions.push(String::from(
+                    "sandbox task used the bounded starter run body `echo sandbox`; replace it later if the repo needs a real sandbox command",
+                ));
+            }
+            if matches!(kind, AssistTaskKindArg::Setup) && internal.is_none() {
+                assumptions.push(String::from(
+                    "setup tasks default to `internal: true` in this slice because they exist to support `ota up`, not the public task list",
+                ));
+            }
+            (None, None, None, None)
+        };
+
+    let mut after_value = YamlValue::Mapping(Mapping::new());
+    if let Some(description) = &task.description {
+        set_yaml_path(
+            &mut after_value,
+            &["description"],
+            YamlValue::String(description.clone()),
+        );
+    }
+    if let Some(run) = &task.run {
+        set_yaml_path(&mut after_value, &["run"], YamlValue::String(run.clone()));
+    }
+    if let Some(script) = &task.script {
+        set_yaml_path(&mut after_value, &["script"], YamlValue::String(script.clone()));
+    }
+    if task.internal {
+        set_yaml_path(&mut after_value, &["internal"], YamlValue::Bool(true));
+    }
+    if let Some(runtime) = &task.runtime {
+        let runtime_value = serde_yaml::to_value(runtime).map_err(|error| {
+            (
+                format!("failed to serialize proposed runtime: {error}"),
+                String::from("rerun the assist command after repairing the repo contract"),
+            )
+        })?;
+        set_yaml_path(&mut after_value, &["runtime"], runtime_value);
+    }
+
+    Ok(AssistAddTaskProposal {
+        name: name.to_string(),
+        kind,
+        execution_kind,
+        execution_body,
+        description: description.map(ToOwned::to_owned),
+        internal: task.internal,
+        listener: listener_name,
+        protocol: protocol_value,
+        address: bind_address,
+        port: fixed_port,
+        assumptions,
+        after_value,
+    })
+}
+
+fn build_assist_add_task_yaml(
+    raw_document: &YamlValue,
+    proposal: &AssistAddTaskProposal,
+) -> Result<String, String> {
+    let mut document = raw_document.clone();
+    set_yaml_path(
+        &mut document,
+        &["tasks", proposal.name.as_str()],
+        proposal.after_value.clone(),
+    );
+    serde_yaml::to_string(&document)
+        .map_err(|error| format!("failed to serialize assist proposal: {error}"))
+}
+
+fn assist_add_task_validation_commands(
+    resolved_path: &Path,
+    member: Option<&str>,
+    kind: AssistTaskKindArg,
+) -> Vec<String> {
+    let mut commands = Vec::new();
+    let validate = if let Some(member) = member {
+        format!("ota validate --member {member}")
+    } else {
+        String::from("ota validate")
+    };
+    commands.push(command_for_repo_from_contract_path(&validate, resolved_path));
+
+    let tasks = if let Some(member) = member {
+        format!("ota tasks --member {member}")
+    } else {
+        String::from("ota tasks")
+    };
+    commands.push(command_for_repo_from_contract_path(&tasks, resolved_path));
+
+    if matches!(kind, AssistTaskKindArg::Service) {
+        let topology = if let Some(member) = member {
+            format!("ota execution topology --member {member}")
+        } else {
+            String::from("ota execution topology")
+        };
+        commands.push(command_for_repo_from_contract_path(&topology, resolved_path));
+    }
+
+    commands
 }
 
 fn parse_assist_bind_target_selector(value: &str) -> (String, Option<String>) {

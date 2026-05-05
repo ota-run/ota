@@ -85,6 +85,7 @@ ota currently ships these commands:
 - `ota assist declare-service`
 - `ota assist bind-task`
 - `ota assist declare-env`
+- `ota assist add-task`
 - `ota assist wire-setup`
 - `ota detect`
 - `ota validate`
@@ -608,6 +609,48 @@ ota assist declare-env --name PATH --prepend ./node_modules/.bin --append /opt/o
 ota assist declare-env --source-kind dotenv --source-path .env.local --must-exist true --json
 ota assist declare-env --task smoke --name API_BASE --value http://127.0.0.1:3000
 ota assist declare-env --member api --task smoke --name API_BASE --value http://127.0.0.1:3000 --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist add-task`
+
+Create one new declared task with an explicit execution body.
+
+```bash
+ota assist add-task --name <task> --run "<command>" [PATH]
+ota assist add-task --name <task> --script "<body>" [PATH]
+ota assist add-task --name <task> --kind sandbox [PATH]
+ota assist add-task --name <task> --kind service --run "<command>" --listener <name> --protocol http|tcp --port <port> [PATH]
+ota assist add-task --member api --name <task> --run "<command>" --write [PATH]
+ota assist add-task --json --name <task> --run "<command>" [PATH]
+```
+
+Use it when the contract needs one new task entry and the right next step is a reviewed starter task
+instead of hand-authoring `tasks.<name>`.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the exact new `tasks.<name>` block, and the next validation commands
+- `--write` applies the proposed task creation and revalidates the updated contract before returning success
+- creates only new tasks in this slice; it refuses when the selected task name already exists in the effective contract
+- supports `command`, `service`, `setup`, `check`, and `sandbox` task kinds
+- requires `--run` or `--script` for every kind except `sandbox`, which uses the bounded starter body `echo sandbox` when no body is supplied
+- `--kind setup` only applies to the canonical `--name setup` task and defaults `internal: true` when you do not override it
+- `--kind service` requires `--listener`, `--protocol`, and `--port`, and currently declares one fixed listener plus a matching fixed host projection without adding readiness
+- supports `--member` through the merged monorepo contract path while writing only to the selected member overlay file
+- refuses service-only listener inputs on non-service task kinds
+- `--json` emits the stable assist proposal/apply result for this task creation change
+
+Examples:
+
+```bash
+ota assist add-task --name smoke --run "cargo test"
+ota assist add-task --name setup --kind setup --run "npm install"
+ota assist add-task --name sandbox --kind sandbox
+ota assist add-task --name dev --kind service --run "npm run dev" --listener http --protocol http --port 3000 --json
+ota assist add-task --member api --name smoke --run "npm test" --write
 ```
 
 Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,

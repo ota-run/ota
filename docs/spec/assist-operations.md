@@ -24,7 +24,7 @@
 
 # Assist Operations
 
-Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness`, `ota assist declare-service`, and `ota assist wire-setup`.
+Status: active long-term spec, with the first shipped slices now covering `ota assist declare-readiness`, `ota assist declare-service`, `ota assist bind-task`, `ota assist declare-env`, `ota assist add-task`, and `ota assist wire-setup`.
 
 This document defines the long-term product contract for `ota assist`.
 
@@ -43,6 +43,9 @@ The currently shipped assist operations are:
 
 - `ota assist declare-readiness`
 - `ota assist declare-service`
+- `ota assist bind-task`
+- `ota assist declare-env`
+- `ota assist add-task`
 - `ota assist wire-setup`
 
 Current scope:
@@ -54,6 +57,9 @@ Current scope:
 - emits a stable JSON proposal/apply result
 - previews or applies one deterministic managed-service mutation
 - can create or refine one `services.<name>` block with explicit manager, endpoint, and optional readiness inputs
+- previews or applies one deterministic `tasks.<consumer>.targets.<name>` binding to a producer runtime listener
+- previews or applies one deterministic env requirement, env source, or task-local env mutation
+- previews or applies one deterministic new-task declaration with explicit execution input
 - previews or applies one deterministic `tasks.setup` mutation with explicit setup body, `setup.requires_services`, and `internal` ownership
 
 Current trust boundaries:
@@ -62,6 +68,7 @@ Current trust boundaries:
 - managed services require explicit `--style` unless assist is refining an existing structured readiness kind
 - assist refuses ambiguous listener selection instead of guessing
 - text preview must show destructive readiness replacement honestly
+- `add-task` creates only new tasks and requires explicit runtime listener inputs for service tasks
 - `wire-setup` owns only `tasks.setup` plus the phased `setup.requires_services` boundary; it is not a broad task authoring command
 
 For the operator guide and concrete examples, see [assist-workflow.md](assist-workflow.md).

@@ -800,6 +800,50 @@ enum AssistCommands {
         /// Path to a repo root, ota.yaml file, or directory containing one.
         path: Option<PathBuf>,
     },
+    /// Add one new declared task with an explicit execution body.
+    AddTask {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Apply the proposed task creation.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// New task name.
+        #[arg(long)]
+        name: String,
+        /// Task shape to create. Defaults to `command`.
+        #[arg(long, value_enum)]
+        kind: Option<AssistTaskKindArg>,
+        /// Single run command for the new task.
+        #[arg(long, conflicts_with = "script")]
+        run: Option<String>,
+        /// Shell script body for the new task.
+        #[arg(long, conflicts_with = "run")]
+        script: Option<String>,
+        /// Optional task description.
+        #[arg(long)]
+        description: Option<String>,
+        /// Explicit internal flag for the new task.
+        #[arg(long)]
+        internal: Option<bool>,
+        /// Listener name for a new service task.
+        #[arg(long)]
+        listener: Option<String>,
+        /// Listener protocol for a new service task.
+        #[arg(long, value_enum)]
+        protocol: Option<AssistTaskListenerProtocolArg>,
+        /// Bind address for a new service task listener. Defaults to `127.0.0.1`.
+        #[arg(long)]
+        address: Option<String>,
+        /// Fixed bind and host projection port for a new service task listener.
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        port: Option<u16>,
+        /// Path to a repo root, ota.yaml file, or directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -838,6 +882,21 @@ enum AssistEnvSourceKindArg {
     Json,
     Yaml,
     Toml,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskKindArg {
+    Command,
+    Service,
+    Setup,
+    Check,
+    Sandbox,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistTaskListenerProtocolArg {
+    Http,
+    Tcp,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -4171,6 +4230,42 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Assist {
+            command:
+                AssistCommands::AddTask {
+                    json,
+                    write,
+                    member,
+                    name,
+                    kind,
+                    run,
+                    script,
+                    description,
+                    internal,
+                    listener,
+                    protocol,
+                    address,
+                    port,
+                    path,
+                },
+        } => commands::assist_add_task(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            &name,
+            kind,
+            run.as_deref(),
+            script.as_deref(),
+            description.as_deref(),
+            internal,
+            listener.as_deref(),
+            protocol,
+            address.as_deref(),
+            port,
+            write,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Studio {
             open,
             serve,
@@ -4887,6 +4982,11 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         } => {
             "rerun `ota assist declare-env` with one explicit env var, env source, or task-local env target"
         }
+        Commands::Assist {
+            command: AssistCommands::AddTask { .. },
+        } => {
+            "rerun `ota assist add-task --name <task>` with one explicit task body and any required service listener inputs"
+        }
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
@@ -5091,6 +5191,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Assist {
             command: AssistCommands::DeclareEnv { json, .. },
         }
+        | Commands::Assist {
+            command: AssistCommands::AddTask { json, .. },
+        }
         | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
@@ -5170,6 +5273,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Assist {
             command: AssistCommands::DeclareEnv { .. },
         } => "ota assist declare-env",
+        Commands::Assist {
+            command: AssistCommands::AddTask { .. },
+        } => "ota assist add-task",
         Commands::Env { .. } => "ota env",
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
@@ -35258,6 +35364,160 @@ tasks:
         let stderr =
             normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
         assert!(stderr.contains("task-local env declaration needs `--value`"));
+    }
+
+    #[test]
+    fn assist_add_task_previews_new_command_task() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ASSIST ADD-TASK"));
+        assert!(stdout.contains("tasks.smoke"));
+        assert!(stdout.contains("run: cargo test"));
+        assert!(stdout.contains("ota tasks"));
+    }
+
+    #[test]
+    fn assist_add_task_json_preview_supports_new_service_task() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--json",
+            "--name",
+            "dev",
+            "--kind",
+            "service",
+            "--run",
+            "npm run dev",
+            "--listener",
+            "http",
+            "--protocol",
+            "http",
+            "--port",
+            "3000",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["operation"], "add-task");
+        assert_eq!(json["subject"]["task"], "dev");
+        assert_eq!(json["inputs"]["kind"], "service");
+        assert_eq!(json["inputs"]["protocol"], "http");
+        assert_eq!(json["inputs"]["port"], "3000");
+    }
+
+    #[test]
+    fn assist_add_task_member_write_updates_overlay_and_keeps_member_validation_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--member",
+            "api",
+            "--name",
+            "smoke",
+            "--run",
+            "npm test",
+            "--write",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ota validate --member api"));
+        assert!(stdout.contains("ota tasks --member api"));
+
+        let member_contract =
+            fs::read_to_string(fixture.dir.path().join("api").join("ota.yaml")).unwrap();
+        assert!(member_contract.contains("tasks:"));
+        assert!(member_contract.contains("smoke:"));
+        assert!(member_contract.contains("run: npm test"));
+
+        let validate = run_with(["ota", "validate", "--member", "api", fixture.path()]);
+        assert_eq!(validate.exit_code, 0, "{validate:?}");
+    }
+
+    #[test]
+    fn assist_add_task_refuses_existing_task_name() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  smoke:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "add-task",
+            "--name",
+            "smoke",
+            "--run",
+            "cargo test",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("task `smoke` is already declared"));
     }
 
     struct WorkspaceFixture {

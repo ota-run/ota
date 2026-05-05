@@ -23,6 +23,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/assist-declare-service.json](json-schemas/assist-declare-service.json)
 - [json-schemas/assist-bind-task.json](json-schemas/assist-bind-task.json)
 - [json-schemas/assist-declare-env.json](json-schemas/assist-declare-env.json)
+- [json-schemas/assist-add-task.json](json-schemas/assist-add-task.json)
 - [json-schemas/assist-wire-setup.json](json-schemas/assist-wire-setup.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
@@ -62,6 +63,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
 - use `ota assist bind-task --json` when you want a deterministic target-binding proposal or apply result without scraping review text
 - use `ota assist declare-env --json` when you want a deterministic env proposal or apply result without scraping review text
+- use `ota assist add-task --json` when you want a deterministic new-task proposal or apply result without scraping review text
 - use `ota assist wire-setup --json` when you want a deterministic setup-wiring proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
@@ -91,6 +93,7 @@ human text output:
 - `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist bind-task --json`: use `mode`, `subject.task`, `subject.target`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist declare-env --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
+- `ota assist add-task --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist wire-setup --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
@@ -726,6 +729,103 @@ Failure:
   },
   "why": "task-local env declaration needs `--value`",
   "next": "rerun with `--task <name> --name <ENV> --value <value>`"
+}
+```
+
+## `ota assist add-task --json`
+
+Assist add-task output reports one deterministic proposal or apply result for one new
+`tasks.<name>` declaration.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "preview",
+  "operation": "add-task",
+  "subject": {
+    "task": "dev"
+  },
+  "inputs": {
+    "kind": "service",
+    "run": "npm run dev",
+    "internal": "false",
+    "listener": "http",
+    "protocol": "http",
+    "address": "127.0.0.1",
+    "port": "3000"
+  },
+  "assumptions": [
+    "assist adds only one new task and does not infer env, targets, or readiness in this slice",
+    "service task creation only declares one fixed listener and matching host projection; declare readiness separately if the app needs deeper truth"
+  ],
+  "changes": [
+    {
+      "path": "tasks.dev",
+      "action": "set",
+      "before": null,
+      "after": {
+        "run": "npm run dev",
+        "runtime": {
+          "kind": "service",
+          "listeners": {
+            "http": {
+              "protocol": "http",
+              "bind": {
+                "address": "127.0.0.1",
+                "port": {
+                  "mode": "fixed",
+                  "value": 3000
+                }
+              },
+              "project": {
+                "host": {
+                  "address": "127.0.0.1",
+                  "port": {
+                    "mode": "fixed",
+                    "value": 3000
+                  },
+                  "primary": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "diff": "tasks.dev\n- null\n+ run: npm run dev ...",
+  "validation": [
+    "ota validate /abs/path/to/ota.yaml",
+    "ota tasks /abs/path/to/ota.yaml",
+    "ota execution topology /abs/path/to/ota.yaml"
+  ],
+  "next": "rerun with `ota assist add-task --name dev --kind service --run 'npm run dev' --internal false --listener http --protocol http --address 127.0.0.1 --port 3000 --write /abs/path/to/ota.yaml` to apply this task change"
+}
+```
+
+Notes:
+
+- `subject.task` is always the newly created task name
+- `inputs.kind` is one of `command`, `service`, `setup`, `check`, or `sandbox`
+- `inputs.run` or `inputs.script` records the explicit execution body; sandbox can use the bounded `echo sandbox` starter body
+- `inputs.listener`, `inputs.protocol`, `inputs.address`, and `inputs.port` appear only for `service`
+- `changes[0].before` is always `null` because this slice creates only new tasks
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "operation": "add-task",
+  "subject": {
+    "task": "smoke"
+  },
+  "why": "task `smoke` is already declared",
+  "next": "choose a new task name, or use `ota tasks` to inspect the current inventory"
 }
 ```
 
