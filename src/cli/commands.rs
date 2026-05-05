@@ -4018,6 +4018,7 @@ struct AssistSetupProposal {
     assumptions: Vec<String>,
     before_value: YamlValue,
     after_value: YamlValue,
+    write_value: YamlValue,
     body_input_kind: Option<&'static str>,
     body_input: Option<String>,
     services_mode: AssistSetupServicesMode,
@@ -4951,11 +4952,79 @@ pub fn assist_wire_setup(
                     }
                 };
 
-                let before_value =
+                let overlay_before_value =
                     get_yaml_path_value(&document, &["tasks", "setup"]).unwrap_or(YamlValue::Null);
+                let before_value = if member.is_some() {
+                    let root_contents = match fs::read_to_string(&resolved_path) {
+                        Ok(contents) => contents,
+                        Err(error) => {
+                            let why = format!(
+                                "failed to read `{}`: {}",
+                                compact_contract_path(&resolved_path),
+                                error
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => {
+                                    let mut subject = BTreeMap::new();
+                                    subject.insert("task", "setup");
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "wire-setup",
+                                        subject,
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path, then rerun the assist command",
+                                        ),
+                                    }))
+                                }
+                            };
+                        }
+                    };
+                    let mut effective_document: YamlValue = match serde_yaml::from_str(
+                        &root_contents,
+                    ) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            let why = format!(
+                                "failed to parse `{}` for assist preview: {}",
+                                compact_contract_path(&resolved_path),
+                                error
+                            );
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => {
+                                    let mut subject = BTreeMap::new();
+                                    subject.insert("task", "setup");
+                                    CommandOutput::failure(to_json(&AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "wire-setup",
+                                        subject,
+                                        why,
+                                        next: String::from(
+                                            "repair the existing contract, then rerun the assist command",
+                                        ),
+                                    }))
+                                }
+                            };
+                        }
+                    };
+                    merge_yaml_value(&mut effective_document, document.clone());
+                    get_yaml_path_value(&effective_document, &["tasks", "setup"])
+                        .unwrap_or(YamlValue::Null)
+                } else {
+                    overlay_before_value.clone()
+                };
                 let proposal = match build_assist_setup_proposal(
                     &target.contract,
+                    target.contract.tasks.get("setup"),
                     &before_value,
+                    &overlay_before_value,
+                    member.is_some(),
                     run,
                     script,
                     services,
@@ -4991,7 +5060,11 @@ pub fn assist_wire_setup(
                 };
 
                 let after_value = proposal.after_value.clone();
-                set_yaml_path(&mut document, &["tasks", "setup"], after_value.clone());
+                set_yaml_path(
+                    &mut document,
+                    &["tasks", "setup"],
+                    proposal.write_value.clone(),
+                );
                 let yaml = match serde_yaml::to_string(&document) {
                     Ok(yaml) => yaml,
                     Err(error) => {
@@ -5236,14 +5309,17 @@ fn proposal_service_subject_map(service: &str) -> BTreeMap<&'static str, &str> {
 
 fn build_assist_setup_proposal(
     contract: &Contract,
+    existing_setup: Option<&TaskSpec>,
     before_value: &YamlValue,
+    overlay_before_value: &YamlValue,
+    member_mode: bool,
     run: Option<&str>,
     script: Option<&str>,
     services: &[String],
     clear_services: bool,
     internal: Option<bool>,
 ) -> Result<AssistSetupProposal, (String, String)> {
-    let existing = contract.tasks.get("setup");
+    let existing = existing_setup;
     if existing.is_none() && run.is_none() && script.is_none() {
         return Err((
             String::from("creating `tasks.setup` needs an explicit `--run` or `--script` body"),
@@ -5345,6 +5421,10 @@ fn build_assist_setup_proposal(
         .as_mapping()
         .cloned()
         .unwrap_or_else(Mapping::new);
+    let mut write_mapping = overlay_before_value
+        .as_mapping()
+        .cloned()
+        .unwrap_or_else(Mapping::new);
     let string_key = |key: &str| YamlValue::String(key.to_string());
 
     if existing.is_none() {
@@ -5359,10 +5439,22 @@ fn build_assist_setup_proposal(
     if let Some(run) = run {
         after_mapping.insert(string_key("run"), YamlValue::String(run.to_string()));
         after_mapping.remove(string_key("script"));
+        write_mapping.insert(string_key("run"), YamlValue::String(run.to_string()));
+        if existing.is_some_and(|task| task.script.is_some()) {
+            write_mapping.insert(string_key("script"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("script"));
+        }
     }
     if let Some(script) = script {
         after_mapping.insert(string_key("script"), YamlValue::String(script.to_string()));
         after_mapping.remove(string_key("run"));
+        write_mapping.insert(string_key("script"), YamlValue::String(script.to_string()));
+        if existing.is_some_and(|task| task.run.is_some()) {
+            write_mapping.insert(string_key("run"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("run"));
+        }
     }
     match &services_mode {
         AssistSetupServicesMode::Preserve => {}
@@ -5377,13 +5469,41 @@ fn build_assist_setup_proposal(
                         .collect::<Vec<_>>(),
                 ),
             );
+            write_mapping.insert(
+                string_key("requires_services"),
+                YamlValue::Sequence(
+                    services
+                        .iter()
+                        .cloned()
+                        .map(YamlValue::String)
+                        .collect::<Vec<_>>(),
+                ),
+            );
         }
         AssistSetupServicesMode::Clear => {
             after_mapping.remove(string_key("requires_services"));
+            if member_mode && existing.is_some_and(|task| !task.requires_services.is_empty()) {
+                write_mapping.insert(
+                    string_key("requires_services"),
+                    YamlValue::Sequence(Vec::new()),
+                );
+            } else {
+                write_mapping.remove(string_key("requires_services"));
+            }
         }
     }
     if let Some(internal) = internal {
         after_mapping.insert(string_key("internal"), YamlValue::Bool(internal));
+        write_mapping.insert(string_key("internal"), YamlValue::Bool(internal));
+    }
+
+    if existing.is_none() {
+        write_mapping
+            .entry(string_key("category"))
+            .or_insert_with(|| YamlValue::String(String::from("setup")));
+        if internal.is_none() {
+            write_mapping.insert(string_key("internal"), YamlValue::Bool(true));
+        }
     }
 
     let after_value = YamlValue::Mapping(after_mapping);
@@ -5398,6 +5518,7 @@ fn build_assist_setup_proposal(
         assumptions,
         before_value: before_value.clone(),
         after_value,
+        write_value: YamlValue::Mapping(write_mapping),
         body_input_kind,
         body_input,
         services_mode,
@@ -6147,6 +6268,24 @@ fn compact_yaml_inline(value: &YamlValue) -> String {
         .unwrap_or_else(|_| String::from("<unavailable>"))
         .trim()
         .replace('\n', " ")
+}
+
+fn merge_yaml_value(root: &mut YamlValue, override_value: YamlValue) {
+    match (root, override_value) {
+        (YamlValue::Mapping(root_map), YamlValue::Mapping(override_map)) => {
+            for (key, override_entry) in override_map {
+                match root_map.get_mut(&key) {
+                    Some(root_entry) => merge_yaml_value(root_entry, override_entry),
+                    None => {
+                        root_map.insert(key, override_entry);
+                    }
+                }
+            }
+        }
+        (root_value, override_value) => {
+            *root_value = override_value;
+        }
+    }
 }
 
 fn get_yaml_path_value(document: &YamlValue, path: &[&str]) -> Option<YamlValue> {
