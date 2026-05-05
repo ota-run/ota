@@ -44,7 +44,7 @@ use time::macros::format_description;
 
 use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistReadinessStyleArg,
-    AssistServiceManagerArg, AssistTaskKindArg, AssistTaskListenerProtocolArg,
+    AssistNormalizeIntoArg, AssistServiceManagerArg, AssistTaskKindArg, AssistTaskListenerProtocolArg,
     AssistTaskTargetActivationModeArg, AssistTaskTargetAddressViewArg,
 };
 use crate::contract_drift::{
@@ -4277,6 +4277,49 @@ impl AssistAddTaskProposal {
     }
 }
 
+struct AssistNormalizeProposal {
+    source_task: String,
+    source_change_path: String,
+    assumptions: Vec<String>,
+    before_value: YamlValue,
+    after_value: YamlValue,
+}
+
+impl AssistNormalizeProposal {
+    fn subject_json(&self) -> BTreeMap<&'static str, &str> {
+        let mut subject = BTreeMap::new();
+        subject.insert("task", self.source_task.as_str());
+        subject.insert("into", "setup");
+        subject
+    }
+
+    fn inputs_json(&self) -> BTreeMap<&'static str, String> {
+        let mut inputs = BTreeMap::new();
+        inputs.insert("into", String::from("setup"));
+        inputs
+    }
+
+    fn diff(&self) -> String {
+        format!(
+            "normalize task {}\n- {}\n+ {}",
+            self.source_task,
+            compact_yaml_inline(&self.before_value),
+            compact_yaml_inline(&self.after_value)
+        )
+    }
+
+    fn preview_next_command(&self, member: Option<&str>, contract_path: &Path) -> String {
+        let mut command = String::from("ota assist normalize");
+        if let Some(member) = member {
+            command.push_str(&format!(" --member {member}"));
+        }
+        command.push_str(&format!(" --task {}", self.source_task));
+        command.push_str(" --into setup --write");
+        let command = command_for_repo_from_contract_path(&command, contract_path);
+        format!("rerun with `{command}` to apply this normalization")
+    }
+}
+
 enum AssistEnvProposalSubject {
     RootVar { name: String },
     RootSource { kind: EnvSourceKind, path: String },
@@ -5024,6 +5067,62 @@ fn render_assist_add_task_text(
             format!(
                 "created {}",
                 paint_backticked_code(&format!("tasks.{}", proposal.name))
+            )
+        ));
+    }
+    output
+}
+
+fn render_assist_normalize_text(
+    path: &str,
+    proposal: &AssistNormalizeProposal,
+    mode: &str,
+    validation: &[String],
+    preview_next: Option<&str>,
+) -> String {
+    let mut output = format_command_header("ASSIST NORMALIZE", path);
+    output.push_str(&format!("\n\n{} {}", mode_icon(), paint_key("Mode:")));
+    output.push_str(&format!(
+        " {}",
+        if mode == "write" { "write" } else { "preview" }
+    ));
+    output.push_str(&format!(
+        "\n{} {} {} -> {}",
+        info_bullet(),
+        paint_key("Subject:"),
+        paint_named_drift_label("Task", &proposal.source_task),
+        paint_backticked_code("tasks.setup")
+    ));
+    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    for assumption in &proposal.assumptions {
+        output.push_str(&format!("\n{} {}", info_bullet(), assumption));
+    }
+    output.push_str(&format!("\n\n{}:", paint_section_title("Current setup-like task")));
+    let before_yaml =
+        serde_yaml::to_string(&proposal.before_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!("\n{}", stylize_yaml_preview(before_yaml.trim_end())));
+    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed canonical setup task")));
+    let after_yaml =
+        serde_yaml::to_string(&proposal.after_value).unwrap_or_else(|_| String::from("---\n"));
+    output.push_str(&format!("\n{}", stylize_yaml_preview(after_yaml.trim_end())));
+    output.push_str(&format_next_timeline(
+        &validation
+            .iter()
+            .map(|command| format!("run `{}`", command))
+            .collect::<Vec<_>>(),
+    ));
+    if mode == "preview" {
+        if let Some(preview_next) = preview_next {
+            output.push_str(&format!("\n{} {}", paint_key("Next:"), preview_next));
+        }
+    } else {
+        output.push_str(&format!(
+            "\n{} {}",
+            paint_key("Result:"),
+            format!(
+                "normalized {} into {}",
+                paint_backticked_code(&format!("tasks.{}", proposal.source_task)),
+                paint_backticked_code("tasks.setup")
             )
         ));
     }
@@ -7550,9 +7649,365 @@ pub fn assist_add_task(
     )
 }
 
+pub fn assist_normalize(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    task: &str,
+    into: AssistNormalizeIntoArg,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=assist normalize")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=assist normalize"),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG task={task}"),
+        format!("DEBUG into={}", assist_normalize_into_name(into)),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if write {
+        debug_lines.push(String::from("DEBUG mode=write"));
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let source_contents = match fs::read_to_string(&target.contract_path) {
+                    Ok(contents) => contents,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to read `{}`: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "normalize",
+                                    subject: assist_normalize_subject_map(task),
+                                    why,
+                                    next: String::from(
+                                        "repair the contract path, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+                let document: YamlValue = match serde_yaml::from_str(&source_contents) {
+                    Ok(document) => document,
+                    Err(error) => {
+                        let why = format!(
+                            "failed to parse `{}` for assist preview: {}",
+                            compact_contract_path(&target.contract_path),
+                            error
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(why.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "normalize",
+                                    subject: assist_normalize_subject_map(task),
+                                    why,
+                                    next: String::from(
+                                        "repair the existing contract, then rerun the assist command",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let proposal = match build_assist_normalize_proposal(
+                    &target.contract,
+                    &document,
+                    task,
+                    into,
+                    member,
+                ) {
+                    Ok(proposal) => proposal,
+                    Err((why, next)) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(format!(
+                                "{}\n{} {}\n{} {}",
+                                format_command_header("ASSIST NORMALIZE", &text_path_display),
+                                error_key("Why:"),
+                                why,
+                                paint_key("Next:"),
+                                next
+                            )),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "normalize",
+                                    subject: assist_normalize_subject_map(task),
+                                    why,
+                                    next,
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                let yaml = match build_assist_normalize_yaml(&document, &proposal) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error.clone()),
+                            OutputFormat::Json => CommandOutput::failure(to_json(
+                                &AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "normalize",
+                                    subject: proposal.subject_json(),
+                                    why: error,
+                                    next: String::from(
+                                        "rerun the assist command after fixing the repo contract",
+                                    ),
+                                },
+                            )),
+                        };
+                    }
+                };
+
+                if let Err(error) = validate_assist_contract_update(
+                    &resolved_path,
+                    member,
+                    &target.contract_path,
+                    &yaml,
+                ) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(error.clone()),
+                        OutputFormat::Json => CommandOutput::failure(to_json(
+                            &AssistProposalFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                operation: "normalize",
+                                subject: proposal.subject_json(),
+                                why: error,
+                                next: String::from(
+                                    "adjust the normalization target, then rerun the assist command",
+                                ),
+                            },
+                        )),
+                    };
+                }
+
+                let validation = assist_normalize_validation_commands(&resolved_path, member);
+                let after_value = proposal.after_value.clone();
+                if write {
+                    match fs::write(&target.contract_path, yaml) {
+                        Ok(()) => match format {
+                            OutputFormat::Text => CommandOutput::success(render_assist_normalize_text(
+                                &text_path_display,
+                                &proposal,
+                                "write",
+                                &validation,
+                                None,
+                            )),
+                            OutputFormat::Json => CommandOutput::success(to_json(
+                                &AssistProposalSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    member,
+                                    mode: "write",
+                                    operation: "normalize",
+                                    subject: proposal.subject_json(),
+                                    inputs: proposal.inputs_json(),
+                                    assumptions: proposal.assumptions.clone(),
+                                    changes: vec![
+                                        AssistProposalChange {
+                                            path: &proposal.source_change_path,
+                                            action: "delete",
+                                            before: proposal.before_value.clone(),
+                                            after: YamlValue::Null,
+                                        },
+                                        AssistProposalChange {
+                                            path: "tasks.setup",
+                                            action: "set",
+                                            before: YamlValue::Null,
+                                            after: after_value,
+                                        },
+                                    ],
+                                    diff: proposal.diff(),
+                                    validation,
+                                    next: assist_normalize_write_next(&resolved_path, member),
+                                },
+                            )),
+                        },
+                        Err(error) => {
+                            let why = format!(
+                                "failed to write `{}`: {}",
+                                compact_contract_path(&target.contract_path),
+                                error
+                            );
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(why.clone()),
+                                OutputFormat::Json => CommandOutput::failure(to_json(
+                                    &AssistProposalFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        member,
+                                        operation: "normalize",
+                                        subject: proposal.subject_json(),
+                                        why,
+                                        next: String::from(
+                                            "repair the contract path or permissions, then rerun with `--write`",
+                                        ),
+                                    },
+                                )),
+                            }
+                        }
+                    }
+                } else {
+                    let preview_target_path = if member.is_some() {
+                        &resolved_path
+                    } else {
+                        &target.contract_path
+                    };
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_assist_normalize_text(
+                            &text_path_display,
+                            &proposal,
+                            "preview",
+                            &validation,
+                            Some(&proposal.preview_next_command(member, preview_target_path)),
+                        )),
+                        OutputFormat::Json => CommandOutput::success(to_json(&AssistProposalSuccess {
+                            ok: true,
+                            path: &path_display,
+                            member,
+                            mode: "preview",
+                            operation: "normalize",
+                            subject: proposal.subject_json(),
+                            inputs: proposal.inputs_json(),
+                            assumptions: proposal.assumptions.clone(),
+                            changes: vec![
+                                AssistProposalChange {
+                                    path: &proposal.source_change_path,
+                                    action: "delete",
+                                    before: proposal.before_value.clone(),
+                                    after: YamlValue::Null,
+                                },
+                                AssistProposalChange {
+                                    path: "tasks.setup",
+                                    action: "set",
+                                    before: YamlValue::Null,
+                                    after: after_value,
+                                },
+                            ],
+                            diff: proposal.diff(),
+                            validation,
+                            next: proposal.preview_next_command(member, preview_target_path),
+                        })),
+                    }
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ASSIST NORMALIZE",
+                    &resolved_path,
+                    &errors.errors().iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota assist normalize", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "normalize",
+                    subject: assist_normalize_subject_map(task),
+                    why: errors.to_string(),
+                    next: String::from(
+                        "repair the existing contract, then rerun the assist command",
+                    ),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ASSIST NORMALIZE",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota assist normalize", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&AssistProposalFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    operation: "normalize",
+                    subject: assist_normalize_subject_map(task),
+                    why: error.to_string(),
+                    next: String::from("repair the contract path, then rerun the assist command"),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 fn assist_add_task_subject_map(name: &str) -> BTreeMap<&'static str, &str> {
     let mut subject = BTreeMap::new();
     subject.insert("task", name);
+    subject
+}
+
+fn assist_normalize_subject_map(task: &str) -> BTreeMap<&'static str, &str> {
+    let mut subject = BTreeMap::new();
+    subject.insert("task", task);
     subject
 }
 
@@ -7618,6 +8073,12 @@ fn assist_task_listener_protocol_name(protocol: TaskRuntimeProtocol) -> &'static
         TaskRuntimeProtocol::Http => "http",
         TaskRuntimeProtocol::Https => "https",
         TaskRuntimeProtocol::Tcp => "tcp",
+    }
+}
+
+fn assist_normalize_into_name(into: AssistNormalizeIntoArg) -> &'static str {
+    match into {
+        AssistNormalizeIntoArg::Setup => "setup",
     }
 }
 
@@ -8368,6 +8829,133 @@ fn assist_add_task_write_next(
     };
     format!(
         "rerun `{}` to inspect the updated task contract",
+        command_for_repo_from_contract_path(&command, resolved_path)
+    )
+}
+
+fn build_assist_normalize_proposal(
+    contract: &Contract,
+    raw_document: &YamlValue,
+    task: &str,
+    into: AssistNormalizeIntoArg,
+    member: Option<&str>,
+) -> Result<AssistNormalizeProposal, (String, String)> {
+    match into {
+        AssistNormalizeIntoArg::Setup => {}
+    }
+    if task == "setup" {
+        return Err((
+            String::from("`tasks.setup` is already the canonical setup slot"),
+            String::from(
+                "use `ota assist wire-setup` when the setup task itself needs refinement",
+            ),
+        ));
+    }
+    if contract.tasks.contains_key("setup") {
+        return Err((
+            String::from("the contract already declares `tasks.setup`"),
+            String::from(
+                "use `ota assist wire-setup` to refine setup instead of normalizing another task into it",
+            ),
+        ));
+    }
+
+    let raw_task_value = get_yaml_path_value(raw_document, &["tasks", task]).ok_or_else(|| {
+        if member.is_some() {
+            (
+                format!("task `{task}` is not declared in the selected member overlay"),
+                String::from(
+                    "normalize only tasks owned by this write target, or run the command against the contract file that declares the task",
+                ),
+            )
+        } else {
+            (
+                format!("task `{task}` is not declared"),
+                String::from("run `ota tasks` to inspect declared task names"),
+            )
+        }
+    })?;
+
+    let raw_task_spec = contract.tasks.get(task).ok_or_else(|| {
+        (
+            format!("task `{task}` is not declared in the effective contract"),
+            String::from("run `ota tasks` to inspect declared task names"),
+        )
+    })?;
+
+    let mut after_value = raw_task_value.clone();
+    if let Some(mapping) = after_value.as_mapping_mut() {
+        mapping.insert(
+            YamlValue::String(String::from("internal")),
+            YamlValue::Bool(true),
+        );
+    }
+
+    let mut assumptions = vec![format!(
+        "`tasks.{task}` will move into the canonical `tasks.setup` slot"
+    )];
+    if !raw_task_spec.internal {
+        assumptions.push(String::from(
+            "`tasks.setup` will be normalized to `internal: true` so setup stays an `ota up` support task by default",
+        ));
+    }
+    assumptions.push(String::from(
+        "normalization moves the existing task body and fields as-is; use `wire-setup` afterward if the canonical setup task still needs refinement",
+    ));
+
+    Ok(AssistNormalizeProposal {
+        source_task: task.to_string(),
+        source_change_path: format!("tasks.{task}"),
+        assumptions,
+        before_value: raw_task_value,
+        after_value,
+    })
+}
+
+fn build_assist_normalize_yaml(
+    raw_document: &YamlValue,
+    proposal: &AssistNormalizeProposal,
+) -> Result<String, String> {
+    let mut document = raw_document.clone();
+    remove_yaml_path(&mut document, &["tasks", proposal.source_task.as_str()]);
+    set_yaml_path(&mut document, &["tasks", "setup"], proposal.after_value.clone());
+    serde_yaml::to_string(&document)
+        .map_err(|error| format!("failed to serialize assist proposal: {error}"))
+}
+
+fn assist_normalize_validation_commands(resolved_path: &Path, member: Option<&str>) -> Vec<String> {
+    let mut commands = Vec::new();
+    let validate = if let Some(member) = member {
+        format!("ota validate --member {member}")
+    } else {
+        String::from("ota validate")
+    };
+    commands.push(command_for_repo_from_contract_path(&validate, resolved_path));
+
+    let up = if let Some(member) = member {
+        format!("ota up --member {member} --dry-run")
+    } else {
+        String::from("ota up --dry-run")
+    };
+    commands.push(command_for_repo_from_contract_path(&up, resolved_path));
+
+    let doctor = if let Some(member) = member {
+        format!("ota doctor --member {member}")
+    } else {
+        String::from("ota doctor")
+    };
+    commands.push(command_for_repo_from_contract_path(&doctor, resolved_path));
+    commands
+}
+
+fn assist_normalize_write_next(resolved_path: &Path, member: Option<&str>) -> String {
+    let command = if let Some(member) = member {
+        format!("ota up --member {member} --dry-run")
+    } else {
+        String::from("ota up --dry-run")
+    };
+    format!(
+        "rerun `{}` to inspect the canonical setup path",
         command_for_repo_from_contract_path(&command, resolved_path)
     )
 }
@@ -9664,6 +10252,30 @@ fn set_yaml_path(document: &mut YamlValue, path: &[&str], value: YamlValue) {
         .as_mapping_mut()
         .expect("mapping")
         .insert(YamlValue::String(path[path.len() - 1].to_string()), value);
+}
+
+fn remove_yaml_path(document: &mut YamlValue, path: &[&str]) {
+    debug_assert!(!path.is_empty());
+    if path.len() == 1 {
+        if let Some(mapping) = document.as_mapping_mut() {
+            mapping.remove(YamlValue::String(path[0].to_string()));
+        }
+        return;
+    }
+
+    let mut current = document;
+    for segment in &path[..path.len() - 1] {
+        let Some(mapping) = current.as_mapping_mut() else {
+            return;
+        };
+        let Some(next) = mapping.get_mut(YamlValue::String((*segment).to_string())) else {
+            return;
+        };
+        current = next;
+    }
+    if let Some(mapping) = current.as_mapping_mut() {
+        mapping.remove(YamlValue::String(path[path.len() - 1].to_string()));
+    }
 }
 
 fn validate_assist_contract_update(

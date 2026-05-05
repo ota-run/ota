@@ -87,6 +87,7 @@ ota currently ships these commands:
 - `ota assist declare-env`
 - `ota assist add-task`
 - `ota assist wire-setup`
+- `ota assist normalize`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -691,6 +692,42 @@ ota assist wire-setup --run "test -f .env.local || cp .env.example .env.local"
 ota assist wire-setup --run "npm install" --service postgres
 ota assist wire-setup --script "cargo fetch\ncargo build" --json
 ota assist wire-setup --member api --run "npm install" --service postgres --write
+```
+
+Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,
+or monorepo/member behavior.
+
+## `ota assist normalize`
+
+Normalize one existing task into the canonical `tasks.setup` slot.
+
+```bash
+ota assist normalize --task <name> --into setup [PATH]
+ota assist normalize --member api --task <name> --into setup --write [PATH]
+ota assist normalize --json --task <name> --into setup [PATH]
+```
+
+Use it when the contract already has one setup-like task under the wrong task name and the right
+next step is to move that existing declaration into `tasks.setup` instead of hand-editing both the
+old and new task entries.
+
+Current behavior:
+
+- defaults to preview mode and shows assumptions, the current task block, the proposed canonical `tasks.setup` block, and the next validation commands
+- `--write` applies the normalization and revalidates the updated contract before returning success
+- the current shipped scope is one intent only: `--into setup`
+- removes the original `tasks.<name>` entry and writes the moved task under `tasks.setup`
+- normalizes the moved task to `internal: true` so setup stays an `ota up` support task by default
+- supports `--member` only when the selected task is declared in that member overlay file; it refuses inherited root tasks because member overlays cannot delete those safely in this shipped slice
+- refuses when `tasks.setup` already exists, when the selected task does not exist, or when the selected task is already `setup`
+- `--json` emits the stable assist proposal/apply result for this normalization change
+
+Examples:
+
+```bash
+ota assist normalize --task bootstrap --into setup
+ota assist normalize --member api --task bootstrap --into setup --write
+ota assist normalize --json --task bootstrap --into setup
 ```
 
 Use [assist-workflow.md](assist-workflow.md) when you need the fuller operator guide, refusal cases,

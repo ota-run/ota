@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/assist-normalize.json",
+  "title": "ota assist normalize --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "mode",
+        "operation",
+        "subject",
+        "inputs",
+        "assumptions",
+        "changes",
+        "diff",
+        "validation",
+        "next"
+      ],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "mode": { "enum": ["preview", "write"] },
+        "operation": { "const": "normalize" },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task", "into"],
+          "properties": {
+            "task": { "type": "string" },
+            "into": { "const": "setup" }
+          }
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["into"],
+          "properties": {
+            "into": { "const": "setup" }
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "changes": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "action", "before", "after"],
+            "properties": {
+              "path": { "type": "string" },
+              "action": { "enum": ["delete", "set"] },
+              "before": {},
+              "after": {}
+            }
+          }
+        },
+        "diff": { "type": "string" },
+        "validation": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "next": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "operation", "subject", "why", "next"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "operation": { "const": "normalize" },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task"],
+          "properties": {
+            "task": { "type": "string" }
+          }
+        },
+        "why": { "type": "string" },
+        "next": { "type": "string" }
+      }
+    }
+  ]
+}
