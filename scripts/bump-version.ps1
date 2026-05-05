@@ -56,8 +56,18 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$') {
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $cargoToml = Join-Path $repoRoot "Cargo.toml"
+$changelog = Join-Path $repoRoot "CHANGELOG.md"
+$readinessWorkflow = Join-Path $repoRoot ".github/workflows/ota-readiness.yml"
 if (-not (Test-Path $cargoToml)) {
     Write-Error "Cargo.toml not found at $cargoToml"
+    exit 1
+}
+if (-not (Test-Path $changelog)) {
+    Write-Error "CHANGELOG.md not found at $changelog"
+    exit 1
+}
+if (-not (Test-Path $readinessWorkflow)) {
+    Write-Error "readiness workflow not found at $readinessWorkflow"
     exit 1
 }
 
@@ -87,14 +97,49 @@ if (-not $found -or -not $currentVersion) {
     exit 1
 }
 
+$changelogLines = [System.Collections.Generic.List[string]]::new()
+$changelogLines.AddRange([string[]](Get-Content -Path $changelog))
+
+if ($changelogLines.Contains("## $Version")) {
+    Write-Error "CHANGELOG.md already contains ## $Version"
+    exit 1
+}
+
+$unreleasedIndex = $changelogLines.IndexOf("## Unreleased")
+if ($unreleasedIndex -lt 0) {
+    Write-Error "failed to locate ## Unreleased in CHANGELOG.md"
+    exit 1
+}
+
 Set-Content -Path $cargoToml -Value $lines
 
+$workflowLines = Get-Content -Path $readinessWorkflow
+$updatedWorkflow = $false
+for ($i = 0; $i -lt $workflowLines.Count; $i++) {
+    if (-not $updatedWorkflow -and $workflowLines[$i] -match '^(\s*ota-version:\s*)(\S+)\s*$') {
+        $workflowLines[$i] = "$($Matches[1])$Version"
+        $updatedWorkflow = $true
+    }
+}
+
+if (-not $updatedWorkflow) {
+    Write-Error "failed to update ota-version in $readinessWorkflow"
+    exit 1
+}
+
+Set-Content -Path $readinessWorkflow -Value $workflowLines
+
+$changelogLines.Insert($unreleasedIndex + 1, "")
+$changelogLines.Insert($unreleasedIndex + 2, "## $Version")
+
+Set-Content -Path $changelog -Value $changelogLines
+
 Write-Host "🦦 VERSION BUMP" -ForegroundColor Cyan
-Write-Host "Updated: Cargo.toml"
+Write-Host "Updated: Cargo.toml, CHANGELOG.md, .github/workflows/ota-readiness.yml"
 Write-Host "From: $currentVersion"
 Write-Host "To:   $Version"
 Write-Host ""
 Write-Host "Next:"
-Write-Host "▸  run `cargo test`"
-Write-Host "▸  commit with message like `release: v$Version`"
-Write-Host "▸  push to `main`; GitHub Actions will create `v$Version` after the gate passes"
+Write-Host '▸  run `cargo test`'
+Write-Host ('▸  commit with message like `release: v{0}`' -f $Version)
+Write-Host ('▸  push to `main`; GitHub Actions will create `v{0}` after the gate passes' -f $Version)
