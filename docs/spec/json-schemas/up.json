@@ -343,6 +343,10 @@
               }
             },
             "next": { "type": "string" },
+            "next_steps": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
             "runtime": { "$ref": "./shared.json#/$defs/resolvedTaskRuntime" },
             "service_termination": {
               "$ref": "./shared.json#/$defs/serviceTermination"
