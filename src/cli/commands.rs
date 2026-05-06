@@ -31051,6 +31051,7 @@ fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> 
 
 fn render_up(
     path: &str,
+    member: Option<&str>,
     status: &str,
     phase: &str,
     report: DoctorReport,
@@ -31093,6 +31094,7 @@ fn render_up(
         ),
         OutputFormat::Json => render_up_json(
             path,
+            member,
             status,
             phase,
             cause.map(up_failure_cause_key),
@@ -31131,6 +31133,7 @@ fn render_up_result(
 
     match format {
         OutputFormat::Text => {
+            let member = member_from_display_contract_target(text_path);
             let cause = primary_up_failure_cause(
                 result.status,
                 result.phase,
@@ -31140,17 +31143,26 @@ fn render_up_result(
                 result.service.as_deref(),
                 result.task.as_deref(),
             );
+            let receipt = normalized_up_receipt(
+                member,
+                result.status,
+                result.phase,
+                &result.report.findings,
+                (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
+                &result.receipt,
+            );
             let mut stdout = render_up_section(text_path, &result);
             if show_receipt {
-                stdout.push_str(&render_execution_receipt_text(&result.receipt));
+                stdout.push_str(&render_execution_receipt_text(&receipt));
             }
             stdout.push('\n');
             stdout.push_str(&render_up_summary_block(
-                &result.receipt,
+                &receipt,
                 result.task.as_deref().or(Some(result.phase)),
                 "UP SUMMARY",
                 cause,
             ));
+            append_receipt_next_block(&mut stdout, &receipt);
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -31159,6 +31171,7 @@ fn render_up_result(
         }
         OutputFormat::Json => render_up(
             path,
+            member_from_display_contract_target(text_path),
             result.status,
             result.phase,
             result.report,
@@ -31233,11 +31246,19 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "blockers": preview.blockers,
         })
     } else {
+        let receipt = normalized_up_receipt(
+            None,
+            result.status,
+            result.phase,
+            &result.report.findings,
+            (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
+            &result.receipt,
+        );
         let cause = primary_up_failure_cause(
             result.status,
             result.phase,
             &result.report.findings,
-            result.receipt.backend.as_deref(),
+            receipt.backend.as_deref(),
             (!result.stderr.is_empty()).then_some(result.stderr.as_str()),
             result.service.as_deref(),
             result.task.as_deref(),
@@ -31250,7 +31271,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "phase": result.phase,
             "cause": cause,
             "findings": result.report.findings,
-            "receipt": result.receipt,
+            "receipt": receipt,
             "stderr": result.stderr,
             "service": result.service,
             "task": result.task,
@@ -31303,6 +31324,12 @@ fn display_contract_target(path: &str, member: Option<&str>) -> String {
         Some(member) => format!("{path} [member {member}]"),
         None => path.to_string(),
     }
+}
+
+fn member_from_display_contract_target(path: &str) -> Option<&str> {
+    let path = path.strip_suffix(']')?;
+    let (_, member) = path.rsplit_once(" [member ")?;
+    Some(member)
 }
 
 fn compact_contract_path(path: &Path) -> String {
@@ -34007,6 +34034,85 @@ tasks:
     }
 
     #[test]
+    fn up_text_appends_receipt_next_after_up_summary() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(1, "setup", "OK", None, Some(0))],
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: Some(String::from(
+                "run `ota execution plan` to inspect the selected execution path",
+            )),
+        };
+        let result = RepoUpResult {
+            ok: true,
+            status: "READY",
+            phase: "task",
+            report: DoctorReport {
+                ok: true,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: Vec::new(),
+            },
+            preview: None,
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("setup")),
+            task_command: Some(String::from("echo setup")),
+            exit_code: Some(0),
+            stdout: String::from("setup"),
+            stderr: String::new(),
+        };
+
+        let text = strip_ansi_codes(
+            &render_up_result(
+                "./ota.yaml",
+                "./ota.yaml",
+                result,
+                OutputFormat::Text,
+                false,
+            )
+            .stdout,
+        );
+
+        let summary = text.find("UP SUMMARY").expect("summary");
+        let next = text.rfind("\nNext:").expect("next");
+        assert!(next > summary, "{text}");
+        assert!(
+            text.contains("run `ota execution plan` to inspect the selected execution path"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn up_blocked_provisioning_text_highlights_primary_reason_and_context() {
         let receipt = ExecutionReceipt {
             ok: false,
@@ -34395,6 +34501,85 @@ tasks:
         assert_eq!(
             value.get("cause").and_then(|value| value.as_str()),
             Some("backend_startup")
+        );
+    }
+
+    #[test]
+    fn up_json_receipt_next_includes_execution_plan_for_backend_startup_failures() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-3ff7e125cddff1a4")),
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "provisioning",
+                "PROVISION FAILED",
+                None,
+                Some(1),
+            )],
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "PROVISION FAILED",
+            phase: "provisioning",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: Vec::new(),
+            },
+            preview: None,
+            receipt,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: String::from(
+                "Error response from daemon: failed to set up container networking: network local_default not found\nfailed to start containers: ota-3ff7e125cddff1a4\n",
+            ),
+        };
+
+        let value = super::up_result_json_value("./ota.yaml", &result);
+        let next = value["receipt"]["next"].as_str().expect("receipt next");
+
+        assert!(next.contains("ota execution plan --mode container"), "{next}");
+        assert!(
+            next.contains("repair the missing compose/runtime network attachment"),
+            "{next}"
+        );
+        assert!(
+            next.contains("verify the container runtime and required compose attachments are healthy"),
+            "{next}"
         );
     }
 
@@ -37041,6 +37226,7 @@ docker: Error response from daemon: failed to set up container networking: netwo
         assert!(text.contains(
             "docker: Error response from daemon: failed to set up container networking: network local_default not found"
         ));
+        assert!(text.contains("ota execution plan --mode container"));
     }
 
     #[test]
@@ -38660,10 +38846,19 @@ tasks:
         let rendered = strip_ansi_codes(&rendered);
 
         assert!(rendered.contains("RUN SUMMARY"), "{rendered}");
+        let summary = rendered.find("RUN SUMMARY").expect("summary");
+        let status = rendered.find("\nStatus:").expect("status");
+        let note = rendered.find("\nNote:").expect("note");
+        let next = rendered.rfind("\nNext:").expect("next");
+        assert!(status > summary, "{rendered}");
+        assert!(note > status, "{rendered}");
+        assert!(next > note, "{rendered}");
         assert!(
-            rendered.contains(
-                "Status:      success\nNote:        running on the host environment\n\n\nNext: run `ota tasks --use` to inspect runnable task usage"
-            ),
+            rendered.contains("Note:        running on the host environment"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Next: run `ota tasks --use` to inspect runnable task usage"),
             "{rendered}"
         );
     }
@@ -44993,6 +45188,59 @@ fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
     }
 }
 
+fn repo_run_command(task_name: &str, member: Option<&str>) -> String {
+    match member {
+        Some(member) => format!("ota run --member {member} {task_name}"),
+        None => format!("ota run {task_name}"),
+    }
+}
+
+fn repo_env_task_command(task_name: &str, member: Option<&str>) -> String {
+    match member {
+        Some(member) => format!("ota env --member {member} --task {task_name}"),
+        None => format!("ota env --task {task_name}"),
+    }
+}
+
+fn repo_execution_plan_command(
+    contract_path: &Path,
+    member: Option<&str>,
+    backend: Backend,
+) -> String {
+    let mut command = match member {
+        Some(member) => format!("ota execution plan --member {member}"),
+        None => String::from("ota execution plan"),
+    };
+    match backend {
+        Backend::Container => command.push_str(" --mode container"),
+        Backend::Remote => command.push_str(" --mode remote"),
+        Backend::Native => {}
+    }
+    let target_path = member
+        .and_then(|member_name| member_root_contract_path(contract_path, member_name))
+        .unwrap_or_else(|| contract_path.to_path_buf());
+    command_for_repo_contract_target(&command, &target_path)
+}
+
+fn member_root_contract_path(contract_path: &Path, member: &str) -> Option<PathBuf> {
+    if contract_path
+        .file_name()
+        .is_none_or(|name| name != std::ffi::OsStr::new(DEFAULT_CONTRACT_FILE))
+    {
+        return None;
+    }
+
+    let member_dir = contract_path.parent()?;
+    if member_dir
+        .file_name()
+        .is_none_or(|name| name != std::ffi::OsStr::new(member))
+    {
+        return None;
+    }
+
+    Some(member_dir.parent()?.join(DEFAULT_CONTRACT_FILE))
+}
+
 fn task_use_details_step(contract_path: Option<&Path>, member: Option<&str>) -> String {
     let command = match member {
         Some(member) => format!("ota tasks --member {member} --use"),
@@ -45605,13 +45853,7 @@ fn render_run_structured_error_text(
             )],
             vec![format!(
                 "run {} to inspect env requirements for this task",
-                paint_code(&format!(
-                    "`{}`",
-                    match member {
-                        Some(member) => format!("ota env --member {member} --task {task_name}"),
-                        None => format!("ota env --task {task_name}"),
-                    }
-                ))
+                paint_code(&format!("`{}`", repo_env_task_command(task_name, member)))
             )],
         ),
         RunError::InvalidEnvValue {
@@ -45625,13 +45867,7 @@ fn render_run_structured_error_text(
             )],
             vec![format!(
                 "run {} to inspect env requirements for this task",
-                paint_code(&format!(
-                    "`{}`",
-                    match member {
-                        Some(member) => format!("ota env --member {member} --task {task_name}"),
-                        None => format!("ota env --task {task_name}"),
-                    }
-                ))
+                paint_code(&format!("`{}`", repo_env_task_command(task_name, member)))
             )],
         ),
         RunError::MissingRequiredEnvSource { kind, path } => (
@@ -45639,10 +45875,16 @@ fn render_run_structured_error_text(
             vec![format!(
                 "task `{task_name}` requires declared environment source `{kind}:{path}`, but it is missing"
             )],
-            vec![format!(
-                "repair the declared environment sources, then rerun `{}`",
-                paint_code(&repo_run_stream_command(task_name, member).replace(" --stream", ""))
-            )],
+            vec![
+                format!(
+                    "run {} to inspect env source status for this task",
+                    paint_code(&format!("`{}`", repo_env_task_command(task_name, member)))
+                ),
+                format!(
+                    "repair the declared environment sources, then rerun `{}`",
+                    paint_code(&repo_run_command(task_name, member))
+                ),
+            ],
         ),
         RunError::InvalidEnvSource {
             kind,
@@ -45653,10 +45895,16 @@ fn render_run_structured_error_text(
             vec![format!(
                 "task `{task_name}` could not read declared environment source `{kind}:{path}`: {details}"
             )],
-            vec![format!(
-                "repair the declared environment sources, then rerun `{}`",
-                paint_code(&repo_run_stream_command(task_name, member).replace(" --stream", ""))
-            )],
+            vec![
+                format!(
+                    "run {} to inspect env source status for this task",
+                    paint_code(&format!("`{}`", repo_env_task_command(task_name, member)))
+                ),
+                format!(
+                    "repair the declared environment sources, then rerun `{}`",
+                    paint_code(&repo_run_command(task_name, member))
+                ),
+            ],
         ),
         RunError::InvalidPolicyPack { details } => (
             String::from("Invalid org policy pack"),
@@ -45814,9 +46062,27 @@ fn render_run_structured_error_text(
             | RunError::MissingContainerBackendCli { .. }
             | RunError::MissingRemoteProvider { .. }
             | RunError::MissingRemoteTarget { .. }
-    ) && let Some(fallback) = run_default_fallback_step(task_name, overrides)
-    {
-        next_steps.push(fallback);
+    ) {
+        let inspect_command = if matches!(
+            error,
+            RunError::MissingContainerImage { .. }
+                | RunError::MissingContainerLifecycle { .. }
+                | RunError::MissingContainerBackendCli { .. }
+        ) {
+            repo_execution_plan_command(contract_path, member, Backend::Container)
+        } else {
+            repo_execution_plan_command(contract_path, member, Backend::Remote)
+        };
+        next_steps.insert(
+            0,
+            format!(
+                "run {} to inspect the selected execution path before changing the contract",
+                paint_code(&format!("`{inspect_command}`"))
+            ),
+        );
+        if let Some(fallback) = run_default_fallback_step(task_name, overrides) {
+            next_steps.push(fallback);
+        }
         next_steps.push(task_use_details_step(Some(contract_path), member));
     }
 
@@ -46301,6 +46567,13 @@ fn render_run_preferred_backend_validation_text(
                 String::from("this contract does not declare `execution.backends.container.image`"),
             ],
             vec![
+                format!(
+                    "run {} to inspect the selected execution path before changing the contract",
+                    paint_code(&format!(
+                        "`{}`",
+                        repo_execution_plan_command(resolved_path, member, Backend::Container)
+                    ))
+                ),
                 String::from("add `execution.backends.container.image` to the repo contract"),
                 String::from(
                     "or change the default execution mode if this repo should not prefer containers",
@@ -46326,6 +46599,13 @@ fn render_run_preferred_backend_validation_text(
                 String::from("this contract does not declare `execution.lifecycle`"),
             ],
             vec![
+                format!(
+                    "run {} to inspect the selected execution path before changing the contract",
+                    paint_code(&format!(
+                        "`{}`",
+                        repo_execution_plan_command(resolved_path, member, Backend::Container)
+                    ))
+                ),
                 String::from("add `execution.lifecycle` to the repo contract"),
                 String::from(
                     "or change the default execution mode if this repo should not prefer containers",
@@ -46351,6 +46631,13 @@ fn render_run_preferred_backend_validation_text(
                 String::from("this contract does not declare `execution.backends.remote.provider`"),
             ],
             vec![
+                format!(
+                    "run {} to inspect the selected execution path before changing the contract",
+                    paint_code(&format!(
+                        "`{}`",
+                        repo_execution_plan_command(resolved_path, member, Backend::Remote)
+                    ))
+                ),
                 String::from("add `execution.backends.remote.provider` to the repo contract"),
                 String::from(
                     "or change the default execution mode if this repo should not prefer remote execution",
@@ -47634,6 +47921,14 @@ fn render_up_text(
     receipt: &ExecutionReceipt,
     show_receipt: bool,
 ) -> CommandOutput {
+    let receipt = normalized_up_receipt(
+        member_from_display_contract_target(path),
+        status,
+        phase,
+        &report.findings,
+        stderr,
+        receipt,
+    );
     let cause = primary_up_failure_cause(
         status,
         phase,
@@ -47656,19 +47951,20 @@ fn render_up_text(
         task_command,
         stderr,
         exit_code,
-        receipt,
+        &receipt,
         cause,
     );
     if show_receipt {
-        stdout.push_str(&render_execution_receipt_text(receipt));
+        stdout.push_str(&render_execution_receipt_text(&receipt));
     }
     stdout.push_str("\n\n");
     stdout.push_str(&render_up_summary_block(
-        receipt,
+        &receipt,
         task.or(Some(phase)),
         "UP SUMMARY",
         cause,
     ));
+    append_receipt_next_block(&mut stdout, &receipt);
 
     CommandOutput {
         stdout,
@@ -47937,6 +48233,21 @@ fn render_up_backend_startup_failure_section(
     append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
 
     let mut next_steps = Vec::new();
+    if let Some(contract_path) = contract_path {
+        let member = member_from_display_contract_target(path);
+        let command = repo_execution_plan_command(
+            contract_path,
+            member,
+            match backend {
+                Some("remote") => Backend::Remote,
+                _ => Backend::Container,
+            },
+        );
+        next_steps.push(format!(
+            "run {} to inspect the selected execution path before changing execution settings",
+            paint_code(&format!("`{command}`"))
+        ));
+    }
     if stderr
         .map(|text| {
             let lowered = text.to_ascii_lowercase();
@@ -48048,10 +48359,20 @@ fn render_up_blocked_provisioning_section(
                 ),
                 String::from("this contract does not declare `execution.backends.container.image`"),
             ];
-            let next_steps = vec![
+            let mut next_steps = Vec::new();
+            if let Some(contract_path) = contract_path {
+                let member = member_from_display_contract_target(path);
+                let command =
+                    repo_execution_plan_command(contract_path, member, Backend::Container);
+                next_steps.push(format!(
+                    "run {} to inspect the selected execution path before changing the contract",
+                    paint_code(&format!("`{command}`"))
+                ));
+            }
+            next_steps.extend([
                 String::from("set `execution.backends.container.image` in the repo contract"),
                 String::from("rerun `ota up`"),
-            ];
+            ]);
             stdout.push_str(&format!(
                 "\n\n{}  {}",
                 render_severity(FindingSeverity::Error),
@@ -48075,8 +48396,30 @@ fn render_up_blocked_provisioning_section(
                 render_container_image_finding_text(&primary.why, &primary.next, doctor_mode);
             let why_lines =
                 finding_why_lines(&primary.summary, &display_why, container_image.as_deref());
-            let next_steps =
+            let mut next_steps =
                 finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
+            if let Some(contract_path) = contract_path
+                && matches!(receipt.backend.as_deref(), Some("container" | "remote"))
+                && !next_steps.iter().any(|step| step.contains("ota execution plan"))
+            {
+                let member = member_from_display_contract_target(path);
+                let command = repo_execution_plan_command(
+                    contract_path,
+                    member,
+                    if receipt.backend.as_deref() == Some("remote") {
+                        Backend::Remote
+                    } else {
+                        Backend::Container
+                    },
+                );
+                next_steps.insert(
+                    0,
+                    format!(
+                        "run {} to inspect the selected execution path before changing execution settings",
+                        paint_code(&format!("`{command}`"))
+                    ),
+                );
+            }
             stdout.push('\n');
             append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
             append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
@@ -48462,6 +48805,21 @@ fn render_up_section_from_parts(
             let finding = group.findings[0];
             stdout.push_str("\n\n");
             let rewritten_next = rewrite_doctor_mode_command(&finding.next, doctor_mode);
+            let rewritten_next = if should_prepend_up_execution_plan_for_finding(
+                status,
+                phase,
+                finding,
+                backend,
+            ) {
+                prepend_up_execution_plan_next_step(
+                    &rewritten_next,
+                    contract_path,
+                    member_from_display_contract_target(path),
+                    backend,
+                )
+            } else {
+                rewritten_next
+            };
             if render_depends_on_boundary_doctor_finding(
                 &mut stdout,
                 finding.severity,
@@ -48498,6 +48856,139 @@ fn render_up_section_from_parts(
     }
 
     stdout
+}
+
+fn prepend_up_execution_plan_next_step(
+    next: &str,
+    contract_path: Option<&Path>,
+    member: Option<&str>,
+    backend: Option<&str>,
+) -> String {
+    let Some(contract_path) = contract_path else {
+        return next.to_string();
+    };
+    let backend = match backend {
+        Some("container") => Backend::Container,
+        Some("remote") => Backend::Remote,
+        _ => return next.to_string(),
+    };
+    if next.contains("ota execution plan") {
+        return next.to_string();
+    }
+    let command = repo_execution_plan_command(contract_path, member, backend);
+    format!(
+        "run `{command}` to inspect the selected execution path before changing execution settings; {next}"
+    )
+}
+
+fn should_prepend_up_execution_plan_for_finding(
+    status: &str,
+    phase: &str,
+    finding: &Finding,
+    backend: Option<&str>,
+) -> bool {
+    if !matches!(backend, Some("container" | "remote")) {
+        return false;
+    }
+    if finding.next.contains("ota execution plan") {
+        return false;
+    }
+    if status == "PROVISION FAILED" {
+        return true;
+    }
+    if phase != "preconditions" {
+        return false;
+    }
+    let summary = finding.summary.as_str();
+    summary == "Container execution is not configured"
+        || summary == "Container execution lifecycle is not configured"
+        || summary.starts_with("Missing container execution backend CLI")
+        || summary == "Remote execution is not configured"
+        || summary == "Remote execution target is not configured"
+}
+
+fn normalized_up_receipt(
+    member: Option<&str>,
+    status: &str,
+    phase: &str,
+    findings: &[Finding],
+    stderr: Option<&str>,
+    receipt: &ExecutionReceipt,
+) -> ExecutionReceipt {
+    let mut normalized = receipt.clone();
+    normalized.next =
+        normalized_up_receipt_next(member, status, phase, findings, stderr, receipt);
+    normalized
+}
+
+fn normalized_up_receipt_next(
+    member: Option<&str>,
+    status: &str,
+    phase: &str,
+    findings: &[Finding],
+    stderr: Option<&str>,
+    receipt: &ExecutionReceipt,
+) -> Option<String> {
+    let backend = receipt.backend.as_deref();
+    let cause = primary_up_failure_cause(status, phase, findings, backend, stderr, None, None);
+    if matches!(cause, Some(UpFailureCause::BackendStartup)) {
+        let Some(contract_path) = Some(Path::new(receipt.contract.as_str())) else {
+            return receipt.next.clone();
+        };
+        let backend = match backend {
+            Some("container") => Backend::Container,
+            Some("remote") => Backend::Remote,
+            _ => return receipt.next.clone(),
+        };
+        let command = repo_execution_plan_command(contract_path, member, backend);
+        let mut next_steps = vec![format!(
+            "run `{command}` to inspect the selected execution path before changing execution settings"
+        )];
+        if stderr
+            .map(|text| {
+                let lowered = text.to_ascii_lowercase();
+                lowered.contains("network") && lowered.contains("not found")
+            })
+            .unwrap_or(false)
+        {
+            next_steps.push(String::from(
+                "repair the missing compose/runtime network attachment, then rerun `ota up`",
+            ));
+        } else {
+            next_steps.push(String::from(
+                "repair the container backend startup state, then rerun `ota up`",
+            ));
+        }
+        next_steps.push(String::from(
+            "verify the container runtime and required compose attachments are healthy",
+        ));
+        return Some(next_steps.join("; "));
+    }
+
+    let Some(primary) = findings
+        .iter()
+        .find(|finding| finding.severity == FindingSeverity::Error)
+        .or_else(|| findings.first())
+    else {
+        return receipt.next.clone();
+    };
+
+    let current_next = receipt
+        .next
+        .as_deref()
+        .unwrap_or(primary.next.as_str())
+        .to_string();
+
+    if should_prepend_up_execution_plan_for_finding(status, phase, primary, backend) {
+        return Some(prepend_up_execution_plan_next_step(
+            &current_next,
+            Some(Path::new(receipt.contract.as_str())),
+            member,
+            backend,
+        ));
+    }
+
+    receipt.next.clone()
 }
 
 fn doctor_mode_from_backend(backend: Option<&str>) -> Option<DoctorMode> {
@@ -48769,6 +49260,7 @@ fn render_contract_identity_text(identity: &ContractIdentity) -> String {
 
 fn render_up_json(
     path: &str,
+    member: Option<&str>,
     status: &str,
     phase: &str,
     cause: Option<&str>,
@@ -48780,6 +49272,7 @@ fn render_up_json(
     exit_code: Option<i32>,
     receipt: &ExecutionReceipt,
 ) -> CommandOutput {
+    let receipt = normalized_up_receipt(member, status, phase, &report.findings, stderr, receipt);
     CommandOutput {
         stdout: to_json(&UpStatus {
             ok: ready,
@@ -48788,7 +49281,7 @@ fn render_up_json(
             phase,
             cause,
             findings: &report.findings,
-            receipt: receipt.clone(),
+            receipt,
             stderr,
             service,
             task,

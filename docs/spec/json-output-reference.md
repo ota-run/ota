@@ -51,6 +51,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - success output is printed to stdout
 - command failures may still use stderr when the command cannot produce its normal JSON result
 - some JSON failures include an optional `next` string when ota can point to one safe follow-up command
+- execution receipts may also expose additive `next_steps` when the same follow-up lane is available as ordered machine-readable steps
 - `ok: true` does not always mean zero findings; warning-only diagnosis can still be `ok: true`
 - `path` refers to the resolved contract path as rendered by current CLI path compaction (often cwd-relative such as `./ota.yaml`)
 
@@ -2914,6 +2915,10 @@ without opening `receipt` first.
 `receipt.contract_identity` uses the same compact identity block as repo execution receipts, but
 identifies the workspace contract with `project.type = "workspace"` and workspace-level `repos` /
 `policies` counts.
+
+When an execution receipt includes `next`, additive `receipt.next_steps` carries the same
+follow-up lane as an ordered string array so agents and CI do not need to split the human review
+string themselves.
 
 Optional per-repo fields:
 

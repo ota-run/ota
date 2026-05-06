@@ -99,7 +99,11 @@
             "not_ready_count": { "type": "integer", "minimum": 0 }
           }
         },
-        "next": { "type": "string" }
+        "next": { "type": "string" },
+        "next_steps": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
       }
     },
     "repos": {
