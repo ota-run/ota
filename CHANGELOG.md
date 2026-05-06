@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- `ota explain` grouped actions now expose optional staged `commands` when ota can name a concrete execution lane directly, and text output now shows that command sequence for multi-step preview/apply paths instead of hiding it only inside prose `Next:` text
 - `ota explain` now orders grouped remediation actions deliberately instead of inheriting raw finding order, so preview-first and contract-authoring fixes surface ahead of later runtime follow-ups when several blockers exist at once
 - aligned `ota explain --json` and `ota workspace explain --json` with the ordered remediation story shown in text by adding grouped `actions` alongside detailed finding-level `steps`, so machine consumers get the same stable first-action plan without losing per-finding detail
 - expanded the safe `doctor --fix` repo-hygiene surface so the same `.gitignore` fix path now protects both `.ota/state/` and `.ota/receipts/` as Ota-owned local artifacts, with matching init/detect write behavior and updated doctor messaging

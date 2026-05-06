@@ -196,6 +196,18 @@ fn render_explain_group(
         }
     }
 
+    let commands = explain_action_commands(group);
+    if commands.len() > 1 {
+        output.push_str("\n  ");
+        output.push_str(&paint_key("Commands:"));
+        for command in commands {
+            output.push_str(&format!(
+                "\n    {}",
+                render_backticked_text(&format!("`{command}`"), Some(contract_path))
+            ));
+        }
+    }
+
     if let Some(provenance) = explain_group_provenance(group) {
         append_wrapped_labeled_text(
             output,
@@ -396,6 +408,24 @@ fn explain_action_priority(group: &DoctorFindingGroup<'_>) -> usize {
     }
 }
 
+fn explain_action_commands(group: &DoctorFindingGroup<'_>) -> Vec<String> {
+    let mut commands = Vec::new();
+    for token in backticked_tokens(&doctor_finding_group_next(
+        &group.kind,
+        &group.findings,
+        None,
+    )) {
+        if !token.starts_with("ota ") {
+            continue;
+        }
+        let command = token.to_string();
+        if !commands.contains(&command) {
+            commands.push(command);
+        }
+    }
+    commands
+}
+
 pub(super) fn explain_summary(report: &DoctorReport) -> ExplainSummary {
     explain_summary_from_findings(&report.findings)
 }
@@ -430,6 +460,7 @@ pub(super) fn explain_actions(findings: &[Finding]) -> Vec<ExplainAction> {
             count: group.findings.len(),
             why: explain_group_why_lines(&group).join("; "),
             next: doctor_finding_group_next(&group.kind, &group.findings, None),
+            commands: explain_action_commands(&group),
             provenance: explain_group_provenance(&group),
         })
         .collect()
@@ -601,5 +632,35 @@ mod tests {
         assert!(detect_index < assist_index);
         assert!(assist_index < env_index);
         assert!(env_index < runtime_index);
+    }
+
+    #[test]
+    fn explain_group_renders_staged_commands_when_multiple_ota_commands_exist() {
+        set_plain_mode(true);
+
+        let finding = Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("No tasks defined in contract"),
+            why: String::from("the contract cannot run anything yet"),
+            next: String::from(
+                "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task",
+            ),
+        };
+        let group = DoctorFindingGroup {
+            group_key: String::from("tasks-missing"),
+            action_key: String::from("tasks-missing"),
+            kind: DoctorFindingGroupKind::SharedAction(compact_backticked_paths(&finding.next)),
+            severity: FindingSeverity::Error,
+            findings: vec![&finding],
+        };
+
+        let mut output = String::new();
+        render_explain_group(&mut output, &group, 1, Path::new("./ota.yaml"));
+        let text = strip_ansi_codes(&output);
+        set_plain_mode(false);
+
+        assert!(text.contains("Commands:"));
+        assert!(text.contains("ota detect --dry-run"));
+        assert!(text.contains("ota assist add-task --name dev --kind command"));
     }
 }
