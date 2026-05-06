@@ -1246,15 +1246,14 @@ ota agents --write --output AGENTS.md [PATH]
 Current behavior:
 
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
-- falls back to a lightweight scaffold that makes the missing `agent` block explicit when one is not present
-- includes a fallback hint to run `ota tasks` when you want to inspect runnable task commands before generating or editing agent guidance
+- when the repo contract does not declare `agent`, preview mode now behaves like a blocked agent-boundary sync surface instead of a generic scaffold preview: it reports `Agent contract missing`, shows compare-first next steps through `ota detect --dry-run` and `ota init --dry-run`, and surfaces any trustworthy inferred repo signals plus inferred starter agent boundaries under `What Ota can tell so far`
+- `ota agents --write` now refuses when the repo contract still lacks `agent`, so Ota does not write generic guidance that looks more authoritative than the authored contract
 - renders an explicit `Bootstrap` section when `agent.bootstrap.ota` is present, including the approved shell and PowerShell install commands for `ota`
 - preserves existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting user-authored guidance
 - skips the write if the existing file already contains the generated AGENTS content
 - keeps the generated file lightweight by using short provenance (`Generated from ... by \`ota agents\`.`) instead of an Ota copyright or license banner
 - renders a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
-- text preview points directly at `ota agents --write` and `ota doctor` so the guidance can be written and then verified from the same contract
-- pairs naturally with `ota tasks --use` when you want to confirm runnable task shapes before writing the guidance file
+- text preview points directly at the missing boundary and the next safe authoring lane instead of only previewing generated markdown when the contract still lacks `agent`
 - writes to `AGENTS.md` by default when `--write` is set
 - accepts `--output` to write elsewhere
 - keeps output deterministic and reviewable
@@ -1262,7 +1261,8 @@ Current behavior:
 Text output:
 
 - header: `AGENTS <path>`
-- preview mode shows the generated markdown content together with the write and verification next steps
+- when `agent` exists, preview mode shows the generated markdown content together with the write and verification next steps
+- when `agent` is missing, preview mode shows a blocked boundary-sync diagnosis with `Target`, `Primary Blocker`, `Next`, and `What Ota can tell so far`
 - write mode reports whether the target was written or already in sync and points back to `ota doctor`
 
 JSON output:

@@ -18579,11 +18579,13 @@ pub fn agents(
     let compact_output_display = compact_path(&normalized_display_path(&output_path), "AGENTS.md");
 
     let content = render_agents_markdown(&contract, agent.as_ref(), &repo_local_contract_display);
-    let write_command = format!(
-        "`{}`",
-        command_for_contract("ota agents --write", &contract_path)
-    );
+    let detect_dry_run_raw = command_for_contract("ota detect --dry-run", &contract_path);
+    let init_dry_run_raw = command_for_contract("ota init --dry-run", &contract_path);
+    let write_raw = command_for_contract("ota agents --write", &contract_path);
+    let write_command = format!("`{}`", write_raw);
     let doctor_command = format!("`{}`", command_for_contract("ota doctor", &contract_path));
+    let detect_dry_run_command = format!("`{}`", detect_dry_run_raw);
+    let init_dry_run_command = format!("`{}`", init_dry_run_raw);
 
     let render_text = |status: &str| {
         let mut stdout = format_command_header("AGENTS", &compact_path_display);
@@ -18613,6 +18615,59 @@ pub fn agents(
         ));
         stdout
     };
+
+    if agent.is_none() {
+        let inferred_context = detect_repo(contract_root)
+            .ok()
+            .map(|report| inferred_agents_missing_block_context(contract_root, &report));
+        let render_missing_agent_text = || {
+            render_agents_missing_agent_text(
+                &compact_path_display,
+                &compact_output_display,
+                &detect_dry_run_command,
+                &init_dry_run_command,
+                &write_command,
+                inferred_context.as_ref(),
+            )
+        };
+
+        if write {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput {
+                        stdout: render_missing_agent_text(),
+                        stderr: None,
+                        exit_code: 1,
+                    },
+                    OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: "the repo contract does not declare an `agent` block yet",
+                        next: Some(&detect_dry_run_raw),
+                    })),
+                },
+                debug,
+                debug_lines,
+            );
+        }
+
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::success(render_missing_agent_text()),
+                OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
+                    ok: true,
+                    path: &path_display,
+                    output: &output_path_display,
+                    written: false,
+                    mode: "preview",
+                    content: &content,
+                })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
 
     if write {
         if let Ok(existing) = fs::read_to_string(&output_path) {
@@ -32618,14 +32673,140 @@ fn render_agents_markdown(
         }
     } else {
         output.push_str("No explicit `agent` block is declared in `ota.yaml` yet.\n\n");
-        output.push_str("Suggested next commands:\n\n");
-        output.push_str("- `ota tasks`\n");
-        output.push_str("- `ota doctor`\n");
-        output.push_str("- `ota detect --dry-run`\n");
-        output.push_str("- `ota init --bootstrap`\n");
+        output.push_str(
+            "Review inferred `agent` defaults with `ota detect --dry-run` and compare the starter contract path with `ota init --dry-run` before writing `AGENTS.md`.\n",
+        );
     }
 
     output
+}
+
+struct InferredMissingAgentContext {
+    signal_findings: Vec<Finding>,
+}
+
+fn inferred_agents_missing_block_context(
+    repo_root: &Path,
+    report: &DetectReport,
+) -> InferredMissingAgentContext {
+    let mut signal_findings = Vec::new();
+    append_contractless_repo_findings(repo_root, report, &mut signal_findings);
+
+    let mut inferred_contract = report.contract.clone();
+    apply_detected_starter_contract_defaults(&mut inferred_contract, report);
+    if let Some(agent) = inferred_contract
+        .agent
+        .as_ref()
+        .and_then(AgentSummary::from_config)
+    {
+        if !agent.safe_tasks.is_empty() {
+            signal_findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: format!("Inferred safe tasks: {}", agent.safe_tasks.join(", ")),
+                why: String::from("detector-backed starter agent defaults identified safe tasks"),
+                next: String::from("review the inferred agent boundary before writing it"),
+            });
+        }
+        if !agent.writable_paths.is_empty() {
+            signal_findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: format!(
+                    "Inferred starter writable paths: {}",
+                    agent.writable_paths.join(", ")
+                ),
+                why: String::from(
+                    "detector-backed starter agent defaults identified writable source roots",
+                ),
+                next: String::from("review the inferred agent boundary before writing it"),
+            });
+        }
+        if !agent.protected_paths.is_empty() {
+            signal_findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: format!(
+                    "Inferred protected paths: {}",
+                    agent.protected_paths.join(", ")
+                ),
+                why: String::from(
+                    "detector-backed starter agent defaults identified protected control files",
+                ),
+                next: String::from("review the inferred agent boundary before writing it"),
+            });
+        }
+    }
+
+    InferredMissingAgentContext { signal_findings }
+}
+
+fn render_agents_missing_agent_text(
+    compact_path_display: &str,
+    compact_output_display: &str,
+    detect_dry_run_command: &str,
+    init_dry_run_command: &str,
+    write_command: &str,
+    inferred_context: Option<&InferredMissingAgentContext>,
+) -> String {
+    let mut stdout = format_command_header("AGENTS", compact_path_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line("BLOCKED")));
+    stdout.push_str(&format!("\n{}\n", paint_section_title("Target")));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("File:"),
+        paint_code(compact_output_display)
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Managed block:"),
+        paint_code("Ota-generated content")
+    ));
+    stdout.push_str(&format!(
+        "\n\n{} {} {}",
+        primary_error_marker(),
+        paint("Primary Blocker", "1;38;2;255;168;168"),
+        render_finding_summary_with_count(FindingSeverity::Error, "Agent contract missing", 1)
+    ));
+    append_finding_section(
+        &mut stdout,
+        "Why:",
+        &[String::from(
+            "`ota.yaml` does not declare an `agent` block yet, so Ota cannot sync a real agent boundary into `AGENTS.md`",
+        )],
+        FindingSeverity::Error,
+        None,
+    );
+    append_wrapped_labeled_text(
+        &mut stdout,
+        "Provenance:",
+        "repo contract",
+        "",
+        DOCTOR_DETAIL_WRAP_WIDTH,
+        false,
+        paint_key,
+        |value| value.to_string(),
+    );
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[
+            format!("run {detect_dry_run_command} to review inferred `agent` defaults"),
+            format!("run {init_dry_run_command} to compare the starter contract path"),
+            String::from(
+                "confirm `agent.safe_tasks`, `agent.writable_paths`, and `agent.protected_paths`",
+            ),
+            format!("run {write_command} after the contract declares the agent boundary"),
+        ],
+        FindingSeverity::Error,
+        None,
+    );
+    if let Some(inferred_context) = inferred_context
+        && !inferred_context.signal_findings.is_empty()
+    {
+        let signal_refs = inferred_context.signal_findings.iter().collect::<Vec<_>>();
+        stdout.push_str(&render_contractless_doctor_signal_section(&signal_refs));
+    }
+    stdout
 }
 
 fn render_agents_task_list(output: &mut String, label: &str, tasks: &[String]) {

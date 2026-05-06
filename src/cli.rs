@@ -19246,29 +19246,95 @@ tasks:
     }
 
     #[test]
-    fn agents_preview_renders_scaffold_when_agent_block_is_missing() {
+    fn agents_preview_blocks_when_agent_block_is_missing() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
 project:
-  name: ota
+  name: ota-site
 "#,
         );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "start": "next start"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-site\"\n}\n");
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        fs::create_dir_all(fixture.dir.path().join("lib")).unwrap();
+        fixture.write(
+            "app/page.tsx",
+            "export default function Page() { return null; }\n",
+        );
+        fixture.write("lib/site.ts", "export const site = true;\n");
 
         let output = run_with(["ota", "agents", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("AGENTS"));
-        assert!(stdout.contains("Target:"));
+        assert!(stdout.contains("BLOCKED"));
+        assert!(stdout.contains("Target"));
+        assert!(stdout.contains("File:"));
         assert!(stdout.contains("Managed block:"));
-        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("Primary Blocker Agent contract missing"));
+        assert!(stdout.contains("Provenance: repo contract"));
+        assert!(stdout.contains("ota detect --dry-run"));
+        assert!(stdout.contains("ota init --dry-run"));
         assert!(stdout.contains("ota agents --write"));
-        assert!(stdout.contains("ota doctor"));
-        assert!(stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
-        assert!(stdout.contains("- `ota tasks`"));
-        assert!(stdout.contains("- `ota doctor`"));
-        assert!(stdout.contains("- `ota detect --dry-run`"));
+        assert!(stdout.contains("What Ota can tell so far"));
+        assert!(stdout.contains("Detected project name: ota-site"));
+        assert!(stdout.contains("Detected repo type: Node"));
+        assert!(stdout.contains("Detected package manager: npm"));
+        assert!(stdout.contains("Detected likely runnable tasks: dev, build, typecheck, start"));
+        assert!(stdout.contains("Inferred starter writable paths: app, lib"));
+        assert!(stdout.contains("Inferred protected paths:"));
+        assert!(stdout.contains("ota.yaml"));
+        assert!(stdout.contains("package.json"));
+        assert!(stdout.contains("package-lock.json"));
+        assert!(!stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
+        assert!(!stdout.contains("Suggested next commands:"));
+        assert!(!stdout.contains("# AGENTS.md"));
+    }
+
+    #[test]
+    fn agents_write_refuses_when_agent_block_is_missing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-site\"\n}\n");
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        fixture.write(
+            "app/page.tsx",
+            "export default function Page() { return null; }\n",
+        );
+
+        let output = run_with(["ota", "agents", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Primary Blocker Agent contract missing"));
+        assert!(!fixture.dir.path().join("AGENTS.md").exists());
     }
 
     #[test]
@@ -19279,8 +19345,23 @@ project:
             r#"
 version: 1
 project:
-  name: ota
+  name: ota-site
 "#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-site\"\n}\n");
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        fixture.write(
+            "app/page.tsx",
+            "export default function Page() { return null; }\n",
         );
 
         let output = run_with(["ota", "agents", fixture.file_path().to_str().unwrap()]);
@@ -19298,8 +19379,9 @@ project:
             .to_string();
         assert!(stdout.contains(&format!("AGENTS {contract_path}")));
         assert!(stdout.contains(&agents_path));
+        assert!(stdout.contains(&format!("ota detect --dry-run {contract_path}")));
+        assert!(stdout.contains(&format!("ota init --dry-run {contract_path}")));
         assert!(stdout.contains(&format!("ota agents --write {contract_path}")));
-        assert!(stdout.contains(&format!("ota doctor {contract_path}")));
     }
 
     #[test]
