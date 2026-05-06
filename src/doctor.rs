@@ -56,7 +56,7 @@ use crate::runner::{
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
-    RequirementSurface, RuntimeRequirement, ServiceSpec, ToolRequirement,
+    RequirementSurface, RuntimeRequirement, ServiceReadinessSpec, ServiceSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, collect_contract_advisories};
@@ -962,7 +962,7 @@ impl Finding {
     pub(crate) fn code(&self) -> &'static str {
         match self.summary.as_str() {
             "No tasks defined in contract" => "OTA_TASKS_MISSING",
-            "Repo local runtime state is not ignored by git" => {
+            "Repo local Ota artifacts are not ignored by git" => {
                 "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE"
             }
             "Ephemeral lifecycle is execution-only" => "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY",
@@ -2062,7 +2062,7 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
             "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
         ),
         next: String::from(
-            "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate",
+            "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task",
         ),
     });
 }
@@ -2614,20 +2614,32 @@ fn service_finding(
     }
 
     if service.required {
-        let why = if service.start_command(name).is_some() {
+        let can_anchor_structured_readiness = service
+            .readiness
+            .as_ref()
+            .and_then(ServiceReadinessSpec::from_context)
+            .is_some()
+            || service.endpoints.contains_key("host")
+            || service.endpoints.len() == 1;
+
+        let why = if can_anchor_structured_readiness {
             format!(
                 "service `{name}` is required but no `healthcheck` is configured, so Ota cannot verify readiness"
             )
         } else {
             format!(
-                "service `{name}` is required but no `healthcheck` or `start` command is configured, so Ota cannot verify or prepare it"
+                "service `{name}` is required but the current managed service shape does not yet expose one truthful readiness surface, so Ota cannot verify readiness"
             )
         };
 
-        let next = if service.start_command(name).is_some() {
-            format!("add `services.{name}.healthcheck` so `ota doctor` can verify readiness")
+        let next = if can_anchor_structured_readiness {
+            format!(
+                "declare readiness with `ota assist declare-readiness --service {name} --style tcp` or `--style http`, then rerun `ota doctor`"
+            )
         } else {
-            format!("add `services.{name}.healthcheck` and optionally `services.{name}.start`")
+            format!(
+                "refine the managed service with `ota assist declare-service --name {name} --style tcp` or `--style http`, then rerun `ota doctor`"
+            )
         };
 
         return Some(Finding {
@@ -3061,7 +3073,10 @@ fn diagnose_env(
                         why: format!(
                             "{name} resolved to `{value}`, which is outside the allowed values"
                         ),
-                        next: format!("set {name} to one of: {}", requirement.allowed.join(", ")),
+                        next: format!(
+                            "run `ota env` to inspect the resolved source for {name}, then set {name} to one of: {}",
+                            requirement.allowed.join(", ")
+                        ),
                     });
                 }
             }
@@ -3070,7 +3085,7 @@ fn diagnose_env(
                 summary: format!("Missing environment variable: {name}"),
                 why: format!("{name} is required by this repo contract"),
                 next: format!(
-                    "set {name} in policy env, the shell, or a declared env source before running tasks"
+                    "run `ota env` to inspect the current precedence, then set {name} in policy env, the shell, or a declared env source before running tasks"
                 ),
             }),
             None => {}
@@ -4872,7 +4887,9 @@ fn failed_check_next(contract: &Contract, check: &crate::schema::CheckSpec) -> S
                 "run `ota up` or `ota run setup` to create `{path}`, then rerun `ota doctor`"
             );
         }
-        return format!("create `{path}`, then rerun `ota doctor`");
+        return format!(
+            "create `{path}` now, or declare a setup path with `ota assist wire-setup --run '<command>'`, then rerun `ota doctor`"
+        );
     }
 
     format!(
@@ -5177,13 +5194,23 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime state";
+pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime artifacts";
 pub(crate) const OTA_STATE_GITIGNORE_ENTRY: &str = ".ota/state/";
+pub(crate) const OTA_RECEIPTS_GITIGNORE_ENTRY: &str = ".ota/receipts/";
 
 fn gitignore_has_ota_state_entry(contents: &str) -> bool {
     contents
         .lines()
         .any(|line| matches!(line.trim(), ".ota/state/" | ".ota/state" | ".ota/state/*"))
+}
+
+fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".ota/receipts/" | ".ota/receipts" | ".ota/receipts/*"
+        )
+    })
 }
 
 pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, String> {
@@ -5199,7 +5226,7 @@ pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, Stri
 
     let contents = fs::read_to_string(&gitignore_path)
         .map_err(|error| format!("failed to read `{}`: {}", gitignore_path.display(), error))?;
-    Ok(!gitignore_has_ota_state_entry(&contents))
+    Ok(!(gitignore_has_ota_state_entry(&contents) && gitignore_has_ota_receipts_entry(&contents)))
 }
 
 pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option<Finding> {
@@ -5207,19 +5234,21 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
     match repo_missing_ota_state_gitignore(root) {
         Ok(true) => Some(Finding {
             severity: FindingSeverity::Warn,
-            summary: String::from("Repo local runtime state is not ignored by git"),
+            summary: String::from("Repo local Ota artifacts are not ignored by git"),
             why: String::from(
-                "`.ota/state/` stores Ota-owned local runtime state; if it is tracked by git, local execution residue can pollute repo diffs and diagnosis artifacts",
+                "`.ota/state/` and `.ota/receipts/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue and archived receipts can pollute repo diffs and diagnosis artifacts",
             ),
             next: String::from(
-                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/` to `.gitignore`, or add the ignore rule manually",
+                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/` and `.ota/receipts/` to `.gitignore`, or add the ignore rules manually",
             ),
         }),
         Ok(false) => None,
         Err(error) => Some(Finding {
             severity: FindingSeverity::Warn,
             summary: String::from("Repo `.gitignore` could not be inspected"),
-            why: format!("ota could not inspect whether `.ota/state/` is ignored: {error}"),
+            why: format!(
+                "ota could not inspect whether `.ota/state/` and `.ota/receipts/` are ignored: {error}"
+            ),
             next: String::from("repair `.gitignore` readability and rerun `ota doctor`"),
         }),
     }
@@ -7424,6 +7453,39 @@ tasks:
     }
 
     #[test]
+    fn diagnose_checks_points_missing_file_precondition_to_wire_setup_when_setup_missing() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: env-local-present
+    kind: precondition
+    severity: error
+    run: test -f .env.local
+tasks:
+  dev:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, synthetic_contract_path());
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].summary,
+            "Check failed: env-local-present"
+        );
+        assert_eq!(
+            report.findings[0].next,
+            "create `.env.local` now, or declare a setup path with `ota assist wire-setup --run '<command>'`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
     fn reports_optional_tool_version_mismatches_as_warnings() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
@@ -7969,7 +8031,7 @@ tasks:
     }
 
     #[test]
-    fn warns_when_required_service_has_no_healthcheck() {
+    fn required_service_with_start_and_endpoint_routes_to_declare_readiness() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
@@ -7980,6 +8042,10 @@ services:
   postgres:
     required: true
     start: docker compose up -d postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
 tasks:
   setup:
     run: printf ready
@@ -7994,6 +8060,108 @@ tasks:
         assert_eq!(
             report.findings[0].summary,
             "Required service cannot be verified: postgres"
+        );
+        assert_eq!(
+            report.findings[0].next,
+            "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn warns_when_required_service_has_no_start_or_healthcheck() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(
+            report.findings[0].summary,
+            "Required service cannot be verified: postgres"
+        );
+        assert_eq!(
+            report.findings[0].next,
+            "refine the managed service with `ota assist declare-service --name postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn required_host_service_with_one_endpoint_routes_to_declare_readiness() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: host
+      name: local-postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].next,
+            "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn required_compose_service_without_endpoint_routes_to_declare_service() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].next,
+            "refine the managed service with `ota assist declare-service --name postgres --style tcp` or `--style http`, then rerun `ota doctor`"
         );
     }
 
@@ -8014,6 +8182,10 @@ project:
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
         assert_eq!(report.findings[0].summary, "No tasks defined in contract");
+        assert_eq!(
+            report.findings[0].next,
+            "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
+        );
     }
 
     #[test]
