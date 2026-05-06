@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- reshaped `ota doctor` execution environment output so execution facts stay compact, environment resolution gets its own section, required-missing counts are explicit, and env entries are grouped as policy-backed, process-backed, source-backed, defaulted, or missing instead of rendering as a flat repeated `Env:` list
 - normalized another public CLI output-coherence slice: workspace detect/init scaffold mutations now keep stable command headers with result status in-body, `ota workspace tasks` no longer fakes a readiness verdict, preview `Contract` sections now use the newer unpunctuated grammar, `ota assist` previews now use `Next:` instead of legacy `Apply:` tails, and `ota receipt` now groups archive metadata inside a proper `Archive` section
 - improved no-contract `ota doctor` signal formatting in rich mode so the detected values now stand out visually without changing the labels, plain output, or JSON behavior
 - redesigned `ota agents` when the repo contract lacks `agent`: preview mode now reports `Agent contract missing` as a blocked boundary-sync diagnosis with inferred repo signals and inferred starter agent boundaries, and `ota agents --write` now refuses until the contract declares a real agent boundary
