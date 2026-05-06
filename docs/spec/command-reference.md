@@ -1049,7 +1049,7 @@ ota doctor --member api --member web --json [PATH]
 
 - Current behavior:
 
-- when no contract exists, inspects repo and host signals and reports the best next step instead of only telling the user to create a contract
+- when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `What Ota can tell so far` such as repo type, package manager, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
 - the human summary now makes the top-level state explicit as `READY`, `READY WITH WARNINGS`, or `BLOCKED`
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
