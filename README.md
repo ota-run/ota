@@ -330,10 +330,12 @@ ota agents --write
 If you are setting up multiple repos together:
 
 ```bash
-ota workspace doctor .
-ota workspace up
-ota workspace tasks .
+ota workspace detect --dry-run .
+ota workspace init --dry-run .
+ota workspace init .
 ota workspace validate .
+ota workspace up --dry-run .
+ota workspace up .
 ```
 
 If the contract declares agent guidance, `ota doctor --json` and `ota explain --json` surface the
@@ -815,5 +817,5 @@ If you want the shortest “which example proves what?” guide, use
 
 ### Workspace
 
-- [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter; use `ota workspace doctor` to review readiness and `ota workspace up` to prepare the stack.
-- [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow; use `ota workspace init` first, then `ota workspace up` to acquire and prepare repos.
+- [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter; compare `ota workspace detect --dry-run` with `ota workspace init --dry-run`, then use `ota workspace up --dry-run` before preparing the stack.
+- [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow; compare `ota workspace detect --dry-run` with `ota workspace init --dry-run`, then use `ota workspace up --dry-run` and `ota workspace up` to acquire and prepare repos.
