@@ -2554,6 +2554,9 @@ Current behavior:
 - `--force` force-fetches and hard-resets refreshed repos to the declared source or `--ref` override
 - `--prune` prunes stale remote-tracking refs during refresh
 - `--ref <branch|tag|sha>` overrides the source ref used for refresh
+- refresh target precedence is: explicit `--ref`, then declared `source.ref`, then the repo's current upstream branch
+- when none of those targets exist, ota refuses before preview or apply instead of falling through to a vague `git pull` failure
+- refresh failures now distinguish wrong remote target (`source.ref` / `--ref`), remote access/auth problems, and generic local git-state failures so the follow-up lane stays specific
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
 
 Text output:
@@ -2568,7 +2571,8 @@ JSON output:
 - `ok`
 - `path`
 - `mode`: `refresh` for normal refresh, `preview` for `--dry-run`
-- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
+- `summary` from the shared workspace execution receipt shape, always including `error_count`, `warn_count`, `info_count`, and `step_count`, and optionally including `repo_count`, `ready_count`, and `not_ready_count` when ota recorded the workspace roll-up
+- `receipt`
 - `repos`
 
 Current non-goals:
@@ -2598,7 +2602,12 @@ Current behavior:
 - never mutates repo state
 - `--json` returns a workspace diff roll-up with `mode: "diff"`
 - text and JSON now carry an additive top-level lifecycle `next` lane when ota can name the safest refresh or acquisition follow-up directly
+- text output now makes the comparison provenance explicit on each `Target:` line when ota is using declared `source.ref` versus upstream-branch fallback
+- when drift is being compared against upstream-branch fallback instead of declared `source.ref`, the repo-level follow-up lane now says that explicitly and suggests declaring `source.ref` when the workspace should own the target
 - per-repo JSON items can also carry additive `next` and `next_steps` so automation can read the repo-owned follow-up lane without reparsing findings
+- per-repo JSON also carries additive `drift_kind` so automation can distinguish local dirtiness, commit divergence, missing repo, missing contract, target ambiguity, and unresolved comparison directly
+- per-repo JSON also carries additive `target_source` so automation can tell whether the comparison target came from declared `source.ref` or from the repo's upstream branch
+- text and JSON summaries now also break the collapsed `Missing` and `Unresolved` buckets into explicit missing-contract and target-unavailable subcounts when present
 - differences do not fail the command; the command succeeds and surfaces drift in the report
 
 Current non-goals:
@@ -2626,7 +2635,12 @@ Current behavior:
 - never mutates repo state
 - `--json` returns a workspace status roll-up with `mode: "status"`
 - text and JSON now carry an additive top-level lifecycle `next` lane when ota can name the safest doctor, refresh, or acquisition follow-up directly
+- text output now makes the comparison provenance explicit on each `Target:` line when ota is using declared `source.ref` versus upstream-branch fallback
+- when drift is being compared against upstream-branch fallback instead of declared `source.ref`, the repo-level follow-up lane now says that explicitly and suggests declaring `source.ref` when the workspace should own the target
 - per-repo JSON items can also carry additive `next` and `next_steps` so automation can read the repo-owned follow-up lane without reparsing findings
+- per-repo JSON also carries additive `drift_kind` so automation can distinguish local dirtiness, commit divergence, missing repo, missing contract, target ambiguity, and unresolved comparison directly
+- per-repo JSON also carries additive `target_source` so automation can tell whether the comparison target came from declared `source.ref` or from the repo's upstream branch
+- text and JSON summaries now also break the collapsed `Missing` and `Unresolved` buckets into explicit missing-contract and target-unavailable subcounts when present
 - readiness findings and drift findings are surfaced in the same report
 
 Text output:

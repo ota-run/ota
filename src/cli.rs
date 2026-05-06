@@ -31838,6 +31838,324 @@ repos:
         assert!(stderr.contains("or run `ota workspace init --dry-run"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn workspace_refresh_refuses_ambiguous_source_target_before_running_git_pull() {
+        let fixture = TempDir::new().unwrap();
+        init_named_git_repo(
+            fixture.path(),
+            "api",
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        );
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+    source:
+      git: https://example.com/api.git
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "refresh",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("Refresh target unavailable: api"));
+        assert!(body.contains("does not declare `source.ref`"));
+        assert!(body.contains("ota workspace refresh --dry-run --ref <branch|tag|sha>"));
+        assert!(!body.contains("Refresh command:"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_refresh_classifies_missing_declared_source_ref() {
+        let fixture = TempDir::new().unwrap();
+        let origin_seed = init_named_git_repo(
+            fixture.path(),
+            "origin-seed",
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        );
+        let origin_bare = fixture.path().join("origin.git");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                "--bare",
+                origin_seed.to_str().unwrap(),
+                origin_bare.to_str().unwrap(),
+            ],
+        );
+        let checkout = fixture.path().join("api");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                origin_bare.to_str().unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+        );
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            format!(
+                r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+    source:
+      git: {}
+      ref: release-does-not-exist
+"#,
+                origin_bare.display()
+            ),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "refresh",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("Refresh target unavailable: api"));
+        assert!(body.contains("release-does-not-exist"));
+        assert!(body.contains("fix `source.ref`"));
+        assert!(body.contains("ota workspace refresh --dry-run --ref <branch|tag|sha>"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_refresh_classifies_missing_remote_path_as_source_access_failure() {
+        let fixture = TempDir::new().unwrap();
+        let origin_seed = init_named_git_repo(
+            fixture.path(),
+            "origin-seed",
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        );
+        let origin_bare = fixture.path().join("origin.git");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                "--bare",
+                origin_seed.to_str().unwrap(),
+                origin_bare.to_str().unwrap(),
+            ],
+        );
+        let checkout = fixture.path().join("api");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                origin_bare.to_str().unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+        );
+        let missing_origin = fixture.path().join("missing-origin.git");
+        run_git(
+            &checkout,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                missing_origin.to_str().unwrap(),
+            ],
+        );
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            format!(
+                r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+    source:
+      git: {}
+"#,
+                missing_origin.display()
+            ),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "refresh",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("Repo refresh failed: api"));
+        assert!(body.contains("could not reach or authenticate to its declared source"));
+        assert!(body.contains("fix source access or credentials"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_diff_json_marks_upstream_branch_target_source_when_ref_is_not_declared() {
+        let fixture = TempDir::new().unwrap();
+        let origin_seed = init_named_git_repo(
+            fixture.path(),
+            "origin-seed",
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        );
+        let origin_bare = fixture.path().join("origin.git");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                "--bare",
+                origin_seed.to_str().unwrap(),
+                origin_bare.to_str().unwrap(),
+            ],
+        );
+        let checkout = fixture.path().join("api");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                origin_bare.to_str().unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+        );
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            format!(
+                r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+    source:
+      git: {}
+"#,
+                origin_bare.display()
+            ),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "diff",
+            fixture.path().to_str().unwrap(),
+            "--json",
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let value: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(value["repos"][0]["drift_kind"], "match");
+        assert_eq!(value["repos"][0]["target_source"], "upstream_branch");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_diff_text_explains_upstream_branch_fallback_drift() {
+        let fixture = TempDir::new().unwrap();
+        let origin_seed = init_named_git_repo(
+            fixture.path(),
+            "origin-seed",
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        );
+        let origin_bare = fixture.path().join("origin.git");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                "--bare",
+                origin_seed.to_str().unwrap(),
+                origin_bare.to_str().unwrap(),
+            ],
+        );
+        let checkout = fixture.path().join("api");
+        run_git(
+            fixture.path(),
+            &[
+                "clone",
+                origin_bare.to_str().unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+        );
+        fs::write(checkout.join("README.md"), "dirty\n").unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            format!(
+                r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+    source:
+      git: {}
+"#,
+                origin_bare.display()
+            ),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "diff",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("Target: origin/"));
+        assert!(body.contains("(upstream branch)"));
+        assert!(body.contains("differs from upstream branch `origin/"));
+        assert!(body.contains("declare `source.ref` if the workspace should own the target explicitly"));
+    }
+
     #[test]
     fn workspace_list_concise_omits_detail_lines() {
         let fixture = WorkspaceFixture::new_multi_repo();

@@ -1202,6 +1202,9 @@ pub struct WorkspaceRepoDiffReport {
     pub required: bool,
     pub acquired: bool,
     pub status: String,
+    pub drift_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1233,7 +1236,11 @@ pub struct WorkspaceDiffSummary {
     pub different_count: usize,
     pub dirty_count: usize,
     pub missing_count: usize,
+    pub missing_repo_count: usize,
+    pub missing_contract_count: usize,
     pub unresolved_count: usize,
+    pub target_unavailable_count: usize,
+    pub comparison_unresolved_count: usize,
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
@@ -1262,6 +1269,9 @@ pub struct WorkspaceRepoStatusReport {
     pub ready: bool,
     pub readiness_status: String,
     pub drift_status: String,
+    pub drift_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1295,7 +1305,11 @@ pub struct WorkspaceStatusSummary {
     pub different_count: usize,
     pub dirty_count: usize,
     pub missing_count: usize,
+    pub missing_repo_count: usize,
+    pub missing_contract_count: usize,
     pub unresolved_count: usize,
+    pub target_unavailable_count: usize,
+    pub comparison_unresolved_count: usize,
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,

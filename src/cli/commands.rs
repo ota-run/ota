@@ -52006,6 +52006,10 @@ fn workspace_diff_next_steps(repos: &[WorkspaceRepoDiffReport]) -> Vec<String> {
     let has_drift = repos
         .iter()
         .any(|repo| matches!(repo.status.as_str(), "DIRTY" | "DIFFERENT"));
+    let has_upstream_fallback_drift = repos.iter().any(|repo| {
+        matches!(repo.status.as_str(), "DIRTY" | "DIFFERENT")
+            && repo.target_source.as_deref() == Some("upstream_branch")
+    });
     let has_unresolved = repos
         .iter()
         .any(|repo| matches!(repo.status.as_str(), "UNRESOLVED" | "MISSING CONTRACT"));
@@ -52031,6 +52035,11 @@ fn workspace_diff_next_steps(repos: &[WorkspaceRepoDiffReport]) -> Vec<String> {
         next_steps.push(String::from(
             "run `ota workspace refresh` when you are ready to reconcile workspace drift",
         ));
+        if has_upstream_fallback_drift {
+            next_steps.push(String::from(
+                "declare `source.ref` for repos that should use a contract-owned refresh target instead of local upstream-branch fallback",
+            ));
+        }
     }
     if has_missing || has_drift {
         next_steps.push(String::from(
@@ -52048,6 +52057,10 @@ fn workspace_status_next_steps(repos: &[WorkspaceRepoStatusReport]) -> Vec<Strin
     let has_drift = repos
         .iter()
         .any(|repo| matches!(repo.drift_status.as_str(), "DIRTY" | "DIFFERENT"));
+    let has_upstream_fallback_drift = repos.iter().any(|repo| {
+        matches!(repo.drift_status.as_str(), "DIRTY" | "DIFFERENT")
+            && repo.target_source.as_deref() == Some("upstream_branch")
+    });
     let has_unresolved = repos.iter().any(|repo| {
         matches!(
             repo.drift_status.as_str(),
@@ -52076,6 +52089,11 @@ fn workspace_status_next_steps(repos: &[WorkspaceRepoStatusReport]) -> Vec<Strin
         next_steps.push(String::from(
             "run `ota workspace refresh` when you are ready to reconcile workspace drift",
         ));
+        if has_upstream_fallback_drift {
+            next_steps.push(String::from(
+                "declare `source.ref` for repos that should use a contract-owned refresh target instead of local upstream-branch fallback",
+            ));
+        }
     }
     if has_unresolved && !has_drift {
         next_steps.push(String::from(
@@ -54886,6 +54904,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             required: repo.required,
             acquired: false,
             status: String::from("MISSING"),
+            drift_kind: String::from("missing_repo"),
+            target_source: None,
             source_url: repo.source_url.clone(),
             source_ref: repo.source_ref.clone(),
             branch: None,
@@ -54930,6 +54950,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             required: repo.required,
             acquired: true,
             status: String::from("MISSING CONTRACT"),
+            drift_kind: String::from("missing_contract"),
+            target_source: None,
             source_url: repo.source_url.clone(),
             source_ref: repo.source_ref.clone(),
             branch: None,
@@ -54973,6 +54995,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                 required: repo.required,
                 acquired: true,
                 status: String::from("UNRESOLVED"),
+                drift_kind: String::from("comparison_unresolved"),
+                target_source: None,
                 source_url: repo.source_url.clone(),
                 source_ref: repo.source_ref.clone(),
                 branch,
@@ -55006,14 +55030,10 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
         .ok()
         .map(|value| !value.is_empty())
         .unwrap_or(true);
-    let target_ref = repo.source_ref.clone().or_else(|| {
-        workspace_repo_git_output(
-            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-            &repo.path,
-        )
-        .ok()
-        .and_then(|value| (!value.is_empty()).then_some(value))
-    });
+    let target_ref = repo
+        .source_ref
+        .clone()
+        .or_else(|| workspace_repo_upstream_branch(&repo.path));
 
     if target_ref.is_none() {
         return WorkspaceRepoDiffReport {
@@ -55023,6 +55043,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             required: repo.required,
             acquired: true,
             status: String::from("UNRESOLVED"),
+            drift_kind: String::from("target_unavailable"),
+            target_source: None,
             source_url: repo.source_url.clone(),
             source_ref: repo.source_ref.clone(),
             branch,
@@ -55069,6 +55091,9 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                 required: repo.required,
                 acquired: true,
                 status: String::from("UNRESOLVED"),
+                drift_kind: String::from("comparison_unresolved"),
+                target_source: workspace_repo_target_source(repo.source_ref.is_some(), true)
+                    .map(String::from),
                 source_url: repo.source_url.clone(),
                 source_ref: repo.source_ref.clone(),
                 branch,
@@ -55112,6 +55137,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
     let findings = if status == "MATCH" {
         Vec::new()
     } else {
+        let target_label =
+            workspace_repo_target_label(target_ref.as_deref().unwrap_or("declared target"), repo.source_ref.is_some());
         vec![Finding {
             severity: if repo.required {
                 FindingSeverity::Warn
@@ -55121,22 +55148,19 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             summary: format!("Repo drift detected: {}", repo_name),
             why: if dirty {
                 format!(
-                    "workspace repo `{}` has uncommitted changes and differs from `{}`",
-                    repo_name,
-                    target_ref.as_deref().unwrap_or("declared target")
+                    "workspace repo `{}` has uncommitted changes and differs from {}",
+                    repo_name, target_label
                 )
             } else {
                 format!(
-                    "workspace repo `{}` is {} commit(s) ahead and {} commit(s) behind of `{}`",
+                    "workspace repo `{}` is {} commit(s) ahead and {} commit(s) behind of {}",
                     repo_name,
                     ahead.unwrap_or(0),
                     behind.unwrap_or(0),
-                    target_ref.as_deref().unwrap_or("declared target")
+                    target_label
                 )
             },
-            next: String::from(
-                "run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync",
-            ),
+            next: workspace_repo_drift_next(repo.source_ref.is_some()),
         }]
     };
 
@@ -55147,6 +55171,9 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
         required: repo.required,
         acquired: true,
         status: status.to_string(),
+        drift_kind: String::from(workspace_repo_drift_kind(&status, target_ref.is_some())),
+        target_source: workspace_repo_target_source(repo.source_ref.is_some(), target_ref.is_some())
+            .map(String::from),
         source_url: repo.source_url.clone(),
         source_ref: repo.source_ref.clone(),
         branch,
@@ -55189,6 +55216,8 @@ fn run_workspace_repo_status(
         ready: doctor.ok,
         readiness_status,
         drift_status: diff.status,
+        drift_kind: diff.drift_kind,
+        target_source: diff.target_source,
         source_url: diff.source_url,
         source_ref: diff.source_ref,
         branch: diff.branch,
@@ -55439,6 +55468,63 @@ fn refresh_ref_override<'a>(
         .or_else(|| repo_ref.filter(|value| !value.trim().is_empty()))
 }
 
+fn workspace_repo_upstream_branch(repo_path: &Path) -> Option<String> {
+    workspace_repo_git_output(
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        repo_path,
+    )
+    .ok()
+    .and_then(|value| (!value.is_empty()).then_some(value))
+}
+
+fn workspace_repo_drift_kind(status: &str, target_ref_present: bool) -> &'static str {
+    match status {
+        "MATCH" => "match",
+        "DIRTY" => "local_dirty",
+        "DIFFERENT" => "commit_divergence",
+        "MISSING" => "missing_repo",
+        "MISSING CONTRACT" => "missing_contract",
+        "UNRESOLVED" if !target_ref_present => "target_unavailable",
+        "UNRESOLVED" => "comparison_unresolved",
+        _ => "comparison_unresolved",
+    }
+}
+
+fn workspace_repo_target_source(
+    source_ref_present: bool,
+    target_ref_present: bool,
+) -> Option<&'static str> {
+    if !target_ref_present {
+        return None;
+    }
+
+    if source_ref_present {
+        Some("declared_ref")
+    } else {
+        Some("upstream_branch")
+    }
+}
+
+fn workspace_repo_target_label(target_ref: &str, source_ref_present: bool) -> String {
+    if source_ref_present {
+        format!("declared source ref `{target_ref}`")
+    } else {
+        format!("upstream branch `{target_ref}`")
+    }
+}
+
+fn workspace_repo_drift_next(source_ref_present: bool) -> String {
+    if source_ref_present {
+        String::from(
+            "run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync",
+        )
+    } else {
+        String::from(
+            "run `ota workspace refresh --dry-run` to preview the sync against the repo upstream branch; run `ota workspace refresh` when you are ready to reconcile the repo; declare `source.ref` if the workspace should own the target explicitly",
+        )
+    }
+}
+
 fn workspace_refresh_command(effective_ref: Option<&str>, force: bool, prune: bool) -> String {
     if force {
         let mut command = String::from("git fetch --force");
@@ -55462,6 +55548,73 @@ fn workspace_refresh_command(effective_ref: Option<&str>, force: bool, prune: bo
         command.push_str(ref_name);
     }
     command
+}
+
+fn workspace_refresh_target_error(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("couldn't find remote ref")
+        || stderr.contains("couldn't find remote branch")
+        || stderr.contains("no such ref was fetched")
+        || stderr.contains("invalid refspec")
+}
+
+fn workspace_refresh_source_access_error(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
+    stderr.contains("authentication failed")
+        || stderr.contains("permission denied")
+        || stderr.contains("could not read from remote repository")
+        || stderr.contains("repository not found")
+        || stderr.contains("does not appear to be a git repository")
+        || stderr.contains("no such file or directory")
+        || stderr.contains("could not resolve host")
+        || stderr.contains("connection timed out")
+        || stderr.contains("connection refused")
+}
+
+fn workspace_refresh_failure_finding(
+    repo_name: &str,
+    source_ref: Option<&str>,
+    stderr: Option<&str>,
+) -> Finding {
+    let stderr = stderr.unwrap_or_default();
+
+    if workspace_refresh_target_error(stderr) {
+        let target = source_ref.unwrap_or("<target>");
+        return Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Refresh target unavailable: {repo_name}"),
+            why: format!(
+                "workspace repo `{repo_name}` could not refresh from `{target}` because the selected target does not exist on the remote"
+            ),
+            next: String::from(
+                "fix `source.ref`, confirm the remote branch or tag exists, or rerun `ota workspace refresh --dry-run --ref <branch|tag|sha>` before applying `ota workspace refresh`",
+            ),
+        };
+    }
+
+    if workspace_refresh_source_access_error(stderr) {
+        return Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Repo refresh failed: {repo_name}"),
+            why: format!(
+                "workspace repo `{repo_name}` could not reach or authenticate to its declared source during refresh"
+            ),
+            next: String::from(
+                "inspect the `Source:` and `Refresh command:` lines, then fix source access or credentials before rerunning `ota workspace refresh`",
+            ),
+        };
+    }
+
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Repo refresh failed: {repo_name}"),
+        why: format!(
+            "workspace repo `{repo_name}` could not complete its refresh command cleanly"
+        ),
+        next: String::from(
+            "inspect the `Refresh command:` line and refresh output, then fix branch tracking or local git state before rerunning `ota workspace refresh`",
+        ),
+    }
 }
 
 fn run_workspace_repo_refresh_command(
@@ -55614,6 +55767,53 @@ fn run_workspace_repo_refresh(
 
     let effective_ref =
         refresh_ref_override(repo.source_ref.as_deref(), options.git_ref.as_deref());
+    let upstream_ref = if effective_ref.is_none() {
+        workspace_repo_upstream_branch(&repo.path)
+    } else {
+        None
+    };
+    if effective_ref.is_none() && upstream_ref.is_none() {
+        return WorkspaceRepoUpReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            ok: !repo.required,
+            status: if repo.required {
+                String::from("REFRESH FAILED")
+            } else {
+                String::from("WARN")
+            },
+            phase: String::from("refresh"),
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Refresh target unavailable: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` does not declare `source.ref`, has no `--ref` override, and does not have an upstream branch to refresh from",
+                    repo_name
+                ),
+                next: String::from(
+                    "declare `source.ref`, configure an upstream branch, or rerun `ota workspace refresh --dry-run --ref <branch|tag|sha>` before applying `ota workspace refresh`",
+                ),
+            }],
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: Some(1),
+            stdout: None,
+            stderr: None,
+            env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
+        };
+    }
     let refresh_command = workspace_refresh_command(effective_ref, options.force, options.prune);
 
     if options.dry_run {
@@ -55688,6 +55888,11 @@ fn run_workspace_repo_refresh(
     };
 
     if refresh.exit_code != 0 {
+        let finding = workspace_refresh_failure_finding(
+            &repo_name,
+            effective_ref.or(repo.source_ref.as_deref()),
+            Some(&refresh.stderr),
+        );
         return WorkspaceRepoUpReport {
             name: repo.name,
             path: path_display,
@@ -55702,19 +55907,13 @@ fn run_workspace_repo_refresh(
             phase: String::from("refresh"),
             findings: vec![Finding {
                 severity: if repo.required {
-                    FindingSeverity::Error
-                } else {
+                    finding.severity
+                } else if finding.severity == FindingSeverity::Error {
                     FindingSeverity::Warn
+                } else {
+                    finding.severity
                 },
-                summary: format!("Repo refresh failed: {}", repo_name),
-                why: format!(
-                    "workspace repo `{}` could not be refreshed from `{}`",
-                    repo_name,
-                    repo.source_url.as_deref().unwrap_or("unknown source")
-                ),
-                next: String::from(
-                    "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before rerunning `ota workspace refresh`",
-                ),
+                ..finding
             }],
             source_url: repo.source_url.clone(),
             source_ref: repo.source_ref.clone(),

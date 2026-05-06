@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- hardened workspace drift semantics for automation: `ota workspace diff --json` and `ota workspace status --json` now expose additive per-repo `drift_kind` so local dirtiness, commit divergence, missing repo, missing contract, target ambiguity, and unresolved comparison are machine-readable directly
+- refined workspace drift semantics further: `ota workspace diff --json` and `ota workspace status --json` now also expose additive per-repo `target_source` so automation can tell whether the comparison target came from declared `source.ref` or from the repo's upstream branch
+- clarified workspace drift text too: `ota workspace diff` and `ota workspace status` now make each `Target:` line explicit about declared-source-ref versus upstream-branch comparison provenance
+- refined workspace drift roll-ups too: workspace diff/status summaries now break the previously collapsed `Missing` and `Unresolved` buckets into explicit missing-contract and target-unavailable subcounts when those cases are present
+- clarified workspace source governance further: when drift is being compared against upstream-branch fallback instead of declared `source.ref`, repo-level follow-up now says that explicitly and suggests declaring `source.ref` when the workspace should own the target
+- pinned the workspace refresh machine surface explicitly with a dedicated `workspace-refresh.json` schema so preview/apply refresh output is no longer documented only by shared prose
+- hardened workspace source-target trust for `ota workspace refresh`: refresh now resolves targets in the explicit order `--ref` → declared `source.ref` → repo upstream branch, and refuses before preview or apply when none exists instead of falling through to a vague `git pull` failure
+- refined workspace refresh failure routing further: wrong remote target (`source.ref` / `--ref`) now stays distinct from source-access failures and generic local git-state failures so the follow-up lane stays specific
 - hardened the workspace lifecycle lane so `ota workspace diff` and `ota workspace status` now carry additive top-level and per-repo `next` / `next_steps` follow-up guidance, and successful `ota workspace refresh` previews now point back into the apply-and-recheck loop more explicitly
 - hardened execution failure routing for `ota run`: backend-configuration failures now point through `ota execution plan` before contract edits or retries, and declared env-source failures now point through `ota env --task <name>` before file repair and rerun
 - hardened execution failure routing for `ota up`: execution-plane precondition failures, backend startup failures, and provisioning failures now point through `ota execution plan` before execution-setting edits or retries
