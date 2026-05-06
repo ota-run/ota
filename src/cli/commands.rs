@@ -14849,6 +14849,24 @@ fn append_contractless_repo_findings(
     report: &DetectReport,
     findings: &mut Vec<Finding>,
 ) {
+    if let Some(project) = report.contract.project.as_ref()
+        && let Some(source) = report
+            .inferences
+            .iter()
+            .find(|inference| inference.field == "project.name")
+            .map(|inference| inference.source.as_str())
+        && source != "directory-name"
+    {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!("Detected project name: {}", project.name),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from(
+                "run `ota detect --contract` to inspect the exact starter contract text",
+            ),
+        });
+    }
+
     if contractless_repo_looks_like_node(report) {
         let source = report
             .inferences
@@ -14919,6 +14937,77 @@ fn append_contractless_repo_findings(
         });
     }
 
+    if let Some(source) = contractless_repo_source(
+        report,
+        &["python"],
+        &["pip", "pipenv", "uv"],
+        &["pyproject.toml#", "Pipfile#", "setup.cfg#"],
+        &["requirements.txt", "uv.lock", ".python-version"],
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Python"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Python contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "python",
+            &["python", "python3"],
+            "the repo looks like Python, but neither `python` nor `python3` is available on PATH",
+            "install Python so it is available before using this repo",
+        );
+        if let Some(tool) = contractless_repo_first_tool(report, &["uv", "pipenv", "pip"]) {
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: format!("Detected dependency tool: {tool}"),
+                why: format!(
+                    "found `{}`",
+                    contractless_source_file(
+                        contractless_repo_tool_source(report, tool).unwrap_or("pyproject.toml")
+                    )
+                ),
+                next: String::from(
+                    "run `ota detect --dry-run` to review the inferred task contract",
+                ),
+            });
+            let commands = match tool {
+                "pip" => vec!["pip", "pip3"],
+                _ => vec![tool],
+            };
+            push_contractless_host_tool_finding(
+                findings,
+                tool,
+                &commands,
+                &format!(
+                    "the repo looks like Python/{tool}, but `{}` is not available on PATH",
+                    commands[0]
+                ),
+                &format!(
+                    "install `{}` so it is available before using this repo",
+                    commands[0]
+                ),
+            );
+        }
+    }
+
+    if let Some(source) = contractless_repo_source(report, &["go"], &[], &["go.mod#"], &["go.mod"])
+    {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Go"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Go contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "go",
+            &["go"],
+            "the repo looks like Go, but `go` is not available on PATH",
+            "install Go so `go` is available before using this repo",
+        );
+    }
+
     if report.contract.runtimes.contains_key("rust") || report.contract.tools.contains_key("cargo")
     {
         let source = report
@@ -14950,6 +15039,256 @@ fn append_contractless_repo_findings(
                 next: String::from("install Rust so `cargo` is available before using this repo"),
             }),
         }
+    }
+
+    if let Some(source) = contractless_repo_source(
+        report,
+        &["dotnet"],
+        &["dotnet"],
+        &[],
+        &["global.json", ".csproj", ".sln"],
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: .NET"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred .NET contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "dotnet",
+            &["dotnet"],
+            "the repo looks like .NET, but `dotnet` is not available on PATH",
+            "install the .NET SDK so `dotnet` is available before using this repo",
+        );
+    }
+
+    if let Some(source) = contractless_repo_source(
+        report,
+        &["php"],
+        &["composer"],
+        &["composer.json#"],
+        &["composer.json"],
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: PHP"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred PHP contract"),
+        });
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected dependency tool: composer"),
+            why: format!(
+                "found `{}`",
+                contractless_source_file(
+                    contractless_repo_tool_source(report, "composer").unwrap_or("composer.json")
+                )
+            ),
+            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "php",
+            &["php"],
+            "the repo looks like PHP, but `php` is not available on PATH",
+            "install PHP so it is available before using this repo",
+        );
+        push_contractless_host_tool_finding(
+            findings,
+            "composer",
+            &["composer"],
+            "the repo looks like Composer-managed PHP, but `composer` is not available on PATH",
+            "install Composer so it is available before using this repo",
+        );
+    }
+
+    if let Some(source) = contractless_repo_source(
+        report,
+        &["java"],
+        &["maven", "gradle", "kotlin"],
+        &[
+            "pom.xml#",
+            "build.gradle#",
+            "build.gradle.kts#",
+            "settings.gradle#",
+            "settings.gradle.kts#",
+            ".sdkmanrc#",
+        ],
+        &[
+            "pom.xml",
+            "build.gradle",
+            "build.gradle.kts",
+            ".java-version",
+            "gradle/wrapper/gradle-wrapper.properties#distributionUrl",
+        ],
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Java"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Java contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "java",
+            &["java"],
+            "the repo looks like Java, but `java` is not available on PATH",
+            "install Java so it is available before using this repo",
+        );
+        if report.contract.tools.contains_key("maven") {
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Detected build tool: Maven"),
+                why: format!(
+                    "found `{}`",
+                    contractless_source_file(
+                        contractless_repo_tool_source(report, "maven").unwrap_or("pom.xml")
+                    )
+                ),
+                next: String::from(
+                    "run `ota detect --dry-run` to review the inferred task contract",
+                ),
+            });
+            if root.join("mvnw").is_file() {
+                findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: String::from("Repo wrapper available: mvnw"),
+                    why: String::from("the repo already ships the Maven wrapper"),
+                    next: String::from("no action required"),
+                });
+            } else {
+                push_contractless_host_tool_finding(
+                    findings,
+                    "maven",
+                    &["mvn"],
+                    "the repo looks like Maven, but `mvn` is not available on PATH and no `mvnw` wrapper was found",
+                    "install Maven or add `mvnw` before using this repo",
+                );
+            }
+        }
+        if report.contract.tools.contains_key("gradle") {
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Detected build tool: Gradle"),
+                why: format!(
+                    "found `{}`",
+                    contractless_source_file(
+                        contractless_repo_tool_source(report, "gradle").unwrap_or("build.gradle")
+                    )
+                ),
+                next: String::from(
+                    "run `ota detect --dry-run` to review the inferred task contract",
+                ),
+            });
+            if root.join("gradlew").is_file() {
+                findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: String::from("Repo wrapper available: gradlew"),
+                    why: String::from("the repo already ships the Gradle wrapper"),
+                    next: String::from("no action required"),
+                });
+            } else {
+                push_contractless_host_tool_finding(
+                    findings,
+                    "gradle",
+                    &["gradle"],
+                    "the repo looks like Gradle, but `gradle` is not available on PATH and no `gradlew` wrapper was found",
+                    "install Gradle or add `gradlew` before using this repo",
+                );
+            }
+        }
+    }
+
+    if let Some(source) = contractless_repo_source(
+        report,
+        &["ruby"],
+        &["bundler"],
+        &["Gemfile#"],
+        &["Gemfile", ".ruby-version"],
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Ruby"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Ruby contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "ruby",
+            &["ruby"],
+            "the repo looks like Ruby, but `ruby` is not available on PATH",
+            "install Ruby so it is available before using this repo",
+        );
+        push_contractless_host_tool_finding(
+            findings,
+            "bundler",
+            &["bundle"],
+            "the repo looks like Bundler-managed Ruby, but `bundle` is not available on PATH",
+            "install Bundler so `bundle` is available before using this repo",
+        );
+    }
+
+    if let Some(source) =
+        contractless_repo_source(report, &["elixir"], &["mix"], &["mix.exs#"], &["mix.exs"])
+    {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Elixir"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Elixir contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "mix",
+            &["mix"],
+            "the repo looks like Elixir, but `mix` is not available on PATH",
+            "install Elixir so `mix` is available before using this repo",
+        );
+    }
+
+    if let Some(source) = contractless_repo_source(
+        report,
+        &["scala"],
+        &["sbt"],
+        &["build.sbt#"],
+        &["build.sbt"],
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Scala"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Scala contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "sbt",
+            &["sbt"],
+            "the repo looks like Scala/sbt, but `sbt` is not available on PATH",
+            "install sbt so it is available before using this repo",
+        );
+    }
+
+    if let Some(source) = contractless_repo_source(
+        report,
+        &[],
+        &["swift"],
+        &["Package.swift#"],
+        &["Package.swift"],
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Swift"),
+            why: format!("found `{}`", contractless_source_file(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Swift contract"),
+        });
+        push_contractless_host_tool_finding(
+            findings,
+            "swift",
+            &["swift"],
+            "the repo looks like Swift, but `swift` is not available on PATH",
+            "install Swift so it is available before using this repo",
+        );
     }
 
     if !report.contract.services.is_empty() {
@@ -15028,6 +15367,25 @@ fn contractless_repo_package_manager<'a>(report: &'a DetectReport) -> Option<&'a
         .find(|tool| report.contract.tools.contains_key(*tool))
 }
 
+fn contractless_repo_first_tool<'a>(
+    report: &'a DetectReport,
+    tools: &[&'a str],
+) -> Option<&'a str> {
+    tools
+        .iter()
+        .copied()
+        .find(|tool| report.contract.tools.contains_key(*tool))
+}
+
+fn contractless_repo_tool_source<'a>(report: &'a DetectReport, tool: &str) -> Option<&'a str> {
+    let field = format!("tools.{tool}");
+    report
+        .inferences
+        .iter()
+        .find(|inference| inference.field == field)
+        .map(|inference| inference.source.as_str())
+}
+
 fn contractless_repo_likely_tasks(report: &DetectReport) -> Vec<String> {
     let preferred = [
         "dev",
@@ -15035,6 +15393,9 @@ fn contractless_repo_likely_tasks(report: &DetectReport) -> Vec<String> {
         "test",
         "typecheck",
         "start",
+        "check",
+        "verify",
+        "ci",
         "lint",
         "setup",
     ];
@@ -15048,6 +15409,70 @@ fn contractless_repo_likely_tasks(report: &DetectReport) -> Vec<String> {
         tasks.extend(report.contract.tasks.keys().take(4).cloned());
     }
     tasks
+}
+
+fn contractless_repo_source<'a>(
+    report: &'a DetectReport,
+    runtimes: &[&str],
+    tools: &[&str],
+    source_prefixes: &[&str],
+    source_exact: &[&str],
+) -> Option<&'a str> {
+    report
+        .inferences
+        .iter()
+        .find(|inference| {
+            runtimes
+                .iter()
+                .any(|runtime| inference.field == format!("runtimes.{runtime}"))
+                || tools
+                    .iter()
+                    .any(|tool| inference.field == format!("tools.{tool}"))
+                || source_prefixes
+                    .iter()
+                    .any(|prefix| inference.source.starts_with(prefix))
+                || source_exact
+                    .iter()
+                    .any(|source| inference.source == *source)
+        })
+        .map(|inference| inference.source.as_str())
+}
+
+fn contractless_source_file(source: &str) -> &str {
+    source.split('#').next().unwrap_or(source)
+}
+
+fn contractless_command_version_candidates(candidates: &[&str]) -> Option<(String, String)> {
+    for candidate in candidates {
+        if let Some(version) = command_version(candidate) {
+            return Some(((*candidate).to_string(), version));
+        }
+    }
+    None
+}
+
+fn push_contractless_host_tool_finding(
+    findings: &mut Vec<Finding>,
+    label: &str,
+    candidates: &[&str],
+    missing_why: &str,
+    missing_next: &str,
+) {
+    if let Some((command, version)) = contractless_command_version_candidates(candidates) {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!("Host tool available: {label}"),
+            why: format!("`{command} --version` returned `{version}`"),
+            next: String::from("no action required"),
+        });
+    } else {
+        findings.push(Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Missing host tool: {label}"),
+            why: missing_why.to_string(),
+            next: missing_next.to_string(),
+        });
+    }
 }
 
 fn contractless_repo_command(command: &str, repo_root: &Path) -> String {
@@ -18658,7 +19083,9 @@ pub fn detect(
                 let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
                 let comparison =
                     selected_detect_comparison(comparison.as_ref(), &report, &selected_fields);
-                let yaml = serde_yaml::to_string(&report.contract)
+                let mut preview_contract = report.contract.clone();
+                apply_starter_contract_defaults(&mut preview_contract, &report.root);
+                let yaml = serde_yaml::to_string(&preview_contract)
                     .expect("serializing detected contract should not fail");
                 match format {
                     OutputFormat::Text => {
@@ -18707,7 +19134,7 @@ pub fn detect(
                         ok: true,
                         path: &path_display,
                         written: false,
-                        config: detect_json_config_value(&report.contract),
+                        config: detect_json_config_value(&preview_contract),
                         inferred: &report.inferences,
                         comparison: comparison.as_ref(),
                     })),
@@ -21995,10 +22422,14 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         };
     }
 
-    let candidate = report.high_confidence_contract();
+    let detected_candidate = report.high_confidence_contract();
+    let mut candidate = detected_candidate.clone();
+    apply_starter_contract_defaults(&mut candidate, &report.root);
     let mut document = serde_yaml::to_value(&candidate)
         .expect("serializing detected write candidate should not fail");
-    if let Err(error) = record_detect_owned_fields(&mut document, detect_field_paths(&candidate)) {
+    if let Err(error) =
+        record_detect_owned_fields(&mut document, detect_field_paths(&detected_candidate))
+    {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
             OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {

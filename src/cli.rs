@@ -6077,16 +6077,18 @@ exit 1
     }
 
     #[cfg(unix)]
-    fn install_fake_cargo(path: &std::path::Path) {
+    fn install_fake_version_command(path: &std::path::Path, version_output: &str) {
         fs::write(
             path,
-            r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "cargo 1.99.0"
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+  echo "{version_output}"
   exit 0
 fi
 exit 1
-"#,
+"#
+            ),
         )
         .unwrap();
 
@@ -6097,23 +6099,13 @@ exit 1
     }
 
     #[cfg(unix)]
-    fn install_fake_npm(path: &std::path::Path) {
-        fs::write(
-            path,
-            r#"#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "10.9.0"
-  exit 0
-fi
-exit 1
-"#,
-        )
-        .unwrap();
+    fn install_fake_cargo(path: &std::path::Path) {
+        install_fake_version_command(path, "cargo 1.99.0");
+    }
 
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(path).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(path, permissions).unwrap();
+    #[cfg(unix)]
+    fn install_fake_npm(path: &std::path::Path) {
+        install_fake_version_command(path, "10.9.0");
     }
 
     #[cfg(unix)]
@@ -19842,7 +19834,7 @@ policies:
     }
 
     #[test]
-    fn init_omits_agent_block_when_no_known_writable_dirs_exist() {
+    fn init_keeps_agent_block_even_when_writable_paths_are_not_inferred_yet() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -19860,7 +19852,9 @@ policies:
 
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
-        assert!(!preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("safe_tasks:"));
+        assert!(preview_stdout.contains("protected_paths:"));
         assert!(!preview_stdout.contains("writable_paths:"));
         assert!(!preview_stdout.contains("\n  - .\n"));
 
@@ -19868,9 +19862,93 @@ policies:
 
         assert_eq!(write.exit_code, 0);
         let written = fs::read_to_string(fixture.file_path()).unwrap();
-        assert!(!written.contains("\nagent:\n"));
+        assert!(written.contains("\nagent:\n"));
+        assert!(written.contains("safe_tasks:"));
+        assert!(written.contains("protected_paths:"));
         assert!(!written.contains("writable_paths:"));
         assert!(!written.contains("\n- .\n"));
+    }
+
+    #[test]
+    fn detect_surfaces_agent_block_for_node_app_repos() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "dev": "next dev",
+    "typecheck": "tsc --noEmit",
+    "discoverability:check": "npm run docs:check"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-site\"\n}\n");
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        fs::create_dir_all(fixture.dir.path().join("components")).unwrap();
+        fs::create_dir_all(fixture.dir.path().join("lib")).unwrap();
+        fs::create_dir_all(fixture.dir.path().join("public")).unwrap();
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("default_task: typecheck"));
+        assert!(preview_stdout.contains("verify_after_changes:"));
+        assert!(preview_stdout.contains("- typecheck"));
+        assert!(preview_stdout.contains("writable_paths:"));
+        assert!(preview_stdout.contains("- app"));
+        assert!(preview_stdout.contains("- components"));
+        assert!(preview_stdout.contains("- lib"));
+        assert!(preview_stdout.contains("- public"));
+
+        let exact = run_with(["ota", "detect", "--contract", fixture.path()]);
+        assert_eq!(exact.exit_code, 0);
+        let exact_stdout = strip_ansi(&exact.stdout);
+        assert!(exact_stdout.contains("\nagent:\n"));
+        assert!(exact_stdout.contains("default_task: typecheck"));
+
+        let write = run_with(["ota", "detect", "--write", fixture.path()]);
+        assert_eq!(write.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("\nagent:\n"));
+        assert!(written.contains("default_task: typecheck"));
+        assert!(written.contains("verify_after_changes:"));
+        assert!(written.contains("- typecheck"));
+        assert!(written.contains("writable_paths:"));
+        assert!(written.contains("- app"));
+        assert!(written.contains("- components"));
+        assert!(written.contains("- lib"));
+        assert!(written.contains("- public"));
+    }
+
+    #[test]
+    fn detect_infers_agent_writable_paths_from_custom_source_roots() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-platform",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-platform\"\n}\n");
+        fs::create_dir_all(fixture.dir.path().join("ui-shell").join("src")).unwrap();
+        fs::create_dir_all(fixture.dir.path().join("api-server").join("src")).unwrap();
+        fixture.write("ui-shell/src/index.ts", "export const ui = true;\n");
+        fixture.write("api-server/src/main.ts", "export const api = true;\n");
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("writable_paths:"));
+        assert!(preview_stdout.contains("- ui-shell"));
+        assert!(preview_stdout.contains("- api-server"));
     }
 
     #[test]
@@ -22573,6 +22651,7 @@ project:
     #[cfg(unix)]
     fn doctor_without_contract_inspects_repo_and_host_signals() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("Cargo.toml"),
@@ -22649,6 +22728,7 @@ project:
     #[test]
     fn doctor_without_contract_surfaces_node_package_manager_and_task_signals() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("package.json"),
@@ -22697,6 +22777,160 @@ project:
         assert!(stdout.contains("Host tool available: npm"));
         assert!(stdout.contains("Detected likely runnable tasks: dev, build, typecheck, start"));
         assert!(!stdout.contains("No strong repo signals were detected yet"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn doctor_without_contract_surfaces_cross_stack_repo_signals() {
+        let _guard = env_mutex_lock();
+        let original_path = std::env::var_os("PATH");
+
+        let bin_dir = TempDir::new().unwrap();
+        install_fake_version_command(&bin_dir.path().join("python3"), "Python 3.12.2");
+        install_fake_version_command(&bin_dir.path().join("uv"), "uv 0.7.2");
+        install_fake_version_command(
+            &bin_dir.path().join("go"),
+            "go version go1.24.0 linux/amd64",
+        );
+        install_fake_version_command(&bin_dir.path().join("java"), "openjdk 21.0.2");
+        install_fake_version_command(&bin_dir.path().join("dotnet"), "8.0.302");
+        install_fake_version_command(&bin_dir.path().join("php"), "PHP 8.3.7");
+        install_fake_version_command(&bin_dir.path().join("composer"), "Composer version 2.8.1");
+        install_fake_version_command(&bin_dir.path().join("ruby"), "ruby 3.3.0");
+        install_fake_version_command(&bin_dir.path().join("bundle"), "Bundler version 2.5.16");
+        install_fake_version_command(&bin_dir.path().join("mix"), "Mix 1.17.2");
+        install_fake_version_command(&bin_dir.path().join("sbt"), "sbt 1.10.0");
+        install_fake_version_command(&bin_dir.path().join("swift"), "Swift version 6.0");
+
+        struct Case<'a> {
+            files: &'a [(&'a str, &'a str)],
+            expected: &'a [&'a str],
+        }
+
+        let cases = [
+            Case {
+                files: &[
+                    (
+                        "pyproject.toml",
+                        "[project]\nname = \"ota-python\"\nrequires-python = \">=3.12\"\n",
+                    ),
+                    ("uv.lock", "version = 1\n"),
+                ],
+                expected: &[
+                    "Detected repo type: Python",
+                    "Detected dependency tool: uv",
+                    "Host tool available: python",
+                    "Host tool available: uv",
+                ],
+            },
+            Case {
+                files: &[("go.mod", "module github.com/ota/doctor-go\n\ngo 1.24.0\n")],
+                expected: &["Detected repo type: Go", "Host tool available: go"],
+            },
+            Case {
+                files: &[
+                    (
+                        "pom.xml",
+                        "<project><modelVersion>4.0.0</modelVersion><artifactId>doctor-java</artifactId><properties><maven.compiler.release>21</maven.compiler.release></properties></project>",
+                    ),
+                    ("mvnw", "#!/bin/sh\nexit 0\n"),
+                ],
+                expected: &[
+                    "Detected repo type: Java",
+                    "Detected build tool: Maven",
+                    "Host tool available: java",
+                    "Repo wrapper available: mvnw",
+                ],
+            },
+            Case {
+                files: &[(
+                    "src/Ota.App/Ota.App.csproj",
+                    "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+                )],
+                expected: &["Detected repo type: .NET", "Host tool available: dotnet"],
+            },
+            Case {
+                files: &[(
+                    "composer.json",
+                    "{\n  \"name\": \"ota/site\",\n  \"require\": { \"php\": \"^8.3\" },\n  \"scripts\": { \"test\": \"phpunit\" }\n}\n",
+                )],
+                expected: &[
+                    "Detected repo type: PHP",
+                    "Detected dependency tool: composer",
+                    "Host tool available: php",
+                    "Host tool available: composer",
+                ],
+            },
+            Case {
+                files: &[
+                    (
+                        "Gemfile",
+                        "source \"https://rubygems.org\"\nruby \"3.3.0\"\n",
+                    ),
+                    (".ruby-version", "3.3.0\n"),
+                ],
+                expected: &[
+                    "Detected repo type: Ruby",
+                    "Host tool available: ruby",
+                    "Host tool available: bundler",
+                ],
+            },
+            Case {
+                files: &[(
+                    "mix.exs",
+                    "defmodule Ota.MixProject do\n  def project do\n    [app: :ota, elixir: \"~> 1.17\"]\n  end\nend\n",
+                )],
+                expected: &["Detected repo type: Elixir", "Host tool available: mix"],
+            },
+            Case {
+                files: &[(
+                    "build.sbt",
+                    "name := \"ota-scala\"\nscalaVersion := \"3.4.2\"\n",
+                )],
+                expected: &["Detected repo type: Scala", "Host tool available: sbt"],
+            },
+            Case {
+                files: &[(
+                    "Package.swift",
+                    "// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: \"ota-swift\")\n",
+                )],
+                expected: &["Detected repo type: Swift", "Host tool available: swift"],
+            },
+        ];
+
+        unsafe {
+            std::env::set_var("PATH", bin_dir.path());
+        }
+
+        for case in cases {
+            let fixture = TempDir::new().unwrap();
+            for (path, contents) in case.files {
+                let target = fixture.path().join(path);
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).unwrap();
+                }
+                fs::write(target, contents).unwrap();
+            }
+
+            let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
+            assert_eq!(output.exit_code, 1);
+            let stdout = strip_ansi(&output.stdout);
+            assert!(stdout.contains("➤ What Ota can tell so far"));
+            for expected in case.expected {
+                assert!(
+                    stdout.contains(expected),
+                    "missing `{expected}` in:\n{stdout}"
+                );
+            }
+            assert!(!stdout.contains("No strong repo signals were detected yet"));
+        }
+
+        unsafe {
+            match original_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
     }
 
     #[test]
