@@ -932,7 +932,9 @@ Current behavior:
 - if every declared input has a default, you can omit all input flags
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
-- on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with the selected mode, container image when relevant, target when one exists, and task
+- backend-configuration failures now point through `ota execution plan` first so the selected execution path can be inspected before you change contract execution settings or retry the task
+- declared env-source failures now point through `ota env --task <name>` first so source status and precedence stay visible before you repair files or rerun the task
+- on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - on non-interactive text success, large task output is shown as a bounded excerpt before the compact `RUN SUMMARY`
 - on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
 - on `Ctrl-C` during ephemeral container runs, ota still attempts to remove the repo-owned container created for that invocation and surfaces cleanup failures in the final summary
@@ -940,7 +942,7 @@ Current behavior:
 - persistent container runs reconcile shape before reuse and recreate when projection/publication drift would make runtime endpoint metadata stale
 - Compose attachment namespace drift also counts as persistent execution-shape drift, so changing `attachments.compose` recreates the persistent backend instead of reusing a container bound to the old Compose network family
 - service tasks with projected listeners classify post-readiness exits as service-stop failures (including `interrupted`) so summaries and receipts stay truthful across both ephemeral and persistent lifecycle modes
-- on success, text output includes the compact `RUN SUMMARY` block with the selected mode, container image when relevant, target when one exists, and task
+- on success, text output includes the compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
 
 Example:
@@ -1414,6 +1416,7 @@ Current behavior:
 - when provisioning fails, `ota up` now surfaces a higher-level backend diagnosis for every shipped adapter while still preserving the raw backend stdout/stderr in the failure output
 - when the initial provisioning stderr is too generic to classify safely, `ota up` reuses the read-only installability probe for that adapter to refine the diagnosis without hiding the original backend output
 - when container/Linux provisioning uses `apt`, ota also classifies supported provisioning failures as pinned-version unavailable, package unavailable, or apt-index/source failures
+- execution-plane precondition failures, backend startup failures, and provisioning failures now point through `ota execution plan` first so the selected backend, lifecycle, image, or target path is visible before you edit execution settings or retry `ota up`
 - `--dry-run` reuses the same contract path, member targeting, backend selection, lifecycle selection, and provisioning plan resolution as `ota up`, but does not mutate repo or execution state
 - runs explicit `services.<name>.start` commands for required services before setup
 - starts required services, and required-service dependencies, in declared dependency order
@@ -1434,7 +1437,8 @@ Current behavior:
 - keeps child output compact by default and surfaces failed service/setup output inside the final report
 - `--stream` opts into raw live child output for provisioning, required service `start` commands, and the `setup` task
 - `--stream` is text-only and is only supported for mutating `ota up`
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in repo-target JSON output; monorepo aggregate JSON keeps grouped `members` results instead of inventing a top-level receipt
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in repo-target JSON output; the compact `UP SUMMARY` now leads with `Status` for faster scan time, and monorepo aggregate JSON keeps grouped `members` results instead of inventing a top-level receipt
+- when the execution receipt carries follow-up guidance, text output appends that shared `Next:` block after `UP SUMMARY`, and the same receipt-backed lane stays on the repo-target JSON `receipt.next` surface so repo and workspace preparation flows end the same way
 - `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, a real named target when one would exist, the setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, the compact contract identity, and the first blocking readiness finding when one exists
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files
 - `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
