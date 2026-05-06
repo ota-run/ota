@@ -607,6 +607,22 @@ pub struct ExplainStep {
     pub provenance_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplainCommandStageKind {
+    Inspect,
+    Apply,
+    Execute,
+    Verify,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExplainCommandStage {
+    pub kind: ExplainCommandStageKind,
+    pub label: String,
+    pub commands: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExplainAction {
     pub order: usize,
@@ -618,6 +634,8 @@ pub struct ExplainAction {
     pub next: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub command_stages: Vec<ExplainCommandStage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
 }

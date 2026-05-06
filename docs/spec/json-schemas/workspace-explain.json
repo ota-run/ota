@@ -71,6 +71,22 @@
                   "type": "array",
                   "items": { "type": "string" }
                 },
+                "command_stages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "label", "commands"],
+                    "properties": {
+                      "kind": { "enum": ["inspect", "apply", "execute", "verify"] },
+                      "label": { "type": "string" },
+                      "commands": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  }
+                },
                 "provenance": { "type": "string" }
               }
             }

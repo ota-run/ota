@@ -7003,6 +7003,8 @@ project:
             actions[0]["commands"][1],
             "ota assist add-task --name dev --kind command"
         );
+        assert_eq!(actions[0]["command_stages"][0]["kind"], "inspect");
+        assert_eq!(actions[0]["command_stages"][1]["kind"], "apply");
         let steps = json["steps"].as_array().unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0]["order"], 1);
@@ -7241,6 +7243,10 @@ project:
         assert_eq!(
             repos[0]["actions"][0]["commands"][0],
             "ota detect --dry-run"
+        );
+        assert_eq!(
+            repos[0]["actions"][0]["command_stages"][0]["kind"],
+            "inspect"
         );
         assert_eq!(repos[0]["steps"].as_array().unwrap().len(), 1);
         assert_eq!(repos[0]["steps"][0]["code"], "OTA_TASKS_MISSING");

@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use crate::output::ExplainAction;
+use crate::output::{ExplainAction, ExplainCommandStage, ExplainCommandStageKind};
 
 use super::*;
 
@@ -196,15 +196,21 @@ fn render_explain_group(
         }
     }
 
-    let commands = explain_action_commands(group);
-    if commands.len() > 1 {
+    let stages = explain_action_command_stages(group);
+    if stages.len() > 1 {
         output.push_str("\n  ");
         output.push_str(&paint_key("Commands:"));
-        for command in commands {
+        for stage in stages {
             output.push_str(&format!(
                 "\n    {}",
-                render_backticked_text(&format!("`{command}`"), Some(contract_path))
+                paint_key(&format!("{}:", stage.label))
             ));
+            for command in stage.commands {
+                output.push_str(&format!(
+                    "\n      {}",
+                    render_backticked_text(&format!("`{command}`"), Some(contract_path))
+                ));
+            }
         }
     }
 
@@ -426,6 +432,67 @@ fn explain_action_commands(group: &DoctorFindingGroup<'_>) -> Vec<String> {
     commands
 }
 
+fn explain_action_command_stages(group: &DoctorFindingGroup<'_>) -> Vec<ExplainCommandStage> {
+    let mut stages: Vec<ExplainCommandStage> = Vec::new();
+    for command in explain_action_commands(group) {
+        let kind = explain_command_stage_kind(&command);
+        if let Some(existing) = stages.iter_mut().find(|stage| stage.kind == kind) {
+            if !existing.commands.contains(&command) {
+                existing.commands.push(command);
+            }
+            continue;
+        }
+        stages.push(ExplainCommandStage {
+            label: explain_command_stage_label(kind).to_string(),
+            kind,
+            commands: vec![command],
+        });
+    }
+    stages
+}
+
+fn explain_command_stage_kind(command: &str) -> ExplainCommandStageKind {
+    if command == "ota doctor"
+        || command.starts_with("ota doctor ")
+        || command == "ota explain"
+        || command.starts_with("ota explain ")
+        || command == "ota validate"
+        || command.starts_with("ota validate ")
+    {
+        ExplainCommandStageKind::Verify
+    } else if command == "ota env"
+        || command.starts_with("ota env ")
+        || command == "ota detect --dry-run"
+        || command.starts_with("ota detect --dry-run ")
+        || command == "ota init --dry-run"
+        || command.starts_with("ota init --dry-run ")
+        || command == "ota policy review"
+        || command.starts_with("ota policy review ")
+    {
+        ExplainCommandStageKind::Inspect
+    } else if command.starts_with("ota assist ")
+        || command == "ota init"
+        || command.starts_with("ota init ")
+        || command == "ota detect --merge"
+        || command.starts_with("ota detect --merge ")
+        || command == "ota detect --rewrite"
+        || command.starts_with("ota detect --rewrite ")
+    {
+        ExplainCommandStageKind::Apply
+    } else {
+        ExplainCommandStageKind::Execute
+    }
+}
+
+fn explain_command_stage_label(kind: ExplainCommandStageKind) -> &'static str {
+    match kind {
+        ExplainCommandStageKind::Inspect => "Inspect",
+        ExplainCommandStageKind::Apply => "Apply",
+        ExplainCommandStageKind::Execute => "Execute",
+        ExplainCommandStageKind::Verify => "Verify",
+    }
+}
+
 pub(super) fn explain_summary(report: &DoctorReport) -> ExplainSummary {
     explain_summary_from_findings(&report.findings)
 }
@@ -461,6 +528,7 @@ pub(super) fn explain_actions(findings: &[Finding]) -> Vec<ExplainAction> {
             why: explain_group_why_lines(&group).join("; "),
             next: doctor_finding_group_next(&group.kind, &group.findings, None),
             commands: explain_action_commands(&group),
+            command_stages: explain_action_command_stages(&group),
             provenance: explain_group_provenance(&group),
         })
         .collect()
@@ -660,7 +728,39 @@ mod tests {
         set_plain_mode(false);
 
         assert!(text.contains("Commands:"));
+        assert!(text.contains("Inspect:"));
+        assert!(text.contains("Apply:"));
         assert!(text.contains("ota detect --dry-run"));
         assert!(text.contains("ota assist add-task --name dev --kind command"));
+    }
+
+    #[test]
+    fn explain_action_command_stages_classify_verify_after_apply() {
+        let finding = Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Required service cannot be verified: postgres"),
+            why: String::from("the service has no readiness probe"),
+            next: String::from(
+                "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`",
+            ),
+        };
+        let group = DoctorFindingGroup {
+            group_key: String::from("service-health-unverifiable-postgres"),
+            action_key: String::from("service-health-unverifiable-postgres"),
+            kind: DoctorFindingGroupKind::ServiceHealth,
+            severity: FindingSeverity::Warn,
+            findings: vec![&finding],
+        };
+
+        let stages = explain_action_command_stages(&group);
+
+        assert_eq!(stages.len(), 2);
+        assert!(matches!(stages[0].kind, ExplainCommandStageKind::Apply));
+        assert_eq!(
+            stages[0].commands[0],
+            "ota assist declare-readiness --service postgres --style tcp"
+        );
+        assert!(matches!(stages[1].kind, ExplainCommandStageKind::Verify));
+        assert_eq!(stages[1].commands[0], "ota doctor");
     }
 }

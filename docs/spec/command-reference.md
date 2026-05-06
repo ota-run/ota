@@ -803,6 +803,7 @@ JSON output:
 - success: `ok`, `path`, `summary`, `actions`, `steps`
 - `actions` is the ordered grouped remediation plan; each action includes `order`, `action_key`, `action_title`, `severity`, `count`, `why`, and `next`
 - when ota can name a staged command lane directly, `actions[*].commands` exposes that ordered command sequence alongside the prose `next`
+- `actions[*].command_stages` further classifies those commands into `inspect`, `apply`, `execute`, and `verify` phases when ota can separate the lane safely
 - `actions` may also include shared `provenance` when the grouped action maps back to one diagnosis source
 - `steps` keeps the finding-level detail; each step includes `order`, `code`, `severity`, `summary`, `why`, and `next`
 - steps may also include `provenance` and `provenance_key`
@@ -2431,7 +2432,7 @@ Text output:
 JSON output:
 
 - success: `ok`, `path`, `summary`, `repos`
-- each repo report includes `summary`, grouped `actions`, optional staged `actions[*].commands`, and detailed `steps`
+- each repo report includes `summary`, grouped `actions`, optional staged `actions[*].commands` and `actions[*].command_stages`, and detailed `steps`
 - failure: `ok`, `path`, and either `errors` or `error`
 
 The `summary` object on success mirrors the top-level receipt summary and includes
