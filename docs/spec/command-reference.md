@@ -1049,7 +1049,7 @@ ota doctor --member api --member web --json [PATH]
 
 - Current behavior:
 
-- when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `What Ota can tell so far` across mainstream and long-tail detector-supported stacks, including repo type, dependency/build tools, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
+- when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `Repo Signals` across mainstream and long-tail detector-supported stacks, including repo type, dependency/build tools, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
 - the human summary now makes the top-level state explicit as `READY`, `READY WITH WARNINGS`, or `BLOCKED`
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
@@ -1246,7 +1246,7 @@ ota agents --write --output AGENTS.md [PATH]
 Current behavior:
 
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
-- when the repo contract does not declare `agent`, preview mode now behaves like a blocked agent-boundary sync surface instead of a generic scaffold preview: it reports `Agent contract missing`, shows compare-first next steps through `ota detect --dry-run` and `ota init --dry-run`, and surfaces any trustworthy inferred repo signals plus inferred starter agent boundaries under `What Ota can tell so far`
+- when the repo contract does not declare `agent`, preview mode now behaves like a blocked agent-boundary sync surface instead of a generic scaffold preview: it reports `Agent contract missing`, shows compare-first next steps through `ota detect --dry-run` and `ota init --dry-run`, and surfaces any trustworthy inferred repo signals plus inferred starter agent boundaries under `Repo Signals`
 - `ota agents --write` now refuses when the repo contract still lacks `agent`, so Ota does not write generic guidance that looks more authoritative than the authored contract
 - renders an explicit `Bootstrap` section when `agent.bootstrap.ota` is present, including the approved shell and PowerShell install commands for `ota`
 - preserves existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting user-authored guidance
@@ -1262,7 +1262,7 @@ Text output:
 
 - header: `AGENTS <path>`
 - when `agent` exists, preview mode shows the generated markdown content together with the write and verification next steps
-- when `agent` is missing, preview mode shows a blocked boundary-sync diagnosis with `Target`, `Primary Blocker`, `Next`, and `What Ota can tell so far`
+- when `agent` is missing, preview mode shows a blocked boundary-sync diagnosis with `Target`, `Primary Blocker`, `Next`, and `Repo Signals`
 - write mode reports whether the target was written or already in sync and points back to `ota doctor`
 
 JSON output:

@@ -74,32 +74,32 @@ use crate::output::{
     DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary,
     DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind,
     EnvEntryStatus, EnvFailure, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
-    ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved,
-    ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptLogs,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExecutionTopologyFailure,
-    ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
-    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
-    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
-    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
-    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
-    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
-    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffComparison,
-    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
-    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
-    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
-    TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
-    ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
-    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
-    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
-    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
-    WorkspaceUpSuccess,
+    ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure, ExecutionPlanOverrides,
+    ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource,
+    ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
+    ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
+    ExecutionTopologyListenerSummary, ExecutionTopologyReadinessSummary,
+    ExecutionTopologyRuntimeSummary, ExecutionTopologySharedBackendEnvironmentSummary,
+    ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
+    ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
+    ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
+    InitFailure, InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo,
+    InitPackOption, InitPackSeeds, InitSelectedPackOptions, InitSuccess, MemberServicesSuccess,
+    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
+    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceReadinessSummary,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -4662,7 +4662,10 @@ fn render_assist_readiness_text(
             stylize_yaml_preview(before_yaml.trim_end())
         ));
     }
-    output.push_str(&format!("\n\n{}", paint_section_title("Proposed Readiness")));
+    output.push_str(&format!(
+        "\n\n{}",
+        paint_section_title("Proposed Readiness")
+    ));
     output.push_str(&format!(
         "\n{} {}",
         info_bullet(),
@@ -30467,7 +30470,7 @@ fn render_contractless_doctor_signal_section(findings: &[&Finding]) -> String {
     let mut stdout = format!(
         "\n\n{} {}\n",
         primary_info_marker(),
-        paint_section_title("What Ota can tell so far")
+        paint_section_title("Repo Signals")
     );
     for finding in findings {
         stdout.push_str(&format!(
@@ -32378,7 +32381,11 @@ fn render_doctor_execution_summary_text(
                 &execution
                     .env
                     .iter()
-                    .filter(|item| item.required && doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Missing)
+                    .filter(|item| {
+                        item.required
+                            && doctor_execution_env_source_kind(item)
+                                == DoctorExecutionEnvSourceKind::Missing
+                    })
                     .count()
                     .to_string(),
             ),
@@ -32404,7 +32411,8 @@ fn render_doctor_execution_summary_text(
             &mut lines,
             "Source-backed Values",
             execution.env.iter().filter(|item| {
-                doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::DeclaredSource
+                doctor_execution_env_source_kind(item)
+                    == DoctorExecutionEnvSourceKind::DeclaredSource
             }),
             render_doctor_execution_env_named_source,
         );
@@ -32421,7 +32429,8 @@ fn render_doctor_execution_summary_text(
             "Missing Required Env",
             execution.env.iter().filter(|item| {
                 item.required
-                    && doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Missing
+                    && doctor_execution_env_source_kind(item)
+                        == DoctorExecutionEnvSourceKind::Missing
             }),
             render_doctor_execution_env_missing,
         );
@@ -32448,20 +32457,25 @@ enum DoctorExecutionEnvSourceKind {
     Issue,
 }
 
-fn doctor_execution_env_source_kind(item: &ExecutionEnvSummary<'_>) -> DoctorExecutionEnvSourceKind {
+fn doctor_execution_env_source_kind(
+    item: &ExecutionEnvSummary<'_>,
+) -> DoctorExecutionEnvSourceKind {
     match item.source.as_str() {
         "process" => DoctorExecutionEnvSourceKind::Process,
         "default" => DoctorExecutionEnvSourceKind::Default,
         "missing" => DoctorExecutionEnvSourceKind::Missing,
-        source if source.starts_with("missing required ")
-            || source.starts_with("parse failed ")
-            || source.starts_with("invalid structure ")
-            || source.starts_with("collision ")
-            || source == "invalid policy pack" =>
+        source
+            if source.starts_with("missing required ")
+                || source.starts_with("parse failed ")
+                || source.starts_with("invalid structure ")
+                || source.starts_with("collision ")
+                || source == "invalid policy pack" =>
         {
             DoctorExecutionEnvSourceKind::Issue
         }
-        source if item.policy.is_some() && source == "org policy" => DoctorExecutionEnvSourceKind::Policy,
+        source if item.policy.is_some() && source == "org policy" => {
+            DoctorExecutionEnvSourceKind::Policy
+        }
         _ => DoctorExecutionEnvSourceKind::DeclaredSource,
     }
 }
@@ -32479,7 +32493,11 @@ fn append_doctor_execution_env_group<'a, I, F>(
     if entries.is_empty() {
         return;
     }
-    lines.push(format!("{} ({})", paint_section_title(title), entries.len()));
+    lines.push(format!(
+        "{} ({})",
+        paint_section_title(title),
+        entries.len()
+    ));
     for item in entries {
         lines.push(format!(" {}  {}", verdict_bullet(), render(item)));
     }
@@ -32503,11 +32521,7 @@ fn render_doctor_execution_env_missing(item: &ExecutionEnvSummary<'_>) -> String
 }
 
 fn render_doctor_execution_env_issue(item: &ExecutionEnvSummary<'_>) -> String {
-    format!(
-        "{} ({})",
-        paint_backticked_code(item.name),
-        item.source
-    )
+    format!("{} ({})", paint_backticked_code(item.name), item.source)
 }
 
 fn format_doctor_execution_context_line(context: &ExecutionContextSummary<'_>) -> String {
@@ -38563,8 +38577,7 @@ tasks:
         };
 
         let rendered = strip_ansi_codes(&super::render_doctor_execution_summary_text(
-            &execution,
-            None,
+            &execution, None,
         ));
 
         assert!(rendered.contains("\nSource-backed Values (1)"));
