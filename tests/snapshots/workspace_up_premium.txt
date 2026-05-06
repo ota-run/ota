@@ -10,11 +10,11 @@ Phase: post-setup diagnosis
 
 🦦 WORKSPACE UP SUMMARY
 
+Status:      success
 Scope:       workspace
 Path:        ./ota.workspace.yaml
 Contract:    ./ota.workspace.yaml
 Mode:        native
 Task:        web
 Workspace:   premium-workspace
-Status:      success
 Note:        running on the host environment; post-setup diagnosis

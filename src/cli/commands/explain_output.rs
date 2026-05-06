@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use crate::output::ExplainAction;
+use crate::output::{ExplainAction, WorkspaceExplainAction};
 
 use super::*;
 
@@ -68,6 +68,32 @@ pub(super) fn workspace_explain_repos(
             steps: explain_steps(&repo.findings),
         })
         .collect()
+}
+
+pub(super) fn workspace_explain_actions(
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> Vec<WorkspaceExplainAction> {
+    let mut actions = report
+        .repos
+        .iter()
+        .flat_map(|repo| {
+            explain_actions(&repo.findings)
+                .into_iter()
+                .map(move |action| WorkspaceExplainAction {
+                    repo: repo.name.clone(),
+                    path: repo.path.clone(),
+                    contract_path: repo.contract_path.clone(),
+                    required: repo.required,
+                    action,
+                })
+        })
+        .collect::<Vec<_>>();
+
+    for (index, action) in actions.iter_mut().enumerate() {
+        action.action.order = index + 1;
+    }
+
+    actions
 }
 
 pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> String {
@@ -629,5 +655,64 @@ mod tests {
         set_plain_mode(false);
 
         assert!(!text.contains("Commands:"));
+    }
+
+    #[test]
+    fn workspace_explain_actions_use_one_global_order() {
+        let report = crate::workspace::WorkspaceDoctorReport {
+            ok: false,
+            repos: vec![
+                crate::workspace::WorkspaceRepoDoctorReport {
+                    name: String::from("api"),
+                    path: String::from("./api"),
+                    contract_path: String::from("./api/ota.yaml"),
+                    required: true,
+                    ok: false,
+                    agent_verdict: DoctorVerdict::NotReady,
+                    primary_blocker: None,
+                    execution: None,
+                    provisioning: None,
+                    adapter_bootstrap: None,
+                    extensions: BTreeMap::new(),
+                    findings: vec![Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from("No tasks defined in contract"),
+                        why: String::from("the contract cannot run anything yet"),
+                        next: String::from(
+                            "run `ota detect --dry-run` to review inferred tasks before writing",
+                        ),
+                    }],
+                },
+                crate::workspace::WorkspaceRepoDoctorReport {
+                    name: String::from("web"),
+                    path: String::from("./web"),
+                    contract_path: String::from("./web/ota.yaml"),
+                    required: true,
+                    ok: false,
+                    agent_verdict: DoctorVerdict::NotReady,
+                    primary_blocker: None,
+                    execution: None,
+                    provisioning: None,
+                    adapter_bootstrap: None,
+                    extensions: BTreeMap::new(),
+                    findings: vec![Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from("Required environment variable `DATABASE_URL` is missing"),
+                        why: String::from("the current precedence did not resolve a value"),
+                        next: String::from(
+                            "run `ota env` to inspect the current precedence, then rerun `ota doctor`",
+                        ),
+                    }],
+                },
+            ],
+        };
+
+        let actions = workspace_explain_actions(&report);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].repo, "api");
+        assert_eq!(actions[0].action.order, 1);
+        assert_eq!(actions[1].repo, "web");
+        assert_eq!(actions[1].action.order, 2);
     }
 }

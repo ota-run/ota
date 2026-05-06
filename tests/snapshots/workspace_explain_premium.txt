@@ -2,6 +2,12 @@
 
 ➤ BLOCKED
 
+Plan
+ 1. web [required] No tasks defined in contract
+Why: without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents
+Next: run `ota detect --dry-run` to review inferred tasks before writing, or run
+      `ota assist add-task --name dev --kind command` when you want one explicit runnable task
+
 ✦ web [required] (NOT READY)
 Path: ./apps/web
 Contract: ./apps/web/ota.yaml
@@ -12,8 +18,10 @@ Plan
     » without at least one task, `ota run <task> ./apps/web/ota.yaml` cannot execute a repo entrypoint and the readiness contract is not
       operational for humans or agents
   Provenance: repo contract
-  Next: add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run ./apps/web` and
-        `ota detect --write` to regenerate
+  Next:
+    run `ota detect --dry-run ./apps/web`
+    to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one
+    explicit runnable task
 
 Overview
  »  Repos: 1

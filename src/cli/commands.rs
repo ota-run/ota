@@ -166,7 +166,8 @@ use self::execution_summary::{
 };
 use self::explain_output::{
     explain_action_count, explain_actions, explain_steps, explain_summary,
-    render_explain_steps_text, workspace_explain_repos, workspace_explain_summary,
+    render_explain_steps_text, workspace_explain_actions, workspace_explain_repos,
+    workspace_explain_summary,
 };
 pub(crate) use self::init_starter::{
     NodePackageManager, PythonTestRunner, StarterPack, StarterPackConfig, StarterPackOptions,
@@ -177,8 +178,8 @@ use self::init_starter::{
 };
 use self::studio_output::render_studio_snapshot_html;
 use self::workspace_diagnostics::{
-    apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
-    render_workspace_doctor_text, render_workspace_explain_text,
+    apply_workspace_doctor_filters, normalize_workspace_doctor_report, render_check_summary_text,
+    render_workspace_check_text, render_workspace_doctor_text, render_workspace_explain_text,
 };
 use self::workspace_output::{
     render_workspace_diff, render_workspace_execution_plan, render_workspace_receipt,
@@ -20883,6 +20884,7 @@ pub fn workspace_explain(
         match load_and_diagnose_workspace(&resolved_path, jobs) {
             Ok(report) => {
                 let report = apply_workspace_doctor_filters(report, &filters);
+                let explain_actions = workspace_explain_actions(&report);
                 let explain_repos = workspace_explain_repos(&report);
                 let summary = workspace_explain_summary(&report);
 
@@ -20895,6 +20897,7 @@ pub fn workspace_explain(
                             ok: report.ok,
                             path: &path_display,
                             summary,
+                            actions: &explain_actions,
                             repos: &explain_repos,
                         }),
                         stderr: None,
@@ -20991,7 +20994,9 @@ pub fn workspace_check(
 
     finalize_debug(
         match load_and_check_workspace(&resolved_path, jobs) {
-            Ok(report) => match format {
+            Ok(report) => {
+                let report = normalize_workspace_doctor_report(report);
+                match format {
                 OutputFormat::Text => render_workspace_check_text(&compact_path_display, &report),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&WorkspaceDoctorSuccess {
@@ -21007,7 +21012,8 @@ pub fn workspace_check(
                     stderr: None,
                     exit_code: if report.ok { 0 } else { 1 },
                 },
-            },
+                }
+            }
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
                     "WORKSPACE CHECK",
@@ -51842,6 +51848,43 @@ fn workspace_run_receipt(
     }
 }
 
+fn workspace_next_steps(next: Option<&str>) -> Vec<String> {
+    next.map(|next| {
+        next.split("; ")
+            .map(str::trim)
+            .filter(|part| !part.is_empty() && !part.starts_with("log capture failed:"))
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn normalize_workspace_up_repo_followups(repos: &mut [WorkspaceRepoUpReport]) {
+    for repo in repos {
+        let next = repo
+            .findings
+            .iter()
+            .map(|finding| finding.next.as_str())
+            .find(|next| !next.trim().is_empty())
+            .map(str::to_string);
+        repo.next_steps = workspace_next_steps(next.as_deref());
+        repo.next = next;
+    }
+}
+
+fn normalize_workspace_run_repo_followups(repos: &mut [WorkspaceRepoRunReport]) {
+    for repo in repos {
+        let next = repo
+            .findings
+            .iter()
+            .map(|finding| finding.next.as_str())
+            .find(|next| !next.trim().is_empty())
+            .map(str::to_string);
+        repo.next_steps = workspace_next_steps(next.as_deref());
+        repo.next = next;
+    }
+}
+
 fn workspace_repo_needs_acquisition(repo: &WorkspaceRepoRef) -> bool {
     !repo.present && repo.source_url.is_some() && !repo.path.is_dir()
 }
@@ -53552,7 +53595,8 @@ fn load_and_run_workspace_up(
         }
     }
 
-    let repos = repos.into_values().collect::<Vec<_>>();
+    let mut repos = repos.into_values().collect::<Vec<_>>();
+    normalize_workspace_up_repo_followups(&mut repos);
     let receipt = workspace_up_receipt(path, &workspace_identity, &workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok,
@@ -53852,7 +53896,8 @@ fn load_and_run_workspace_refresh(
         }
     }
 
-    let repos = repos.into_values().collect::<Vec<_>>();
+    let mut repos = repos.into_values().collect::<Vec<_>>();
+    normalize_workspace_up_repo_followups(&mut repos);
     let receipt = workspace_up_receipt(path, &workspace_identity, &workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok: if options.dry_run { true } else { ok },
@@ -54020,7 +54065,8 @@ fn load_and_run_workspace_task(
         }
     }
 
-    let repos = repos.into_values().collect::<Vec<_>>();
+    let mut repos = repos.into_values().collect::<Vec<_>>();
+    normalize_workspace_run_repo_followups(&mut repos);
     let receipt = workspace_run_receipt(path, &workspace_identity, &workspace_name, task, &repos);
     Ok(WorkspaceRunReport { ok, receipt, repos })
 }
@@ -54088,6 +54134,7 @@ fn run_workspace_refresh_streaming(
         repos.push(report);
     }
 
+    normalize_workspace_up_repo_followups(&mut repos);
     let receipt = workspace_up_receipt(workspace_path, workspace_identity, workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok: if options.dry_run { true } else { ok },
@@ -54158,6 +54205,7 @@ fn run_workspace_task_streaming(
         repos.push(report);
     }
 
+    normalize_workspace_run_repo_followups(&mut repos);
     let receipt = workspace_run_receipt(
         workspace_path,
         workspace_identity,
@@ -54224,6 +54272,7 @@ fn run_workspace_up_streaming(
         repos.push(report);
     }
 
+    normalize_workspace_up_repo_followups(&mut repos);
     let receipt = workspace_up_receipt(workspace_path, workspace_identity, workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok,
@@ -54380,6 +54429,8 @@ fn run_workspace_repo_up(
                     RepoExecutionMode::Stream => None,
                 },
                 env_sources: Vec::new(),
+                next: None,
+                next_steps: Vec::new(),
             };
         }
         Ok(_) => {}
@@ -54419,6 +54470,8 @@ fn run_workspace_repo_up(
                 stdout: None,
                 stderr: None,
                 env_sources: Vec::new(),
+                next: None,
+                next_steps: Vec::new(),
             };
         }
     }
@@ -54480,6 +54533,8 @@ fn run_workspace_repo_up(
                         RepoExecutionMode::Stream => None,
                     },
                     env_sources: env_sources.clone(),
+                    next: None,
+                    next_steps: Vec::new(),
                 },
                 Err(error) => WorkspaceRepoUpReport {
                     name: repo.name,
@@ -54512,6 +54567,8 @@ fn run_workspace_repo_up(
                     stdout: None,
                     stderr: None,
                     env_sources,
+                    next: None,
+                    next_steps: Vec::new(),
                 },
             }
         }
@@ -54546,6 +54603,8 @@ fn run_workspace_repo_up(
             stdout: None,
             stderr: None,
             env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
         },
     }
 }
@@ -54579,6 +54638,8 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
         stdout: None,
         stderr: None,
         env_sources: Vec::new(),
+        next: None,
+        next_steps: Vec::new(),
     }
 }
 
@@ -55100,6 +55161,8 @@ fn blocked_workspace_repo_refresh(
         stdout: None,
         stderr: None,
         env_sources: Vec::new(),
+        next: None,
+        next_steps: Vec::new(),
     }
 }
 
@@ -55137,6 +55200,8 @@ fn blocked_workspace_repo_run(
         stdout: None,
         stderr: None,
         env_sources: Vec::new(),
+        next: None,
+        next_steps: Vec::new(),
     }
 }
 
@@ -55292,6 +55357,8 @@ fn run_workspace_repo_refresh(
             stdout: None,
             stderr: None,
             env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
         };
     }
 
@@ -55315,6 +55382,8 @@ fn run_workspace_repo_refresh(
             stdout: None,
             stderr: None,
             env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
         };
     }
 
@@ -55342,6 +55411,8 @@ fn run_workspace_repo_refresh(
             stdout: None,
             stderr: None,
             env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
         };
     }
 
@@ -55385,6 +55456,8 @@ fn run_workspace_repo_refresh(
                 stdout: None,
                 stderr: None,
                 env_sources: Vec::new(),
+                next: None,
+                next_steps: Vec::new(),
             };
         }
     };
@@ -55438,6 +55511,8 @@ fn run_workspace_repo_refresh(
                 RepoExecutionMode::Stream => None,
             },
             env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
         };
     }
 
@@ -55466,6 +55541,8 @@ fn run_workspace_repo_refresh(
             RepoExecutionMode::Stream => None,
         },
         env_sources: Vec::new(),
+        next: None,
+        next_steps: Vec::new(),
     }
 }
 
@@ -55526,6 +55603,8 @@ fn run_workspace_repo_task(
                     RepoExecutionMode::Stream => None,
                 },
                 env_sources: Vec::new(),
+                next: None,
+                next_steps: Vec::new(),
             };
         }
         Ok(_) => {}
@@ -55565,6 +55644,8 @@ fn run_workspace_repo_task(
                 stdout: None,
                 stderr: None,
                 env_sources: Vec::new(),
+                next: None,
+                next_steps: Vec::new(),
             };
         }
     }
@@ -55616,6 +55697,8 @@ fn run_workspace_repo_task(
                     stdout: None,
                     stderr: None,
                     env_sources: Vec::new(),
+                    next: None,
+                    next_steps: Vec::new(),
                 };
             }
 
@@ -55694,6 +55777,8 @@ fn run_workspace_repo_task(
                         RepoExecutionMode::Stream => None,
                     },
                     env_sources: env_sources.clone(),
+                    next: None,
+                    next_steps: Vec::new(),
                 },
                 Ok(result) => WorkspaceRepoRunReport {
                     name: repo.name,
@@ -55732,6 +55817,8 @@ fn run_workspace_repo_task(
                         RepoExecutionMode::Stream => None,
                     },
                     env_sources: env_sources.clone(),
+                    next: None,
+                    next_steps: Vec::new(),
                 },
                 Err(error) => WorkspaceRepoRunReport {
                     name: repo.name,
@@ -55766,6 +55853,8 @@ fn run_workspace_repo_task(
                     stdout: None,
                     stderr: None,
                     env_sources,
+                    next: None,
+                    next_steps: Vec::new(),
                 },
             }
         }
@@ -55805,6 +55894,8 @@ fn run_workspace_repo_task(
             stdout: None,
             stderr: None,
             env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
         },
     }
 }
@@ -55911,6 +56002,7 @@ fn check_workspace_repo(
             required: repo.required,
             ok: !repo.required,
             agent_verdict: DoctorVerdict::NotReady,
+            primary_blocker: None,
             execution: None,
             provisioning: None,
             adapter_bootstrap: None,
@@ -55955,6 +56047,7 @@ fn check_workspace_repo(
                     agent_verdict: crate::workspace::agent_verdict_from_agent(
                         contract.agent.as_ref(),
                     ),
+                    primary_blocker: None,
                     execution: WorkspaceExecutionSummary::from_contract_with_policy(
                         &contract,
                         &repo.contract_path,
@@ -55998,6 +56091,7 @@ fn check_workspace_repo(
                     .iter()
                     .any(|finding| finding.severity == FindingSeverity::Error),
                 agent_verdict: crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+                primary_blocker: None,
                 execution: WorkspaceExecutionSummary::from_contract_with_policy(
                     &contract,
                     &repo.contract_path,
@@ -56016,6 +56110,7 @@ fn check_workspace_repo(
             required: repo.required,
             ok: !repo.required,
             agent_verdict: DoctorVerdict::NotReady,
+            primary_blocker: None,
             execution: None,
             provisioning: None,
             adapter_bootstrap: None,

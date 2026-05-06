@@ -133,6 +133,11 @@
             "type": "array",
             "items": { "$ref": "./shared.json#/$defs/finding" }
           },
+          "next": { "type": "string" },
+          "next_steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "exit_code": { "type": "integer" },
           "stdout": { "type": "string" },
           "stderr": { "type": "string" }
