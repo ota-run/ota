@@ -6097,6 +6097,26 @@ exit 1
     }
 
     #[cfg(unix)]
+    fn install_fake_npm(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "10.9.0"
+  exit 0
+fi
+exit 1
+"#,
+        )
+        .unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(unix)]
     fn install_fake_daytona(path: &std::path::Path) {
         fs::write(
             path,
@@ -10830,10 +10850,12 @@ repos:
 
         assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert!(json["receipt"]["next"]
-            .as_str()
-            .unwrap()
-            .contains("ota workspace up --dry-run"));
+        assert!(
+            json["receipt"]["next"]
+                .as_str()
+                .unwrap()
+                .contains("ota workspace up --dry-run")
+        );
         assert_eq!(
             json["repos"][0]["next"],
             "run `ota workspace up` to acquire `api` from `https://example.com/api.git`"
@@ -12471,7 +12493,9 @@ tasks:
         assert!(stderr.contains("ERROR  Required environment source is missing"));
         assert!(stderr.contains("dotenv:.env.local"));
         assert!(stderr.contains("ota env --task dev"));
-        assert!(stderr.contains("repair the declared environment sources, then rerun `ota run dev`"));
+        assert!(
+            stderr.contains("repair the declared environment sources, then rerun `ota run dev`")
+        );
     }
 
     #[test]
@@ -22584,23 +22608,28 @@ project:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(!stdout.contains("Primary blocker:"));
-        assert!(stdout.contains("No `ota.yaml` found"));
+        assert!(stdout.contains("➤ Primary Blocker Contract missing"));
+        assert!(stdout.contains("What Ota can tell so far"));
         assert!(stdout.contains("Detected Rust repo"));
         assert!(stdout.contains("Detected Docker Compose services: web"));
         assert!(stdout.contains("Host tool available: cargo"));
         assert!(stdout.contains("Missing container execution backend CLI: docker, podman"));
-        assert!(stdout.contains("ota detect --dry-run"));
-        assert!(stdout.contains("ota init --dry-run"));
-        assert!(
-            stdout.matches("Provenance: repo signals").count() >= 2,
-            "expected provenance on secondary contractless findings, not only the primary blocker"
+        assert!(stdout.contains("ota detect --dry-run ."));
+        assert!(stdout.contains("ota detect --contract ."));
+        assert!(stdout.contains("ota init --dry-run ."));
+        assert!(stdout.contains("ota init ."));
+        assert!(stdout.contains("ota detect --write ."));
+        assert_eq!(
+            stdout.matches("Provenance: repo signals").count(),
+            1,
+            "expected repo-signal provenance on the contractless primary blocker only"
         );
 
         let json_output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
         let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
         assert_eq!(
             json["summary"]["primary_blocker"]["summary"],
-            "No `ota.yaml` found"
+            "Contract missing"
         );
         assert_eq!(json["summary"]["primary_blocker"]["severity"], "error");
         assert!(
@@ -22618,16 +22647,87 @@ project:
     }
 
     #[test]
+    fn doctor_without_contract_surfaces_node_package_manager_and_task_signals() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  }
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("package-lock.json"),
+            "{\n  \"name\": \"ota-site\"\n}\n",
+        )
+        .unwrap();
+
+        let bin_dir = TempDir::new().unwrap();
+        #[cfg(unix)]
+        {
+            install_fake_npm(&bin_dir.path().join("npm"));
+        }
+        let original_path = std::env::var_os("PATH");
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+        unsafe {
+            std::env::set_var("PATH", bin_dir.path());
+        }
+
+        let output = run_with(["ota", "doctor"]);
+
+        unsafe {
+            match original_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("➤ What Ota can tell so far"));
+        assert!(stdout.contains("Detected repo type: Node"));
+        assert!(stdout.contains("Detected package manager: npm"));
+        assert!(stdout.contains("Host tool available: npm"));
+        assert!(stdout.contains("Detected likely runnable tasks: dev, build, typecheck, start"));
+        assert!(!stdout.contains("No strong repo signals were detected yet"));
+    }
+
+    #[test]
     fn doctor_without_contract_marks_no_signals_finding_with_repo_signal_provenance() {
         let finding = Finding {
             severity: FindingSeverity::Info,
-            summary: String::from("No repo signals detected"),
+            summary: String::from("No strong repo signals were detected yet"),
             why: String::from("`./repo` did not expose obvious repo markers yet"),
             next: String::from("run `ota init --dry-run` or `ota detect --dry-run`"),
         };
 
         assert_eq!(finding.provenance().as_deref(), Some("repo signals"));
         assert_eq!(finding.provenance_key().as_deref(), Some("repo_signals"));
+    }
+
+    #[test]
+    fn doctor_without_contract_shows_no_signal_section_and_compare_first_lane() {
+        let _guard = cwd_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+
+        let output = run_with(["ota", "doctor"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("➤ Primary Blocker Contract missing"));
+        assert!(stdout.contains("➤ What Ota can tell so far"));
+        assert!(stdout.contains("No strong repo signals were detected yet"));
+        assert!(stdout.contains("ota detect --dry-run ."));
+        assert!(stdout.contains("ota detect --contract ."));
+        assert!(stdout.contains("ota init --dry-run ."));
     }
 
     #[test]
@@ -32141,19 +32241,16 @@ repos:
         )
         .unwrap();
 
-        let output = run_with([
-            "ota",
-            "workspace",
-            "diff",
-            fixture.path().to_str().unwrap(),
-        ]);
+        let output = run_with(["ota", "workspace", "diff", fixture.path().to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 0);
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("Target: origin/"));
         assert!(body.contains("(upstream branch)"));
         assert!(body.contains("differs from upstream branch `origin/"));
-        assert!(body.contains("declare `source.ref` if the workspace should own the target explicitly"));
+        assert!(
+            body.contains("declare `source.ref` if the workspace should own the target explicitly")
+        );
     }
 
     #[test]

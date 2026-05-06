@@ -786,11 +786,15 @@ fn render_missing_contract_guidance(
             out.push_str(&format_error_next_timeline(&[
                 format!(
                     "run {} to preview the current workspace draft",
-                    paint_code(&format!("`ota workspace detect --dry-run {workspace_target}`"))
+                    paint_code(&format!(
+                        "`ota workspace detect --dry-run {workspace_target}`"
+                    ))
                 ),
                 format!(
                     "or run {} to preview the conservative starter path",
-                    paint_code(&format!("`ota workspace init --dry-run {workspace_target}`"))
+                    paint_code(&format!(
+                        "`ota workspace init --dry-run {workspace_target}`"
+                    ))
                 ),
             ]));
         }
@@ -14806,14 +14810,12 @@ pub fn doctor(
 fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
     let mut findings = vec![Finding {
         severity: FindingSeverity::Error,
-        summary: String::from("No `ota.yaml` found"),
+        summary: String::from("Contract missing"),
         why: format!(
             "no `ota.yaml` was found from `{}` upward, so Ota cannot validate repo readiness yet",
             compact_repo_path(root)
         ),
-        next: String::from(
-            "run `ota detect --dry-run` to review inferred fields, or run `ota init --dry-run` to compare a starter contract",
-        ),
+        next: contractless_repo_onboarding_next_text(root, true),
     }];
 
     let detect_report = match detect_repo(root) {
@@ -14847,6 +14849,76 @@ fn append_contractless_repo_findings(
     report: &DetectReport,
     findings: &mut Vec<Finding>,
 ) {
+    if contractless_repo_looks_like_node(report) {
+        let source = report
+            .inferences
+            .iter()
+            .find(|inference| {
+                inference.source == "package.json#name"
+                    || inference.field == "runtimes.node"
+                    || inference.source.starts_with("package.json#scripts.")
+                    || matches!(
+                        inference.field.as_str(),
+                        "tools.npm" | "tools.pnpm" | "tools.yarn" | "tools.bun"
+                    )
+            })
+            .map(|inference| inference.source.as_str())
+            .unwrap_or("package.json");
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected repo type: Node"),
+            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Node contract"),
+        });
+    }
+
+    if let Some(package_manager) = contractless_repo_package_manager(report) {
+        let source = report
+            .inferences
+            .iter()
+            .find(|inference| inference.field == format!("tools.{package_manager}"))
+            .map(|inference| inference.source.as_str())
+            .unwrap_or("package.json");
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!("Detected package manager: {package_manager}"),
+            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        });
+
+        match command_version(package_manager) {
+            Some(version) => findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: format!("Host tool available: {package_manager}"),
+                why: format!("`{package_manager} --version` returned `{version}`"),
+                next: String::from("no action required"),
+            }),
+            None => findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Missing host tool: {package_manager}"),
+                why: format!(
+                    "the repo looks like Node/{package_manager}, but `{package_manager}` is not available on PATH"
+                ),
+                next: format!(
+                    "install `{package_manager}` so it is available before using this repo"
+                ),
+            }),
+        }
+    }
+
+    let likely_tasks = contractless_repo_likely_tasks(report);
+    if !likely_tasks.is_empty() {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!(
+                "Detected likely runnable tasks: {}",
+                likely_tasks.join(", ")
+            ),
+            why: String::from("found runnable task signals from repo automation files"),
+            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        });
+    }
+
     if report.contract.runtimes.contains_key("rust") || report.contract.tools.contains_key("cargo")
     {
         let source = report
@@ -14928,11 +15000,10 @@ fn append_contractless_repo_findings(
         && report.contract.tools.is_empty()
         && report.contract.services.is_empty()
         && report.contract.tasks.is_empty()
-        && report.contract.project.is_none()
     {
         findings.push(Finding {
             severity: FindingSeverity::Info,
-            summary: String::from("No repo signals detected"),
+            summary: String::from("No strong repo signals were detected yet"),
             why: format!(
                 "`{}` did not expose obvious repo markers yet",
                 compact_repo_path(root)
@@ -14940,6 +15011,87 @@ fn append_contractless_repo_findings(
             next: String::from("run `ota init --dry-run` or `ota detect --dry-run`"),
         });
     }
+}
+
+fn contractless_repo_looks_like_node(report: &DetectReport) -> bool {
+    report.contract.runtimes.contains_key("node")
+        || report
+            .inferences
+            .iter()
+            .any(|inference| inference.source.starts_with("package.json#"))
+        || contractless_repo_package_manager(report).is_some()
+}
+
+fn contractless_repo_package_manager<'a>(report: &'a DetectReport) -> Option<&'a str> {
+    ["pnpm", "npm", "yarn", "bun"]
+        .into_iter()
+        .find(|tool| report.contract.tools.contains_key(*tool))
+}
+
+fn contractless_repo_likely_tasks(report: &DetectReport) -> Vec<String> {
+    let preferred = [
+        "dev",
+        "build",
+        "test",
+        "typecheck",
+        "start",
+        "lint",
+        "setup",
+    ];
+    let mut tasks = Vec::new();
+    for name in preferred {
+        if report.contract.tasks.contains_key(name) {
+            tasks.push(name.to_string());
+        }
+    }
+    if tasks.is_empty() {
+        tasks.extend(report.contract.tasks.keys().take(4).cloned());
+    }
+    tasks
+}
+
+fn contractless_repo_command(command: &str, repo_root: &Path) -> String {
+    if std::env::current_dir().ok().is_some_and(|current_dir| {
+        let current_dir = fs::canonicalize(&current_dir).unwrap_or(current_dir);
+        let target = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+        target == current_dir
+    }) {
+        format!("{command} .")
+    } else {
+        format!("{command} {}", compact_repo_path(repo_root))
+    }
+}
+
+fn contractless_repo_onboarding_next_steps(
+    repo_root: &Path,
+    include_write_step: bool,
+) -> Vec<String> {
+    let mut steps = vec![
+        format!(
+            "run `{}` to review inferred fields",
+            contractless_repo_command("ota detect --dry-run", repo_root)
+        ),
+        format!(
+            "run `{}` to inspect the exact detected contract text",
+            contractless_repo_command("ota detect --contract", repo_root)
+        ),
+        format!(
+            "run `{}` to compare the conservative starter path",
+            contractless_repo_command("ota init --dry-run", repo_root)
+        ),
+    ];
+    if include_write_step {
+        steps.push(format!(
+            "write only after review with `{}` or `{}`",
+            contractless_repo_command("ota init", repo_root),
+            contractless_repo_command("ota detect --write", repo_root)
+        ));
+    }
+    steps
+}
+
+fn contractless_repo_onboarding_next_text(repo_root: &Path, include_write_step: bool) -> String {
+    contractless_repo_onboarding_next_steps(repo_root, include_write_step).join("; ")
 }
 
 pub fn explain(
@@ -21043,21 +21195,23 @@ pub fn workspace_check(
             Ok(report) => {
                 let report = normalize_workspace_doctor_report(report);
                 match format {
-                OutputFormat::Text => render_workspace_check_text(&compact_path_display, &report),
-                OutputFormat::Json => CommandOutput {
-                    stdout: to_json(&WorkspaceDoctorSuccess {
-                        ok: report.ok,
-                        path: &path_display,
-                        summary: workspace_doctor_summary(&report),
-                        finding_groups: doctor_finding_group_summaries(
-                            report.repos.iter().flat_map(|repo| repo.findings.iter()),
-                            None,
-                        ),
-                        repos: &report.repos,
-                    }),
-                    stderr: None,
-                    exit_code: if report.ok { 0 } else { 1 },
-                },
+                    OutputFormat::Text => {
+                        render_workspace_check_text(&compact_path_display, &report)
+                    }
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&WorkspaceDoctorSuccess {
+                            ok: report.ok,
+                            path: &path_display,
+                            summary: workspace_doctor_summary(&report),
+                            finding_groups: doctor_finding_group_summaries(
+                                report.repos.iter().flat_map(|repo| repo.findings.iter()),
+                                None,
+                            ),
+                            repos: &report.repos,
+                        }),
+                        stderr: None,
+                        exit_code: if report.ok { 0 } else { 1 },
+                    },
                 }
             }
             Err(WorkspaceProblem::Validation(errors)) => match format {
@@ -22285,21 +22439,21 @@ fn write_detected_merge(
                 let mut next_steps = vec![format!("run `{highlighted_validate}`")];
                 if let Some(comparison) = post_write_comparison.as_ref() {
                     if !comparison.changes.is_empty() {
-                        let highlighted_merge_review = paint_code(&command_for_repo_contract_target(
-                            "ota detect --merge --dry-run",
-                            &contract_path,
-                        ));
+                        let highlighted_merge_review =
+                            paint_code(&command_for_repo_contract_target(
+                                "ota detect --merge --dry-run",
+                                &contract_path,
+                            ));
                         next_steps.push(format!(
                             "run `{highlighted_merge_review}` to review remaining add-only detected changes"
                         ));
                     }
                     if !comparison.removals.is_empty() {
-                        let highlighted_rewrite_review = paint_code(
-                            &command_for_repo_contract_target(
+                        let highlighted_rewrite_review =
+                            paint_code(&command_for_repo_contract_target(
                                 "ota detect --rewrite --dry-run",
                                 &contract_path,
-                            ),
-                        );
+                            ));
                         next_steps.push(format!(
                             "run `{highlighted_rewrite_review}` to review rewrite-only drift"
                         ));
@@ -28680,19 +28834,31 @@ fn render_report_section(
     let skip_primary_finding = summary
         .and_then(|summary| summary.primary_blocker.as_ref())
         .filter(|finding| finding.severity != FindingSeverity::Info);
+    let contractless_repo_root = contractless_repo_root(contract_path, path);
+    let contractless_doctor =
+        contractless_doctor_signal_findings(command, report, &skip_primary_finding);
     if let Some(primary_blocker) = skip_primary_finding {
         if !stdout.ends_with("\n\n") {
             stdout.push_str("\n\n");
         }
-        stdout.push_str(&render_primary_finding_text(
-            primary_blocker.severity,
-            &primary_blocker.summary,
-            &primary_blocker.why,
-            &primary_blocker.next,
-            primary_blocker.provenance.clone(),
-            doctor_mode,
-            contract_path,
-        ));
+        if contractless_doctor.is_some() {
+            stdout.push_str(&render_contractless_primary_finding_text(
+                primary_blocker,
+                doctor_mode,
+                contract_path,
+                contractless_repo_root.as_deref(),
+            ));
+        } else {
+            stdout.push_str(&render_primary_finding_text(
+                primary_blocker.severity,
+                &primary_blocker.summary,
+                &primary_blocker.why,
+                &primary_blocker.next,
+                primary_blocker.provenance.clone(),
+                doctor_mode,
+                contract_path,
+            ));
+        }
     }
     if command == "DOCTOR" && report.ok && report.findings.is_empty() {
         stdout.push_str(&render_doctor_ready_next(agent, contract_path));
@@ -28722,6 +28888,12 @@ fn render_report_section(
             stdout.push_str("\n\n");
             stdout.push_str(&summary);
         }
+    }
+    if let Some(findings) = contractless_doctor {
+        if !findings.is_empty() {
+            stdout.push_str(&render_contractless_doctor_signal_section(&findings));
+        }
+        return stdout;
     }
     let grouped_findings = group_doctor_findings(report.findings.iter().enumerate().filter_map(
         |(index, finding)| {
@@ -28837,6 +29009,128 @@ fn render_report_section(
         ));
     }
 
+    stdout
+}
+
+fn contractless_repo_root(contract_path: Option<&Path>, path: &str) -> Option<PathBuf> {
+    contract_path
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .or_else(|| {
+            let path = Path::new(path);
+            (!path.as_os_str().is_empty()).then(|| path.to_path_buf())
+        })
+}
+
+fn contractless_doctor_signal_findings<'a>(
+    command: &str,
+    report: &'a DoctorReport,
+    primary_blocker: &Option<&DoctorPrimaryBlocker>,
+) -> Option<Vec<&'a Finding>> {
+    if command != "DOCTOR" {
+        return None;
+    }
+    let primary = primary_blocker.as_ref()?;
+    if primary.summary != "Contract missing"
+        || !primary
+            .why
+            .contains("Ota cannot validate repo readiness yet")
+    {
+        return None;
+    }
+    Some(report.findings.iter().skip(1).collect())
+}
+
+fn render_contractless_primary_finding_text(
+    primary_blocker: &DoctorPrimaryBlocker,
+    doctor_mode: Option<DoctorMode>,
+    contract_path: Option<&Path>,
+    repo_root: Option<&Path>,
+) -> String {
+    let mut stdout = String::new();
+    let (display_why, _, container_image) = render_container_image_finding_text(
+        &primary_blocker.why,
+        &primary_blocker.next,
+        doctor_mode,
+    );
+    let why_lines = finding_why_lines(
+        &primary_blocker.summary,
+        &display_why,
+        container_image.as_deref(),
+    );
+    stdout.push_str(&format!(
+        "{} {} {}",
+        primary_error_marker(),
+        paint("Primary Blocker", "1;38;2;255;168;168"),
+        render_finding_summary_with_count(primary_blocker.severity, &primary_blocker.summary, 1,)
+    ));
+    if !concise_mode() {
+        append_finding_section(
+            &mut stdout,
+            "Why:",
+            &why_lines,
+            primary_blocker.severity,
+            contract_path,
+        );
+    }
+    if let Some(provenance) = primary_blocker.provenance.as_deref() {
+        append_wrapped_labeled_text(
+            &mut stdout,
+            "Provenance:",
+            provenance,
+            "",
+            DOCTOR_DETAIL_WRAP_WIDTH,
+            false,
+            paint_key,
+            |value| render_backticked_text(value, contract_path),
+        );
+    }
+    let next_steps = repo_root
+        .map(|root| contractless_repo_onboarding_next_steps(root, true))
+        .unwrap_or_else(|| {
+            vec![rewrite_doctor_mode_command(
+                &primary_blocker.next,
+                doctor_mode,
+            )]
+        });
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &next_steps,
+        primary_blocker.severity,
+        None,
+    );
+    stdout
+}
+
+fn contractless_signal_line(finding: &Finding) -> String {
+    match finding.summary.as_str() {
+        "Could not inspect repo signals" => {
+            format!("Could not inspect repo signals: {}", finding.why)
+        }
+        "No strong repo signals were detected yet" => {
+            String::from("No strong repo signals were detected yet")
+        }
+        _ => finding.summary.clone(),
+    }
+}
+
+fn render_contractless_doctor_signal_section(findings: &[&Finding]) -> String {
+    let mut stdout = format!(
+        "\n\n{} {}\n",
+        primary_info_marker(),
+        paint_section_title("What Ota can tell so far")
+    );
+    for finding in findings {
+        stdout.push_str(&format!(
+            " {}  {}",
+            verdict_bullet(),
+            contractless_signal_line(finding)
+        ));
+        stdout.push('\n');
+    }
+    while stdout.ends_with('\n') {
+        stdout.pop();
+    }
     stdout
 }
 
@@ -34624,13 +34918,18 @@ tasks:
         let value = super::up_result_json_value("./ota.yaml", &result);
         let next = value["receipt"]["next"].as_str().expect("receipt next");
 
-        assert!(next.contains("ota execution plan --mode container"), "{next}");
+        assert!(
+            next.contains("ota execution plan --mode container"),
+            "{next}"
+        );
         assert!(
             next.contains("repair the missing compose/runtime network attachment"),
             "{next}"
         );
         assert!(
-            next.contains("verify the container runtime and required compose attachments are healthy"),
+            next.contains(
+                "verify the container runtime and required compose attachments are healthy"
+            ),
             "{next}"
         );
     }
@@ -48452,7 +48751,9 @@ fn render_up_blocked_provisioning_section(
                 finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
             if let Some(contract_path) = contract_path
                 && matches!(receipt.backend.as_deref(), Some("container" | "remote"))
-                && !next_steps.iter().any(|step| step.contains("ota execution plan"))
+                && !next_steps
+                    .iter()
+                    .any(|step| step.contains("ota execution plan"))
             {
                 let member = member_from_display_contract_target(path);
                 let command = repo_execution_plan_command(
@@ -48857,21 +49158,17 @@ fn render_up_section_from_parts(
             let finding = group.findings[0];
             stdout.push_str("\n\n");
             let rewritten_next = rewrite_doctor_mode_command(&finding.next, doctor_mode);
-            let rewritten_next = if should_prepend_up_execution_plan_for_finding(
-                status,
-                phase,
-                finding,
-                backend,
-            ) {
-                prepend_up_execution_plan_next_step(
-                    &rewritten_next,
-                    contract_path,
-                    member_from_display_contract_target(path),
-                    backend,
-                )
-            } else {
-                rewritten_next
-            };
+            let rewritten_next =
+                if should_prepend_up_execution_plan_for_finding(status, phase, finding, backend) {
+                    prepend_up_execution_plan_next_step(
+                        &rewritten_next,
+                        contract_path,
+                        member_from_display_contract_target(path),
+                        backend,
+                    )
+                } else {
+                    rewritten_next
+                };
             if render_depends_on_boundary_doctor_finding(
                 &mut stdout,
                 finding.severity,
@@ -48968,8 +49265,7 @@ fn normalized_up_receipt(
     receipt: &ExecutionReceipt,
 ) -> ExecutionReceipt {
     let mut normalized = receipt.clone();
-    normalized.next =
-        normalized_up_receipt_next(member, status, phase, findings, stderr, receipt);
+    normalized.next = normalized_up_receipt_next(member, status, phase, findings, stderr, receipt);
     normalized
 }
 
@@ -52050,7 +52346,9 @@ fn workspace_diff_next_steps(repos: &[WorkspaceRepoDiffReport]) -> Vec<String> {
 }
 
 fn workspace_status_next_steps(repos: &[WorkspaceRepoStatusReport]) -> Vec<String> {
-    let has_missing = repos.iter().any(|repo| repo.readiness_status == "NOT ACQUIRED");
+    let has_missing = repos
+        .iter()
+        .any(|repo| repo.readiness_status == "NOT ACQUIRED");
     let has_not_ready = repos
         .iter()
         .any(|repo| repo.readiness_status == "NOT READY");
@@ -55137,8 +55435,10 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
     let findings = if status == "MATCH" {
         Vec::new()
     } else {
-        let target_label =
-            workspace_repo_target_label(target_ref.as_deref().unwrap_or("declared target"), repo.source_ref.is_some());
+        let target_label = workspace_repo_target_label(
+            target_ref.as_deref().unwrap_or("declared target"),
+            repo.source_ref.is_some(),
+        );
         vec![Finding {
             severity: if repo.required {
                 FindingSeverity::Warn
@@ -55172,8 +55472,11 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
         acquired: true,
         status: status.to_string(),
         drift_kind: String::from(workspace_repo_drift_kind(&status, target_ref.is_some())),
-        target_source: workspace_repo_target_source(repo.source_ref.is_some(), target_ref.is_some())
-            .map(String::from),
+        target_source: workspace_repo_target_source(
+            repo.source_ref.is_some(),
+            target_ref.is_some(),
+        )
+        .map(String::from),
         source_url: repo.source_url.clone(),
         source_ref: repo.source_ref.clone(),
         branch,
@@ -55608,9 +55911,7 @@ fn workspace_refresh_failure_finding(
     Finding {
         severity: FindingSeverity::Error,
         summary: format!("Repo refresh failed: {repo_name}"),
-        why: format!(
-            "workspace repo `{repo_name}` could not complete its refresh command cleanly"
-        ),
+        why: format!("workspace repo `{repo_name}` could not complete its refresh command cleanly"),
         next: String::from(
             "inspect the `Refresh command:` line and refresh output, then fix branch tracking or local git state before rerunning `ota workspace refresh`",
         ),

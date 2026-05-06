@@ -1594,11 +1594,14 @@ impl Finding {
         let summary = self.summary.as_str();
         if matches!(
             summary,
-            "No `ota.yaml` found"
+            "Contract missing"
                 | "Could not inspect repo signals"
                 | "Detected Rust repo"
-                | "No repo signals detected"
+                | "No strong repo signals were detected yet"
+                | "Detected repo type: Node"
         ) || summary.starts_with("Detected Docker Compose services: ")
+            || summary.starts_with("Detected package manager: ")
+            || summary.starts_with("Detected likely runnable tasks: ")
             || summary.starts_with("Host tool available: ")
             || summary.starts_with("Missing host tool: ")
             || (summary.starts_with("Missing container execution backend CLI: ")
