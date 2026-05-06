@@ -74,7 +74,7 @@ use crate::output::{
     DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary,
     DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind,
     EnvEntryStatus, EnvFailure, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
-    ExecutionContextSummary, ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved,
+    ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved,
     ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptLogs,
     ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExecutionTopologyFailure,
     ExecutionTopologyHostProjectionSummary, ExecutionTopologyListenerSummary,
@@ -32364,36 +32364,150 @@ fn render_doctor_execution_summary_text(
         }
     }
     if !execution.env.is_empty() {
+        lines.push(String::new());
+        lines.push(paint_section_title("Environment"));
         lines.push(section_list_row(
             &summary_bullet(),
-            &paint_key("Env precedence:"),
+            &paint_key("Resolution:"),
             "org policy > process > declared env sources > contract default > required missing",
         ));
-        for item in &execution.env {
-            let mut details = Vec::new();
-            details.push(item.source.clone());
-            if item.required {
-                details.push(String::from("required"));
-            }
-            if let Some(default) = item.default {
-                details.push(format!("default={default}"));
-            }
-            if !item.allowed.is_empty() {
-                details.push(format!("allowed={}", item.allowed.join(", ")));
-            }
-            lines.push(section_list_row(
-                &summary_bullet(),
-                &paint_key("Env:"),
-                &format!(
-                    "{} ({})",
-                    paint_backticked_code(item.name),
-                    details.join(", ")
-                ),
-            ));
-        }
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Required missing:"),
+            &paint_backticked_code(
+                &execution
+                    .env
+                    .iter()
+                    .filter(|item| item.required && doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Missing)
+                    .count()
+                    .to_string(),
+            ),
+        ));
+
+        append_doctor_execution_env_group(
+            &mut lines,
+            "Policy-backed Values",
+            execution.env.iter().filter(|item| {
+                doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Policy
+            }),
+            render_doctor_execution_env_named_source,
+        );
+        append_doctor_execution_env_group(
+            &mut lines,
+            "Process-backed Values",
+            execution.env.iter().filter(|item| {
+                doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Process
+            }),
+            render_doctor_execution_env_named_source,
+        );
+        append_doctor_execution_env_group(
+            &mut lines,
+            "Source-backed Values",
+            execution.env.iter().filter(|item| {
+                doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::DeclaredSource
+            }),
+            render_doctor_execution_env_named_source,
+        );
+        append_doctor_execution_env_group(
+            &mut lines,
+            "Defaulted Values",
+            execution.env.iter().filter(|item| {
+                doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Default
+            }),
+            render_doctor_execution_env_default_value,
+        );
+        append_doctor_execution_env_group(
+            &mut lines,
+            "Missing Required Env",
+            execution.env.iter().filter(|item| {
+                item.required
+                    && doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Missing
+            }),
+            render_doctor_execution_env_missing,
+        );
+        append_doctor_execution_env_group(
+            &mut lines,
+            "Source Resolution Issues",
+            execution.env.iter().filter(|item| {
+                doctor_execution_env_source_kind(item) == DoctorExecutionEnvSourceKind::Issue
+            }),
+            render_doctor_execution_env_issue,
+        );
     }
 
     lines.join("\n")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DoctorExecutionEnvSourceKind {
+    Policy,
+    Process,
+    DeclaredSource,
+    Default,
+    Missing,
+    Issue,
+}
+
+fn doctor_execution_env_source_kind(item: &ExecutionEnvSummary<'_>) -> DoctorExecutionEnvSourceKind {
+    match item.source.as_str() {
+        "process" => DoctorExecutionEnvSourceKind::Process,
+        "default" => DoctorExecutionEnvSourceKind::Default,
+        "missing" => DoctorExecutionEnvSourceKind::Missing,
+        source if source.starts_with("missing required ")
+            || source.starts_with("parse failed ")
+            || source.starts_with("invalid structure ")
+            || source.starts_with("collision ")
+            || source == "invalid policy pack" =>
+        {
+            DoctorExecutionEnvSourceKind::Issue
+        }
+        source if item.policy.is_some() && source == "org policy" => DoctorExecutionEnvSourceKind::Policy,
+        _ => DoctorExecutionEnvSourceKind::DeclaredSource,
+    }
+}
+
+fn append_doctor_execution_env_group<'a, I, F>(
+    lines: &mut Vec<String>,
+    title: &str,
+    items: I,
+    render: F,
+) where
+    I: Iterator<Item = &'a ExecutionEnvSummary<'a>>,
+    F: Fn(&ExecutionEnvSummary<'_>) -> String,
+{
+    let entries: Vec<_> = items.collect();
+    if entries.is_empty() {
+        return;
+    }
+    lines.push(format!("{} ({})", paint_section_title(title), entries.len()));
+    for item in entries {
+        lines.push(format!(" {}  {}", verdict_bullet(), render(item)));
+    }
+}
+
+fn render_doctor_execution_env_named_source(item: &ExecutionEnvSummary<'_>) -> String {
+    format!(
+        "{} from {}",
+        paint_backticked_code(item.name),
+        paint_backticked_code(&item.source)
+    )
+}
+
+fn render_doctor_execution_env_default_value(item: &ExecutionEnvSummary<'_>) -> String {
+    let value = item.default.unwrap_or("");
+    paint_backticked_code(&format!("{}={value}", item.name))
+}
+
+fn render_doctor_execution_env_missing(item: &ExecutionEnvSummary<'_>) -> String {
+    paint_backticked_code(item.name)
+}
+
+fn render_doctor_execution_env_issue(item: &ExecutionEnvSummary<'_>) -> String {
+    format!(
+        "{} ({})",
+        paint_backticked_code(item.name),
+        item.source
+    )
 }
 
 fn format_doctor_execution_context_line(context: &ExecutionContextSummary<'_>) -> String {
@@ -38369,6 +38483,93 @@ tasks:
             "\n    app: container / persistent / maven:3.9.14-eclipse-temurin-21-noble / compose=local / isolated=/workspace/node_modules"
         ));
         assert!(rendered.contains("\n    host: native"));
+    }
+
+    #[test]
+    fn doctor_execution_summary_groups_environment_by_source() {
+        let execution = crate::output::ExecutionSummary {
+            default_context: None,
+            preferred: Some("container"),
+            supported: vec!["native", "container"],
+            lifecycle: Some("ephemeral"),
+            backends: Some(crate::output::ExecutionBackendsSummary {
+                container: Some(crate::output::ExecutionContainerSummary {
+                    image: "oven/bun:1.3.12-slim",
+                }),
+                remote: None,
+            }),
+            contexts: Vec::new(),
+            env: vec![
+                crate::output::ExecutionEnvSummary {
+                    name: "DISCORD_TOKEN",
+                    required: true,
+                    default: None,
+                    policy: None,
+                    source: String::from("process"),
+                    allowed: Vec::new(),
+                },
+                crate::output::ExecutionEnvSummary {
+                    name: "BOT_PREFIX",
+                    required: false,
+                    default: Some("!"),
+                    policy: None,
+                    source: String::from("default"),
+                    allowed: Vec::new(),
+                },
+                crate::output::ExecutionEnvSummary {
+                    name: "OPENAI_API_KEY",
+                    required: false,
+                    default: None,
+                    policy: None,
+                    source: String::from(".env.local"),
+                    allowed: Vec::new(),
+                },
+            ],
+        };
+
+        let rendered = strip_ansi_codes(&super::render_doctor_execution_summary_text(
+            &execution,
+            Some(DoctorMode::Container),
+        ));
+
+        assert!(rendered.contains("\nEnvironment"));
+        assert!(rendered.contains("\n »  Resolution:"));
+        assert!(rendered.contains("\n »  Required missing: `0`"));
+        assert!(rendered.contains("\nProcess-backed Values (1)"));
+        assert!(rendered.contains("\n ●  `DISCORD_TOKEN` from `process`"));
+        assert!(rendered.contains("\nSource-backed Values (1)"));
+        assert!(rendered.contains("\n ●  `OPENAI_API_KEY` from `.env.local`"));
+        assert!(rendered.contains("\nDefaulted Values (1)"));
+        assert!(rendered.contains("\n ●  `BOT_PREFIX=!`"));
+    }
+
+    #[test]
+    fn doctor_execution_summary_does_not_treat_declared_policy_named_source_as_org_policy() {
+        let execution = crate::output::ExecutionSummary {
+            default_context: None,
+            preferred: None,
+            supported: Vec::new(),
+            lifecycle: None,
+            backends: None,
+            contexts: Vec::new(),
+            env: vec![crate::output::ExecutionEnvSummary {
+                name: "OPENAI_API_KEY",
+                required: false,
+                default: None,
+                policy: Some(String::from("fallback-policy-value")),
+                source: String::from(".env.policy.local"),
+                allowed: Vec::new(),
+            }],
+        };
+
+        let rendered = strip_ansi_codes(&super::render_doctor_execution_summary_text(
+            &execution,
+            None,
+        ));
+
+        assert!(rendered.contains("\nSource-backed Values (1)"));
+        assert!(rendered.contains("\n ●  `OPENAI_API_KEY` from `.env.policy.local`"));
+        assert!(!rendered.contains("\nPolicy-backed Values (1)"));
     }
 
     #[test]

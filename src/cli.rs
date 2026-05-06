@@ -18549,15 +18549,17 @@ policies:
         }
 
         assert_eq!(output.exit_code, 0);
-        assert!(stdout.contains("Env precedence:"));
-        assert!(stdout.contains(
-            "Env: `OTA_TEST_BASE_URL` (org policy, required, default=http://localhost:8080)"
-        ));
+        assert!(stdout.contains("Environment"));
+        assert!(stdout.contains("Resolution:"));
+        assert!(stdout.contains("Required missing: `0`"));
+        assert!(stdout.contains("Policy-backed Values (1)"));
+        assert!(stdout.contains("`OTA_TEST_BASE_URL` from `org policy`"));
         assert!(stdout.contains(
             "org policy > process > declared env sources > contract default > required missing"
         ));
         assert!(stdout.contains("OTA_TEST_BASE_URL"));
-        assert!(stdout.contains("required, default=http://localhost:8080"));
+        assert!(!stdout.contains("Env precedence:"));
+        assert!(!stdout.contains("Env: `OTA_TEST_BASE_URL`"));
     }
 
     #[test]
