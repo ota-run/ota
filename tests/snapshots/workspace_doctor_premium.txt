@@ -6,8 +6,8 @@
 Why: without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not
      operational for humans or agents
 Provenance: repo contract
-Next: add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and
-      `ota detect --write` to regenerate
+Next: run `ota detect --dry-run` to review inferred tasks before writing, or run
+      `ota assist add-task --name dev --kind command` when you want one explicit runnable task
 
 ✦ web [required] (NOT READY)
 Path: ./apps/web
@@ -15,11 +15,11 @@ Contract: ./apps/web/ota.yaml
 
 ◉ ERROR  No tasks defined in contract
 Why: without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents
-Next: add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate
+Next: run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task
 
 Verdict
- ●  Repo: not ready
- ●  Agent: not ready
+ ●  Repo: blocked
+ ●  Agent: blocked
 
 Overview
  »  Repos: 1

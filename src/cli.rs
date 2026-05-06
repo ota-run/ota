@@ -7229,6 +7229,9 @@ project:
         assert_eq!(json["summary"]["repo_count"], 2);
         assert_eq!(json["summary"]["not_ready_count"], 2);
         assert_eq!(json["summary"]["step_count"], 2);
+        assert_eq!(json["actions"].as_array().unwrap().len(), 2);
+        assert_eq!(json["actions"][0]["repo"], "api");
+        assert_eq!(json["actions"][0]["action_key"], "tasks-missing");
         let repos = json["repos"].as_array().unwrap();
         assert_eq!(repos.len(), 2);
         assert_eq!(repos[0]["actions"].as_array().unwrap().len(), 1);
@@ -32550,6 +32553,10 @@ env:
             json["repos"][0]["findings"][0]["summary"],
             "Missing environment variable: OTA_WORKSPACE_REQUIRED"
         );
+        assert_eq!(
+            json["repos"][0]["primary_blocker"]["summary"],
+            "Missing environment variable: OTA_WORKSPACE_REQUIRED"
+        );
     }
 
     #[test]
@@ -33281,6 +33288,10 @@ tasks:
             json["repos"][1]["findings"][0]["summary"],
             "Blocked by failed dependency: db"
         );
+        assert_eq!(
+            json["repos"][1]["next_steps"][0],
+            "repair `db` first, then rerun `ota workspace up`"
+        );
     }
 
     #[test]
@@ -33531,6 +33542,10 @@ tasks:
         assert_eq!(json["summary"]["ready_count"], 0);
         assert_eq!(json["summary"]["not_ready_count"], 1);
         assert_eq!(json["summary"]["error_count"], 1);
+        assert_eq!(
+            json["repos"][0]["next_steps"][0],
+            "inspect repo `web` task `setup` output and repair the failure"
+        );
         assert_eq!(json["receipt"]["scope"], "workspace");
         assert_eq!(json["receipt"]["summary"]["step_count"], 1);
         assert_eq!(

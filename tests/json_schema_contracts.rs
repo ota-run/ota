@@ -678,6 +678,7 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());
     assert!(repo.get("agent_verdict").is_some());
+    assert!(repo.get("primary_blocker").is_some());
     assert!(repo.get("provisioning").is_some());
     assert!(repo.get("adapter_bootstrap").is_some());
     assert!(execution.get("env").is_some());
@@ -771,6 +772,8 @@ fn workspace_run_schema_exists_and_covers_repo_run_reports() {
     assert!(repo.get("status").is_some());
     assert!(repo.get("task").is_some());
     assert!(repo.get("findings").is_some());
+    assert!(repo.get("next").is_some());
+    assert!(repo.get("next_steps").is_some());
     assert!(repo.get("exit_code").is_some());
     assert!(repo.get("stdout").is_some());
     assert!(repo.get("stderr").is_some());
@@ -786,6 +789,7 @@ fn workspace_check_schema_exists_and_covers_repo_check_reports() {
     assert!(properties.get("summary").is_some());
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
+    assert!(repo.get("primary_blocker").is_some());
     assert!(repo.get("findings").is_some());
 }
 
@@ -805,6 +809,7 @@ fn explain_schema_includes_step_provenance() {
 #[test]
 fn workspace_explain_schema_includes_step_provenance() {
     let schema = load_schema("docs/spec/json-schemas/workspace-explain.json");
+    let top_level_action = &schema["properties"]["actions"]["items"]["properties"];
     let action =
         &schema["properties"]["repos"]["items"]["properties"]["actions"]["items"]["properties"];
     let step =
@@ -813,6 +818,8 @@ fn workspace_explain_schema_includes_step_provenance() {
     assert!(action.get("action_key").is_some());
     assert!(action.get("action_title").is_some());
     assert!(action.get("count").is_some());
+    assert!(top_level_action.get("repo").is_some());
+    assert!(top_level_action.get("contract_path").is_some());
     assert!(step.get("provenance").is_some());
     assert!(step.get("provenance_key").is_some());
 }
@@ -829,6 +836,8 @@ fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     assert!(receipt.get("contract_identity").is_some());
     assert!(repo.get("status").is_some());
     assert!(repo.get("phase").is_some());
+    assert!(repo.get("next").is_some());
+    assert!(repo.get("next_steps").is_some());
     assert!(repo.get("exit_code").is_some());
     assert!(repo.get("stdout").is_some());
     assert!(repo.get("stderr").is_some());
@@ -947,6 +956,7 @@ fn explain_schema_includes_steps_and_summary_counts() {
 fn workspace_explain_schema_includes_repo_steps() {
     let schema = load_schema("docs/spec/json-schemas/workspace-explain.json");
     let summary = &schema["properties"]["summary"]["properties"];
+    let top_level_action = &schema["properties"]["actions"]["items"]["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let action = &repo["actions"]["items"]["properties"];
     let step = &repo["steps"]["items"]["properties"];
@@ -955,6 +965,9 @@ fn workspace_explain_schema_includes_repo_steps() {
     assert!(summary.get("ready_count").is_some());
     assert!(summary.get("not_ready_count").is_some());
     assert!(summary.get("step_count").is_some());
+    assert!(schema["properties"].get("actions").is_some());
+    assert!(top_level_action.get("repo").is_some());
+    assert!(top_level_action.get("action_key").is_some());
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("summary").is_some());
     assert!(repo.get("actions").is_some());

@@ -113,6 +113,7 @@ pub(crate) fn render_workspace_up(
                     .or(report.receipt.steps.first().map(|step| step.label.as_str())),
                 "WORKSPACE UP SUMMARY",
             ));
+            append_receipt_next_block(&mut stdout, &report.receipt);
 
             CommandOutput {
                 stdout,
@@ -226,6 +227,7 @@ pub(crate) fn render_workspace_refresh(
                     "WORKSPACE REFRESH SUMMARY"
                 },
             ));
+            append_receipt_next_block(&mut stdout, &report.receipt);
 
             CommandOutput {
                 stdout,
@@ -360,6 +362,8 @@ mod tests {
                 stdout: None,
                 stderr: Some(String::from("sh: 1: sdk: not found")),
                 env_sources: Vec::new(),
+                next: None,
+                next_steps: Vec::new(),
             }],
         };
 
@@ -454,6 +458,8 @@ mod tests {
                 stdout: None,
                 stderr: Some(String::from("sh: 1: sdk: not found")),
                 env_sources: Vec::new(),
+                next: None,
+                next_steps: Vec::new(),
             }],
         };
 
@@ -1069,6 +1075,7 @@ pub(crate) fn render_workspace_run(
                 Some(task),
                 "WORKSPACE RUN SUMMARY",
             ));
+            append_receipt_next_block(&mut stdout, &report.receipt);
 
             CommandOutput {
                 stdout,

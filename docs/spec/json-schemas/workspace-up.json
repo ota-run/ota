@@ -134,6 +134,11 @@
           "exit_code": { "type": "integer" },
           "stdout": { "type": "string" },
           "stderr": { "type": "string" },
+          "next": { "type": "string" },
+          "next_steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "env_sources": {
             "type": "array",
             "items": {
