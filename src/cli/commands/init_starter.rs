@@ -643,23 +643,12 @@ fn starter_agent_from_detected_contract(
     }
 
     let writable_paths = starter_agent_writable_paths(root);
-    if writable_paths.is_empty() {
-        return None;
-    }
     let entrypoint = contract
         .tasks
         .contains_key("setup")
         .then(|| String::from("setup"));
-    let default_task = if contract.tasks.contains_key("test") {
-        Some(String::from("test"))
-    } else {
-        safe_tasks.first().cloned()
-    };
-    let verify_after_changes = if contract.tasks.contains_key("test") {
-        vec![String::from("test")]
-    } else {
-        Vec::new()
-    };
+    let default_task = preferred_agent_task(&safe_tasks);
+    let verify_after_changes = preferred_agent_verify_tasks(&safe_tasks);
 
     let mut notes =
         String::from("Use `ota validate` before changes and `ota doctor` after edits.\n");
@@ -684,13 +673,188 @@ fn starter_agent_from_detected_contract(
 }
 
 fn starter_agent_writable_paths(root: &Path) -> Vec<String> {
-    let mut writable_paths = Vec::new();
-    for candidate in ["src", "tests", "docs"] {
+    let mut writable_paths = BTreeSet::new();
+    for candidate in [
+        "src",
+        "tests",
+        "test",
+        "docs",
+        "doc",
+        "app",
+        "apps",
+        "components",
+        "lib",
+        "public",
+        "scripts",
+        "packages",
+        "crates",
+        "cmd",
+        "internal",
+        "pkg",
+        "services",
+        "examples",
+        "pages",
+        "server",
+        "client",
+        "frontend",
+        "backend",
+        "shared",
+        "ui",
+        "api",
+        "hooks",
+        "utils",
+        "types",
+        "routes",
+        "resources",
+        "config",
+        "database",
+        "migrations",
+        "prisma",
+        "manifests",
+        "deploy",
+        "infra",
+    ] {
         if root.join(candidate).is_dir() {
-            writable_paths.push(candidate.to_string());
+            writable_paths.insert(candidate.to_string());
         }
     }
-    writable_paths
+
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten().take(256) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if starter_agent_ignored_scan_dir(name) {
+                continue;
+            }
+            if starter_agent_dir_contains_source_files(&path, 3) {
+                writable_paths.insert(name.to_string());
+            }
+        }
+    }
+
+    writable_paths.into_iter().collect()
+}
+
+fn preferred_agent_task(safe_tasks: &[String]) -> Option<String> {
+    for candidate in [
+        "test",
+        "typecheck",
+        "check",
+        "verify",
+        "lint",
+        "build",
+        "ci",
+    ] {
+        if safe_tasks.iter().any(|task| task == candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    safe_tasks.first().cloned()
+}
+
+fn preferred_agent_verify_tasks(safe_tasks: &[String]) -> Vec<String> {
+    preferred_agent_task(safe_tasks).into_iter().collect()
+}
+
+fn starter_agent_ignored_scan_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".hg"
+            | ".svn"
+            | ".next"
+            | ".nuxt"
+            | ".turbo"
+            | ".cache"
+            | ".venv"
+            | "venv"
+            | "__pycache__"
+            | "node_modules"
+            | "vendor"
+            | "target"
+            | "dist"
+            | "build"
+            | "coverage"
+            | "out"
+            | "bin"
+            | "obj"
+    )
+}
+
+fn starter_agent_dir_contains_source_files(dir: &Path, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
+
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+
+    for entry in entries.flatten().take(256) {
+        let path = entry.path();
+        if path.is_file() && starter_agent_is_source_like_file(&path) {
+            return true;
+        }
+        if path.is_dir() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if starter_agent_ignored_scan_dir(name) {
+                continue;
+            }
+            if starter_agent_dir_contains_source_files(&path, depth.saturating_sub(1)) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn starter_agent_is_source_like_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some(
+            "c" | "cc"
+                | "cpp"
+                | "cs"
+                | "css"
+                | "elm"
+                | "ex"
+                | "exs"
+                | "fs"
+                | "go"
+                | "h"
+                | "hpp"
+                | "html"
+                | "java"
+                | "js"
+                | "jsx"
+                | "kt"
+                | "kts"
+                | "php"
+                | "py"
+                | "rb"
+                | "rs"
+                | "sass"
+                | "scala"
+                | "sc"
+                | "scss"
+                | "sh"
+                | "sql"
+                | "swift"
+                | "ts"
+                | "tsx"
+                | "vue"
+        )
+    )
 }
 
 fn directory_name_for_root(root: &Path) -> Option<String> {
