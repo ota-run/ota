@@ -781,6 +781,32 @@ fn workspace_run_schema_exists_and_covers_repo_run_reports() {
 }
 
 #[test]
+fn workspace_refresh_schema_exists_and_covers_preview_and_apply_modes() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-refresh.json");
+    let properties = &schema["properties"];
+
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["ok", "path", "mode", "summary", "receipt", "repos"])
+    );
+    assert!(properties.get("summary").is_some());
+    assert!(properties.get("receipt").is_some());
+    assert!(properties.get("repos").is_some());
+    assert_eq!(
+        properties["mode"]["enum"],
+        serde_json::json!(["preview", "refresh"])
+    );
+    assert_eq!(
+        properties["receipt"]["$ref"],
+        serde_json::json!("./workspace-up.json#/properties/receipt")
+    );
+    assert_eq!(
+        properties["repos"]["$ref"],
+        serde_json::json!("./workspace-up.json#/properties/repos")
+    );
+}
+
+#[test]
 fn workspace_check_schema_exists_and_covers_repo_check_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-check.json");
     let properties = &schema["properties"];
@@ -791,6 +817,43 @@ fn workspace_check_schema_exists_and_covers_repo_check_reports() {
     assert!(repo.get("required").is_some());
     assert!(repo.get("primary_blocker").is_some());
     assert!(repo.get("findings").is_some());
+}
+
+#[test]
+fn workspace_diff_schema_includes_drift_semantics_and_followup_lanes() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-diff.json");
+    let summary = &schema["properties"]["summary"]["properties"];
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+
+    assert_eq!(schema["properties"]["mode"], serde_json::json!({ "const": "diff" }));
+    assert!(summary.get("missing_repo_count").is_some());
+    assert!(summary.get("missing_contract_count").is_some());
+    assert!(summary.get("target_unavailable_count").is_some());
+    assert!(summary.get("comparison_unresolved_count").is_some());
+    assert!(repo.get("drift_kind").is_some());
+    assert!(repo.get("target_source").is_some());
+    assert!(repo.get("next").is_some());
+    assert!(repo.get("next_steps").is_some());
+}
+
+#[test]
+fn workspace_status_schema_includes_drift_semantics_and_followup_lanes() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-status.json");
+    let summary = &schema["properties"]["summary"]["properties"];
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+
+    assert_eq!(
+        schema["properties"]["mode"],
+        serde_json::json!({ "const": "status" })
+    );
+    assert!(summary.get("missing_repo_count").is_some());
+    assert!(summary.get("missing_contract_count").is_some());
+    assert!(summary.get("target_unavailable_count").is_some());
+    assert!(summary.get("comparison_unresolved_count").is_some());
+    assert!(repo.get("drift_kind").is_some());
+    assert!(repo.get("target_source").is_some());
+    assert!(repo.get("next").is_some());
+    assert!(repo.get("next_steps").is_some());
 }
 
 #[test]

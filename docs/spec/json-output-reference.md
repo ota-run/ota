@@ -2921,25 +2921,32 @@ Failure example:
 ```
 
 `ota workspace refresh --json` uses the same workspace roll-up shape, but reports refresh
-status for existing repos instead of bootstrap status for missing ones. In preview mode it
-adds `"mode": "preview"` and does not mutate repo state.
+status for existing repos instead of bootstrap status for missing ones. It switches `mode`
+between `"preview"` and `"refresh"`, and the dedicated schema is `workspace-refresh.json`.
+It always includes the shared workspace `receipt`, and in preview mode it does not mutate repo state.
 
 Workspace repo items may also include additive `next` and `next_steps` when ota can name that
 repo's current follow-up lane directly.
 
 `ota workspace diff --json` uses a read-only workspace diff roll-up. It reports local git
 state against the declared source ref or upstream branch, includes per-repo `status`,
-`branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
-`"mode": "diff"`. Additive top-level `next` and `next_steps` are present when ota can name the
-safest acquisition or refresh follow-up lane directly, and per-repo items can also carry additive
-`next` and `next_steps`.
+`drift_kind`, `target_source`, `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty`
+fields, and adds `"mode": "diff"`. Additive top-level `next` and `next_steps` are present when
+ota can name the safest acquisition or refresh follow-up lane directly, and per-repo items can
+also carry additive `next` and `next_steps`. `summary` now also breaks the previously collapsed
+`missing` and `unresolved` buckets into additive `missing_repo_count`, `missing_contract_count`,
+`target_unavailable_count`, and `comparison_unresolved_count`.
 
 `ota workspace status --json` uses the operational workspace roll-up. It reports readiness and
 local git drift together, includes per-repo `ready`, `readiness_status`, `drift_status`,
-`branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
-`"mode": "status"`. Additive top-level `next` and `next_steps` are present when ota can name the
-safest doctor, acquisition, or refresh follow-up lane directly, and per-repo items can also carry
-additive `next` and `next_steps`.
+`drift_kind`, `target_source`, `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty`
+fields, and adds `"mode": "status"`. Additive top-level `next` and `next_steps` are present when
+ota can name the safest doctor, acquisition, or refresh follow-up lane directly, and per-repo
+items can also carry additive `next` and `next_steps`. `target_source` is `declared_ref` when
+the comparison target came from `repos.<name>.source.ref` and `upstream_branch` when ota fell
+back to the repo's configured upstream branch. `summary` now also breaks the previously collapsed
+`missing` and `unresolved` buckets into additive `missing_repo_count`, `missing_contract_count`,
+`target_unavailable_count`, and `comparison_unresolved_count`.
 
 `ota workspace execution plan --json` uses a read-only execution roll-up. It reports one
 resolved or unresolved execution decision per selected repo, includes per-repo

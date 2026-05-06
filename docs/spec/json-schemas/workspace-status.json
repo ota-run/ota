@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/workspace-status.json",
+  "title": "ota workspace status --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "mode", "summary", "repos"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "mode": { "const": "status" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_count",
+        "ready_count",
+        "not_ready_count",
+        "match_count",
+        "different_count",
+        "dirty_count",
+        "missing_count",
+        "missing_repo_count",
+        "missing_contract_count",
+        "unresolved_count",
+        "target_unavailable_count",
+        "comparison_unresolved_count",
+        "error_count",
+        "warn_count",
+        "info_count"
+      ],
+      "properties": {
+        "repo_count": { "type": "integer", "minimum": 0 },
+        "ready_count": { "type": "integer", "minimum": 0 },
+        "not_ready_count": { "type": "integer", "minimum": 0 },
+        "match_count": { "type": "integer", "minimum": 0 },
+        "different_count": { "type": "integer", "minimum": 0 },
+        "dirty_count": { "type": "integer", "minimum": 0 },
+        "missing_count": { "type": "integer", "minimum": 0 },
+        "missing_repo_count": { "type": "integer", "minimum": 0 },
+        "missing_contract_count": { "type": "integer", "minimum": 0 },
+        "unresolved_count": { "type": "integer", "minimum": 0 },
+        "target_unavailable_count": { "type": "integer", "minimum": 0 },
+        "comparison_unresolved_count": { "type": "integer", "minimum": 0 },
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warn_count": { "type": "integer", "minimum": 0 },
+        "info_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "next": { "type": "string" },
+    "next_steps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path",
+          "contract_path",
+          "required",
+          "acquired",
+          "ready",
+          "readiness_status",
+          "drift_status",
+          "drift_kind",
+          "findings"
+        ],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "contract_path": { "type": "string" },
+          "required": { "type": "boolean" },
+          "acquired": { "type": "boolean" },
+          "ready": { "type": "boolean" },
+          "readiness_status": { "type": "string" },
+          "drift_status": { "type": "string" },
+          "drift_kind": {
+            "enum": [
+              "match",
+              "local_dirty",
+              "commit_divergence",
+              "missing_repo",
+              "missing_contract",
+              "target_unavailable",
+              "comparison_unresolved"
+            ]
+          },
+          "target_source": {
+            "enum": ["declared_ref", "upstream_branch"]
+          },
+          "source_url": { "type": "string" },
+          "source_ref": { "type": "string" },
+          "branch": { "type": "string" },
+          "head": { "type": "string" },
+          "target_ref": { "type": "string" },
+          "ahead": { "type": "integer", "minimum": 0 },
+          "behind": { "type": "integer", "minimum": 0 },
+          "dirty": { "type": "boolean" },
+          "findings": {
+            "type": "array",
+            "items": { "$ref": "./shared.json#/$defs/finding" }
+          },
+          "next": { "type": "string" },
+          "next_steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/workspace-refresh.json",
+  "title": "ota workspace refresh --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "mode", "summary", "receipt", "repos"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "mode": {
+      "enum": ["preview", "refresh"]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error_count", "warn_count", "info_count", "step_count"],
+      "properties": {
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warn_count": { "type": "integer", "minimum": 0 },
+        "info_count": { "type": "integer", "minimum": 0 },
+        "step_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "receipt": {
+      "$ref": "./workspace-up.json#/properties/receipt"
+    },
+    "repos": {
+      "$ref": "./workspace-up.json#/properties/repos"
+    }
+  }
+}
