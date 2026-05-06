@@ -19291,7 +19291,7 @@ project:
         assert!(stdout.contains("ota detect --dry-run"));
         assert!(stdout.contains("ota init --dry-run"));
         assert!(stdout.contains("ota agents --write"));
-        assert!(stdout.contains("What Ota can tell so far"));
+        assert!(stdout.contains("Repo Signals"));
         assert!(stdout.contains("Detected project name: ota-site"));
         assert!(stdout.contains("Detected repo type: Node"));
         assert!(stdout.contains("Detected package manager: npm"));
@@ -22879,7 +22879,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(!stdout.contains("Primary blocker:"));
         assert!(stdout.contains("➤ Primary Blocker Contract missing"));
-        assert!(stdout.contains("What Ota can tell so far"));
+        assert!(stdout.contains("Repo Signals"));
         assert!(stdout.contains("Detected Rust repo"));
         assert!(stdout.contains("Detected Docker Compose services: web"));
         assert!(stdout.contains("Host tool available: cargo"));
@@ -22962,7 +22962,7 @@ project:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("➤ What Ota can tell so far"));
+        assert!(stdout.contains("➤ Repo Signals"));
         assert!(stdout.contains("Detected repo type: Node"));
         assert!(stdout.contains("Detected package manager: npm"));
         assert!(stdout.contains("Host tool available: npm"));
@@ -23414,7 +23414,7 @@ project:
             let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
             assert_eq!(output.exit_code, 1);
             let stdout = strip_ansi(&output.stdout);
-            assert!(stdout.contains("➤ What Ota can tell so far"));
+            assert!(stdout.contains("➤ Repo Signals"));
             for expected in case.expected {
                 assert!(
                     stdout.contains(expected),
@@ -23459,7 +23459,7 @@ project:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("➤ Primary Blocker Contract missing"));
-        assert!(stdout.contains("➤ What Ota can tell so far"));
+        assert!(stdout.contains("➤ Repo Signals"));
         assert!(stdout.contains("No strong repo signals were detected yet"));
         assert!(stdout.contains("ota detect --dry-run ."));
         assert!(stdout.contains("ota detect --contract ."));
