@@ -616,6 +616,8 @@ pub struct ExplainAction {
     pub count: usize,
     pub why: String,
     pub next: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
 }

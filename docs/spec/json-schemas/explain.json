@@ -33,6 +33,10 @@
           "count": { "type": "integer", "minimum": 1 },
           "why": { "type": "string" },
           "next": { "type": "string" },
+          "commands": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "provenance": { "type": "string" }
         }
       }
