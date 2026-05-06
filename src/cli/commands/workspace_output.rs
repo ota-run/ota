@@ -472,6 +472,151 @@ mod tests {
         assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
         assert_eq!(text.matches("Next:").count(), 1);
     }
+
+    #[test]
+    fn workspace_diff_surfaces_top_level_refresh_lane_in_text_and_json() {
+        let report = WorkspaceDiffReport {
+            repos: vec![WorkspaceRepoDiffReport {
+                name: String::from("api"),
+                path: String::from("api"),
+                contract_path: String::from("api/ota.yaml"),
+                required: true,
+                acquired: true,
+                status: String::from("DIFFERENT"),
+                source_url: Some(String::from("https://example.com/api.git")),
+                source_ref: Some(String::from("main")),
+                branch: Some(String::from("main")),
+                head: Some(String::from("abc123")),
+                target_ref: Some(String::from("origin/main")),
+                ahead: Some(1),
+                behind: Some(2),
+                dirty: false,
+                findings: vec![Finding {
+                    severity: FindingSeverity::Warn,
+                    summary: String::from("Repo drift detected: api"),
+                    why: String::from("workspace repo `api` is 1 commit(s) ahead and 2 commit(s) behind of `origin/main`"),
+                    next: String::from("run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync"),
+                }],
+                next: Some(String::from(
+                    "run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync",
+                )),
+                next_steps: vec![
+                    String::from(
+                        "run `ota workspace refresh --dry-run` to preview the sync commands before mutating repo state",
+                    ),
+                    String::from(
+                        "run `ota workspace refresh` when you are ready to reconcile workspace drift",
+                    ),
+                    String::from(
+                        "run `ota workspace status` after workspace changes to confirm readiness and drift together",
+                    ),
+                ],
+            }],
+            next: Some(String::from(
+                "run `ota workspace refresh --dry-run` to preview the sync commands before mutating repo state; run `ota workspace refresh` when you are ready to reconcile workspace drift; run `ota workspace status` after workspace changes to confirm readiness and drift together",
+            )),
+            next_steps: vec![
+                String::from(
+                    "run `ota workspace refresh --dry-run` to preview the sync commands before mutating repo state",
+                ),
+                String::from(
+                    "run `ota workspace refresh` when you are ready to reconcile workspace drift",
+                ),
+                String::from(
+                    "run `ota workspace status` after workspace changes to confirm readiness and drift together",
+                ),
+            ],
+        };
+
+        let text = strip_ansi_codes(
+            &render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Text).stdout,
+        );
+        assert!(text.contains("WORKSPACE DIFF"));
+        assert!(text.contains("Next:"));
+        assert!(text.contains("ota workspace refresh --dry-run"));
+        assert!(text.contains("ota workspace status"));
+
+        let json = render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["next_steps"][0],
+            "run `ota workspace refresh --dry-run` to preview the sync commands before mutating repo state"
+        );
+        assert_eq!(
+            value["repos"][0]["next_steps"][2],
+            "run `ota workspace status` after workspace changes to confirm readiness and drift together"
+        );
+    }
+
+    #[test]
+    fn workspace_status_surfaces_doctor_then_refresh_lane_in_text_and_json() {
+        let report = WorkspaceStatusReport {
+            repos: vec![WorkspaceRepoStatusReport {
+                name: String::from("api"),
+                path: String::from("api"),
+                contract_path: String::from("api/ota.yaml"),
+                required: true,
+                acquired: true,
+                ready: false,
+                readiness_status: String::from("NOT READY"),
+                drift_status: String::from("DIRTY"),
+                source_url: Some(String::from("https://example.com/api.git")),
+                source_ref: Some(String::from("main")),
+                branch: Some(String::from("main")),
+                head: Some(String::from("abc123")),
+                target_ref: Some(String::from("origin/main")),
+                ahead: None,
+                behind: None,
+                dirty: true,
+                findings: vec![Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing setup task"),
+                    why: String::from("repo is not ready"),
+                    next: String::from("run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution"),
+                }],
+                next: Some(String::from(
+                    "run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution",
+                )),
+                next_steps: vec![String::from(
+                    "run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution",
+                )],
+            }],
+            next: Some(String::from(
+                "run `ota workspace doctor` to inspect the readiness blockers before retrying workspace execution; run `ota workspace refresh --dry-run` to preview the sync commands before reconciling workspace drift; run `ota workspace refresh` when you are ready to reconcile workspace drift",
+            )),
+            next_steps: vec![
+                String::from(
+                    "run `ota workspace doctor` to inspect the readiness blockers before retrying workspace execution",
+                ),
+                String::from(
+                    "run `ota workspace refresh --dry-run` to preview the sync commands before reconciling workspace drift",
+                ),
+                String::from(
+                    "run `ota workspace refresh` when you are ready to reconcile workspace drift",
+                ),
+            ],
+        };
+
+        let text = strip_ansi_codes(
+            &render_workspace_status("./ota.workspace.yaml", &report, OutputFormat::Text).stdout,
+        );
+        assert!(text.contains("WORKSPACE STATUS"));
+        assert!(text.contains("Next:"));
+        assert!(text.contains("ota workspace doctor"));
+        assert!(text.contains("ota workspace refresh --dry-run"));
+
+        let json =
+            render_workspace_status("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value["next_steps"][0],
+            "run `ota workspace doctor` to inspect the readiness blockers before retrying workspace execution"
+        );
+        assert_eq!(
+            value["repos"][0]["next"],
+            "run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution"
+        );
+    }
 }
 
 pub(crate) fn render_workspace_repo_findings_text(findings: &[Finding]) -> String {
@@ -608,6 +753,7 @@ pub(crate) fn render_workspace_diff(
             stdout.push('\n');
             stdout.push('\n');
             stdout.push_str(&render_workspace_diff_summary(&report.repos));
+            append_post_summary_next_block(&mut stdout, &report.next_steps);
 
             CommandOutput {
                 stdout,
@@ -621,6 +767,8 @@ pub(crate) fn render_workspace_diff(
                 path,
                 mode: "diff",
                 summary: workspace_diff_summary(&report.repos),
+                next: report.next.as_deref(),
+                next_steps: &report.next_steps,
                 repos: &report.repos,
             }),
             stderr: None,
@@ -725,6 +873,7 @@ pub(crate) fn render_workspace_status(
             stdout.push('\n');
             stdout.push('\n');
             stdout.push_str(&render_workspace_status_summary(&summary));
+            append_post_summary_next_block(&mut stdout, &report.next_steps);
 
             CommandOutput {
                 stdout,
@@ -738,6 +887,8 @@ pub(crate) fn render_workspace_status(
                 path,
                 mode: "status",
                 summary,
+                next: report.next.as_deref(),
+                next_steps: &report.next_steps,
                 repos: &report.repos,
             }),
             stderr: None,

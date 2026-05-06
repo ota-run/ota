@@ -2930,12 +2930,16 @@ repo's current follow-up lane directly.
 `ota workspace diff --json` uses a read-only workspace diff roll-up. It reports local git
 state against the declared source ref or upstream branch, includes per-repo `status`,
 `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
-`"mode": "diff"`.
+`"mode": "diff"`. Additive top-level `next` and `next_steps` are present when ota can name the
+safest acquisition or refresh follow-up lane directly, and per-repo items can also carry additive
+`next` and `next_steps`.
 
 `ota workspace status --json` uses the operational workspace roll-up. It reports readiness and
 local git drift together, includes per-repo `ready`, `readiness_status`, `drift_status`,
 `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
-`"mode": "status"`.
+`"mode": "status"`. Additive top-level `next` and `next_steps` are present when ota can name the
+safest doctor, acquisition, or refresh follow-up lane directly, and per-repo items can also carry
+additive `next` and `next_steps`.
 
 `ota workspace execution plan --json` uses a read-only execution roll-up. It reports one
 resolved or unresolved execution decision per selected repo, includes per-repo

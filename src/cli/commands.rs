@@ -50590,6 +50590,8 @@ struct WorkspaceUpReport {
 
 struct WorkspaceDiffReport {
     repos: Vec<WorkspaceRepoDiffReport>,
+    next: Option<String>,
+    next_steps: Vec<String>,
 }
 
 struct WorkspaceExecutionPlanReport {
@@ -50598,6 +50600,8 @@ struct WorkspaceExecutionPlanReport {
 
 struct WorkspaceStatusReport {
     repos: Vec<WorkspaceRepoStatusReport>,
+    next: Option<String>,
+    next_steps: Vec<String>,
 }
 
 struct RepoReceiptReport {
@@ -51683,7 +51687,8 @@ fn workspace_up_receipt(
         .iter()
         .flat_map(|repo| repo.findings.iter())
         .map(|finding| finding.next.clone())
-        .find(|next| !next.trim().is_empty());
+        .find(|next| !next.trim().is_empty())
+        .or_else(|| workspace_refresh_receipt_next(repos));
     let ok = repos.iter().all(|repo| repo.ok || !repo.required);
     let receipt_status = aggregate_execution_summary_status(ok, &steps, &blocked);
 
@@ -51758,12 +51763,14 @@ fn workspace_status_receipt(
         ));
     }
 
-    let next = report
-        .repos
-        .iter()
-        .flat_map(|repo| repo.findings.iter())
-        .map(|finding| finding.next.clone())
-        .find(|next| !next.trim().is_empty());
+    let next = report.next.clone().or_else(|| {
+        report
+            .repos
+            .iter()
+            .flat_map(|repo| repo.findings.iter())
+            .map(|finding| finding.next.clone())
+            .find(|next| !next.trim().is_empty())
+    });
     let ok = report.repos.iter().all(|repo| !repo.required || repo.ready);
     let receipt_status = aggregate_execution_summary_status(ok, &steps, &[]);
 
@@ -51905,6 +51912,29 @@ fn workspace_next_steps(next: Option<&str>) -> Vec<String> {
     .unwrap_or_default()
 }
 
+fn workspace_refresh_receipt_next(repos: &[WorkspaceRepoUpReport]) -> Option<String> {
+    if repos.is_empty() || repos.iter().any(|repo| repo.phase != "refresh") {
+        return None;
+    }
+
+    if repos.iter().any(|repo| repo.status == "PREVIEW") {
+        return Some(String::from(
+            "review the `Refresh command:` lines, then rerun `ota workspace refresh` to apply the selected sync; run `ota workspace status` after refresh to confirm readiness and drift together",
+        ));
+    }
+
+    if repos
+        .iter()
+        .all(|repo| matches!(repo.status.as_str(), "READY" | "SKIPPED"))
+    {
+        return Some(String::from(
+            "run `ota workspace status` to confirm readiness and drift together, or `ota workspace diff` when you want a drift-only recheck",
+        ));
+    }
+
+    None
+}
+
 fn normalize_workspace_up_repo_followups(repos: &mut [WorkspaceRepoUpReport]) {
     for repo in repos {
         let next = repo
@@ -51929,6 +51959,130 @@ fn normalize_workspace_run_repo_followups(repos: &mut [WorkspaceRepoRunReport]) 
         repo.next_steps = workspace_next_steps(next.as_deref());
         repo.next = next;
     }
+}
+
+fn normalize_workspace_diff_followups(report: &mut WorkspaceDiffReport) {
+    for repo in &mut report.repos {
+        let next = repo
+            .findings
+            .iter()
+            .map(|finding| finding.next.as_str())
+            .find(|next| !next.trim().is_empty())
+            .map(str::to_string);
+        repo.next_steps = workspace_next_steps(next.as_deref());
+        repo.next = next;
+    }
+
+    report.next_steps = workspace_diff_next_steps(&report.repos);
+    report.next = if report.next_steps.is_empty() {
+        None
+    } else {
+        Some(report.next_steps.join("; "))
+    };
+}
+
+fn normalize_workspace_status_followups(report: &mut WorkspaceStatusReport) {
+    for repo in &mut report.repos {
+        let next = repo
+            .findings
+            .iter()
+            .map(|finding| finding.next.as_str())
+            .find(|next| !next.trim().is_empty())
+            .map(str::to_string);
+        repo.next_steps = workspace_next_steps(next.as_deref());
+        repo.next = next;
+    }
+
+    report.next_steps = workspace_status_next_steps(&report.repos);
+    report.next = if report.next_steps.is_empty() {
+        None
+    } else {
+        Some(report.next_steps.join("; "))
+    };
+}
+
+fn workspace_diff_next_steps(repos: &[WorkspaceRepoDiffReport]) -> Vec<String> {
+    let has_missing = repos.iter().any(|repo| repo.status == "MISSING");
+    let has_drift = repos
+        .iter()
+        .any(|repo| matches!(repo.status.as_str(), "DIRTY" | "DIFFERENT"));
+    let has_unresolved = repos
+        .iter()
+        .any(|repo| matches!(repo.status.as_str(), "UNRESOLVED" | "MISSING CONTRACT"));
+
+    let mut next_steps = Vec::new();
+    if has_unresolved {
+        next_steps.push(String::from(
+            "inspect the per-repo findings above, then rerun `ota workspace diff` once the comparison blockers are repaired",
+        ));
+    }
+    if has_missing {
+        next_steps.push(String::from(
+            "run `ota workspace up --dry-run` to preview repo acquisition and setup before repairing missing workspace repos",
+        ));
+        next_steps.push(String::from(
+            "run `ota workspace up` when you are ready to acquire the missing repos",
+        ));
+    }
+    if has_drift {
+        next_steps.push(String::from(
+            "run `ota workspace refresh --dry-run` to preview the sync commands before mutating repo state",
+        ));
+        next_steps.push(String::from(
+            "run `ota workspace refresh` when you are ready to reconcile workspace drift",
+        ));
+    }
+    if has_missing || has_drift {
+        next_steps.push(String::from(
+            "run `ota workspace status` after workspace changes to confirm readiness and drift together",
+        ));
+    }
+    next_steps
+}
+
+fn workspace_status_next_steps(repos: &[WorkspaceRepoStatusReport]) -> Vec<String> {
+    let has_missing = repos.iter().any(|repo| repo.readiness_status == "NOT ACQUIRED");
+    let has_not_ready = repos
+        .iter()
+        .any(|repo| repo.readiness_status == "NOT READY");
+    let has_drift = repos
+        .iter()
+        .any(|repo| matches!(repo.drift_status.as_str(), "DIRTY" | "DIFFERENT"));
+    let has_unresolved = repos.iter().any(|repo| {
+        matches!(
+            repo.drift_status.as_str(),
+            "UNRESOLVED" | "MISSING CONTRACT" | "MISSING"
+        )
+    });
+
+    let mut next_steps = Vec::new();
+    if has_missing {
+        next_steps.push(String::from(
+            "run `ota workspace up --dry-run` to preview repo acquisition and setup for the missing workspace repos",
+        ));
+        next_steps.push(String::from(
+            "run `ota workspace up` when you are ready to acquire the missing repos",
+        ));
+    }
+    if has_not_ready {
+        next_steps.push(String::from(
+            "run `ota workspace doctor` to inspect the readiness blockers before retrying workspace execution",
+        ));
+    }
+    if has_drift {
+        next_steps.push(String::from(
+            "run `ota workspace refresh --dry-run` to preview the sync commands before reconciling workspace drift",
+        ));
+        next_steps.push(String::from(
+            "run `ota workspace refresh` when you are ready to reconcile workspace drift",
+        ));
+    }
+    if has_unresolved && !has_drift {
+        next_steps.push(String::from(
+            "inspect the per-repo findings above, then rerun `ota workspace status` once the workspace comparison blockers are repaired",
+        ));
+    }
+    next_steps
 }
 
 fn workspace_repo_needs_acquisition(repo: &WorkspaceRepoRef) -> bool {
@@ -53700,9 +53854,13 @@ fn load_and_run_workspace_diff(
         }
     }
 
-    Ok(WorkspaceDiffReport {
+    let mut report = WorkspaceDiffReport {
         repos: repos.into_values().collect(),
-    })
+        next: None,
+        next_steps: Vec::new(),
+    };
+    normalize_workspace_diff_followups(&mut report);
+    Ok(report)
 }
 
 fn load_workspace_status_report(
@@ -53761,6 +53919,8 @@ fn load_workspace_status_report(
         workspace_identity,
         WorkspaceStatusReport {
             repos: repos.into_values().collect(),
+            next: None,
+            next_steps: Vec::new(),
         },
     ))
 }
@@ -53769,14 +53929,19 @@ fn load_and_run_workspace_status(
     path: &Path,
     jobs: usize,
 ) -> Result<WorkspaceStatusReport, WorkspaceProblem> {
-    load_workspace_status_report(path, jobs).map(|(_, _, report)| report)
+    load_workspace_status_report(path, jobs).map(|(_, _, mut report)| {
+        normalize_workspace_status_followups(&mut report);
+        report
+    })
 }
 
 fn load_and_run_workspace_receipt(
     path: &Path,
     jobs: usize,
 ) -> Result<WorkspaceReceiptReport, WorkspaceProblem> {
-    let (workspace_name, workspace_identity, report) = load_workspace_status_report(path, jobs)?;
+    let (workspace_name, workspace_identity, mut report) =
+        load_workspace_status_report(path, jobs)?;
+    normalize_workspace_status_followups(&mut report);
     let receipt = workspace_status_receipt(path, &workspace_identity, &workspace_name, &report);
 
     Ok(WorkspaceReceiptReport {
@@ -54752,6 +54917,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                     ),
                 },
             }],
+            next: None,
+            next_steps: Vec::new(),
         };
     }
 
@@ -54788,6 +54955,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                     repo.contract_path.display()
                 ),
             }],
+            next: None,
+            next_steps: Vec::new(),
         };
     }
 
@@ -54827,6 +54996,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                         "fix the local git repository state, then rerun `ota workspace diff`",
                     ),
                 }],
+                next: None,
+                next_steps: Vec::new(),
             };
         }
     };
@@ -54875,6 +55046,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                     "declare `source.ref` or configure an upstream branch, then rerun `ota workspace diff`",
                 ),
             }],
+            next: None,
+            next_steps: Vec::new(),
         };
     }
 
@@ -54919,6 +55092,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                         "fix the local git repository state, then rerun `ota workspace diff`",
                     ),
                 }],
+                next: None,
+                next_steps: Vec::new(),
             };
         }
     };
@@ -54981,6 +55156,8 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
         behind,
         dirty,
         findings,
+        next: None,
+        next_steps: Vec::new(),
     }
 }
 
@@ -55021,6 +55198,8 @@ fn run_workspace_repo_status(
         behind: diff.behind,
         dirty: diff.dirty,
         findings,
+        next: None,
+        next_steps: Vec::new(),
     }
 }
 
