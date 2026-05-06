@@ -22,6 +22,8 @@
 
 use std::path::Path;
 
+use crate::output::ExplainAction;
+
 use super::*;
 
 pub(super) fn workspace_explain_summary(
@@ -62,6 +64,7 @@ pub(super) fn workspace_explain_repos(
             required: repo.required,
             ok: repo.ok,
             summary: explain_summary_from_findings(&repo.findings),
+            actions: explain_actions(&repo.findings),
             steps: explain_steps(&repo.findings),
         })
         .collect()
@@ -349,8 +352,9 @@ pub(super) fn explain_summary(report: &DoctorReport) -> ExplainSummary {
 }
 
 fn explain_summary_from_findings(findings: &[Finding]) -> ExplainSummary {
+    let groups = group_doctor_findings(findings.iter());
     let mut summary = ExplainSummary {
-        step_count: findings.len(),
+        step_count: groups.len(),
         ..ExplainSummary::default()
     };
 
@@ -363,6 +367,23 @@ fn explain_summary_from_findings(findings: &[Finding]) -> ExplainSummary {
     }
 
     summary
+}
+
+pub(super) fn explain_actions(findings: &[Finding]) -> Vec<ExplainAction> {
+    group_doctor_findings(findings.iter())
+        .into_iter()
+        .enumerate()
+        .map(|(index, group)| ExplainAction {
+            order: index + 1,
+            action_key: group.action_key.clone(),
+            action_title: explain_group_title(&group),
+            severity: group.severity,
+            count: group.findings.len(),
+            why: explain_group_why_lines(&group).join("; "),
+            next: doctor_finding_group_next(&group.kind, &group.findings, None),
+            provenance: explain_group_provenance(&group),
+        })
+        .collect()
 }
 
 pub(super) fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {

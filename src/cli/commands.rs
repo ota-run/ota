@@ -165,8 +165,8 @@ use self::execution_summary::{
     render_execution_summary_status_value, summary_detail_line, summary_has_status,
 };
 use self::explain_output::{
-    explain_action_count, explain_steps, explain_summary, render_explain_steps_text,
-    workspace_explain_repos, workspace_explain_summary,
+    explain_action_count, explain_actions, explain_steps, explain_summary,
+    render_explain_steps_text, workspace_explain_repos, workspace_explain_summary,
 };
 pub(crate) use self::init_starter::{
     NodePackageManager, PythonTestRunner, StarterPack, StarterPackConfig, StarterPackOptions,
@@ -15018,6 +15018,7 @@ pub fn explain(
                     &mut report.findings,
                 );
                 let summary = explain_summary(&report);
+                let actions = explain_actions(&report.findings);
                 let steps = explain_steps(&report.findings);
 
                 match format {
@@ -15036,6 +15037,7 @@ pub fn explain(
                             ok: report.ok,
                             path: &path_display,
                             summary,
+                            actions: &actions,
                             steps: &steps,
                         }),
                         stderr: None,

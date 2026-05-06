@@ -608,10 +608,24 @@ pub struct ExplainStep {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ExplainAction {
+    pub order: usize,
+    pub action_key: String,
+    pub action_title: String,
+    pub severity: FindingSeverity,
+    pub count: usize,
+    pub why: String,
+    pub next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ExplainSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub summary: ExplainSummary,
+    pub actions: &'a [ExplainAction],
     pub steps: &'a [ExplainStep],
 }
 
@@ -668,6 +682,7 @@ pub struct WorkspaceRepoExplainReport {
     pub required: bool,
     pub ok: bool,
     pub summary: ExplainSummary,
+    pub actions: Vec<ExplainAction>,
     pub steps: Vec<ExplainStep>,
 }
 
