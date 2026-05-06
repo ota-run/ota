@@ -203,6 +203,7 @@ Use the authoring path first:
 ```bash
 ota doctor
 ota detect --dry-run .
+ota detect --contract .
 ota init --dry-run
 ```
 
@@ -210,6 +211,12 @@ Then choose one explicit write path:
 
 ```bash
 ota init
+```
+
+Then continue into preparation preview:
+
+```bash
+ota up --dry-run
 ```
 
 Use `ota detect --write .` when you want the detector-led authoring path instead of the starter contract path.
@@ -640,6 +647,7 @@ jobs:
 ota treats detection as trust-sensitive.
 
 - `ota detect --dry-run` is the review path
+- `ota detect --contract` is the exact detected starter text path
 - `ota detect --merge --dry-run` is the review path for existing contracts
 - every inferred field includes provenance
 - every inferred field includes confidence

@@ -100,7 +100,7 @@ human text output:
 - `ota assist wire-setup --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
-- `ota workspace explain --json`: use the top-level `summary`, per-repo grouped `actions`, optional per-repo `actions[*].commands` and `actions[*].command_stages`, and per-repo `steps` with stable codes
+- `ota workspace explain --json`: use the top-level `summary`, per-repo grouped `actions`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
 - `ota workspace check --json`: use the top-level `summary` and per-repo findings
@@ -109,7 +109,7 @@ human text output:
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota diff --json`: use the readiness-impact summary and changes
-- `ota explain --json`: use grouped `actions` for the ordered remediation plan, optional `actions[*].commands` and `actions[*].command_stages` for staged execution lanes, and `steps` for stable finding-level detail
+- `ota explain --json`: use grouped `actions` for the ordered remediation plan and `steps` for stable finding-level detail
 
 Hosted CI can use the same fields as annotations or check-run summaries:
 
@@ -1489,8 +1489,6 @@ Explain JSON separates the grouped remediation plan from the detailed finding li
 
 - `actions` is the ordered grouped plan and is the best machine-readable "what should I do first?"
   surface
-- when ota can name the lane directly, `actions[*].commands` exposes the staged ota commands in execution order
-- `actions[*].command_stages` splits that lane into `inspect`, `apply`, `execute`, and `verify` phases when ota can classify the commands safely
 - `steps` keeps the finding-level detail with stable codes for deeper drill-in
 
 Both actions and steps stay deterministic. Explain steps may also include `provenance` and
@@ -1514,23 +1512,7 @@ Both actions and steps stay deterministic. Explain steps may also include `prove
       "severity": "error",
       "count": 1,
       "why": "...",
-      "next": "run `ota detect --dry-run .` to review inferred tasks before writing one",
-      "commands": [
-        "ota detect --dry-run",
-        "ota assist add-task --name dev --kind command"
-      ],
-      "command_stages": [
-        {
-          "kind": "inspect",
-          "label": "Inspect",
-          "commands": ["ota detect --dry-run"]
-        },
-        {
-          "kind": "apply",
-          "label": "Apply",
-          "commands": ["ota assist add-task --name dev --kind command"]
-        }
-      ]
+      "next": "run `ota detect --dry-run .` to review inferred tasks before writing one"
     }
   ],
   "steps": [
@@ -1553,8 +1535,6 @@ Both actions and steps stay deterministic. Explain steps may also include `prove
 Workspace explain uses the same split per repo:
 
 - `actions` for the grouped ordered remediation plan
-- optional `actions[*].commands` for staged repo command lanes when ota can name them directly
-- optional `actions[*].command_stages` for staged `inspect` / `apply` / `execute` / `verify` grouping
 - `steps` for the finding-level detail
 
 Workspace explain steps may also include `provenance` and `provenance_key` when ota can trace the
@@ -1594,23 +1574,7 @@ diagnosis source for the underlying finding.
           "severity": "error",
           "count": 1,
           "why": "...",
-          "next": "run `ota detect --dry-run .` to review inferred tasks before writing one",
-          "commands": [
-            "ota detect --dry-run",
-            "ota assist add-task --name dev --kind command"
-          ],
-          "command_stages": [
-            {
-              "kind": "inspect",
-              "label": "Inspect",
-              "commands": ["ota detect --dry-run"]
-            },
-            {
-              "kind": "apply",
-              "label": "Apply",
-              "commands": ["ota assist add-task --name dev --kind command"]
-            }
-          ]
+          "next": "run `ota detect --dry-run .` to review inferred tasks before writing one"
         }
       ],
       "steps": [
