@@ -191,7 +191,11 @@ pub(crate) fn render_workspace_explain_text(
                 "\n {}. {} [{}] {}",
                 action.action.order,
                 paint(&action.repo, "1"),
-                if action.required { "required" } else { "optional" },
+                if action.required {
+                    "required"
+                } else {
+                    "optional"
+                },
                 render_finding_summary(action.action.severity, &action.action.action_title)
             ));
             stdout.push_str(&format!(

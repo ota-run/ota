@@ -557,7 +557,7 @@ fn top_pack_signal_details(weights: Option<&BTreeMap<String, usize>>) -> Vec<Sta
 pub(super) fn bootstrap_init_contract(report: &DetectReport) -> DetectContract {
     let mut contract = report.contract.clone();
     apply_inferred_init_env_sources(&mut contract, &report.root);
-    apply_starter_contract_defaults(&mut contract, &report.root);
+    apply_detected_starter_contract_defaults(&mut contract, report);
     contract
 }
 
@@ -603,6 +603,25 @@ pub(super) fn apply_starter_contract_defaults(contract: &mut DetectContract, roo
     }
 }
 
+pub(super) fn apply_detected_starter_contract_defaults(
+    contract: &mut DetectContract,
+    report: &DetectReport,
+) {
+    mark_setup_task_internal(contract);
+    if contract.project.is_none()
+        && let Some(name) = directory_name_for_root(&report.root)
+    {
+        contract.project = Some(DetectProject { name });
+    }
+    if let Some(agent) = contract.agent.as_mut() {
+        if agent.bootstrap.is_none() {
+            agent.bootstrap = Some(starter_agent_bootstrap());
+        }
+    } else {
+        contract.agent = starter_agent_from_detected_report(report);
+    }
+}
+
 pub(super) fn mark_setup_task_internal(contract: &mut DetectContract) {
     if let Some(task) = contract.tasks.get_mut("setup") {
         task.internal = true;
@@ -642,7 +661,51 @@ fn starter_agent_from_detected_contract(
         return None;
     }
 
-    let writable_paths = starter_agent_writable_paths(root);
+    let writable_paths = starter_agent_writable_paths(contract, root);
+    starter_agent_config_from_parts(
+        contract,
+        root,
+        safe_tasks,
+        writable_paths,
+        vec![String::from("ota.yaml")],
+    )
+}
+
+fn starter_agent_from_detected_report(report: &DetectReport) -> Option<AgentConfig> {
+    let contract = &report.contract;
+    let mut safe_tasks = Vec::new();
+    for task_name in ["setup", "test"] {
+        if contract.tasks.contains_key(task_name) {
+            safe_tasks.push(task_name.to_string());
+        }
+    }
+    for (task_name, task) in &contract.tasks {
+        if task.safe_for_agent && !safe_tasks.iter().any(|safe| safe == task_name) {
+            safe_tasks.push(task_name.clone());
+        }
+    }
+    if safe_tasks.is_empty() {
+        return None;
+    }
+
+    let writable_paths = starter_agent_writable_paths_for_detect_report(report);
+    let protected_paths = starter_agent_protected_paths_for_detect_report(report);
+    starter_agent_config_from_parts(
+        contract,
+        &report.root,
+        safe_tasks,
+        writable_paths,
+        protected_paths,
+    )
+}
+
+fn starter_agent_config_from_parts(
+    contract: &DetectContract,
+    _root: &Path,
+    safe_tasks: Vec<String>,
+    writable_paths: Vec<String>,
+    protected_paths: Vec<String>,
+) -> Option<AgentConfig> {
     let entrypoint = contract
         .tasks
         .contains_key("setup")
@@ -650,8 +713,9 @@ fn starter_agent_from_detected_contract(
     let default_task = preferred_agent_task(&safe_tasks);
     let verify_after_changes = preferred_agent_verify_tasks(&safe_tasks);
 
-    let mut notes =
-        String::from("Use `ota validate` before changes and `ota doctor` after edits.\n");
+    let mut notes = String::from(
+        "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo.\nUse `ota validate` before changes and `ota doctor` after edits.\n",
+    );
     if let Some(task_name) = default_task
         .as_deref()
         .or(entrypoint.as_deref())
@@ -666,33 +730,46 @@ fn starter_agent_from_detected_contract(
         safe_tasks,
         verify_after_changes,
         writable_paths,
-        protected_paths: vec![String::from("ota.yaml")],
+        protected_paths,
         bootstrap: Some(starter_agent_bootstrap()),
         notes: Some(notes),
     })
 }
 
-fn starter_agent_writable_paths(root: &Path) -> Vec<String> {
+fn starter_agent_writable_paths(contract: &DetectContract, root: &Path) -> Vec<String> {
+    starter_agent_writable_paths_with_semantic_roots(contract, root, &[])
+}
+
+fn starter_agent_writable_paths_for_detect_report(report: &DetectReport) -> Vec<String> {
+    let semantic_roots = starter_agent_semantic_roots_from_detect_report(report);
+    starter_agent_writable_paths_with_semantic_roots(
+        &report.contract,
+        &report.root,
+        semantic_roots.as_slice(),
+    )
+}
+
+fn starter_agent_writable_paths_with_semantic_roots(
+    contract: &DetectContract,
+    root: &Path,
+    semantic_roots: &[String],
+) -> Vec<String> {
     let mut writable_paths = BTreeSet::new();
+    let allowed_extensions = starter_agent_stack_source_extensions(contract);
+
     for candidate in [
-        "src",
         "tests",
         "test",
         "docs",
         "doc",
         "app",
-        "apps",
         "components",
         "lib",
         "public",
         "scripts",
-        "packages",
-        "crates",
         "cmd",
         "internal",
         "pkg",
-        "services",
-        "examples",
         "pages",
         "server",
         "client",
@@ -706,16 +783,35 @@ fn starter_agent_writable_paths(root: &Path) -> Vec<String> {
         "types",
         "routes",
         "resources",
-        "config",
-        "database",
-        "migrations",
         "prisma",
-        "manifests",
-        "deploy",
-        "infra",
     ] {
         if root.join(candidate).is_dir() {
             writable_paths.insert(candidate.to_string());
+        }
+    }
+
+    for candidate in ["src", "apps", "packages", "crates", "services", "examples"] {
+        let path = root.join(candidate);
+        if !path.is_dir() {
+            continue;
+        }
+        if starter_agent_dir_has_direct_source_files(&path, allowed_extensions.as_deref()) {
+            writable_paths.insert(candidate.to_string());
+            continue;
+        }
+        for nested in starter_agent_collect_nested_source_roots(
+            root,
+            candidate,
+            &path,
+            allowed_extensions.as_deref(),
+        ) {
+            writable_paths.insert(nested);
+        }
+    }
+
+    for candidate in semantic_roots {
+        if starter_agent_valid_writable_path(root, candidate) {
+            writable_paths.insert(candidate.clone());
         }
     }
 
@@ -732,13 +828,409 @@ fn starter_agent_writable_paths(root: &Path) -> Vec<String> {
             if starter_agent_ignored_scan_dir(name) {
                 continue;
             }
-            if starter_agent_dir_contains_source_files(&path, 3) {
+            if matches!(
+                name,
+                "src" | "apps" | "packages" | "crates" | "services" | "examples"
+            ) {
+                continue;
+            }
+            if starter_agent_dir_contains_source_files(&path, 3, allowed_extensions.as_deref()) {
                 writable_paths.insert(name.to_string());
             }
         }
     }
 
     writable_paths.into_iter().collect()
+}
+
+fn starter_agent_semantic_roots_from_detect_report(report: &DetectReport) -> Vec<String> {
+    let allowed_extensions = starter_agent_stack_source_extensions(&report.contract);
+    let mut roots = BTreeSet::new();
+    for inference in &report.inferences {
+        let source = inference
+            .source
+            .split('#')
+            .next()
+            .unwrap_or(inference.source.as_str());
+        if let Some(root_path) = starter_agent_semantic_root_from_source(
+            &report.root,
+            source,
+            allowed_extensions.as_deref(),
+        ) {
+            roots.insert(root_path);
+        }
+    }
+    roots.into_iter().collect()
+}
+
+fn starter_agent_protected_paths_for_detect_report(report: &DetectReport) -> Vec<String> {
+    let mut protected_paths = BTreeSet::from([String::from("ota.yaml")]);
+
+    for inference in &report.inferences {
+        let source = inference
+            .source
+            .split('#')
+            .next()
+            .unwrap_or(inference.source.as_str());
+        let candidate = Path::new(source);
+        if candidate.as_os_str().is_empty() {
+            continue;
+        }
+        let absolute = report.root.join(candidate);
+        if !absolute.is_file() {
+            continue;
+        }
+        if starter_agent_is_protected_control_file(candidate) {
+            protected_paths.insert(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    for candidate in starter_agent_stack_companion_protected_paths(&report.contract) {
+        if report.root.join(candidate).is_file() {
+            protected_paths.insert(candidate.to_string());
+        }
+    }
+
+    protected_paths.into_iter().collect()
+}
+
+fn starter_agent_semantic_root_from_source(
+    root: &Path,
+    source: &str,
+    allowed_extensions: Option<&[&'static str]>,
+) -> Option<String> {
+    if source.is_empty() || !source.contains('/') {
+        return None;
+    }
+    let relative = Path::new(source);
+    let absolute = root.join(relative);
+    if !absolute.is_file() || !starter_agent_is_semantic_anchor_file(&absolute, allowed_extensions)
+    {
+        return None;
+    }
+
+    let segments = relative
+        .iter()
+        .filter_map(|segment| segment.to_str())
+        .collect::<Vec<_>>();
+    if segments.len() < 2 || starter_agent_ignored_scan_dir(segments[0]) {
+        return None;
+    }
+
+    for (index, segment) in segments
+        .iter()
+        .enumerate()
+        .take(segments.len().saturating_sub(1))
+    {
+        if starter_agent_source_anchor_dir(segment) && index > 0 {
+            let candidate = segments[..index].join("/");
+            if starter_agent_valid_writable_path(root, &candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    let candidate = relative.parent()?.to_string_lossy().to_string();
+    starter_agent_valid_writable_path(root, &candidate).then_some(candidate)
+}
+
+fn starter_agent_is_semantic_anchor_file(
+    path: &Path,
+    allowed_extensions: Option<&[&'static str]>,
+) -> bool {
+    starter_agent_is_source_like_file(path, allowed_extensions)
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(starter_agent_is_semantic_manifest_name)
+        || path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(starter_agent_is_semantic_manifest_extension)
+}
+
+fn starter_agent_is_semantic_manifest_name(name: &str) -> bool {
+    matches!(
+        name,
+        "package.json"
+            | "go.mod"
+            | "Cargo.toml"
+            | "composer.json"
+            | "Gemfile"
+            | "mix.exs"
+            | "build.sbt"
+            | "Package.swift"
+            | "pubspec.yaml"
+            | "CMakeLists.txt"
+            | "project.clj"
+            | "deps.edn"
+            | "stack.yaml"
+            | "dune-project"
+            | ".ocaml-version"
+            | "Project.toml"
+            | "DESCRIPTION"
+            | "rebar.config"
+            | "build.zig"
+            | "dub.json"
+            | "dub.sdl"
+            | "fpm.toml"
+            | "shard.yml"
+            | "elm.json"
+            | "cpanfile"
+            | "Makefile.PL"
+            | "gleam.toml"
+            | "v.mod"
+            | "alire.toml"
+            | "foundry.toml"
+            | "tclapp.tcl"
+            | "pkgIndex.tcl"
+            | "main.rkt"
+            | "info.rkt"
+            | "main.sh"
+            | "run.sh"
+            | "deno.json"
+            | "deno.jsonc"
+    )
+}
+
+fn starter_agent_is_semantic_manifest_extension(extension: &str) -> bool {
+    matches!(
+        extension,
+        "csproj" | "fsproj" | "cabal" | "rockspec" | "opam" | "nimble" | "hxml" | "ps1"
+    )
+}
+
+fn starter_agent_is_protected_control_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if starter_agent_is_protected_control_name(name) {
+        return true;
+    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(starter_agent_is_protected_control_extension)
+}
+
+fn starter_agent_is_protected_control_name(name: &str) -> bool {
+    matches!(
+        name,
+        "package.json"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "pnpm-workspace.yaml"
+            | "yarn.lock"
+            | "bun.lock"
+            | "bun.lockb"
+            | "pyproject.toml"
+            | "Pipfile"
+            | "uv.lock"
+            | "requirements.txt"
+            | "setup.cfg"
+            | ".python-version"
+            | "go.mod"
+            | "go.sum"
+            | "Cargo.toml"
+            | "Cargo.lock"
+            | "composer.json"
+            | "composer.lock"
+            | "Gemfile"
+            | "Gemfile.lock"
+            | ".ruby-version"
+            | "mix.exs"
+            | "mix.lock"
+            | "build.sbt"
+            | "Package.swift"
+            | "pubspec.yaml"
+            | "pubspec.lock"
+            | "CMakeLists.txt"
+            | "project.clj"
+            | "deps.edn"
+            | "stack.yaml"
+            | "Project.toml"
+            | "DESCRIPTION"
+            | "dune-project"
+            | ".ocaml-version"
+            | "rebar.config"
+            | "build.zig"
+            | "fpm.toml"
+            | "shard.yml"
+            | "elm.json"
+            | "cpanfile"
+            | "Makefile.PL"
+            | "gleam.toml"
+            | "v.mod"
+            | "alire.toml"
+            | "foundry.toml"
+            | "deno.json"
+            | "deno.jsonc"
+            | "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "settings.gradle"
+            | "settings.gradle.kts"
+            | ".java-version"
+            | ".sdkmanrc"
+            | ".nvmrc"
+            | ".node-version"
+            | "global.json"
+    )
+}
+
+fn starter_agent_is_protected_control_extension(extension: &str) -> bool {
+    matches!(
+        extension,
+        "csproj" | "fsproj" | "cabal" | "rockspec" | "opam" | "nimble" | "hxml"
+    )
+}
+
+fn starter_agent_stack_companion_protected_paths(contract: &DetectContract) -> Vec<&'static str> {
+    let mut paths = Vec::new();
+
+    if ["npm", "pnpm", "yarn", "bun"]
+        .iter()
+        .any(|tool| contract.tools.contains_key(*tool))
+    {
+        paths.extend([
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            "yarn.lock",
+            "bun.lock",
+            "bun.lockb",
+        ]);
+    }
+    if contract.runtimes.contains_key("python")
+        || ["uv", "pipenv", "pip"]
+            .iter()
+            .any(|tool| contract.tools.contains_key(*tool))
+    {
+        paths.extend(["uv.lock", "Pipfile", "requirements.txt", ".python-version"]);
+    }
+    if contract.runtimes.contains_key("go") {
+        paths.push("go.sum");
+    }
+    if contract.runtimes.contains_key("rust") || contract.tools.contains_key("cargo") {
+        paths.push("Cargo.lock");
+    }
+    if contract.runtimes.contains_key("php") || contract.tools.contains_key("composer") {
+        paths.push("composer.lock");
+    }
+    if contract.runtimes.contains_key("ruby") || contract.tools.contains_key("bundler") {
+        paths.extend(["Gemfile.lock", ".ruby-version"]);
+    }
+    if contract.tools.contains_key("mix") {
+        paths.push("mix.lock");
+    }
+    if contract.runtimes.contains_key("dart")
+        || contract.tools.contains_key("dart")
+        || contract.tools.contains_key("flutter")
+    {
+        paths.push("pubspec.lock");
+    }
+
+    paths
+}
+
+fn starter_agent_source_anchor_dir(name: &str) -> bool {
+    matches!(
+        name,
+        "src"
+            | "app"
+            | "lib"
+            | "components"
+            | "pages"
+            | "public"
+            | "server"
+            | "client"
+            | "frontend"
+            | "backend"
+            | "shared"
+            | "ui"
+            | "api"
+            | "hooks"
+            | "utils"
+            | "types"
+            | "routes"
+            | "resources"
+            | "tests"
+            | "test"
+            | "pkg"
+            | "cmd"
+            | "internal"
+            | "services"
+            | "examples"
+            | "apps"
+            | "packages"
+            | "crates"
+    )
+}
+
+fn starter_agent_collect_nested_source_roots(
+    root: &Path,
+    prefix: &str,
+    dir: &Path,
+    allowed_extensions: Option<&[&'static str]>,
+) -> Vec<String> {
+    let mut roots = BTreeSet::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+
+    for entry in entries.flatten().take(256) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if starter_agent_ignored_scan_dir(name) {
+            continue;
+        }
+        let candidate = format!("{prefix}/{name}");
+        if starter_agent_dir_contains_source_files(&path, 3, allowed_extensions)
+            && starter_agent_valid_writable_path(root, &candidate)
+        {
+            roots.insert(candidate);
+        }
+    }
+
+    roots.into_iter().collect()
+}
+
+fn starter_agent_dir_has_direct_source_files(
+    dir: &Path,
+    allowed_extensions: Option<&[&'static str]>,
+) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+
+    for entry in entries.flatten().take(256) {
+        let path = entry.path();
+        if path.is_file() && starter_agent_is_source_like_file(&path, allowed_extensions) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn starter_agent_valid_writable_path(root: &Path, candidate: &str) -> bool {
+    if candidate.is_empty() || candidate == "." {
+        return false;
+    }
+    let path = root.join(candidate);
+    if !path.is_dir() {
+        return false;
+    }
+    let first_segment = Path::new(candidate)
+        .iter()
+        .next()
+        .and_then(|segment| segment.to_str());
+    !first_segment.is_some_and(starter_agent_ignored_scan_dir)
 }
 
 fn preferred_agent_task(safe_tasks: &[String]) -> Option<String> {
@@ -762,6 +1254,196 @@ fn preferred_agent_verify_tasks(safe_tasks: &[String]) -> Vec<String> {
     preferred_agent_task(safe_tasks).into_iter().collect()
 }
 
+fn starter_agent_stack_source_extensions(contract: &DetectContract) -> Option<Vec<&'static str>> {
+    let mut extensions = BTreeSet::new();
+
+    if contract.runtimes.contains_key("node")
+        || ["npm", "pnpm", "yarn", "bun"]
+            .iter()
+            .any(|tool| contract.tools.contains_key(*tool))
+    {
+        extensions.extend([
+            "css", "html", "js", "jsx", "mjs", "mts", "sass", "scss", "ts", "tsx", "vue",
+        ]);
+    }
+
+    if contract.runtimes.contains_key("python")
+        || ["pip", "pipenv", "uv"]
+            .iter()
+            .any(|tool| contract.tools.contains_key(*tool))
+    {
+        extensions.extend(["py", "pyi"]);
+    }
+
+    if contract.runtimes.contains_key("go") {
+        extensions.extend(["go"]);
+    }
+
+    if contract.runtimes.contains_key("dart")
+        || contract.tools.contains_key("dart")
+        || contract.tools.contains_key("flutter")
+    {
+        extensions.extend(["dart"]);
+    }
+
+    if contract.runtimes.contains_key("julia") || contract.tools.contains_key("julia") {
+        extensions.extend(["jl"]);
+    }
+
+    if contract.runtimes.contains_key("r") || contract.tools.contains_key("r") {
+        extensions.extend(["R", "r"]);
+    }
+
+    if contract.runtimes.contains_key("nim") || contract.tools.contains_key("nimble") {
+        extensions.extend(["nim"]);
+    }
+
+    if contract.tools.contains_key("rebar3") {
+        extensions.extend(["erl", "hrl"]);
+    }
+
+    if contract.runtimes.contains_key("zig") || contract.tools.contains_key("zig") {
+        extensions.extend(["zig"]);
+    }
+
+    if contract.tools.contains_key("dub") {
+        extensions.extend(["d"]);
+    }
+
+    if contract.tools.contains_key("fpm") {
+        extensions.extend(["f", "f03", "f08", "f90", "f95", "for"]);
+    }
+
+    if contract.runtimes.contains_key("rust") || contract.tools.contains_key("cargo") {
+        extensions.extend(["rs"]);
+    }
+
+    if contract.runtimes.contains_key("crystal") || contract.tools.contains_key("crystal") {
+        extensions.extend(["cr"]);
+    }
+
+    if contract.tools.contains_key("elm") {
+        extensions.extend(["elm"]);
+    }
+
+    if contract.runtimes.contains_key("perl")
+        || contract.tools.contains_key("perl")
+        || contract.tools.contains_key("cpanm")
+    {
+        extensions.extend(["pl", "pm"]);
+    }
+
+    if contract.tools.contains_key("haxe") {
+        extensions.extend(["hx"]);
+    }
+
+    if contract.tools.contains_key("gleam") {
+        extensions.extend(["gleam"]);
+    }
+
+    if contract.tools.contains_key("v") {
+        extensions.extend(["v"]);
+    }
+
+    if contract.tools.contains_key("alr") {
+        extensions.extend(["adb", "ads"]);
+    }
+
+    if contract.runtimes.contains_key("php") || contract.tools.contains_key("composer") {
+        extensions.extend(["php"]);
+    }
+
+    if contract.runtimes.contains_key("ruby") || contract.tools.contains_key("bundler") {
+        extensions.extend(["rb", "rake"]);
+    }
+
+    if contract.runtimes.contains_key("java")
+        || contract.runtimes.contains_key("kotlin")
+        || ["maven", "gradle", "kotlin"]
+            .iter()
+            .any(|tool| contract.tools.contains_key(*tool))
+    {
+        extensions.extend(["java", "kt", "kts"]);
+    }
+
+    if contract.runtimes.contains_key("dotnet")
+        || contract.runtimes.contains_key("fsharp")
+        || contract.tools.contains_key("dotnet")
+    {
+        extensions.extend(["cs", "fs", "fsx", "vb"]);
+    }
+
+    if contract.runtimes.contains_key("c") || contract.tools.contains_key("cmake") {
+        extensions.extend(["c", "h"]);
+    }
+
+    if contract.runtimes.contains_key("cpp") || contract.tools.contains_key("cmake") {
+        extensions.extend(["cc", "cpp", "cxx", "h", "hh", "hpp", "hxx"]);
+    }
+
+    if contract.runtimes.contains_key("ocaml")
+        || ["dune", "opam"]
+            .iter()
+            .any(|tool| contract.tools.contains_key(*tool))
+    {
+        extensions.extend(["ml", "mli", "re", "rei"]);
+    }
+
+    if contract.tools.contains_key("leiningen") || contract.tools.contains_key("clojure") {
+        extensions.extend(["clj", "cljc", "cljs", "edn"]);
+    }
+
+    if contract.tools.contains_key("cabal") || contract.tools.contains_key("stack") {
+        extensions.extend(["hs", "lhs"]);
+    }
+
+    if contract.tools.contains_key("luarocks") {
+        extensions.extend(["lua"]);
+    }
+
+    if contract.tools.contains_key("mix") {
+        extensions.extend(["ex", "exs", "heex"]);
+    }
+
+    if contract.tools.contains_key("sbt") || contract.runtimes.contains_key("scala") {
+        extensions.extend(["scala", "sc"]);
+    }
+
+    if contract.tools.contains_key("swift") {
+        extensions.extend(["swift"]);
+    }
+
+    if contract.runtimes.contains_key("solidity") || contract.tools.contains_key("forge") {
+        extensions.extend(["sol"]);
+    }
+
+    if contract.tools.contains_key("tclsh") {
+        extensions.extend(["tcl"]);
+    }
+
+    if contract.tools.contains_key("racket") {
+        extensions.extend(["rkt"]);
+    }
+
+    if contract.runtimes.contains_key("shell") || contract.tools.contains_key("bash") {
+        extensions.extend(["bash", "sh", "zsh"]);
+    }
+
+    if contract.runtimes.contains_key("powershell") || contract.tools.contains_key("pwsh") {
+        extensions.extend(["ps1", "psd1", "psm1"]);
+    }
+
+    if contract.runtimes.contains_key("deno") || contract.tools.contains_key("deno") {
+        extensions.extend(["cjs", "cts", "js", "jsx", "mjs", "mts", "ts", "tsx"]);
+    }
+
+    if extensions.is_empty() {
+        None
+    } else {
+        Some(extensions.into_iter().collect())
+    }
+}
+
 fn starter_agent_ignored_scan_dir(name: &str) -> bool {
     matches!(
         name,
@@ -782,12 +1464,22 @@ fn starter_agent_ignored_scan_dir(name: &str) -> bool {
             | "build"
             | "coverage"
             | "out"
+            | "config"
+            | "database"
+            | "migrations"
+            | "manifests"
+            | "deploy"
+            | "infra"
             | "bin"
             | "obj"
     )
 }
 
-fn starter_agent_dir_contains_source_files(dir: &Path, depth: usize) -> bool {
+fn starter_agent_dir_contains_source_files(
+    dir: &Path,
+    depth: usize,
+    allowed_extensions: Option<&[&'static str]>,
+) -> bool {
     if depth == 0 {
         return false;
     }
@@ -798,7 +1490,7 @@ fn starter_agent_dir_contains_source_files(dir: &Path, depth: usize) -> bool {
 
     for entry in entries.flatten().take(256) {
         let path = entry.path();
-        if path.is_file() && starter_agent_is_source_like_file(&path) {
+        if path.is_file() && starter_agent_is_source_like_file(&path, allowed_extensions) {
             return true;
         }
         if path.is_dir() {
@@ -809,7 +1501,11 @@ fn starter_agent_dir_contains_source_files(dir: &Path, depth: usize) -> bool {
             if starter_agent_ignored_scan_dir(name) {
                 continue;
             }
-            if starter_agent_dir_contains_source_files(&path, depth.saturating_sub(1)) {
+            if starter_agent_dir_contains_source_files(
+                &path,
+                depth.saturating_sub(1),
+                allowed_extensions,
+            ) {
                 return true;
             }
         }
@@ -818,42 +1514,80 @@ fn starter_agent_dir_contains_source_files(dir: &Path, depth: usize) -> bool {
     false
 }
 
-fn starter_agent_is_source_like_file(path: &Path) -> bool {
+fn starter_agent_is_source_like_file(
+    path: &Path,
+    allowed_extensions: Option<&[&'static str]>,
+) -> bool {
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return false;
+    };
+    if let Some(allowed_extensions) = allowed_extensions {
+        return allowed_extensions
+            .iter()
+            .any(|allowed| *allowed == extension);
+    }
+
     matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        Some(
-            "c" | "cc"
-                | "cpp"
-                | "cs"
-                | "css"
-                | "elm"
-                | "ex"
-                | "exs"
-                | "fs"
-                | "go"
-                | "h"
-                | "hpp"
-                | "html"
-                | "java"
-                | "js"
-                | "jsx"
-                | "kt"
-                | "kts"
-                | "php"
-                | "py"
-                | "rb"
-                | "rs"
-                | "sass"
-                | "scala"
-                | "sc"
-                | "scss"
-                | "sh"
-                | "sql"
-                | "swift"
-                | "ts"
-                | "tsx"
-                | "vue"
-        )
+        extension,
+        "c" | "cc"
+            | "cpp"
+            | "cr"
+            | "cs"
+            | "css"
+            | "dart"
+            | "d"
+            | "f"
+            | "f03"
+            | "f08"
+            | "f90"
+            | "f95"
+            | "for"
+            | "gleam"
+            | "elm"
+            | "erl"
+            | "ex"
+            | "exs"
+            | "fs"
+            | "go"
+            | "h"
+            | "hrl"
+            | "hx"
+            | "hpp"
+            | "html"
+            | "java"
+            | "js"
+            | "jl"
+            | "jsx"
+            | "kt"
+            | "kts"
+            | "lua"
+            | "nim"
+            | "pm"
+            | "pl"
+            | "php"
+            | "ps1"
+            | "psd1"
+            | "psm1"
+            | "py"
+            | "r"
+            | "R"
+            | "rb"
+            | "rkt"
+            | "rs"
+            | "sass"
+            | "scala"
+            | "sc"
+            | "scss"
+            | "sh"
+            | "sol"
+            | "swift"
+            | "tcl"
+            | "ts"
+            | "tsx"
+            | "v"
+            | "vue"
+            | "zig"
+            | "zsh"
     )
 }
 
@@ -1465,5 +2199,56 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn bootstrap_contract_infers_agent_writable_paths_for_long_tail_stack_roots() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("ota-nimble.nimble"),
+            "version = \"0.1.0\"\nrequires \"nim >= 2.0.0\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(fixture.path().join("tooling")).unwrap();
+        std::fs::create_dir_all(fixture.path().join("queries")).unwrap();
+        std::fs::write(
+            fixture.path().join("tooling").join("main.nim"),
+            "echo \"hello\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.path().join("queries").join("schema.sql"),
+            "select 1;\n",
+        )
+        .unwrap();
+
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            String::from("test"),
+            DetectTask {
+                description: None,
+                run: String::from("nimble test"),
+                notes: None,
+                internal: false,
+                safe_for_agent: false,
+            },
+        );
+        let mut tools = BTreeMap::new();
+        tools.insert(String::from("nimble"), String::from("*"));
+        let report = DetectReport {
+            root: fixture.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                tools,
+                tasks,
+                ..DetectContract::default()
+            },
+            inferences: Vec::new(),
+        };
+        let contract = bootstrap_init_contract(&report);
+        let agent = contract.agent.expect("starter agent");
+
+        assert!(agent.writable_paths.contains(&String::from("tooling")));
+        assert!(!agent.writable_paths.contains(&String::from("queries")));
     }
 }

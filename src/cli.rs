@@ -19824,6 +19824,9 @@ policies:
         assert!(written.contains("protected_paths:"));
         assert!(written.contains("- ota.yaml"));
         assert!(written.contains("notes: |"));
+        assert!(written.contains(
+            "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo."
+        ));
         assert!(written.contains("Use `ota run test` to verify changes."));
         assert!(!written.contains("entrypoint: null"));
         let agent_index = written.find("agent:").unwrap();
@@ -19901,12 +19904,21 @@ policies:
         assert!(preview_stdout.contains("- components"));
         assert!(preview_stdout.contains("- lib"));
         assert!(preview_stdout.contains("- public"));
+        assert!(preview_stdout.contains("protected_paths:"));
+        assert!(preview_stdout.contains("- ota.yaml"));
+        assert!(preview_stdout.contains("- package.json"));
+        assert!(preview_stdout.contains("- package-lock.json"));
+        assert!(preview_stdout.contains(
+            "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo."
+        ));
 
         let exact = run_with(["ota", "detect", "--contract", fixture.path()]);
         assert_eq!(exact.exit_code, 0);
         let exact_stdout = strip_ansi(&exact.stdout);
         assert!(exact_stdout.contains("\nagent:\n"));
         assert!(exact_stdout.contains("default_task: typecheck"));
+        assert!(exact_stdout.contains("- package.json"));
+        assert!(exact_stdout.contains("- package-lock.json"));
 
         let write = run_with(["ota", "detect", "--write", fixture.path()]);
         assert_eq!(write.exit_code, 0);
@@ -19920,6 +19932,13 @@ policies:
         assert!(written.contains("- components"));
         assert!(written.contains("- lib"));
         assert!(written.contains("- public"));
+        assert!(written.contains("protected_paths:"));
+        assert!(written.contains("- ota.yaml"));
+        assert!(written.contains("- package.json"));
+        assert!(written.contains("- package-lock.json"));
+        assert!(written.contains(
+            "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo."
+        ));
     }
 
     #[test]
@@ -19949,6 +19968,94 @@ policies:
         assert!(preview_stdout.contains("writable_paths:"));
         assert!(preview_stdout.contains("- ui-shell"));
         assert!(preview_stdout.contains("- api-server"));
+    }
+
+    #[test]
+    fn detect_does_not_whitelist_ops_dirs_as_agent_writable_paths() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-ops",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-ops\"\n}\n");
+        for dir in [
+            "config",
+            "database",
+            "migrations",
+            "manifests",
+            "deploy",
+            "infra",
+        ] {
+            fs::create_dir_all(fixture.dir.path().join(dir)).unwrap();
+            fixture.write(&format!("{dir}/placeholder.sql"), "-- not app code\n");
+        }
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(!preview_stdout.contains("- config"));
+        assert!(!preview_stdout.contains("- database"));
+        assert!(!preview_stdout.contains("- migrations"));
+        assert!(!preview_stdout.contains("- manifests"));
+        assert!(!preview_stdout.contains("- deploy"));
+        assert!(!preview_stdout.contains("- infra"));
+    }
+
+    #[test]
+    fn detect_limits_custom_agent_writable_paths_to_stack_source_roots() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-precision",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"ota-precision\"\n}\n");
+        fs::create_dir_all(fixture.dir.path().join("ui-shell").join("src")).unwrap();
+        fs::create_dir_all(fixture.dir.path().join("queries")).unwrap();
+        fixture.write("ui-shell/src/index.tsx", "export const App = () => null;\n");
+        fixture.write("queries/schema.sql", "select 1;\n");
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("- ui-shell"));
+        assert!(!preview_stdout.contains("- queries"));
+    }
+
+    #[test]
+    fn detect_prefers_nested_project_roots_over_broad_src_for_agent_writable_paths() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "src/Ota.App/Ota.App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+        );
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("writable_paths:"));
+        assert!(preview_stdout.contains("- src/Ota.App"));
+        assert!(preview_stdout.contains("protected_paths:"));
+        assert!(preview_stdout.contains("- src/Ota.App/Ota.App.csproj"));
+        assert!(!preview_stdout.contains("- src\n"));
+        assert!(!preview_stdout.contains("- src\r\n"));
     }
 
     #[test]
@@ -22792,12 +22899,65 @@ project:
             &bin_dir.path().join("go"),
             "go version go1.24.0 linux/amd64",
         );
+        install_fake_version_command(&bin_dir.path().join("cmake"), "cmake version 3.30.0");
         install_fake_version_command(&bin_dir.path().join("java"), "openjdk 21.0.2");
+        install_fake_version_command(&bin_dir.path().join("lein"), "Leiningen 2.11.2");
+        install_fake_version_command(
+            &bin_dir.path().join("clojure"),
+            "Clojure CLI version 1.12.0.1479",
+        );
+        install_fake_version_command(&bin_dir.path().join("stack"), "Version 3.1.1");
+        install_fake_version_command(
+            &bin_dir.path().join("cabal"),
+            "cabal-install version 3.12.1.0",
+        );
         install_fake_version_command(&bin_dir.path().join("dotnet"), "8.0.302");
+        install_fake_version_command(
+            &bin_dir.path().join("ocaml"),
+            "The OCaml toplevel, version 5.2.0",
+        );
+        install_fake_version_command(&bin_dir.path().join("dune"), "3.17.2");
+        install_fake_version_command(&bin_dir.path().join("opam"), "2.2.1");
+        install_fake_version_command(&bin_dir.path().join("dart"), "Dart SDK version: 3.5.0");
+        install_fake_version_command(&bin_dir.path().join("flutter"), "Flutter 3.24.0");
+        install_fake_version_command(&bin_dir.path().join("julia"), "julia version 1.11.0");
+        install_fake_version_command(&bin_dir.path().join("R"), "R version 4.4.1");
+        install_fake_version_command(&bin_dir.path().join("nimble"), "nimble v0.16.1");
+        install_fake_version_command(
+            &bin_dir.path().join("rebar3"),
+            "rebar 3.24.0 on Erlang/OTP 27",
+        );
+        install_fake_version_command(&bin_dir.path().join("zig"), "0.14.0");
+        install_fake_version_command(&bin_dir.path().join("dub"), "DUB version 1.38.0");
+        install_fake_version_command(&bin_dir.path().join("fpm"), "Version:     0.10.1");
+        install_fake_version_command(&bin_dir.path().join("crystal"), "Crystal 1.14.0");
+        install_fake_version_command(&bin_dir.path().join("elm"), "0.19.1");
+        install_fake_version_command(
+            &bin_dir.path().join("perl"),
+            "perl 5, version 40, subversion 0",
+        );
+        install_fake_version_command(
+            &bin_dir.path().join("cpanm"),
+            "cpanm (App::cpanminus) version 1.7047",
+        );
+        install_fake_version_command(&bin_dir.path().join("haxe"), "4.3.5");
+        install_fake_version_command(&bin_dir.path().join("gleam"), "gleam 1.8.0");
+        install_fake_version_command(&bin_dir.path().join("v"), "V 0.4.8");
+        install_fake_version_command(&bin_dir.path().join("alr"), "alr 2.0.1");
+        install_fake_version_command(&bin_dir.path().join("forge"), "forge 0.2.0");
+        install_fake_version_command(&bin_dir.path().join("tclsh"), "8.6.14");
+        install_fake_version_command(&bin_dir.path().join("racket"), "Welcome to Racket v8.14");
+        install_fake_version_command(
+            &bin_dir.path().join("bash"),
+            "GNU bash, version 5.2.37(1)-release",
+        );
+        install_fake_version_command(&bin_dir.path().join("pwsh"), "PowerShell 7.4.3");
+        install_fake_version_command(&bin_dir.path().join("deno"), "deno 2.0.0");
         install_fake_version_command(&bin_dir.path().join("php"), "PHP 8.3.7");
         install_fake_version_command(&bin_dir.path().join("composer"), "Composer version 2.8.1");
         install_fake_version_command(&bin_dir.path().join("ruby"), "ruby 3.3.0");
         install_fake_version_command(&bin_dir.path().join("bundle"), "Bundler version 2.5.16");
+        install_fake_version_command(&bin_dir.path().join("luarocks"), "3.11.1");
         install_fake_version_command(&bin_dir.path().join("mix"), "Mix 1.17.2");
         install_fake_version_command(&bin_dir.path().join("sbt"), "sbt 1.10.0");
         install_fake_version_command(&bin_dir.path().join("swift"), "Swift version 6.0");
@@ -22828,6 +22988,35 @@ project:
                 expected: &["Detected repo type: Go", "Host tool available: go"],
             },
             Case {
+                files: &[(
+                    "pubspec.yaml",
+                    "name: ota_dart\nenvironment:\n  sdk: \">=3.5.0 <4.0.0\"\n",
+                )],
+                expected: &["Detected repo type: Dart", "Host tool available: dart"],
+            },
+            Case {
+                files: &[(
+                    "pubspec.yaml",
+                    "name: ota_flutter\nenvironment:\n  sdk: \">=3.5.0 <4.0.0\"\nflutter:\n  uses-material-design: true\n",
+                )],
+                expected: &[
+                    "Detected repo type: Flutter",
+                    "Detected build tool: Flutter",
+                    "Host tool available: flutter",
+                ],
+            },
+            Case {
+                files: &[(
+                    "CMakeLists.txt",
+                    "cmake_minimum_required(VERSION 3.28)\nproject(ota-cpp LANGUAGES C CXX)\nset(CMAKE_C_STANDARD 11)\nset(CMAKE_CXX_STANDARD 23)\n",
+                )],
+                expected: &[
+                    "Detected repo type: C/C++",
+                    "Detected build tool: CMake",
+                    "Host tool available: cmake",
+                ],
+            },
+            Case {
                 files: &[
                     (
                         "pom.xml",
@@ -22843,11 +23032,237 @@ project:
                 ],
             },
             Case {
+                files: &[
+                    (
+                        "build.gradle.kts",
+                        "plugins { kotlin(\"jvm\") version \"2.0.21\" }\n",
+                    ),
+                    ("gradlew", "#!/bin/sh\nexit 0\n"),
+                ],
+                expected: &[
+                    "Detected repo type: Kotlin",
+                    "Detected build tool: Gradle",
+                    "Repo wrapper available: gradlew",
+                ],
+            },
+            Case {
+                files: &[(
+                    "project.clj",
+                    "(defproject ota-clj \"0.1.0-SNAPSHOT\" :dependencies [[org.clojure/clojure \"1.12.0\"]])\n",
+                )],
+                expected: &[
+                    "Detected repo type: Clojure",
+                    "Detected build tool: Leiningen",
+                    "Host tool available: lein",
+                ],
+            },
+            Case {
+                files: &[("deps.edn", "{:paths [\"src\"] :aliases {:test {}}}\n")],
+                expected: &[
+                    "Detected repo type: Clojure",
+                    "Detected build tool: Clojure CLI",
+                    "Host tool available: clojure",
+                ],
+            },
+            Case {
+                files: &[("stack.yaml", "resolver: lts-22.34\n")],
+                expected: &[
+                    "Detected repo type: Haskell",
+                    "Detected build tool: Stack",
+                    "Host tool available: stack",
+                ],
+            },
+            Case {
+                files: &[("ota-haskell.cabal", "name: ota-haskell\nversion: 0.1.0.0\n")],
+                expected: &[
+                    "Detected repo type: Haskell",
+                    "Detected build tool: cabal",
+                    "Host tool available: cabal",
+                ],
+            },
+            Case {
                 files: &[(
                     "src/Ota.App/Ota.App.csproj",
                     "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
                 )],
                 expected: &["Detected repo type: .NET", "Host tool available: dotnet"],
+            },
+            Case {
+                files: &[(
+                    "Ota.App.fsproj",
+                    "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+                )],
+                expected: &["Detected repo type: F#", "Host tool available: dotnet"],
+            },
+            Case {
+                files: &[
+                    ("dune-project", "(lang dune 3.17)\n(name ota_ocaml)\n"),
+                    (".ocaml-version", "5.2.0\n"),
+                    ("ota.opam", "opam-version: \"2.0\"\n"),
+                ],
+                expected: &[
+                    "Detected repo type: OCaml",
+                    "Host tool available: ocaml",
+                    "Detected build tool: dune",
+                    "Host tool available: dune",
+                    "Detected dependency tool: opam",
+                    "Host tool available: opam",
+                ],
+            },
+            Case {
+                files: &[(
+                    "ota-lua-1.rockspec",
+                    "package = \"ota-lua\"\nversion = \"1.0-1\"\n",
+                )],
+                expected: &[
+                    "Detected repo type: Lua",
+                    "Detected dependency tool: LuaRocks",
+                    "Host tool available: luarocks",
+                ],
+            },
+            Case {
+                files: &[(
+                    "Project.toml",
+                    "name = \"ota-julia\"\n[compat]\njulia = \"1.11\"\n",
+                )],
+                expected: &["Detected repo type: Julia", "Host tool available: julia"],
+            },
+            Case {
+                files: &[(
+                    "DESCRIPTION",
+                    "Package: otaR\nVersion: 0.1.0\nDepends: R (>= 4.4.0)\n",
+                )],
+                expected: &["Detected repo type: R", "Host tool available: R"],
+            },
+            Case {
+                files: &[(
+                    "ota-nimble.nimble",
+                    "version = \"0.1.0\"\nrequires \"nim >= 2.0.0\"\n",
+                )],
+                expected: &[
+                    "Detected repo type: Nim",
+                    "Detected build tool: nimble",
+                    "Host tool available: nimble",
+                ],
+            },
+            Case {
+                files: &[(
+                    "rebar.config",
+                    "{erl_opts, [debug_info]}.\n{project_plugins, []}.\n",
+                )],
+                expected: &[
+                    "Detected repo type: Erlang",
+                    "Detected build tool: rebar3",
+                    "Host tool available: rebar3",
+                ],
+            },
+            Case {
+                files: &[(
+                    "build.zig",
+                    "const std = @import(\"std\");\npub fn build(b: *std.Build) void {}\n",
+                )],
+                expected: &["Detected repo type: Zig", "Host tool available: zig"],
+            },
+            Case {
+                files: &[("dub.json", "{ \"name\": \"ota-d\" }\n")],
+                expected: &[
+                    "Detected repo type: D",
+                    "Detected build tool: dub",
+                    "Host tool available: dub",
+                ],
+            },
+            Case {
+                files: &[(
+                    "fpm.toml",
+                    "[project]\nname = \"ota-fortran\"\nversion = \"0.1.0\"\n",
+                )],
+                expected: &[
+                    "Detected repo type: Fortran",
+                    "Detected build tool: fpm",
+                    "Host tool available: fpm",
+                ],
+            },
+            Case {
+                files: &[(
+                    "shard.yml",
+                    "name: ota-crystal\ncrystal: 1.14.0\nversion: 0.1.0\n",
+                )],
+                expected: &[
+                    "Detected repo type: Crystal",
+                    "Host tool available: crystal",
+                ],
+            },
+            Case {
+                files: &[(
+                    "elm.json",
+                    "{\n  \"type\": \"application\",\n  \"source-directories\": [\"src\"],\n  \"elm-version\": \"0.19.1\",\n  \"dependencies\": {\"direct\": {}, \"indirect\": {}},\n  \"test-dependencies\": {\"direct\": {}, \"indirect\": {}}\n}\n",
+                )],
+                expected: &["Detected repo type: Elm", "Host tool available: elm"],
+            },
+            Case {
+                files: &[
+                    ("cpanfile", "requires 'Test::More';\n"),
+                    ("Makefile.PL", "WriteMakefile(NAME => 'ota-perl');\n"),
+                ],
+                expected: &[
+                    "Detected repo type: Perl",
+                    "Detected dependency tool: cpanm",
+                    "Host tool available: cpanm",
+                    "Host tool available: perl",
+                ],
+            },
+            Case {
+                files: &[("build.hxml", "-main Main\n-js app.js\n")],
+                expected: &["Detected repo type: Haxe", "Host tool available: haxe"],
+            },
+            Case {
+                files: &[("gleam.toml", "name = \"ota_gleam\"\nversion = \"0.1.0\"\n")],
+                expected: &["Detected repo type: Gleam", "Host tool available: gleam"],
+            },
+            Case {
+                files: &[("v.mod", "Module {\n  name: 'ota_v'\n}\n")],
+                expected: &["Detected repo type: V", "Host tool available: v"],
+            },
+            Case {
+                files: &[(
+                    "alire.toml",
+                    "[project]\nname = \"ota_ada\"\nversion = \"0.1.0\"\n",
+                )],
+                expected: &["Detected repo type: Ada", "Host tool available: alr"],
+            },
+            Case {
+                files: &[(
+                    "foundry.toml",
+                    "[profile.default]\nsolc_version = \"0.8.28\"\n",
+                )],
+                expected: &[
+                    "Detected repo type: Solidity",
+                    "Detected build tool: Foundry",
+                    "Host tool available: forge",
+                ],
+            },
+            Case {
+                files: &[("tclapp.tcl", "puts \"hello\"\n")],
+                expected: &["Detected repo type: Tcl", "Host tool available: tclsh"],
+            },
+            Case {
+                files: &[("main.rkt", "#lang racket\n(displayln \"hello\")\n")],
+                expected: &["Detected repo type: Racket", "Host tool available: racket"],
+            },
+            Case {
+                files: &[("main.sh", "#!/usr/bin/env bash\necho hi\n")],
+                expected: &["Detected repo type: Shell", "Host tool available: bash"],
+            },
+            Case {
+                files: &[("main.ps1", "Write-Host 'hi'\n")],
+                expected: &[
+                    "Detected repo type: PowerShell",
+                    "Host tool available: pwsh",
+                ],
+            },
+            Case {
+                files: &[("deno.json", "{\n  \"tasks\": {}\n}\n")],
+                expected: &["Detected repo type: Deno", "Host tool available: deno"],
             },
             Case {
                 files: &[(
@@ -22921,6 +23336,9 @@ project:
                     stdout.contains(expected),
                     "missing `{expected}` in:\n{stdout}"
                 );
+            }
+            if case.expected.contains(&"Detected repo type: Kotlin") {
+                assert!(!stdout.contains("Detected repo type: Java"));
             }
             assert!(!stdout.contains("No strong repo signals were detected yet"));
         }

@@ -1049,7 +1049,7 @@ ota doctor --member api --member web --json [PATH]
 
 - Current behavior:
 
-- when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `What Ota can tell so far` such as repo type across Node, Python, Go, Rust, Java, .NET, PHP, Ruby, Elixir, Scala, and Swift, dependency/build tools, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
+- when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `What Ota can tell so far` across mainstream and long-tail detector-supported stacks, including repo type, dependency/build tools, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
 - the human summary now makes the top-level state explicit as `READY`, `READY WITH WARNINGS`, or `BLOCKED`
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
@@ -1154,7 +1154,8 @@ Current behavior:
 - low-confidence fields remain excluded from plain `ota init` writes
 - canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
 - confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
-- when the detected tasks are confident enough, the starter contract now keeps a derived `agent` block and review notes even when writable-path inference is still partial; ota now combines broader common app/source directories with a bounded source-root scan so custom code roots can surface in `agent.writable_paths` without falling back to `.`
+- when the detected tasks are confident enough, the starter contract now keeps a derived `agent` block and review notes even when writable-path inference is still partial; ota now combines broader common app/source directories with detector-backed nested project roots and a bounded stack-aware source-root scan so custom code roots can surface in `agent.writable_paths` without falling back to `.`, while detector-backed control files such as manifests and lockfiles now surface explicitly in `agent.protected_paths` and operational directories such as `config`, `database`, `migrations`, `manifests`, `deploy`, and `infra` stay out of the default starter allowlist
+- those starter `agent.notes` now explicitly tell authors to review `agent.writable_paths` and `agent.protected_paths` before trusting automation, so the inferred boundary is visible as something to confirm rather than silent starter magic
 
 Choosing an init path:
 
