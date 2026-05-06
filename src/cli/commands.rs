@@ -4583,6 +4583,17 @@ fn assist_task_target_activation_mode_name(mode: TaskTargetActivationMode) -> &'
     mode.as_str()
 }
 
+fn append_assist_result_section(output: &mut String, result: String) {
+    output.push_str(&format!("\n\n{}\n", paint_section_title("Result")));
+    output.push_str(&format!("\n {}  {result}", summary_bullet()));
+}
+
+fn append_assist_preview_next(output: &mut String, preview_next: Option<&str>) {
+    if let Some(preview_next) = preview_next {
+        output.push_str(&format_next_timeline(&[preview_next.to_string()]));
+    }
+}
+
 fn render_assist_readiness_text(
     path: &str,
     proposal: &AssistReadinessProposal,
@@ -4628,22 +4639,18 @@ fn render_assist_readiness_text(
                 .map(|command| format!("run `{}`", command))
                 .collect::<Vec<_>>(),
         ));
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code(&proposal.change_path))
-        ));
+        append_assist_result_section(
+            &mut output,
+            format!("applied {}", paint_backticked_code(&proposal.change_path)),
+        );
         return output;
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
     if !proposal.before_value.is_null() {
-        output.push_str(&format!(
-            "\n\n{}:",
-            paint_section_title("Current readiness")
-        ));
+        output.push_str(&format!("\n\n{}", paint_section_title("Current Readiness")));
         output.push_str(&format!(
             "\n{} {}",
             info_bullet(),
@@ -4655,10 +4662,7 @@ fn render_assist_readiness_text(
             stylize_yaml_preview(before_yaml.trim_end())
         ));
     }
-    output.push_str(&format!(
-        "\n\n{}:",
-        paint_section_title("Proposed readiness")
-    ));
+    output.push_str(&format!("\n\n{}", paint_section_title("Proposed Readiness")));
     output.push_str(&format!(
         "\n{} {}",
         info_bullet(),
@@ -4675,17 +4679,7 @@ fn render_assist_readiness_text(
             .map(|command| format!("run `{}`", command))
             .collect::<Vec<_>>(),
     ));
-    if mode == "preview" {
-        if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
-        }
-    } else {
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code(&proposal.change_path))
-        ));
-    }
+    append_assist_preview_next(&mut output, preview_next);
     output
 }
 
@@ -4741,19 +4735,18 @@ fn render_assist_service_text(
                 .map(|command| format!("run `{}`", command))
                 .collect::<Vec<_>>(),
         ));
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code(&proposal.change_path))
-        ));
+        append_assist_result_section(
+            &mut output,
+            format!("applied {}", paint_backticked_code(&proposal.change_path)),
+        );
         return output;
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
     if !proposal.before_value.is_null() {
-        output.push_str(&format!("\n\n{}:", paint_section_title("Current service")));
+        output.push_str(&format!("\n\n{}", paint_section_title("Current Service")));
         output.push_str(&format!(
             "\n{} {}",
             info_bullet(),
@@ -4765,7 +4758,7 @@ fn render_assist_service_text(
             stylize_yaml_preview(before_yaml.trim_end())
         ));
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed service")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Proposed Service")));
     output.push_str(&format!(
         "\n{} {}",
         info_bullet(),
@@ -4782,17 +4775,7 @@ fn render_assist_service_text(
             .map(|command| format!("run `{}`", command))
             .collect::<Vec<_>>(),
     ));
-    if mode == "preview" {
-        if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
-        }
-    } else {
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code(&proposal.change_path))
-        ));
-    }
+    append_assist_preview_next(&mut output, preview_next);
     output
 }
 
@@ -4828,19 +4811,18 @@ fn render_assist_setup_text(
                 .map(|command| format!("run `{}`", command))
                 .collect::<Vec<_>>(),
         ));
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code("tasks.setup"))
-        ));
+        append_assist_result_section(
+            &mut output,
+            format!("applied {}", paint_backticked_code("tasks.setup")),
+        );
         return output;
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
     if !proposal.before_value.is_null() {
-        output.push_str(&format!("\n\n{}:", paint_section_title("Current setup")));
+        output.push_str(&format!("\n\n{}", paint_section_title("Current Setup")));
         output.push_str(&format!(
             "\n{} {}",
             info_bullet(),
@@ -4852,7 +4834,7 @@ fn render_assist_setup_text(
             stylize_yaml_preview(before_yaml.trim_end())
         ));
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed setup")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Proposed Setup")));
     output.push_str(&format!(
         "\n{} {}",
         info_bullet(),
@@ -4869,17 +4851,7 @@ fn render_assist_setup_text(
             .map(|command| format!("run `{}`", command))
             .collect::<Vec<_>>(),
     ));
-    if mode == "preview" {
-        if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
-        }
-    } else {
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code("tasks.setup"))
-        ));
-    }
+    append_assist_preview_next(&mut output, preview_next);
     output
 }
 
@@ -4960,19 +4932,18 @@ fn render_assist_bind_task_text(
                 .map(|command| format!("run `{}`", command))
                 .collect::<Vec<_>>(),
         ));
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code(&applied_path))
-        ));
+        append_assist_result_section(
+            &mut output,
+            format!("applied {}", paint_backticked_code(&applied_path)),
+        );
         return output;
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
     if !proposal.before_value.is_null() {
-        output.push_str(&format!("\n\n{}:", paint_section_title("Current target")));
+        output.push_str(&format!("\n\n{}", paint_section_title("Current Target")));
         output.push_str(&format!(
             "\n{} {}",
             info_bullet(),
@@ -4987,7 +4958,7 @@ fn render_assist_bind_task_text(
             stylize_yaml_preview(before_yaml.trim_end())
         ));
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed target")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Proposed Target")));
     output.push_str(&format!(
         "\n{} {}",
         info_bullet(),
@@ -5007,23 +4978,7 @@ fn render_assist_bind_task_text(
             .map(|command| format!("run `{}`", command))
             .collect::<Vec<_>>(),
     ));
-    if mode == "preview" {
-        if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
-        }
-    } else {
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!(
-                "applied {}",
-                paint_backticked_code(&format!(
-                    "tasks.{}.targets.{}",
-                    proposal.consumer_task, proposal.target_name
-                ))
-            )
-        ));
-    }
+    append_assist_preview_next(&mut output, preview_next);
     output
 }
 
@@ -5081,19 +5036,18 @@ fn render_assist_env_text(
                 .map(|command| format!("run `{}`", command))
                 .collect::<Vec<_>>(),
         ));
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code(&proposal.change_path))
-        ));
+        append_assist_result_section(
+            &mut output,
+            format!("applied {}", paint_backticked_code(&proposal.change_path)),
+        );
         return output;
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
     if !proposal.before_value.is_null() {
-        output.push_str(&format!("\n\n{}:", paint_section_title("Current env")));
+        output.push_str(&format!("\n\n{}", paint_section_title("Current Env")));
         output.push_str(&format!(
             "\n{} {}",
             info_bullet(),
@@ -5105,7 +5059,7 @@ fn render_assist_env_text(
             stylize_yaml_preview(before_yaml.trim_end())
         ));
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed env")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Proposed Env")));
     output.push_str(&format!(
         "\n{} {}",
         info_bullet(),
@@ -5122,17 +5076,7 @@ fn render_assist_env_text(
             .map(|command| format!("run `{}`", command))
             .collect::<Vec<_>>(),
     ));
-    if mode == "preview" {
-        if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
-        }
-    } else {
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("applied {}", paint_backticked_code(&proposal.change_path))
-        ));
-    }
+    append_assist_preview_next(&mut output, preview_next);
     output
 }
 
@@ -5175,18 +5119,17 @@ fn render_assist_add_task_text(
                 .map(|command| format!("run `{}`", command))
                 .collect::<Vec<_>>(),
         ));
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!("created {}", paint_backticked_code(&applied_path))
-        ));
+        append_assist_result_section(
+            &mut output,
+            format!("created {}", paint_backticked_code(&applied_path)),
+        );
         return output;
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Proposed task")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Proposed Task")));
     output.push_str(&format!(
         "\n{} {}",
         info_bullet(),
@@ -5203,20 +5146,7 @@ fn render_assist_add_task_text(
             .map(|command| format!("run `{}`", command))
             .collect::<Vec<_>>(),
     ));
-    if mode == "preview" {
-        if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
-        }
-    } else {
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!(
-                "created {}",
-                paint_backticked_code(&format!("tasks.{}", proposal.name))
-            )
-        ));
-    }
+    append_assist_preview_next(&mut output, preview_next);
     output
 }
 
@@ -5253,24 +5183,23 @@ fn render_assist_normalize_text(
                 .map(|command| format!("run `{}`", command))
                 .collect::<Vec<_>>(),
         ));
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
+        append_assist_result_section(
+            &mut output,
             format!(
                 "normalized {} into {}",
                 paint_backticked_code(&format!("tasks.{}", proposal.source_task)),
                 paint_backticked_code("tasks.setup")
-            )
-        ));
+            ),
+        );
         return output;
     }
-    output.push_str(&format!("\n\n{}:", paint_section_title("Assumptions")));
+    output.push_str(&format!("\n\n{}", paint_section_title("Assumptions")));
     for assumption in &proposal.assumptions {
         output.push_str(&format!("\n{} {}", info_bullet(), assumption));
     }
     output.push_str(&format!(
-        "\n\n{}:",
-        paint_section_title("Current setup-like task")
+        "\n\n{}",
+        paint_section_title("Current Setup-Like Task")
     ));
     let before_yaml = assist_preview_yaml(&proposal.before_value);
     output.push_str(&format!(
@@ -5278,8 +5207,8 @@ fn render_assist_normalize_text(
         stylize_yaml_preview(before_yaml.trim_end())
     ));
     output.push_str(&format!(
-        "\n\n{}:",
-        paint_section_title("Proposed canonical setup task")
+        "\n\n{}",
+        paint_section_title("Proposed Canonical Setup Task")
     ));
     let after_yaml = assist_preview_yaml(&proposal.after_value);
     output.push_str(&format!(
@@ -5292,21 +5221,7 @@ fn render_assist_normalize_text(
             .map(|command| format!("run `{}`", command))
             .collect::<Vec<_>>(),
     ));
-    if mode == "preview" {
-        if let Some(preview_next) = preview_next {
-            output.push_str(&format!("\n{} {}", paint_key("Apply:"), preview_next));
-        }
-    } else {
-        output.push_str(&format!(
-            "\n{} {}",
-            paint_key("Result:"),
-            format!(
-                "normalized {} into {}",
-                paint_backticked_code(&format!("tasks.{}", proposal.source_task)),
-                paint_backticked_code("tasks.setup")
-            )
-        ));
-    }
+    append_assist_preview_next(&mut output, preview_next);
     output
 }
 
@@ -18183,12 +18098,15 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
     let packs = starter_pack_catalog();
     match format {
         OutputFormat::Text => {
-            let mut stdout = format_command_header("INIT PACKS", "starter packs");
+            let mut stdout = format_command_header("INIT PACKS", "catalog");
+            stdout.push_str(&format!("\n\n{}\n", paint_section_title("Overview")));
             stdout.push_str(&format!(
-                "\n\n{} review the available starter packs, then preview one explicitly before writing it",
-                paint_next_header(),
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Use:"),
+                "review the available starter packs, then preview one explicitly before writing it"
             ));
-            stdout.push_str(&format!("\n\n{}:", paint_section_title("Available packs")));
+            stdout.push_str(&format!("\n\n{}", paint_section_title("Available Packs")));
             for entry in packs {
                 let command = entry.pack.command();
                 stdout.push_str(&format!(
@@ -20064,7 +19982,7 @@ pub fn detect(
                                 comparison_mode,
                             );
                         }
-                        stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+                        stdout.push_str(&format!("\n\n{}\n", paint_section_title("Contract")));
                         stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                         render_inference_section(
                             &mut stdout,
@@ -21054,19 +20972,20 @@ pub fn workspace_init(
                 match format {
                     OutputFormat::Text => {
                         let mut stdout = format_command_header(
-                            &format!("WORKSPACE {command_label} REWRITTEN"),
+                            &format!("WORKSPACE {command_label}"),
                             &compact_workspace_path(&workspace_path),
                         );
+                        stdout.push_str(&format!("\n\n{}\n", render_status_line("REWRITTEN")));
+                        stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
                         stdout.push_str(&format!(
-                            "\n\n{}",
-                            format_result_line(&format!(
-                                "wrote {}",
-                                paint_code(&compact_workspace_path(&workspace_path))
-                            ))
+                            "\n {}  Wrote {}",
+                            summary_bullet(),
+                            paint_code(&compact_workspace_path(&workspace_path))
                         ));
                         stdout.push_str(&format!(
-                            "\n{} {}",
-                            backup_label(),
+                            "\n {}  {} {}",
+                            summary_bullet(),
+                            paint_key("Backup:"),
                             paint_code(&compact_workspace_path(&backup_path))
                         ));
                         render_workspace_repo_rewrite_sections(
@@ -21125,7 +21044,7 @@ pub fn workspace_init(
                         stdout.push_str(&format_next_timeline(&[format!(
                             "run `{command_name} --merge {compact_root_display}` to apply additive repo entries",
                         )]));
-                        stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+                        stdout.push_str(&format!("\n\n{}\n", paint_section_title("Contract")));
                         stdout.push_str(&stylize_yaml_preview(merge_state.yaml.trim_end()));
                         render_workspace_init_merge_section(
                             &mut stdout,
@@ -21210,9 +21129,15 @@ pub fn workspace_init(
                     return match format {
                         OutputFormat::Text => {
                             let mut stdout = format_command_header(
-                                &format!("WORKSPACE {command_label} NO CHANGES"),
+                                &format!("WORKSPACE {command_label}"),
                                 &compact_workspace_path(&workspace_path),
                             );
+                            stdout.push_str(&format!("\n\n{}\n", render_status_line("NO CHANGES")));
+                            stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
+                            stdout.push_str(&format!(
+                                "\n {}  No additive workspace changes were needed",
+                                summary_bullet()
+                            ));
                             render_workspace_init_merge_section(
                                 &mut stdout,
                                 "Additive merge preview",
@@ -21242,9 +21167,15 @@ pub fn workspace_init(
                 match format {
                     OutputFormat::Text => {
                         let mut stdout = format_command_header(
-                            &format!("WORKSPACE {command_label} MERGED"),
+                            &format!("WORKSPACE {command_label}"),
                             &compact_workspace_path(&workspace_path),
                         );
+                        stdout.push_str(&format!("\n\n{}\n", render_status_line("MERGED")));
+                        stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
+                        stdout.push_str(&format!(
+                            "\n {}  Applied additive workspace entries",
+                            summary_bullet()
+                        ));
                         render_workspace_init_merge_section(
                             &mut stdout,
                             "Applied additions",
@@ -21611,7 +21542,7 @@ pub fn workspace_init(
                         compact_workspace_path(&workspace_path)
                     ));
                     stdout.push_str(&format_next_timeline(&next_steps));
-                    stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+                    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Contract")));
                     stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                     render_workspace_init_discovery_sections(
                         &mut stdout,
@@ -23635,7 +23566,13 @@ fn write_detected_merge(
     if selected_changes.is_empty() {
         return match format {
             OutputFormat::Text => {
-                let mut stdout = format_command_header("NO CHANGES", &compact_path_display);
+                let mut stdout = format_command_header("DETECT MERGE", &compact_path_display);
+                stdout.push_str(&format!("\n\n{}\n", render_status_line("NO CHANGES")));
+                stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
+                stdout.push_str(&format!(
+                    "\n {}  No high-confidence mergeable changes were found",
+                    summary_bullet()
+                ));
                 render_detect_comparison_section(
                     &mut stdout,
                     Some(&comparison),
@@ -23853,12 +23790,15 @@ fn write_detected_merge(
                     ));
                     next_steps.push(format!("run `{highlighted_up}`"));
                 }
-                let mut stdout = format_command_header("MERGED", &compact_path_display);
+                let mut stdout = format_command_header("DETECT MERGE", &compact_path_display);
+                stdout.push_str(&format!("\n\n{}\n", render_status_line("MERGED")));
+                stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
                 let applied_title = if selected_fields.is_empty() {
                     "Applied high-confidence additions"
                 } else {
                     "Applied selected high-confidence changes"
                 };
+                stdout.push_str(&format!("\n {}  {applied_title}", summary_bullet()));
                 render_detect_change_section(&mut stdout, applied_title, &applied);
                 render_detect_comparison_section(
                     &mut stdout,
@@ -24050,17 +23990,18 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     "ota up --dry-run",
                     &contract_path,
                 ));
-                let mut stdout = format_command_header("REWRITTEN", &compact_path_display);
+                let mut stdout = format_command_header("DETECT REWRITE", &compact_path_display);
+                stdout.push_str(&format!("\n\n{}\n", render_status_line("REWRITTEN")));
+                stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
                 stdout.push_str(&format!(
-                    "\n\n{}",
-                    format_result_line(&format!(
-                        "wrote {}",
-                        paint_code(&compact_contract_path(&contract_path))
-                    ))
+                    "\n {}  Wrote {}",
+                    summary_bullet(),
+                    paint_code(&compact_contract_path(&contract_path))
                 ));
                 stdout.push_str(&format!(
-                    "\n{} {}",
-                    backup_label(),
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Backup:"),
                     paint_code(&compact_contract_path(&backup_path))
                 ));
                 render_detect_comparison_section(
@@ -50922,7 +50863,7 @@ fn setup_failure_output_label(stderr: &str) -> &'static str {
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     let mut stdout = String::from("\n\n");
     if !receipt.steps.is_empty() {
-        stdout.push_str(&paint_section_title("Steps:"));
+        stdout.push_str(&paint_section_title("Steps"));
         for step in &receipt.steps {
             if step.order > 1 {
                 stdout.push_str("\n\n");
@@ -50964,42 +50905,30 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
-        paint("Errors:", "1;31"),
-        paint(
-            &receipt.summary.error_count.to_string(),
-            "1;38;2;255;255;255"
-        )
+        paint_key("Errors:"),
+        receipt.summary.error_count
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
-        paint("Warnings:", "1;33"),
-        paint(
-            &receipt.summary.warn_count.to_string(),
-            "1;38;2;255;255;255"
-        )
+        paint_key("Warnings:"),
+        receipt.summary.warn_count
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
-        paint("Info:", "1;36"),
-        paint(
-            &receipt.summary.info_count.to_string(),
-            "1;38;2;255;255;255"
-        )
+        paint_key("Info:"),
+        receipt.summary.info_count
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
-        paint("Steps:", "1;38;2;102;217;255"),
-        paint(
-            &receipt.summary.step_count.to_string(),
-            "1;38;2;255;255;255"
-        )
+        paint_key("Steps:"),
+        receipt.summary.step_count
     ));
 
     if !receipt.env_sources.is_empty() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Env sources:")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Env Sources")));
         for source in &receipt.env_sources {
             stdout.push_str(&format!(
                 "\n{} {} ({})",
@@ -51011,12 +50940,12 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     }
 
     if let Some(runtime) = receipt.runtime.as_ref() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Runtime:")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Runtime")));
         append_runtime_listener_lines(&mut stdout, runtime, "");
     }
 
     if !receipt.workloads.is_empty() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Workloads:")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Workloads")));
         for (task_name, runtime) in &receipt.workloads {
             stdout.push_str(&format!("\n{}", paint_key(task_name)));
             append_runtime_listener_lines(&mut stdout, runtime, "  ");
@@ -51024,7 +50953,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     }
 
     if let Some(logs) = receipt.logs.as_ref() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Logs:")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Logs")));
         stdout.push_str(&format!(
             "\n{} {}",
             paint_key("Dir:"),
@@ -51043,17 +50972,17 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     }
 
     if !receipt.policy.is_empty() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Policy:")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Policy")));
         for line in &receipt.policy {
             stdout.push_str(&format!("\n{}", line));
         }
     }
 
     if !receipt.blocked.is_empty() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Blocked:")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Blocked")));
         stdout.push_str(&format!(
             "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
+            summary_bullet(),
             paint_key("Items:"),
             receipt.blocked.join(", ")
         ));
@@ -51195,11 +51124,14 @@ fn render_up_json(
 }
 
 fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -> CommandOutput {
-    let mut stdout = format!(
-        "{}\n\n{}",
-        format_command_header("WORKSPACE TASKS", path),
-        render_readiness_status(true)
-    );
+    let mut stdout = format_command_header("WORKSPACE TASKS", path);
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Overview")));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Use:"),
+        "inventory of declared workspace tasks by repo"
+    ));
 
     for repo in repos {
         stdout.push_str(&format!(
@@ -51764,6 +51696,12 @@ fn render_status_line(status: &str) -> String {
         "NOT READY" => render_readiness_status(false),
         "VALID" => render_valid_status(),
         "RESOLVED" => render_resolved_status(),
+        "MERGED" | "REWRITTEN" => {
+            render_named_status(status.trim(), primary_success_marker(), "1;38;2;0;255;120")
+        }
+        "NO CHANGES" => {
+            render_named_status(status.trim(), primary_info_marker(), "1;38;2;102;245;255")
+        }
         "BLOCKED" | "UNRESOLVED" | "WARN" => {
             render_named_status(status.trim(), primary_warn_marker(), "1;38;2;255;235;59")
         }
@@ -51785,6 +51723,8 @@ fn render_status_word(status: &str) -> String {
         "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
         "VALID" => paint("VALID", "1;38;2;0;255;120"),
         "RESOLVED" => paint("RESOLVED", "1;38;2;0;255;120"),
+        "MERGED" | "REWRITTEN" => paint(trimmed, "1;38;2;0;255;120"),
+        "NO CHANGES" => paint(trimmed, "1;38;2;102;245;255"),
         "BLOCKED" | "UNRESOLVED" | "WARN" => paint(trimmed, "1;38;2;255;235;59"),
         "INVALID CONTRACT" | "UNREADABLE CONTRACT" | "MISSING CONTRACT" => {
             paint(trimmed, "1;38;2;255;122;122")
@@ -51817,40 +51757,65 @@ pub(crate) fn render_completion_success_text(
     completion_file: Option<&str>,
     next: &str,
 ) -> String {
-    let title = if plain_mode() {
-        String::from("COMPLETION")
-    } else {
-        paint("🦦  COMPLETION", "1")
+    let overview_status = match (status.map(str::trim), hook.map(str::trim)) {
+        (Some("removed"), _) => "RESOLVED",
+        (Some("missing" | "needs update" | "not configured"), _)
+        | (_, Some("missing" | "needs update" | "not configured")) => "WARN",
+        _ => "READY",
     };
 
-    let mut lines = vec![title, String::new()];
-    lines.push(format!("{} {}", paint_key("Shell:"), paint(shell, "1")));
+    let mut lines = vec![
+        format_command_header("COMPLETION", shell),
+        String::new(),
+        render_status_line(overview_status),
+        String::new(),
+        paint_section_title("Overview"),
+    ];
     if let Some(binary) = binary {
-        lines.push(format!("{} {}", paint_key("Binary:"), paint_code(binary)));
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Binary:"),
+            paint_code(binary)
+        ));
     }
-    lines.push(format!("{} {}", paint_key("File:"), paint_code(file)));
+    lines.push(format!(
+        " {}  {} {}",
+        summary_bullet(),
+        paint_key("File:"),
+        paint_code(file)
+    ));
     if let Some(completion_file) = completion_file {
         lines.push(format!(
-            "{} {}",
+            " {}  {} {}",
+            summary_bullet(),
             paint_key("Completion file:"),
             paint_code(completion_file)
         ));
     }
     if let Some(status) = status {
         lines.push(format!(
-            "{} {}",
+            " {}  {} {}",
+            summary_bullet(),
             paint_key("Status:"),
             render_completion_status_word(status)
         ));
     }
     if let Some(hook) = hook {
         lines.push(format!(
-            "{} {}",
+            " {}  {} {}",
+            summary_bullet(),
             paint_key("Hook:"),
             render_completion_status_word(hook)
         ));
     }
-    lines.push(format!("{} {}", paint_key("Next:"), next));
+    lines.push(format!(
+        " {}  {} {}",
+        summary_bullet(),
+        paint_key("Shell:"),
+        paint(shell, "1")
+    ));
+    lines.push(format_next_timeline(&[next.to_string()]));
     lines.join("\n")
 }
 
@@ -51882,13 +51847,6 @@ fn explain_why_key() -> String {
 
 fn explain_next_key() -> String {
     paint_next_key()
-}
-
-fn backup_label() -> String {
-    if plain_mode() {
-        return String::from("Backup:");
-    }
-    format!("{} {}", "𖦹", paint_key("Backup:"))
 }
 
 fn error_key(key: &str) -> String {
@@ -53256,24 +53214,30 @@ fn render_repo_receipt(
                 format_command_header("RECEIPT", text_path),
                 render_execution_receipt_text(&report.receipt)
             );
-            if let Some(archive_path) = report.archive_path.as_ref() {
-                stdout.push_str(&summary_detail_line(
-                    "Archive:",
-                    &compact_path(archive_path, "."),
-                ));
-                stdout.push('\n');
-            }
-            if let Some(promoted_baseline) = report.promoted_baseline.as_ref() {
-                stdout.push_str(&summary_detail_line(
-                    "Baseline:",
-                    &compact_path(Path::new(&promoted_baseline.path), "."),
-                ));
-                stdout.push('\n');
-                stdout.push_str(&summary_detail_line(
-                    "Promoted:",
-                    &promoted_baseline.promoted_at,
-                ));
-                stdout.push('\n');
+            if report.archive_path.is_some() || report.promoted_baseline.is_some() {
+                stdout.push_str(&format!("\n\n{}", paint_section_title("Archive")));
+                if let Some(archive_path) = report.archive_path.as_ref() {
+                    stdout.push_str(&format!(
+                        "\n {}  {} {}",
+                        summary_bullet(),
+                        paint_key("Archive:"),
+                        compact_path(archive_path, ".")
+                    ));
+                }
+                if let Some(promoted_baseline) = report.promoted_baseline.as_ref() {
+                    stdout.push_str(&format!(
+                        "\n {}  {} {}",
+                        summary_bullet(),
+                        paint_key("Baseline:"),
+                        compact_path(Path::new(&promoted_baseline.path), ".")
+                    ));
+                    stdout.push_str(&format!(
+                        "\n {}  {} {}",
+                        summary_bullet(),
+                        paint_key("Promoted:"),
+                        &promoted_baseline.promoted_at
+                    ));
+                }
             }
             stdout.push('\n');
 
