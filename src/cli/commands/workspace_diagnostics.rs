@@ -23,10 +23,21 @@
 use super::*;
 use crate::cli::commands::workspace_output::render_workspace_repo_findings_text;
 
+pub(crate) fn normalize_workspace_doctor_report(
+    mut report: crate::workspace::WorkspaceDoctorReport,
+) -> crate::workspace::WorkspaceDoctorReport {
+    for repo in &mut report.repos {
+        repo.primary_blocker = workspace_repo_primary_blocker(&repo.findings);
+    }
+
+    report
+}
+
 pub(crate) fn apply_workspace_doctor_filters(
     report: crate::workspace::WorkspaceDoctorReport,
     filters: &WorkspaceDoctorFilters,
 ) -> crate::workspace::WorkspaceDoctorReport {
+    let report = normalize_workspace_doctor_report(report);
     let mut repos = Vec::new();
 
     for mut repo in report.repos {
@@ -60,6 +71,7 @@ pub(crate) fn apply_workspace_doctor_filters(
             .findings
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error);
+        repo.primary_blocker = workspace_repo_primary_blocker(&repo.findings);
         repos.push(repo);
     }
 
@@ -135,6 +147,15 @@ pub(crate) fn render_workspace_doctor_text(
         if !repo.extensions.is_empty() {
             stdout.push_str(&render_extensions_text(&repo.extensions));
         }
+        if repo.findings.len() > 1
+            && let Some(primary_blocker) = repo.primary_blocker.as_ref()
+        {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Primary next:"),
+                compact_backticked_paths(&primary_blocker.next)
+            ));
+        }
         stdout.push_str(&render_workspace_repo_findings_text(&repo.findings));
     }
     stdout.push_str(&render_workspace_summary_text(&summary));
@@ -160,6 +181,28 @@ pub(crate) fn render_workspace_explain_text(
         format_command_header("WORKSPACE EXPLAIN", path),
         render_explain_status(report.ok, action_count)
     );
+    let actions = workspace_explain_actions(report);
+
+    if !actions.is_empty() {
+        stdout.push_str("\n\n");
+        stdout.push_str(&paint_section_title("Plan"));
+        for action in &actions {
+            stdout.push_str(&format!(
+                "\n {}. {} [{}] {}",
+                action.action.order,
+                paint(&action.repo, "1"),
+                if action.required { "required" } else { "optional" },
+                render_finding_summary(action.action.severity, &action.action.action_title)
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                finding_detail_key(action.action.severity, "Why:"),
+                compact_backticked_paths(&action.action.why)
+            ));
+            let next_steps = finding_next_steps(&action.action.next);
+            append_error_detail_section(&mut stdout, "Next:", &next_steps, None);
+        }
+    }
 
     for repo in &report.repos {
         stdout.push_str(&format!(
@@ -193,11 +236,7 @@ pub(crate) fn render_workspace_explain_text(
     }
     stdout.push_str(&render_workspace_explain_summary_text(
         &workspace_explain_summary(report),
-        report
-            .repos
-            .iter()
-            .map(|repo| explain_action_count(&repo.findings))
-            .sum(),
+        actions.len(),
     ));
 
     CommandOutput {
@@ -205,6 +244,21 @@ pub(crate) fn render_workspace_explain_text(
         stderr: None,
         exit_code: if report.ok { 0 } else { 1 },
     }
+}
+
+fn workspace_repo_primary_blocker(
+    findings: &[Finding],
+) -> Option<crate::workspace::WorkspaceRepoPrimaryBlocker> {
+    findings
+        .first()
+        .map(|finding| crate::workspace::WorkspaceRepoPrimaryBlocker {
+            severity: finding.severity,
+            summary: finding.summary.clone(),
+            why: finding.why.clone(),
+            next: finding.next.clone(),
+            provenance: finding.provenance(),
+            provenance_key: finding.provenance_key(),
+        })
 }
 
 pub(crate) fn render_check_summary_text(summary: &DoctorSummary) -> String {
@@ -442,6 +496,15 @@ pub(crate) fn render_workspace_check_text(
         }
         if !repo.extensions.is_empty() {
             stdout.push_str(&render_extensions_text(&repo.extensions));
+        }
+        if repo.findings.len() > 1
+            && let Some(primary_blocker) = repo.primary_blocker.as_ref()
+        {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Primary next:"),
+                compact_backticked_paths(&primary_blocker.next)
+            ));
         }
         stdout.push_str(&render_workspace_repo_findings_text(&repo.findings));
     }

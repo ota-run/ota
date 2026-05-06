@@ -2316,6 +2316,8 @@ Text output:
 - header: `WORKSPACE RUN <task> <path>`
 - status line: `READY` or `NOT READY`
 - per-repo status includes `required/optional`, task name, findings, and optional exit details
+- after `WORKSPACE RUN SUMMARY`, ota appends the same receipt-backed `Next:` lane used by repo-level
+  execution output when a safe follow-up exists
 
 JSON output:
 
@@ -2325,7 +2327,7 @@ JSON output:
 - `summary`
 - `receipt`
 - `repos`
-- each repo includes: `name`, `path`, `contract_path`, `required`, `ok`, `status`, `task`, `findings`, and optional `exit_code`/`stdout`/`stderr`
+- each repo includes: `name`, `path`, `contract_path`, `required`, `ok`, `status`, `task`, `findings`, additive `next` / `next_steps`, and optional `exit_code`/`stdout`/`stderr`
 
 ## `ota workspace check`
 
@@ -2354,6 +2356,8 @@ Text output:
   bottom of the report
 - each repo includes required/optional status, contract path, and findings rendered through the
   shared grouped finding UX
+- when one repo has several findings, ota also surfaces that repo's primary next action before the
+  grouped finding list so the operator does not have to choose the first move by hand
 - with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 
 JSON output:
@@ -2361,6 +2365,8 @@ JSON output:
 - `ok`
 - `path`
 - `summary` with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
+- each repo may include additive `primary_blocker` with that repo's current highest-priority
+  `severity`, `summary`, `why`, and `next`
 - `repos`
 
 ## `ota workspace doctor`
@@ -2408,6 +2414,8 @@ JSON output:
 - `ok`
 - `path`
 - `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
+- each repo may include additive `primary_blocker` with that repo's current highest-priority
+  `severity`, `summary`, `why`, and `next`
 - repo execution metadata may include env provenance for inherited workspace policy values
 - `repos`
 
@@ -2428,20 +2436,23 @@ ota workspace explain --repo api [PATH]
 Current behavior:
 
 - diagnoses the workspace first
-- turns each repo's grouped findings into an ordered remediation plan
-- preserves the same safest-next-action ordering inside each repo plan
+- exposes one top-level ordered workspace plan before the per-repo drill-in
+- keeps the same grouped remediation actions and detailed steps under each repo
 - stays read-only and deterministic
 - prints a summary with repo and step counts at the end
 
 Text output:
 
+- one top-level `Plan` section with explicit repo ownership for each grouped action
 - one section per workspace repo
 - ordered remediation `Plan` steps under each repo
 - an `Overview` count block at the end
 
 JSON output:
 
-- success: `ok`, `path`, `summary`, `repos`
+- success: `ok`, `path`, `summary`, top-level `actions`, and `repos`
+- each top-level action identifies the owning `repo`, `path`, `contract_path`, `required`, and the
+  grouped action fields
 - each repo report includes `summary`, grouped `actions`, and detailed `steps`
 - failure: `ok`, `path`, and either `errors` or `error`
 
@@ -2486,12 +2497,16 @@ Text output:
 - header: `WORKSPACE UP <path>`
 - status line: `READY` or `NOT READY`
 - each repo includes required/optional status, phase, findings, exit details, and captured stdout/stderr when present
+- after `WORKSPACE UP SUMMARY`, ota appends the same receipt-backed `Next:` lane used by repo-level
+  execution output when a safe follow-up exists
 
 JSON output:
 
 - `ok`
 - `path`
 - `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
+- `receipt` with additive `next_steps` when the workspace follow-up lane can be split into ordered machine-readable steps
+- each repo may include additive `next` and `next_steps` for that repo's current follow-up lane
 - `repos`
 
 Current non-goals:

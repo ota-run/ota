@@ -4,7 +4,7 @@
   "title": "ota workspace explain --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "summary", "repos"],
+  "required": ["ok", "path", "summary", "actions", "repos"],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
@@ -28,6 +28,40 @@
         "warn_count": { "type": "integer", "minimum": 0 },
         "info_count": { "type": "integer", "minimum": 0 },
         "step_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo",
+          "path",
+          "contract_path",
+          "required",
+          "order",
+          "action_key",
+          "action_title",
+          "severity",
+          "count",
+          "why",
+          "next"
+        ],
+        "properties": {
+          "repo": { "type": "string" },
+          "path": { "type": "string" },
+          "contract_path": { "type": "string" },
+          "required": { "type": "boolean" },
+          "order": { "type": "integer", "minimum": 1 },
+          "action_key": { "type": "string" },
+          "action_title": { "type": "string" },
+          "severity": { "enum": ["error", "warn", "info"] },
+          "count": { "type": "integer", "minimum": 1 },
+          "why": { "type": "string" },
+          "next": { "type": "string" },
+          "provenance": { "type": "string" }
+        }
       }
     },
     "repos": {

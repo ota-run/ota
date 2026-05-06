@@ -288,6 +288,8 @@ pub struct WorkspaceRepoDoctorReport {
     pub ok: bool,
     pub agent_verdict: DoctorVerdict,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_blocker: Option<WorkspaceRepoPrimaryBlocker>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<WorkspaceExecutionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning: Option<ProvisioningDiagnostics>,
@@ -296,6 +298,18 @@ pub struct WorkspaceRepoDoctorReport {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, ExtensionSpec>,
     pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceRepoPrimaryBlocker {
+    pub severity: FindingSeverity,
+    pub summary: String,
+    pub why: String,
+    pub next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -758,6 +772,7 @@ pub(crate) fn diagnose_workspace_repo(
             required: repo.required,
             ok: !repo.required,
             agent_verdict: DoctorVerdict::NotReady,
+            primary_blocker: None,
             execution: None,
             provisioning: None,
             adapter_bootstrap: None,
@@ -853,6 +868,7 @@ pub(crate) fn diagnose_workspace_repo(
         required: repo.required,
         ok,
         agent_verdict,
+        primary_blocker: None,
         execution,
         provisioning,
         adapter_bootstrap,
