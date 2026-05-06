@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- hardened the workspace lifecycle lane so `ota workspace diff` and `ota workspace status` now carry additive top-level and per-repo `next` / `next_steps` follow-up guidance, and successful `ota workspace refresh` previews now point back into the apply-and-recheck loop more explicitly
 - hardened execution failure routing for `ota run`: backend-configuration failures now point through `ota execution plan` before contract edits or retries, and declared env-source failures now point through `ota env --task <name>` before file repair and rerun
 - hardened execution failure routing for `ota up`: execution-plane precondition failures, backend startup failures, and provisioning failures now point through `ota execution plan` before execution-setting edits or retries
 - kept repo-level `ota up` execution receipts aligned across text and JSON by appending shared receipt follow-up guidance after the final `UP SUMMARY` block and carrying the same execution-plan-first lane onto repo-target `receipt.next`
