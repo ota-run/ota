@@ -10,6 +10,7 @@ Commands:
   explain      Explain readiness findings as an ordered remediation plan
   up           Prepare the repo for use with minimal prior knowledge
   run          Run a validated task from an Ota contract
+  assist       Propose reviewed contract mutations from bounded Ota intents
   init         Create a starter Ota contract for a repo that does not yet have one
   detect       Infer a starting contract from repo state
   validate     Validate an Ota contract
@@ -45,7 +46,8 @@ Options:
 Start here:
   diagnose repo readiness      ota doctor
   preview inferred contract    ota detect --dry-run .
-  review a starter contract    ota init --dry-run
+  compare exact starter text   ota detect --contract .
+  review starter write path    ota init --dry-run
   explain current blockers     ota explain
   preview repo preparation     ota up --dry-run
   prepare the repo             ota up

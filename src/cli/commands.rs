@@ -21851,8 +21851,8 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     "ota validate",
                     &contract_path,
                 ));
-                let highlighted_doctor = paint_code(&command_for_repo_contract_target(
-                    "ota doctor",
+                let highlighted_up = paint_code(&command_for_repo_contract_target(
+                    "ota up --dry-run",
                     &contract_path,
                 ));
                 let mut stdout = format!(
@@ -21861,7 +21861,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     format_result_line(&format!("wrote {highlighted_written}")),
                     format_next_timeline(&[
                         format!("run `{highlighted_validate}`"),
-                        format!("run `{highlighted_doctor}`"),
+                        format!("run `{highlighted_up}`"),
                     ])
                 );
                 render_inference_section(
@@ -22226,6 +22226,40 @@ fn write_detected_merge(
             OutputFormat::Text => {
                 let post_write_comparison =
                     compare_detected_contract(&contract_path, &report, DetectRemovalScope::Drift);
+                let highlighted_validate = paint_code(&command_for_repo_contract_target(
+                    "ota validate",
+                    &contract_path,
+                ));
+                let mut next_steps = vec![format!("run `{highlighted_validate}`")];
+                if let Some(comparison) = post_write_comparison.as_ref() {
+                    if !comparison.changes.is_empty() {
+                        let highlighted_merge_review = paint_code(&command_for_repo_contract_target(
+                            "ota detect --merge --dry-run",
+                            &contract_path,
+                        ));
+                        next_steps.push(format!(
+                            "run `{highlighted_merge_review}` to review remaining add-only detected changes"
+                        ));
+                    }
+                    if !comparison.removals.is_empty() {
+                        let highlighted_rewrite_review = paint_code(
+                            &command_for_repo_contract_target(
+                                "ota detect --rewrite --dry-run",
+                                &contract_path,
+                            ),
+                        );
+                        next_steps.push(format!(
+                            "run `{highlighted_rewrite_review}` to review rewrite-only drift"
+                        ));
+                    }
+                }
+                if next_steps.len() == 1 {
+                    let highlighted_up = paint_code(&command_for_repo_contract_target(
+                        "ota up --dry-run",
+                        &contract_path,
+                    ));
+                    next_steps.push(format!("run `{highlighted_up}`"));
+                }
                 let mut stdout = format_command_header("MERGED", &compact_path_display);
                 let applied_title = if selected_fields.is_empty() {
                     "Applied high-confidence additions"
@@ -22238,6 +22272,7 @@ fn write_detected_merge(
                     post_write_comparison.as_ref(),
                     DetectComparisonMode::MergeResult,
                 );
+                stdout.push_str(&format_next_timeline(&next_steps));
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => {
@@ -22414,6 +22449,14 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
+                let highlighted_validate = paint_code(&command_for_repo_contract_target(
+                    "ota validate",
+                    &contract_path,
+                ));
+                let highlighted_up = paint_code(&command_for_repo_contract_target(
+                    "ota up --dry-run",
+                    &contract_path,
+                ));
                 let mut stdout = format_command_header("REWRITTEN", &compact_path_display);
                 stdout.push_str(&format!(
                     "\n\n{}",
@@ -22432,6 +22475,10 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     comparison.as_ref(),
                     DetectComparisonMode::RewriteResult,
                 );
+                stdout.push_str(&format_next_timeline(&[
+                    format!("run `{highlighted_validate}`"),
+                    format!("run `{highlighted_up}`"),
+                ]));
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -24123,8 +24170,8 @@ fn render_init(
                         "ota validate",
                         &contract_path,
                     ));
-                    let highlighted_doctor = paint_code(&command_for_repo_contract_target(
-                        "ota doctor",
+                    let highlighted_up = paint_code(&command_for_repo_contract_target(
+                        "ota up --dry-run",
                         &contract_path,
                     ));
                     let mut stdout = format!(
@@ -24180,7 +24227,7 @@ fn render_init(
                     }
                     stdout.push_str(&format_next_timeline(&[
                         format!("run `{highlighted_validate}`"),
-                        format!("run `{highlighted_doctor}`"),
+                        format!("run `{highlighted_up}`"),
                     ]));
                     render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
                     CommandOutput::success(stdout)
@@ -24221,6 +24268,8 @@ fn render_init(
             } else {
                 format!("ota init {}", compact_root_display)
             });
+            let highlighted_detect_contract =
+                paint_code(&format!("ota detect --contract {}", compact_root_display));
             let mut stdout = format!(
                 "{}\n{}",
                 format_command_header("INIT PREVIEW", &compact_root_display),
@@ -24242,11 +24291,20 @@ fn render_init(
                 ));
                 render_init_pack_advisory_text(&mut stdout, pack_advisory.as_ref());
             }
-            stdout.push_str(&format!(
-                "\n{} review this starter contract, edit it if needed, then run `{}`",
-                paint_next_header(),
-                highlighted_init,
-            ));
+            if pack.is_some() || mode == "blank" {
+                stdout.push_str(&format!(
+                    "\n{} review this starter contract, edit it if needed, then run `{}`",
+                    paint_next_header(),
+                    highlighted_init,
+                ));
+            } else {
+                stdout.push_str(&format_next_timeline(&[
+                    format!(
+                        "run `{highlighted_detect_contract}` to compare the exact detector-led starter text"
+                    ),
+                    format!("run `{highlighted_init}` to write this starter contract"),
+                ]));
+            }
             stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
             stdout.push_str(&stylize_yaml_preview(review_yaml.trim_end()));
             if mode == "blank" {
@@ -24356,9 +24414,17 @@ fn detect_preview_next_steps(
     match mode {
         DetectComparisonMode::Preview => {
             if comparison.is_none() {
-                vec![format!(
-                    "run `ota detect --write {root_display}` to write a high-confidence contract"
-                )]
+                vec![
+                    format!(
+                        "run `ota detect --contract {root_display}` to inspect the exact detected starter contract"
+                    ),
+                    format!(
+                        "run `ota init --dry-run {root_display}` to compare the conservative starter contract path"
+                    ),
+                    format!(
+                        "run `ota detect --write {root_display}` to write a high-confidence contract"
+                    ),
+                ]
             } else if has_removals {
                 vec![
                     format!(

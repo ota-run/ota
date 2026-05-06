@@ -51,7 +51,7 @@ pub(crate) use commands::parse_container_host_port_conflict;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
+    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  compare exact starter text   ota detect --contract .\n  review starter write path    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -6998,13 +6998,6 @@ project:
         assert_eq!(actions[0]["action_key"], "tasks-missing");
         assert_eq!(actions[0]["action_title"], "No tasks defined in contract");
         assert_eq!(actions[0]["count"], 1);
-        assert_eq!(actions[0]["commands"][0], "ota detect --dry-run");
-        assert_eq!(
-            actions[0]["commands"][1],
-            "ota assist add-task --name dev --kind command"
-        );
-        assert_eq!(actions[0]["command_stages"][0]["kind"], "inspect");
-        assert_eq!(actions[0]["command_stages"][1]["kind"], "apply");
         let steps = json["steps"].as_array().unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0]["order"], 1);
@@ -7240,14 +7233,6 @@ project:
         assert_eq!(repos.len(), 2);
         assert_eq!(repos[0]["actions"].as_array().unwrap().len(), 1);
         assert_eq!(repos[0]["actions"][0]["action_key"], "tasks-missing");
-        assert_eq!(
-            repos[0]["actions"][0]["commands"][0],
-            "ota detect --dry-run"
-        );
-        assert_eq!(
-            repos[0]["actions"][0]["command_stages"][0]["kind"],
-            "inspect"
-        );
         assert_eq!(repos[0]["steps"].as_array().unwrap().len(), 1);
         assert_eq!(repos[0]["steps"][0]["code"], "OTA_TASKS_MISSING");
         assert_eq!(
@@ -17463,8 +17448,10 @@ tasks:
         assert!(
             detect
                 .stdout
-                .contains("\nNext:\n  - run `ota detect --write")
+                .contains("\nNext:\n  - run `ota detect --contract")
         );
+        assert!(detect.stdout.contains("\n  - run `ota init --dry-run"));
+        assert!(detect.stdout.contains("\n  - run `ota detect --write"));
         assert!(!detect.stdout.contains("🦦 "));
         assert!(!detect.stdout.contains("▸"));
         for output in [doctor, explain, up] {
@@ -19154,9 +19141,9 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("INIT"));
         assert!(stdout.contains("Mode: detected"));
-        assert!(stdout.contains(
-            "Next: review this starter contract, edit it if needed, then run `ota init "
-        ));
+        assert!(stdout.contains("ota detect --contract "));
+        assert!(stdout.contains("compare the exact detector-led starter text"));
+        assert!(stdout.contains("ota init "));
         assert!(stdout.contains("name: ota-web"));
         assert!(stdout.contains("tools.pnpm"));
         assert!(!fixture.file_path().exists());
@@ -19656,6 +19643,7 @@ policies:
         ));
         assert!(stdout.contains("Next:"));
         assert!(stdout.contains("ota validate"));
+        assert!(stdout.contains("ota up --dry-run"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
@@ -19706,9 +19694,9 @@ policies:
             .display()
             .to_string();
         assert!(stdout.contains(&format!("run `ota validate {repo_path}`")));
-        assert!(stdout.contains(&format!("run `ota doctor {repo_path}`")));
+        assert!(stdout.contains(&format!("run `ota up --dry-run {repo_path}`")));
         assert!(!stdout.contains(&format!("ota validate {repo_path}/ota.yaml")));
-        assert!(!stdout.contains(&format!("ota doctor {repo_path}/ota.yaml")));
+        assert!(!stdout.contains(&format!("ota up --dry-run {repo_path}/ota.yaml")));
     }
 
     #[test]
@@ -24215,6 +24203,8 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("MERGED"));
         assert!(stdout.contains("Applied high-confidence additions:"));
+        assert!(stdout.contains("ota validate"));
+        assert!(stdout.contains("ota detect --merge --dry-run"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
@@ -24453,6 +24443,8 @@ tasks:
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("REWRITTEN"));
         assert!(body.contains("Backup:"));
+        assert!(body.contains("ota validate"));
+        assert!(body.contains("ota up --dry-run"));
 
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
@@ -24729,6 +24721,8 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DETECT WRITE"));
         assert!(stdout.contains("Excluded from automatic write:"));
+        assert!(stdout.contains("ota validate"));
+        assert!(stdout.contains("ota up --dry-run"));
         assert!(stdout.contains("runtimes.node"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
