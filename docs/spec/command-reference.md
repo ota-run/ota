@@ -1044,11 +1044,17 @@ ota doctor --member api --member web --json [PATH]
 - Current behavior:
 
 - when no contract exists, inspects repo and host signals and reports the best next step instead of only telling the user to create a contract
+- the human summary now makes the top-level state explicit as `READY`, `READY WITH WARNINGS`, or `BLOCKED`
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
 - prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
+- when findings are warning-only, still surfaces one highest-priority primary finding before grouped detail so the next safe action is visible without scanning the whole report
+- environment blockers now point through `ota env` first so operators can inspect precedence before changing shell values, policy env, or declared sources
+- unverifiable required services now route into `ota assist declare-readiness` when only the probe is missing, or `ota assist declare-service` when the managed service shape itself still lacks a start path
+- missing-file precondition failures now point to `ota up` / `ota run setup` when `tasks.setup` already exists, or to `ota assist wire-setup` when the repo still needs a contract-first setup path
+- when a contract has no tasks, doctor now keeps that path preview-first too: it suggests `ota detect --dry-run` before any detect write, while still offering `ota assist add-task` when the right fix is clearly one explicit task
 - checks configured env requirements, declared checks, and service healthchecks in native mode
 - checks required execution backends for the selected `--mode` and resolved contexts
 - `--mode native` diagnoses host/native readiness; `--mode container` diagnoses selected container context requirements
@@ -1057,10 +1063,10 @@ ota doctor --member api --member web --json [PATH]
 - `ssh` / `tsh` targets without `user@host`
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
-- for contract-backed repos, when repo-local runtime state is git-backed but `.ota/state/` is not ignored, reports a fixable repo-hygiene finding
+- for contract-backed repos, when Ota-owned local artifacts are git-backed but `.ota/state/` or `.ota/receipts/` is not ignored, reports a fixable repo-hygiene finding
 - `--fix --dry-run` previews deterministic safe fixes without writing files
-- `--fix` applies only supported deterministic safe fixes for repos with a valid `ota.yaml`; current scope is `.gitignore` hygiene for `.ota/state/`
-- when no `ota.yaml` exists yet, `ota doctor --fix` does not propose repo-hygiene mutations and instead points operators to `ota detect --dry-run` or `ota init --bootstrap`
+- `--fix` applies only supported deterministic safe fixes for repos with a valid `ota.yaml`; current scope is `.gitignore` hygiene for `.ota/state/` and `.ota/receipts/`
+- when no `ota.yaml` exists yet, `ota doctor --fix` does not propose repo-hygiene mutations and instead points operators to preview-first onboarding with `ota detect --dry-run` or `ota init --dry-run`
 - in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
 - in container mode, ota also uses safe non-mutating installability probes for the shipped mutating provisioning adapters when policy-backed provisioning is declared
 - in container mode, `apt` findings distinguish pinned-version unavailable, package unavailable, and apt-index/source failures when the backend evidence supports that classification
