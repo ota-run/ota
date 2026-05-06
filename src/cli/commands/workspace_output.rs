@@ -496,8 +496,12 @@ mod tests {
                 findings: vec![Finding {
                     severity: FindingSeverity::Warn,
                     summary: String::from("Repo drift detected: api"),
-                    why: String::from("workspace repo `api` is 1 commit(s) ahead and 2 commit(s) behind of `origin/main`"),
-                    next: String::from("run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync"),
+                    why: String::from(
+                        "workspace repo `api` is 1 commit(s) ahead and 2 commit(s) behind of `origin/main`",
+                    ),
+                    next: String::from(
+                        "run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync",
+                    ),
                 }],
                 next: Some(String::from(
                     "run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync",
@@ -539,7 +543,8 @@ mod tests {
         assert!(text.contains("ota workspace status"));
         assert!(text.contains("Target: origin/main (declared source ref)"));
 
-        let json = render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
+        let json =
+            render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
             value["next_steps"][0],
@@ -579,7 +584,9 @@ mod tests {
                     severity: FindingSeverity::Error,
                     summary: String::from("Missing setup task"),
                     why: String::from("repo is not ready"),
-                    next: String::from("run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution"),
+                    next: String::from(
+                        "run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution",
+                    ),
                 }],
                 next: Some(String::from(
                     "run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution",
@@ -685,7 +692,8 @@ mod tests {
         assert!(text.contains("Missing contract: 1"));
         assert!(text.contains("Target unavailable: 1"));
 
-        let json = render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
+        let json =
+            render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["summary"]["missing_contract_count"], 1);
         assert_eq!(value["summary"]["target_unavailable_count"], 1);
@@ -1535,7 +1543,10 @@ fn render_workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> String {
             section_list_row(
                 &summary_bullet(),
                 &paint("Missing repo:", "1;38;2;255;80;80"),
-                &paint(&summary.missing_repo_count.to_string(), "1;38;2;255;255;255"),
+                &paint(
+                    &summary.missing_repo_count.to_string(),
+                    "1;38;2;255;255;255"
+                ),
             )
         ));
     }
@@ -1697,7 +1708,10 @@ fn render_workspace_status_summary(summary: &WorkspaceStatusSummary) -> String {
             section_list_row(
                 &summary_bullet(),
                 &paint("Missing repo:", "1;38;2;255;80;80"),
-                &paint(&summary.missing_repo_count.to_string(), "1;38;2;255;255;255"),
+                &paint(
+                    &summary.missing_repo_count.to_string(),
+                    "1;38;2;255;255;255"
+                ),
             )
         ));
     }

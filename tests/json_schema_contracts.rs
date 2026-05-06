@@ -825,7 +825,10 @@ fn workspace_diff_schema_includes_drift_semantics_and_followup_lanes() {
     let summary = &schema["properties"]["summary"]["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
 
-    assert_eq!(schema["properties"]["mode"], serde_json::json!({ "const": "diff" }));
+    assert_eq!(
+        schema["properties"]["mode"],
+        serde_json::json!({ "const": "diff" })
+    );
     assert!(summary.get("missing_repo_count").is_some());
     assert!(summary.get("missing_contract_count").is_some());
     assert!(summary.get("target_unavailable_count").is_some());

@@ -697,7 +697,9 @@ mod tests {
                     extensions: BTreeMap::new(),
                     findings: vec![Finding {
                         severity: FindingSeverity::Error,
-                        summary: String::from("Required environment variable `DATABASE_URL` is missing"),
+                        summary: String::from(
+                            "Required environment variable `DATABASE_URL` is missing",
+                        ),
                         why: String::from("the current precedence did not resolve a value"),
                         next: String::from(
                             "run `ota env` to inspect the current precedence, then rerun `ota doctor`",
