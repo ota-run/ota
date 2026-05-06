@@ -27,6 +27,7 @@
 ## Unreleased
 
 - improved no-contract `ota doctor` signal formatting in rich mode so the detected values now stand out visually without changing the labels, plain output, or JSON behavior
+- redesigned `ota agents` when the repo contract lacks `agent`: preview mode now reports `Agent contract missing` as a blocked boundary-sync diagnosis with inferred repo signals and inferred starter agent boundaries, and `ota agents --write` now refuses until the contract declares a real agent boundary
 - improved no-contract `ota doctor` output so it now reports `Contract missing`, shows trustworthy repo signals under `What Ota can tell so far`, and uses the compare-first onboarding lane with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
 - expanded no-contract `ota doctor` signal coverage for Node/package-manager repos so it now surfaces repo type, detected package manager, likely runnable tasks, and host tool availability from existing detector signals
 - expanded no-contract `ota doctor` signal coverage across the broader detected repo families too: Python, Go, Java, .NET, PHP, Ruby, Elixir, Scala, and Swift repos now surface repo-type, dependency/build-tool, and host-tool hints from the same detector truth instead of falling back to an empty signal section
