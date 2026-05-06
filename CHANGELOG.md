@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- `ota explain` grouped actions now expose optional staged `commands` when ota can name a concrete execution lane directly, and text output now shows that command sequence for multi-step preview/apply paths instead of hiding it only inside prose `Next:` text
+- `ota explain` now orders grouped remediation actions deliberately instead of inheriting raw finding order, so preview-first and contract-authoring fixes surface ahead of later runtime follow-ups when several blockers exist at once
+- aligned `ota explain --json` and `ota workspace explain --json` with the ordered remediation story shown in text by adding grouped `actions` alongside detailed finding-level `steps`, so machine consumers get the same stable first-action plan without losing per-finding detail
 - expanded the safe `doctor --fix` repo-hygiene surface so the same `.gitignore` fix path now protects both `.ota/state/` and `.ota/receipts/` as Ota-owned local artifacts, with matching init/detect write behavior and updated doctor messaging
 - hardened the doctor-first onboarding lane: `ota doctor` now renders the repo state as `READY`, `READY WITH WARNINGS`, or `BLOCKED`, warning-only reports still single out one highest-priority primary finding, ready repos no longer get told to rerun `ota up`, contractless guidance is preview-first (`ota detect --dry-run` / `ota init --dry-run`), and deterministic next steps now point into `ota assist` where Ota can safely author the missing contract surface
 - tightened doctor's service guidance further: unverifiable required services now route into `ota assist declare-readiness` when only the probe is missing, or `ota assist declare-service` when the managed service declaration still lacks a start path and wider service shape

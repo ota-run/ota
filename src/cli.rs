@@ -6993,6 +6993,18 @@ project:
         assert_eq!(json["summary"]["warn_count"], 0);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["summary"]["step_count"], 1);
+        let actions = json["actions"].as_array().unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["action_key"], "tasks-missing");
+        assert_eq!(actions[0]["action_title"], "No tasks defined in contract");
+        assert_eq!(actions[0]["count"], 1);
+        assert_eq!(actions[0]["commands"][0], "ota detect --dry-run");
+        assert_eq!(
+            actions[0]["commands"][1],
+            "ota assist add-task --name dev --kind command"
+        );
+        assert_eq!(actions[0]["command_stages"][0]["kind"], "inspect");
+        assert_eq!(actions[0]["command_stages"][1]["kind"], "apply");
         let steps = json["steps"].as_array().unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0]["order"], 1);
@@ -7226,6 +7238,16 @@ project:
         assert_eq!(json["summary"]["step_count"], 2);
         let repos = json["repos"].as_array().unwrap();
         assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0]["actions"].as_array().unwrap().len(), 1);
+        assert_eq!(repos[0]["actions"][0]["action_key"], "tasks-missing");
+        assert_eq!(
+            repos[0]["actions"][0]["commands"][0],
+            "ota detect --dry-run"
+        );
+        assert_eq!(
+            repos[0]["actions"][0]["command_stages"][0]["kind"],
+            "inspect"
+        );
         assert_eq!(repos[0]["steps"].as_array().unwrap().len(), 1);
         assert_eq!(repos[0]["steps"][0]["code"], "OTA_TASKS_MISSING");
         assert_eq!(

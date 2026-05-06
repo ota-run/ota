@@ -4,7 +4,7 @@
   "title": "ota explain --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "summary", "steps"],
+  "required": ["ok", "path", "summary", "actions", "steps"],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
@@ -19,7 +19,45 @@
         "step_count": { "type": "integer", "minimum": 0 }
       }
     },
-        "steps": {
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["order", "action_key", "action_title", "severity", "count", "why", "next"],
+        "properties": {
+          "order": { "type": "integer", "minimum": 1 },
+          "action_key": { "type": "string" },
+          "action_title": { "type": "string" },
+          "severity": { "enum": ["error", "warn", "info"] },
+          "count": { "type": "integer", "minimum": 1 },
+          "why": { "type": "string" },
+          "next": { "type": "string" },
+          "commands": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "command_stages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "label", "commands"],
+              "properties": {
+                "kind": { "enum": ["inspect", "apply", "execute", "verify"] },
+                "label": { "type": "string" },
+                "commands": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          },
+          "provenance": { "type": "string" }
+        }
+      }
+    },
+    "steps": {
       "type": "array",
       "items": {
         "type": "object",
