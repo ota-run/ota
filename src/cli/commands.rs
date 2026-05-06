@@ -782,10 +782,17 @@ fn render_missing_contract_guidance(
             ]));
         }
         MissingContractContext::Workspace => {
-            out.push_str(&format_error_next_timeline(&[format!(
-                "run {} to create a starter workspace",
-                paint_code("`ota workspace init`")
-            )]));
+            let workspace_target = where_label;
+            out.push_str(&format_error_next_timeline(&[
+                format!(
+                    "run {} to preview the current workspace draft",
+                    paint_code(&format!("`ota workspace detect --dry-run {workspace_target}`"))
+                ),
+                format!(
+                    "or run {} to preview the conservative starter path",
+                    paint_code(&format!("`ota workspace init --dry-run {workspace_target}`"))
+                ),
+            ]));
         }
     }
 }
@@ -19146,6 +19153,23 @@ pub enum WorkspaceScaffoldSurface {
     Detect,
 }
 
+fn workspace_scaffold_write_steps(workspace_path: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "run `{}`",
+            command_for_workspace("ota workspace validate", workspace_path)
+        ),
+        format!(
+            "run `{}`",
+            command_for_workspace("ota workspace up --dry-run", workspace_path)
+        ),
+        format!(
+            "run `{}` when you are ready to prepare the workspace",
+            command_for_workspace("ota workspace up", workspace_path)
+        ),
+    ]
+}
+
 pub fn workspace_init(
     path: Option<&Path>,
     write: bool,
@@ -19515,6 +19539,9 @@ pub fn workspace_init(
                             &rewrite_result.rewritten,
                             &rewrite_result.skipped,
                         );
+                        stdout.push_str(&format_next_timeline(&workspace_scaffold_write_steps(
+                            &workspace_path,
+                        )));
                         CommandOutput::success(stdout)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json_value(json!({
@@ -19698,6 +19725,9 @@ pub fn workspace_init(
                             &draft.included,
                             &draft.missing_contract,
                         );
+                        stdout.push_str(&format_next_timeline(&workspace_scaffold_write_steps(
+                            &workspace_path,
+                        )));
                         CommandOutput::success(stdout)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json_value(json!({
@@ -19827,6 +19857,9 @@ pub fn workspace_init(
                                 String::from(
                                     "or preview repo contracts with `ota detect --dry-run <repo-path>`",
                                 ),
+                                format!(
+                                    "then compare `ota workspace detect --dry-run {compact_root_display}` with `ota workspace init --dry-run {compact_root_display}` before writing a workspace contract"
+                                ),
                             ]),
                         )
                     } else if matches!(surface, WorkspaceScaffoldSurface::Init) {
@@ -19842,6 +19875,9 @@ pub fn workspace_init(
                                 String::from(
                                     "or preview repo contracts with `ota detect --dry-run <repo-path>`",
                                 ),
+                                format!(
+                                    "then compare `ota workspace detect --dry-run {compact_root_display}` with `ota workspace init --dry-run {compact_root_display}` before writing a workspace contract"
+                                ),
                             ]),
                         )
                     } else {
@@ -19852,6 +19888,9 @@ pub fn workspace_init(
                                 String::from("create repo contracts with `ota init <repo-path>`"),
                                 String::from(
                                     "or preview repo contracts with `ota detect --dry-run <repo-path>`",
+                                ),
+                                format!(
+                                    "then compare `ota workspace detect --dry-run {compact_root_display}` with `ota workspace init --dry-run {compact_root_display}` before writing a workspace contract"
                                 ),
                             ]),
                         )
@@ -19945,10 +19984,6 @@ pub fn workspace_init(
 
                 match format {
                     OutputFormat::Text => {
-                        let next_validate =
-                            command_for_workspace("ota workspace validate", &workspace_path);
-                        let next_doctor =
-                            command_for_workspace("ota workspace doctor", &workspace_path);
                         let mut stdout = format_command_header(
                             &format!("WORKSPACE {command_label} WRITE"),
                             &compact_root_display,
@@ -19968,10 +20003,9 @@ pub fn workspace_init(
                                 &auto_provision.skipped,
                             );
                         }
-                        stdout.push_str(&format_next_timeline(&[
-                            format!("run `{next_validate}`"),
-                            format!("run `{next_doctor}`"),
-                        ]));
+                        stdout.push_str(&format_next_timeline(&workspace_scaffold_write_steps(
+                            &workspace_path,
+                        )));
                         render_workspace_init_discovery_sections(
                             &mut stdout,
                             &draft.included,
@@ -20026,10 +20060,22 @@ pub fn workspace_init(
                             format!("{command_name} --write {compact_root_display}")
                         }
                     };
-                    stdout.push_str(&format_next_timeline(&[format!(
+                    let mut next_steps = Vec::new();
+                    if !workspace_path.exists() {
+                        match surface {
+                            WorkspaceScaffoldSurface::Init => next_steps.push(format!(
+                                "run `ota workspace detect --dry-run {compact_root_display}` to compare the detector-led workspace draft"
+                            )),
+                            WorkspaceScaffoldSurface::Detect => next_steps.push(format!(
+                                "run `ota workspace init --dry-run {compact_root_display}` to compare the conservative starter path"
+                            )),
+                        }
+                    }
+                    next_steps.push(format!(
                         "run `{write_command}` to write `{}`",
                         compact_workspace_path(&workspace_path)
-                    )]));
+                    ));
+                    stdout.push_str(&format_next_timeline(&next_steps));
                     stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
                     stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                     render_workspace_init_discovery_sections(
@@ -42939,7 +42985,7 @@ fn build_workspace_init_draft(workspace_root: &Path) -> Result<WorkspaceInitDraf
                 String::from("create repo contracts with `ota init <repo-path>`"),
                 String::from("or preview repo contracts with `ota detect --dry-run <repo-path>`"),
                 String::from(
-                    "then run `ota workspace detect --write` or `ota workspace init` after repo contracts exist"
+                    "then compare `ota workspace detect --dry-run <workspace-root>` with `ota workspace init --dry-run <workspace-root>` before writing a workspace contract"
                 ),
             ]),
         ));

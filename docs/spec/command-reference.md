@@ -2058,18 +2058,21 @@ Current behavior:
 - infers workspace repos by scanning common local repo roots (top-level plus containers like `apps/`, `services/`, `repos/`, `packages/`)
 - includes only repos that already have `ota.yaml`
 - skips candidate repos that do not yet have `ota.yaml`
+- when no `ota.workspace.yaml` exists yet, preview-first onboarding is compare-first: review `ota workspace detect --dry-run` against `ota workspace init --dry-run` before any first write
 - `ota workspace init` writes `ota.workspace.yaml` by default
 - `ota workspace init --bootstrap` can auto-provision missing repo contracts from detected repo signals before writing `ota.workspace.yaml`
 - `--write` remains a compatibility alias for the write path
 - writes `ota.workspace.yaml`
 - refuses to overwrite an existing `ota.workspace.yaml`
-- when no repos are available to bootstrap, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
+- when no repos are available to bootstrap, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, then back to `ota workspace detect --dry-run` and `ota workspace init --dry-run` before any workspace write
 - when overwrite is refused, points to `ota workspace validate` and `ota workspace doctor`
+- successful writes now hand directly to `ota workspace validate`, `ota workspace up --dry-run`, and `ota workspace up`
 - supports JSON for machine-readable write outcomes
 
 Text output:
 
-- write: `WORKSPACE INIT WRITE <path>`
+- preview: compare-first `Next:` guidance into `ota workspace detect --dry-run` or the explicit write path
+- write: `WORKSPACE INIT WRITE <path>` with the same post-write lane into `ota workspace validate`, `ota workspace up --dry-run`, and `ota workspace up`
 
 JSON output:
 
@@ -2097,13 +2100,15 @@ Current behavior:
 - includes only repos that already have `ota.yaml`
 - skips candidate repos that do not yet have `ota.yaml`
 - default mode is preview
+- when no `ota.workspace.yaml` exists yet, preview-first onboarding is compare-first: review `ota workspace detect --dry-run` against `ota workspace init --dry-run` before `ota workspace detect --write`
 - `--write` writes `ota.workspace.yaml` only for first contract creation
 - `--merge` requires an existing `ota.workspace.yaml` and adds only missing discovered repo entries under `repos`
 - merge is additive-only and does not overwrite existing repo entries
 - `--rewrite --dry-run` previews full replacement of an existing `ota.workspace.yaml`
 - `--rewrite --yes` fully replaces existing `ota.workspace.yaml` with regenerated detected workspace contract
 - rewrite creates a timestamped backup file (`ota.workspace.yaml.bak-<timestamp>`) before writing
-- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
+- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, then back to `ota workspace detect --dry-run` and `ota workspace init --dry-run` before any workspace write
+- successful writes, merges, and rewrites now hand directly to `ota workspace validate`, `ota workspace up --dry-run`, and `ota workspace up`
 - supports JSON for machine-readable preview/write outcomes
 
 ## `ota workspace validate`

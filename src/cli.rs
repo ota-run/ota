@@ -30125,10 +30125,67 @@ project:
         assert!(body.contains("workspace init could not find any repos to bootstrap"));
         assert!(body.contains("create repo contracts with `ota init <repo-path>`"));
         assert!(body.contains("preview repo contracts with `ota detect --dry-run <repo-path>`"));
-        assert!(body.contains(
+        assert!(body.contains("compare `ota workspace detect --dry-run"));
+        assert!(body.contains("`ota workspace init --dry-run"));
+        assert!(body.contains("before writing a workspace contract"));
+        assert!(!body.contains(
             "then run `ota workspace detect --write` or `ota workspace init` after repo contracts exist"
         ));
         assert!(body.contains("Next:"));
+    }
+
+    #[test]
+    fn workspace_detect_dry_run_points_to_init_dry_run_before_first_write() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE DETECT PREVIEW"));
+        assert!(body.contains("ota workspace init --dry-run"));
+        assert!(body.contains("compare the conservative starter path"));
+        assert!(body.contains("ota workspace detect --write"));
+    }
+
+    #[test]
+    fn workspace_init_dry_run_points_to_detect_dry_run_before_first_write() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE INIT PREVIEW"));
+        assert!(body.contains("ota workspace detect --dry-run"));
+        assert!(body.contains("compare the detector-led workspace draft"));
+        assert!(body.contains("ota workspace init"));
     }
 
     #[test]
@@ -30283,6 +30340,10 @@ edition = "2024"
         assert!(web_dir.join("ota.yaml").is_file());
         assert!(!api_dir.join("ota.yaml").exists());
         assert!(!body.contains("Auto-provisioned repo contracts"));
+        assert!(body.contains("run `ota workspace validate"));
+        assert!(body.contains("run `ota workspace up --dry-run"));
+        assert!(body.contains("run `ota workspace up"));
+        assert!(body.contains("when you are ready to prepare the workspace"));
     }
 
     #[test]
@@ -30340,7 +30401,8 @@ repos:
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
+        assert!(stderr.contains("run `ota workspace detect --dry-run"));
+        assert!(stderr.contains("or run `ota workspace init --dry-run"));
     }
 
     #[test]
@@ -30773,6 +30835,8 @@ repos:
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("WORKSPACE DETECT REWRITTEN"));
         assert!(body.contains("Backup:"));
+        assert!(body.contains("run `ota workspace validate"));
+        assert!(body.contains("run `ota workspace up --dry-run"));
         assert!(!body.contains("Included repos:"));
 
         let backups = fs::read_dir(fixture.path())
@@ -30872,7 +30936,10 @@ repos:
             fixture.path().to_str().unwrap(),
         ]);
         assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("WORKSPACE DETECT MERGED"));
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE DETECT MERGED"));
+        assert!(body.contains("run `ota workspace validate"));
+        assert!(body.contains("run `ota workspace up --dry-run"));
 
         let written = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
         assert!(written.contains("web:"));
@@ -31589,7 +31656,8 @@ repos:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
-        assert!(stderr.contains("Next: run `ota workspace init` to create a starter workspace"));
+        assert!(stderr.contains("Next: run `ota workspace detect --dry-run"));
+        assert!(stderr.contains("or run `ota workspace init --dry-run"));
     }
 
     #[test]
@@ -31625,7 +31693,7 @@ repos:
     }
 
     #[test]
-    fn workspace_doctor_not_found_uses_single_workspace_next() {
+    fn workspace_doctor_not_found_uses_compare_first_workspace_next() {
         let _env_guard = env_mutex_lock();
         let _guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -31642,12 +31710,13 @@ repos:
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
         assert_eq!(stderr.matches("Next:").count(), 1);
-        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
+        assert!(stderr.contains("run `ota workspace detect --dry-run"));
+        assert!(stderr.contains("or run `ota workspace init --dry-run"));
         assert!(!stderr.contains("Next: `ota workspace doctor`"));
     }
 
     #[test]
-    fn workspace_status_not_found_uses_single_workspace_next() {
+    fn workspace_status_not_found_uses_compare_first_workspace_next() {
         let fixture = TempDir::new().unwrap();
 
         let output = run_with([
@@ -31663,7 +31732,8 @@ repos:
         assert!(stderr.contains("Workspace target could not be resolved"));
         assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
         assert_eq!(stderr.matches("Next:").count(), 1);
-        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
+        assert!(stderr.contains("run `ota workspace detect --dry-run"));
+        assert!(stderr.contains("or run `ota workspace init --dry-run"));
     }
 
     #[test]
@@ -31705,7 +31775,7 @@ repos:
     }
 
     #[test]
-    fn workspace_receipt_not_found_uses_single_workspace_next() {
+    fn workspace_receipt_not_found_uses_compare_first_workspace_next() {
         let fixture = TempDir::new().unwrap();
 
         let output = run_with([
@@ -31721,7 +31791,8 @@ repos:
         assert!(stderr.contains("Workspace target could not be resolved"));
         assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
         assert_eq!(stderr.matches("Next:").count(), 1);
-        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
+        assert!(stderr.contains("run `ota workspace detect --dry-run"));
+        assert!(stderr.contains("or run `ota workspace init --dry-run"));
     }
 
     #[test]
