@@ -797,8 +797,6 @@ fn explain_schema_includes_step_provenance() {
     assert!(action.get("action_key").is_some());
     assert!(action.get("action_title").is_some());
     assert!(action.get("count").is_some());
-    assert!(action.get("commands").is_some());
-    assert!(action.get("command_stages").is_some());
     assert!(step.get("provenance").is_some());
     assert!(step.get("provenance_key").is_some());
 }
@@ -814,8 +812,6 @@ fn workspace_explain_schema_includes_step_provenance() {
     assert!(action.get("action_key").is_some());
     assert!(action.get("action_title").is_some());
     assert!(action.get("count").is_some());
-    assert!(action.get("commands").is_some());
-    assert!(action.get("command_stages").is_some());
     assert!(step.get("provenance").is_some());
     assert!(step.get("provenance_key").is_some());
 }
@@ -936,8 +932,6 @@ fn explain_schema_includes_steps_and_summary_counts() {
     assert!(action.get("count").is_some());
     assert!(action.get("why").is_some());
     assert!(action.get("next").is_some());
-    assert!(action.get("commands").is_some());
-    assert!(action.get("command_stages").is_some());
     assert!(step.get("order").is_some());
     assert!(step.get("code").is_some());
     assert!(step.get("severity").is_some());
@@ -965,8 +959,6 @@ fn workspace_explain_schema_includes_repo_steps() {
     assert!(action.get("action_key").is_some());
     assert!(action.get("action_title").is_some());
     assert!(action.get("count").is_some());
-    assert!(action.get("commands").is_some());
-    assert!(action.get("command_stages").is_some());
     assert!(step.get("order").is_some());
     assert!(step.get("code").is_some());
     assert!(step.get("severity").is_some());

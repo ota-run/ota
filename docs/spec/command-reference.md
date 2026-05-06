@@ -47,11 +47,12 @@ Doctor first, contract second.
 ## Recommended onboarding flow
 
 1. `ota doctor`
-2. if the repo does not yet have `ota.yaml`, preview with `ota init --dry-run` or `ota detect --dry-run .`
-3. choose an explicit first write with `ota init` or `ota detect --write .`
-4. if the repo already has `ota.yaml`, use `ota explain`
-5. if the repo already has `ota.yaml`, review changes with `ota detect --merge --dry-run .` or `ota detect --rewrite --dry-run .`
-6. `ota up`
+2. if the repo does not yet have `ota.yaml`, preview with `ota detect --dry-run .`
+3. compare exact first-contract options with `ota detect --contract .` and `ota init --dry-run .`
+4. choose an explicit first write with `ota init .` or `ota detect --write .`
+5. if the repo already has `ota.yaml`, use `ota explain`
+6. if the repo already has `ota.yaml`, review changes with `ota detect --merge --dry-run .` or `ota detect --rewrite --dry-run .`
+7. `ota up`
 
 ## Global
 
@@ -787,8 +788,8 @@ Current behavior:
 - stays read-only and deterministic
 - prints a compact overview with step counts at the end
 
-If the repo does not yet have `ota.yaml`, start with `ota doctor`, then use `ota init --dry-run`
-or `ota detect --dry-run .` before coming back to `ota explain`.
+If the repo does not yet have `ota.yaml`, start with `ota doctor`, then use `ota detect --dry-run .`,
+`ota detect --contract .`, and `ota init --dry-run .` before coming back to `ota explain`.
 
 Text output:
 
@@ -802,8 +803,6 @@ JSON output:
 
 - success: `ok`, `path`, `summary`, `actions`, `steps`
 - `actions` is the ordered grouped remediation plan; each action includes `order`, `action_key`, `action_title`, `severity`, `count`, `why`, and `next`
-- when ota can name a staged command lane directly, `actions[*].commands` exposes that ordered command sequence alongside the prose `next`
-- `actions[*].command_stages` further classifies those commands into `inspect`, `apply`, `execute`, and `verify` phases when ota can separate the lane safely
 - `actions` may also include shared `provenance` when the grouped action maps back to one diagnosis source
 - `steps` keeps the finding-level detail; each step includes `order`, `code`, `severity`, `summary`, `why`, and `next`
 - steps may also include `provenance` and `provenance_key`
@@ -1158,8 +1157,9 @@ Current behavior:
 Choosing an init path:
 
 - use `ota init --dry-run` when detector-led init should shape the first draft from repo signals
+- use `ota detect --contract` before detector-led `ota init` when you want the exact starter text without annotations or pack commentary
 - use detector-led init when you want ota to carry existing declared-source candidates such as `.env.local`, `.env`, `src/main/resources/application.properties`, `src/main/resources/application.yml`, `src/main/resources/application.yaml`, `appsettings.json`, or `appsettings.Development.json` into `env.sources`
-- use plain `ota init` only after reviewing that detector-led starter
+- use plain `ota init` only after comparing that detector-led starter against `ota detect --contract`
 - use `ota init --packs` when you want to compare the explicit starter catalog first
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
 - use `ota init --pack node --package-manager <name> --dry-run` when the repo is intentionally npm-, pnpm-, yarn-, or bun-based and you want the starter to match that package-manager boundary from the first write
@@ -1173,8 +1173,10 @@ Examples:
 
 ```bash
 # detector-led path
+ota detect --contract
 ota init --dry-run
 ota init
+ota up --dry-run
 
 # pack-led path
 ota init --packs
@@ -1963,6 +1965,8 @@ Current write behavior:
 - `ota detect --write` remains conservative even when `ota init` can write a valid starter
 - validates the generated contract before writing
 - refuses to overwrite an existing `ota.yaml`
+- when no `ota.yaml` exists yet, preview guidance stays compare-first: `ota detect --contract` for exact detected text, `ota init --dry-run` for the conservative starter path, then `ota detect --write` for the first detected write
+- after a successful first detect write, text output points directly to `ota validate` and `ota up --dry-run`
 
 Current merge-preview behavior:
 
@@ -1989,6 +1993,7 @@ Current merge-write behavior:
 - it is additive only in the current implementation
 - on mixed repos, lower-confidence fields can still appear in `comparison` without being written
 - if nothing eligible can be added, it returns success with `written: false` and leaves `ota.yaml` unchanged
+- after a successful merge write, text output points to `ota validate`, then keeps remaining detect drift on `ota detect --merge --dry-run` and `ota detect --rewrite --dry-run`; only drift-free merges hand directly to `ota up --dry-run`
 
 Current rewrite behavior:
 
@@ -1997,6 +2002,7 @@ Current rewrite behavior:
 - `ota detect --rewrite --yes` replaces the existing `ota.yaml` with the regenerated detected contract
 - rewrite creates a timestamped backup file (`ota.yaml.bak-<timestamp>`) before writing
 - rewrite validates the regenerated contract before replacing the existing file
+- after a successful rewrite, text output points directly to `ota validate` and `ota up --dry-run`
 
 Example dry-run annotations for detected Compose services:
 
@@ -2432,7 +2438,7 @@ Text output:
 JSON output:
 
 - success: `ok`, `path`, `summary`, `repos`
-- each repo report includes `summary`, grouped `actions`, optional staged `actions[*].commands` and `actions[*].command_stages`, and detailed `steps`
+- each repo report includes `summary`, grouped `actions`, and detailed `steps`
 - failure: `ok`, `path`, and either `errors` or `error`
 
 The `summary` object on success mirrors the top-level receipt summary and includes
