@@ -71,7 +71,7 @@ pub(super) fn workspace_explain_repos(
 }
 
 pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> String {
-    let groups = group_doctor_findings(findings.iter());
+    let groups = explain_groups(findings);
     let (blockers, notes): (Vec<_>, Vec<_>) = groups
         .into_iter()
         .partition(|group| group.severity != FindingSeverity::Info);
@@ -316,7 +316,7 @@ fn shared_group_next(groups: &[DoctorFindingGroup<'_>]) -> Option<String> {
 }
 
 pub(super) fn explain_action_count(findings: &[Finding]) -> usize {
-    group_doctor_findings(findings.iter())
+    explain_groups(findings)
         .into_iter()
         .filter(|group| group.severity != FindingSeverity::Info)
         .count()
@@ -347,12 +347,61 @@ fn explain_group_why_lines(group: &DoctorFindingGroup<'_>) -> Vec<String> {
         .collect()
 }
 
+fn explain_groups(findings: &[Finding]) -> Vec<DoctorFindingGroup<'_>> {
+    let mut groups = group_doctor_findings(findings.iter());
+    groups.sort_by(|left, right| {
+        explain_group_sort_key(left)
+            .cmp(&explain_group_sort_key(right))
+            .then_with(|| left.action_key.cmp(&right.action_key))
+            .then_with(|| explain_group_title(left).cmp(&explain_group_title(right)))
+    });
+    groups
+}
+
+fn explain_group_sort_key(group: &DoctorFindingGroup<'_>) -> (usize, usize) {
+    (
+        explain_severity_priority(group.severity),
+        explain_action_priority(group),
+    )
+}
+
+fn explain_severity_priority(severity: FindingSeverity) -> usize {
+    match severity {
+        FindingSeverity::Error => 0,
+        FindingSeverity::Warn => 1,
+        FindingSeverity::Info => 2,
+    }
+}
+
+fn explain_action_priority(group: &DoctorFindingGroup<'_>) -> usize {
+    let next = doctor_finding_group_next(&group.kind, &group.findings, None);
+    if next.contains("`ota detect --dry-run") || next.contains("`ota init --dry-run") {
+        0
+    } else if next.contains("`ota assist ") {
+        1
+    } else if next.contains("`ota env") {
+        2
+    } else {
+        match group.kind {
+            DoctorFindingGroupKind::ToolingVersion
+            | DoctorFindingGroupKind::ExecutionBackend
+            | DoctorFindingGroupKind::AdapterBootstrap => 3,
+            DoctorFindingGroupKind::ServiceHealth => 4,
+            DoctorFindingGroupKind::CheckFailure => 5,
+            DoctorFindingGroupKind::ContractDrift => 6,
+            DoctorFindingGroupKind::PolicySurface => 7,
+            DoctorFindingGroupKind::EnvironmentValue => 2,
+            DoctorFindingGroupKind::SharedAction(_) => 8,
+        }
+    }
+}
+
 pub(super) fn explain_summary(report: &DoctorReport) -> ExplainSummary {
     explain_summary_from_findings(&report.findings)
 }
 
 fn explain_summary_from_findings(findings: &[Finding]) -> ExplainSummary {
-    let groups = group_doctor_findings(findings.iter());
+    let groups = explain_groups(findings);
     let mut summary = ExplainSummary {
         step_count: groups.len(),
         ..ExplainSummary::default()
@@ -370,7 +419,7 @@ fn explain_summary_from_findings(findings: &[Finding]) -> ExplainSummary {
 }
 
 pub(super) fn explain_actions(findings: &[Finding]) -> Vec<ExplainAction> {
-    group_doctor_findings(findings.iter())
+    explain_groups(findings)
         .into_iter()
         .enumerate()
         .map(|(index, group)| ExplainAction {
@@ -492,5 +541,65 @@ mod tests {
         assert!(text.contains("can bootstrap missing adapter binaries"));
         assert_eq!(text.matches("Provenance: org policy").count(), 1);
         assert_eq!(text.matches("ota policy review").count(), 1);
+    }
+
+    #[test]
+    fn explain_actions_prioritize_preview_and_assist_before_runtime_followups() {
+        let findings = vec![
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Check failed: api-health"),
+                why: String::from("the health check failed"),
+                next: String::from("run `ota run smoke` and rerun `ota doctor`"),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("No tasks defined in contract"),
+                why: String::from("the contract cannot run anything yet"),
+                next: String::from(
+                    "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("The required service `postgres` is not verifiable"),
+                why: String::from("the service has no readiness probe"),
+                next: String::from(
+                    "declare readiness with `ota assist declare-readiness --service postgres --style tcp` or `--style http`, then rerun `ota doctor`",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Required environment variable `DATABASE_URL` is missing"),
+                why: String::from("the current precedence did not resolve a value"),
+                next: String::from(
+                    "run `ota env` to inspect the current precedence, set the listed environment variables, then rerun `ota doctor`",
+                ),
+            },
+        ];
+
+        let actions = explain_actions(&findings);
+
+        assert_eq!(actions.len(), 4);
+        let detect_index = actions
+            .iter()
+            .position(|action| action.next.contains("`ota detect --dry-run`"))
+            .unwrap();
+        let assist_index = actions
+            .iter()
+            .position(|action| action.next.contains("`ota assist declare-readiness"))
+            .unwrap();
+        let env_index = actions
+            .iter()
+            .position(|action| action.next.contains("`ota env`"))
+            .unwrap();
+        let runtime_index = actions
+            .iter()
+            .position(|action| action.next.contains("`ota run smoke`"))
+            .unwrap();
+
+        assert!(detect_index < assist_index);
+        assert!(assist_index < env_index);
+        assert!(env_index < runtime_index);
     }
 }

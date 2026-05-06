@@ -783,6 +783,7 @@ Current behavior:
 - requires an existing `ota.yaml`
 - diagnoses the contract first
 - turns grouped findings into an ordered remediation plan
+- prioritizes preview-first and contract-authoring actions ahead of later runtime follow-ups when several fixes are available
 - stays read-only and deterministic
 - prints a compact overview with step counts at the end
 
@@ -2416,6 +2417,7 @@ Current behavior:
 
 - diagnoses the workspace first
 - turns each repo's grouped findings into an ordered remediation plan
+- preserves the same safest-next-action ordering inside each repo plan
 - stays read-only and deterministic
 - prints a summary with repo and step counts at the end
 
