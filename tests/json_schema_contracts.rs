@@ -435,6 +435,7 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success_receipt.get("failed_task").is_some());
     assert!(success_receipt.get("failed_dependency").is_some());
     assert!(success_receipt.get("failure_origin").is_some());
+    assert!(success_receipt.get("next_steps").is_some());
     assert!(success.get("findings").is_some());
     assert!(success.get("promoted_baseline").is_some());
     assert!(success_summary.get("error_count").is_some());
@@ -877,6 +878,7 @@ fn up_schema_includes_member_grouping() {
             .get("service_termination")
             .is_some()
     );
+    assert!(runtime_receipt_properties.get("next_steps").is_some());
     assert!(runtime_receipt_properties.get("workloads").is_some());
     assert!(runtime_member_properties.get("member").is_some());
     assert!(runtime_member_properties.get("status").is_some());
@@ -896,6 +898,7 @@ fn receipt_schema_includes_runtime_endpoint_metadata() {
 
     assert!(receipt_properties.get("runtime").is_some());
     assert!(receipt_properties.get("workloads").is_some());
+    assert!(receipt_properties.get("next_steps").is_some());
     assert!(resolved_runtime.get("primary_listener").is_some());
     assert!(resolved_runtime.get("primary_endpoint").is_some());
     assert!(resolved_runtime.get("exposed_endpoints").is_some());

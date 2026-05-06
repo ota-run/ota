@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- hardened execution failure routing for `ota run`: backend-configuration failures now point through `ota execution plan` before contract edits or retries, and declared env-source failures now point through `ota env --task <name>` before file repair and rerun
+- hardened execution failure routing for `ota up`: execution-plane precondition failures, backend startup failures, and provisioning failures now point through `ota execution plan` before execution-setting edits or retries
+- kept repo-level `ota up` execution receipts aligned across text and JSON by appending shared receipt follow-up guidance after the final `UP SUMMARY` block and carrying the same execution-plan-first lane onto repo-target `receipt.next`
+- refined the execution receipt JSON contract with additive `receipt.next_steps`, so receipt-bearing `up`, `workspace up`, `workspace run`, and `receipt` outputs expose ordered follow-up steps without forcing agents to split the human `next` string
+- polished the compact human execution summaries so `RUN SUMMARY` and `UP SUMMARY` lead with `Status`, making success, failure, blocked, and interrupted outcomes easier to scan before the longer execution details
 - restored `ota detect --contract` as the minimal exact starter preview and removed the brittle explain JSON command-lane surface so `ota explain --json` / `ota workspace explain --json` expose only structured `actions` and `steps` instead of scraping machine commands back out of prose
 - tightened the detect merge success lane so remaining diff now stays on detect-owned review (`ota detect --merge --dry-run` / `ota detect --rewrite --dry-run`) instead of incorrectly handing users to `ota explain`, and clarified the review/write/preparation wording in README and public onboarding examples
 - aligned the remaining onboarding-facing docs and help surfaces with the stronger first-contract lane: repo README, command reference, and root help now teach `ota doctor`, `ota detect --dry-run`, `ota detect --contract`, `ota init --dry-run`, then the explicit write/preparation path instead of skipping the exact starter comparison step

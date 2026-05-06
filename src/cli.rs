@@ -12364,6 +12364,7 @@ tasks:
         assert!(
             stderr.contains("this contract does not declare `execution.backends.container.image`")
         );
+        assert!(stderr.contains("ota execution plan --mode container"));
         assert!(stderr.contains("add `execution.backends.container.image` to the repo contract"));
         assert!(stderr.contains("or rerun without the explicit backend override: `ota run dev`"));
     }
@@ -12393,9 +12394,38 @@ tasks:
         assert!(
             stderr.contains("this contract does not declare `execution.backends.container.image`")
         );
+        assert!(stderr.contains("ota execution plan --mode container"));
         assert!(stderr.contains(
             "or rerun with a different supported mode if the repo allows it: `ota run dev --mode native`"
         ));
+    }
+
+    #[test]
+    fn run_text_routes_missing_env_source_through_task_env_inspection() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: dotenv
+      path: .env.local
+      must_exist: true
+tasks:
+  dev:
+    run: printf ready
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Required environment source is missing"));
+        assert!(stderr.contains("dotenv:.env.local"));
+        assert!(stderr.contains("ota env --task dev"));
+        assert!(stderr.contains("repair the declared environment sources, then rerun `ota run dev`"));
     }
 
     #[test]
@@ -14690,6 +14720,10 @@ agent:
         assert_eq!(receipt_json["findings"][0]["code"], "OTA_ENV_MISSING");
         assert_eq!(
             receipt_json["receipt"]["next"],
+            "run `ota env` to inspect the current precedence, then set FOO in policy env, the shell, or a declared env source before running tasks"
+        );
+        assert_eq!(
+            receipt_json["receipt"]["next_steps"][0],
             "run `ota env` to inspect the current precedence, then set FOO in policy env, the shell, or a declared env source before running tasks"
         );
         assert_eq!(
@@ -29037,6 +29071,7 @@ policies:
         assert!(text.contains("Missing container execution backend CLI: docker, podman"));
         assert!(text.contains("Mode:"));
         assert!(text.contains("container"));
+        assert!(text.contains("ota execution plan --mode container"));
         assert!(!text.contains("PROVISION FAILED"));
         assert!(!text.contains("pwsh"));
         assert!(!text.contains("choco"));
@@ -29113,12 +29148,75 @@ policies:
         assert!(text.contains("Missing container execution backend CLI: docker, podman"));
         assert!(text.contains("Mode:"));
         assert!(text.contains("container"));
+        assert!(text.contains("ota execution plan --mode container"));
         assert!(!text.contains("PROVISION FAILED"));
         assert!(!text.contains("pwsh"));
         assert!(!text.contains("choco"));
         assert!(
             !apt_log.exists(),
             "host provisioning should not be attempted"
+        );
+    }
+
+    #[test]
+    fn up_json_member_receipt_next_keeps_member_target_for_execution_plan() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: monorepo
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker, podman]
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--member", "api", "--json", fixture.path()]);
+
+        assert_eq!(
+            output.exit_code,
+            1,
+            "stdout=\n{}\nstderr=\n{}",
+            output.stdout,
+            output.stderr.unwrap_or_default()
+        );
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let next = json["receipt"]["next"].as_str().expect("receipt next");
+        assert!(
+            next.contains("ota execution plan --member api --mode container"),
+            "{next}"
+        );
+        let next_step = json["receipt"]["next_steps"][0]
+            .as_str()
+            .expect("receipt next step");
+        assert!(
+            next_step.contains("ota execution plan --member api --mode container"),
+            "{next_step}"
         );
     }
 
@@ -29213,6 +29311,7 @@ policies:
         assert!(text.contains("Container brew cannot install pinned version: node"));
         assert!(text.contains("Task output: Error: No available formula with the name"));
         assert!(text.contains("node@22"));
+        assert!(text.contains("ota execution plan --mode container"));
         assert!(text.contains("ota up --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }
@@ -29271,6 +29370,7 @@ policies:
         assert!(text.contains("PROVISION FAILED"));
         assert!(text.contains("Container mise cannot install pinned version: node"));
         assert!(text.contains("Task output: mise install failed"));
+        assert!(text.contains("ota execution plan --mode container"));
         assert!(text.contains("ota up --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }

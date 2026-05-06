@@ -66,6 +66,10 @@ pub(super) fn render_execution_receipt_summary_block(
     };
     let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
 
+    lines.push(summary_detail_line(
+        "Status:",
+        &render_execution_summary_status_value(&status),
+    ));
     lines.push(summary_detail_line("Scope:", &receipt.scope));
     lines.push(summary_detail_line("Path:", &path_display));
     lines.push(summary_detail_line("Contract:", &contract_display));
@@ -208,10 +212,6 @@ pub(super) fn render_execution_receipt_summary_block(
     if let Some(logs) = receipt.logs.as_ref() {
         lines.push(summary_detail_line("Logs:", &logs.dir));
     }
-    lines.push(summary_detail_line(
-        "Status:",
-        &render_execution_summary_status_value(&status),
-    ));
     if let Some(note_value) = note.as_deref() {
         lines.push(summary_detail_line("Note:", note_value));
     }

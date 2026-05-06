@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -310,7 +310,7 @@ pub struct ContractIdentity {
     pub counts: ContractIdentityCounts,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceipt {
     pub ok: bool,
     pub path: String,
@@ -369,6 +369,114 @@ pub struct ExecutionReceipt {
     pub summary: ExecutionReceiptSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+}
+
+fn execution_receipt_next_steps_json(next: Option<&str>) -> Vec<String> {
+    next.map(|next| {
+        next.split("; ")
+            .map(str::trim)
+            .filter(|part| !part.is_empty() && !part.starts_with("log capture failed:"))
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+impl Serialize for ExecutionReceipt {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("ok", &self.ok)?;
+        map.serialize_entry("path", &self.path)?;
+        map.serialize_entry("scope", &self.scope)?;
+        map.serialize_entry("contract", &self.contract)?;
+        if let Some(contract_identity) = self.contract_identity.as_ref() {
+            map.serialize_entry("contract_identity", contract_identity)?;
+        }
+        if let Some(workspace) = self.workspace.as_ref() {
+            map.serialize_entry("workspace", workspace)?;
+        }
+        if let Some(backend) = self.backend.as_ref() {
+            map.serialize_entry("backend", backend)?;
+        }
+        if let Some(context) = self.context.as_ref() {
+            map.serialize_entry("context", context)?;
+        }
+        if let Some(lifecycle) = self.lifecycle.as_ref() {
+            map.serialize_entry("lifecycle", lifecycle)?;
+        }
+        if let Some(image) = self.image.as_ref() {
+            map.serialize_entry("image", image)?;
+        }
+        if let Some(container_memory_bytes) = self.container_memory_bytes {
+            map.serialize_entry("container_memory_bytes", &container_memory_bytes)?;
+        }
+        if let Some(target) = self.target.as_ref() {
+            map.serialize_entry("target", target)?;
+        }
+        if let Some(provider) = self.provider.as_ref() {
+            map.serialize_entry("provider", provider)?;
+        }
+        if let Some(cwd) = self.cwd.as_ref() {
+            map.serialize_entry("cwd", cwd)?;
+        }
+        if !self.acquired.is_empty() {
+            map.serialize_entry("acquired", &self.acquired)?;
+        }
+        if !self.env.is_empty() {
+            map.serialize_entry("env", &self.env)?;
+        }
+        if !self.env_sources.is_empty() {
+            map.serialize_entry("env_sources", &self.env_sources)?;
+        }
+        if let Some(runtime) = self.runtime.as_ref() {
+            map.serialize_entry("runtime", runtime)?;
+        }
+        if let Some(service_termination) = self.service_termination.as_ref() {
+            map.serialize_entry("service_termination", service_termination)?;
+        }
+        if let Some(backend_fulfillment) = self.backend_fulfillment.as_ref() {
+            map.serialize_entry("backend_fulfillment", backend_fulfillment)?;
+        }
+        if let Some(logs) = self.logs.as_ref() {
+            map.serialize_entry("logs", logs)?;
+        }
+        if !self.workloads.is_empty() {
+            map.serialize_entry("workloads", &self.workloads)?;
+        }
+        if !self.policy.is_empty() {
+            map.serialize_entry("policy", &self.policy)?;
+        }
+        if !self.steps.is_empty() {
+            map.serialize_entry("steps", &self.steps)?;
+        }
+        if let Some(status) = self.status.as_ref() {
+            map.serialize_entry("status", status)?;
+        }
+        if let Some(failed_task) = self.failed_task.as_ref() {
+            map.serialize_entry("failed_task", failed_task)?;
+        }
+        if let Some(failed_dependency) = self.failed_dependency.as_ref() {
+            map.serialize_entry("failed_dependency", failed_dependency)?;
+        }
+        if let Some(failure_origin) = self.failure_origin.as_ref() {
+            map.serialize_entry("failure_origin", failure_origin)?;
+        }
+        if !self.blocked.is_empty() {
+            map.serialize_entry("blocked", &self.blocked)?;
+        }
+        map.serialize_entry("summary", &self.summary)?;
+        if let Some(next) = self.next.as_ref() {
+            map.serialize_entry("next", next)?;
+        }
+        let next_steps = execution_receipt_next_steps_json(self.next.as_deref());
+        if !next_steps.is_empty() {
+            map.serialize_entry("next_steps", &next_steps)?;
+        }
+        map.end()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
