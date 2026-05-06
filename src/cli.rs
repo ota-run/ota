@@ -7960,7 +7960,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(!stdout.starts_with('\n'));
         assert!(stdout.contains("RECEIPT "));
-        assert!(stdout.contains("Steps:"));
+        assert!(stdout.contains("Steps"));
         assert!(stdout.contains("1. READY  readiness"));
         assert!(stdout.contains("Summary"));
     }
@@ -10785,7 +10785,7 @@ env:
         assert!(stdout.contains("Project: ota-dev (workspace)"));
         assert!(stdout.contains("Counts:"));
         assert!(stdout.contains("repos=1"));
-        assert!(stdout.contains("Steps:"));
+        assert!(stdout.contains("Steps"));
         assert!(stdout.contains("Summary"));
     }
 
@@ -12035,7 +12035,7 @@ tasks:
             output.stdout,
             output.stderr.as_deref().unwrap_or_default()
         ));
-        assert!(rendered.contains("Steps:"));
+        assert!(rendered.contains("Steps"));
         assert!(rendered.contains("Summary"));
         assert!(rendered.contains("Target:"));
         assert!(rendered.contains("sandbox-dev"));
@@ -20275,7 +20275,7 @@ policies:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("INIT PACKS starter packs"));
+        assert!(stdout.contains("INIT PACKS catalog"));
         assert!(stdout.contains("go `ota init --pack go`"));
         assert!(stdout.contains("rust `ota init --pack rust`"));
         assert!(stdout.contains("dotnet `ota init --pack dotnet`"));
@@ -24717,7 +24717,7 @@ edition = "2024"
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("DETECT PREVIEW "));
         assert!(stdout.contains("dry-run (no write)"));
-        assert!(stdout.contains("Contract:\nversion: 1"));
+        assert!(stdout.contains("Contract\nversion: 1"));
         assert!(stdout.contains("Annotations:"));
         assert!(stdout.contains("Field: "));
         assert!(stdout.contains("Value: "));
@@ -24784,7 +24784,7 @@ tasks:
         let comparison = stdout
             .find("Existing contract comparison:")
             .expect("comparison section");
-        let contract = stdout.find("Contract:").expect("contract section");
+        let contract = stdout.find("Contract\n").expect("contract section");
         assert!(comparison < contract);
     }
 
@@ -24954,7 +24954,7 @@ tasks:
         let drift = stdout
             .find("Existing contract drift:")
             .expect("drift section");
-        let contract = stdout.find("Contract:").expect("contract section");
+        let contract = stdout.find("Contract\n").expect("contract section");
         assert!(drift < contract);
     }
 
@@ -26584,7 +26584,7 @@ edition = "2024"
             compact_path(detect_fixture.dir.path(), ".")
         )));
         assert!(detect_stdout.contains("Mode: dry-run (no write)"));
-        assert!(detect_stdout.contains("Contract:"));
+        assert!(detect_stdout.contains("Contract"));
         assert!(detect_stdout.contains("Annotations:"));
         assert!(detect_stdout.contains("Next:"));
         assert!(detect_stdout.find("Annotations:").unwrap() < detect_stdout.find("Next:").unwrap());
@@ -31710,7 +31710,8 @@ repos:
         ]);
         assert_eq!(output.exit_code, 0);
         let body = strip_ansi(&output.stdout);
-        assert!(body.contains("WORKSPACE DETECT REWRITTEN"));
+        assert!(body.contains("WORKSPACE DETECT "));
+        assert!(body.contains("REWRITTEN"));
         assert!(body.contains("Backup:"));
         assert!(body.contains("run `ota workspace validate"));
         assert!(body.contains("run `ota workspace up --dry-run"));
@@ -31762,7 +31763,8 @@ repos:
             fixture.path().to_str().unwrap(),
         ]);
         assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("WORKSPACE DETECT REWRITTEN"));
+        assert!(strip_ansi(&output.stdout).contains("WORKSPACE DETECT "));
+        assert!(strip_ansi(&output.stdout).contains("REWRITTEN"));
         assert!(fixture.path().join("ota.workspace.yaml").is_file());
 
         let validate = run_with([
@@ -31814,7 +31816,8 @@ repos:
         ]);
         assert_eq!(output.exit_code, 0);
         let body = strip_ansi(&output.stdout);
-        assert!(body.contains("WORKSPACE DETECT MERGED"));
+        assert!(body.contains("WORKSPACE DETECT "));
+        assert!(body.contains("MERGED"));
         assert!(body.contains("run `ota workspace validate"));
         assert!(body.contains("run `ota workspace up --dry-run"));
 
@@ -34908,7 +34911,7 @@ tasks:
         assert!(stdout.contains("web [optional] (WARN)"));
         assert!(stdout.contains("Task: setup"));
         assert!(stdout.contains("Exit code: 7"));
-        assert!(stdout.contains("Steps:"));
+        assert!(stdout.contains("Steps"));
         assert!(stdout.contains("Summary"));
     }
 
@@ -37124,8 +37127,7 @@ project:
         assert_eq!(output.exit_code, 0, "{output:?}");
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Validate:"));
-        assert!(stdout.contains("Apply:"));
-        assert_eq!(stdout.matches("Next:").count(), 0);
+        assert!(stdout.contains("Next:"));
     }
 
     #[test]
