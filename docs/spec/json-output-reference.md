@@ -100,14 +100,14 @@ human text output:
 - `ota assist normalize --json`: use `mode`, `subject.task`, `subject.into`, `changes`, `validation`, and `next`
 - `ota assist wire-setup --json`: use `mode`, `subject.task`, `inputs`, `changes`, `validation`, and `next`
 - `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
-- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
-- `ota workspace explain --json`: use the top-level `summary`, per-repo grouped `actions`, and per-repo `steps` with stable codes
+- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, per-repo `primary_blocker` when present, and `execution`; repo doctor also includes `mode`
+- `ota workspace explain --json`: use the top-level `summary`, top-level ordered `actions`, per-repo grouped `actions`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
-- `ota workspace check --json`: use the top-level `summary` and per-repo findings
+- `ota workspace check --json`: use the top-level `summary`, per-repo findings, and per-repo `primary_blocker` when present
 - `ota receipt --json`: use the top-level `summary`, `receipt`, and `findings`
-- `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
-- `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
+- `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
+- `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota diff --json`: use the readiness-impact summary and changes
 - `ota explain --json`: use grouped `actions` for the ordered remediation plan and `steps` for stable finding-level detail
@@ -1424,6 +1424,9 @@ workspace policy values.
 `ota workspace doctor --json` may also include the same `extensions` object on each repo item when
 the underlying repo contract declares it. The descriptor shape matches `ota doctor --json`.
 
+Each repo item may also include additive `primary_blocker` with that repo's current highest-priority
+finding (`severity`, `summary`, `why`, `next`, and optional provenance fields).
+
 `ota workspace doctor --json` also includes a top-level `summary` object with repo and finding
 counts for hosted validation and editor consumers. The workspace summary also carries
 `verdict` / `agent_verdict` values. When there is at least one finding, the summary may also
@@ -1533,9 +1536,10 @@ Both actions and steps stay deterministic. Explain steps may also include `prove
 
 ## `ota workspace explain --json`
 
-Workspace explain uses the same split per repo:
+Workspace explain now exposes two ordered action surfaces:
 
-- `actions` for the grouped ordered remediation plan
+- top-level `actions` for the grouped workspace plan with explicit repo ownership
+- per-repo `actions` for the grouped ordered remediation plan
 - `steps` for the finding-level detail
 
 Workspace explain steps may also include `provenance` and `provenance_key` when ota can trace the
@@ -1554,6 +1558,21 @@ diagnosis source for the underlying finding.
     "info_count": 0,
     "step_count": 2
   },
+  "actions": [
+    {
+      "repo": "api",
+      "path": "/abs/path/to/api",
+      "contract_path": "/abs/path/to/api/ota.yaml",
+      "required": true,
+      "order": 1,
+      "action_key": "tasks-missing",
+      "action_title": "Add at least one declared task to the contract",
+      "severity": "error",
+      "count": 1,
+      "why": "...",
+      "next": "run `ota detect --dry-run .` to review inferred tasks before writing one"
+    }
+  ],
   "repos": [
     {
       "name": "api",
@@ -1730,6 +1749,12 @@ Failure shape can also include:
       "contract_path": "/abs/path/to/apps/web/ota.yaml",
       "required": true,
       "ok": false,
+      "primary_blocker": {
+        "severity": "error",
+        "summary": "Repo not acquired: web",
+        "why": "...",
+        "next": "..."
+      },
       "findings": [
         {
           "severity": "error",
@@ -1918,6 +1943,8 @@ same surface as the repo-level execution commands, and includes additive
 
 Optional per-repo fields:
 
+- `next`
+- `next_steps`
 - `exit_code`
 - `stdout`
 - `stderr`
@@ -1926,7 +1953,7 @@ Optional per-repo fields:
 ## `ota workspace check --json`
 
 `ota workspace check --json` uses the same finding shape as `ota workspace doctor --json`,
-including additive `finding_groups` when present:
+including additive `finding_groups` and per-repo `primary_blocker` when present:
 
 ```json
 {
@@ -1947,6 +1974,12 @@ including additive `finding_groups` when present:
       "contract_path": "/abs/path/to/apps/web/ota.yaml",
       "required": true,
       "ok": false,
+      "primary_blocker": {
+        "severity": "error",
+        "summary": "Check failed: health-check",
+        "why": "...",
+        "next": "..."
+      },
       "findings": [
         {
           "severity": "error",
@@ -1961,7 +1994,9 @@ including additive `finding_groups` when present:
 ```
 
 `summary` mirrors the workspace doctor roll-up so hosted gates can read the same repo and finding
-counts from checks-only output.
+counts from checks-only output. When one repo has several findings, additive `primary_blocker`
+identifies the repo's current highest-priority next move without forcing consumers to choose one
+from the full list themselves.
 
 ## `ota init --json`
 
@@ -2888,6 +2923,9 @@ Failure example:
 `ota workspace refresh --json` uses the same workspace roll-up shape, but reports refresh
 status for existing repos instead of bootstrap status for missing ones. In preview mode it
 adds `"mode": "preview"` and does not mutate repo state.
+
+Workspace repo items may also include additive `next` and `next_steps` when ota can name that
+repo's current follow-up lane directly.
 
 `ota workspace diff --json` uses a read-only workspace diff roll-up. It reports local git
 state against the declared source ref or upstream branch, includes per-repo `status`,

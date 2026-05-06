@@ -795,10 +795,21 @@ pub struct WorkspaceRepoExplainReport {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceExplainAction {
+    pub repo: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    #[serde(flatten)]
+    pub action: ExplainAction,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceExplainSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub summary: WorkspaceExplainSummary,
+    pub actions: &'a [WorkspaceExplainAction],
     pub repos: &'a [WorkspaceRepoExplainReport],
 }
 
@@ -1166,6 +1177,10 @@ pub struct WorkspaceRepoUpReport {
     pub stderr: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_sources: Vec<ExecutionReceiptEnvSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1509,6 +1524,10 @@ pub struct WorkspaceRepoRunReport {
     pub stderr: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_sources: Vec<ExecutionReceiptEnvSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

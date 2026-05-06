@@ -65,6 +65,21 @@
           "agent_verdict": {
             "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
           },
+          "primary_blocker": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "summary", "why", "next"],
+            "properties": {
+              "severity": { "enum": ["error", "warn", "info"] },
+              "summary": { "type": "string" },
+              "why": { "type": "string" },
+              "next": { "type": "string" },
+              "provenance": { "type": "string" },
+              "provenance_key": {
+                "enum": ["org_policy", "repo_signals", "repo_contract"]
+              }
+            }
+          },
           "findings": {
             "type": "array",
             "items": { "$ref": "./shared.json#/$defs/finding" }
