@@ -54,11 +54,11 @@ use crate::contract_drift::{
 };
 use crate::detector::{Confidence, DetectContract, DetectReport, Inference, detect_repo};
 use crate::doctor::{
-    DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_STATE_GITIGNORE_COMMENT,
-    OTA_STATE_GITIGNORE_ENTRY, command_available, command_version, diagnose_checks_only,
-    diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review, diagnose_preconditions,
-    diagnose_preconditions_with_mode, diagnose_service, diagnose_services_only,
-    finding_targets_container_image, finding_targets_remote_backend,
+    DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_RECEIPTS_GITIGNORE_ENTRY,
+    OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY, command_available, command_version,
+    diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
+    diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
+    diagnose_services_only, finding_targets_container_image, finding_targets_remote_backend,
     provisioning_installability_finding,
 };
 use crate::execution::{
@@ -12892,21 +12892,54 @@ fn gitignore_has_ota_state_entry(contents: &str) -> bool {
         .any(|line| matches!(line.trim(), ".ota/state/" | ".ota/state" | ".ota/state/*"))
 }
 
-fn ota_state_gitignore_block() -> String {
-    format!("{OTA_STATE_GITIGNORE_COMMENT}\n{OTA_STATE_GITIGNORE_ENTRY}\n")
+fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".ota/receipts/" | ".ota/receipts" | ".ota/receipts/*"
+        )
+    })
+}
+
+fn ota_artifact_gitignore_block(contents: Option<&str>) -> Option<String> {
+    let missing_state = contents.is_none_or(|contents| !gitignore_has_ota_state_entry(contents));
+    let missing_receipts =
+        contents.is_none_or(|contents| !gitignore_has_ota_receipts_entry(contents));
+    if !missing_state && !missing_receipts {
+        return None;
+    }
+
+    let mut block = String::new();
+    let has_comment = contents.is_some_and(|contents| {
+        contents
+            .lines()
+            .any(|line| line.trim() == OTA_STATE_GITIGNORE_COMMENT)
+    });
+    if !has_comment {
+        block.push_str(OTA_STATE_GITIGNORE_COMMENT);
+        block.push('\n');
+    }
+    if missing_state {
+        block.push_str(OTA_STATE_GITIGNORE_ENTRY);
+        block.push('\n');
+    }
+    if missing_receipts {
+        block.push_str(OTA_RECEIPTS_GITIGNORE_ENTRY);
+        block.push('\n');
+    }
+    Some(block)
 }
 
 fn plan_ota_state_gitignore_fix(root: &Path) -> Result<Option<DoctorFixPlanAction>, String> {
     let gitignore_path = root.join(".gitignore");
     let path_display = compact_path(&gitignore_path, ".gitignore");
-    let block = ota_state_gitignore_block();
 
     if gitignore_path.exists() {
         let contents = fs::read_to_string(&gitignore_path)
             .map_err(|error| format!("failed to read `{}`: {}", gitignore_path.display(), error))?;
-        if gitignore_has_ota_state_entry(&contents) {
+        let Some(block) = ota_artifact_gitignore_block(Some(&contents)) else {
             return Ok(None);
-        }
+        };
         let mut preview = String::new();
         if !contents.is_empty() && !contents.ends_with('\n') {
             preview.push('\n');
@@ -12923,6 +12956,8 @@ fn plan_ota_state_gitignore_fix(root: &Path) -> Result<Option<DoctorFixPlanActio
             preview,
         }))
     } else {
+        let block = ota_artifact_gitignore_block(None)
+            .expect("new gitignore should require ota artifact ignore entries");
         Ok(Some(DoctorFixPlanAction {
             key: DOCTOR_FIX_ACTION_OTA_STATE_GITIGNORE,
             path: gitignore_path,

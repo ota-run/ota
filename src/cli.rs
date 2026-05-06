@@ -19643,7 +19643,7 @@ policies:
     }
 
     #[test]
-    fn init_write_creates_gitignore_for_ota_state() {
+    fn init_write_creates_gitignore_for_ota_artifacts() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -19657,8 +19657,9 @@ policies:
 
         assert_eq!(output.exit_code, 0);
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
-        assert!(gitignore.contains("# Ota local runtime state"));
+        assert!(gitignore.contains("# Ota local runtime artifacts"));
         assert!(gitignore.contains(".ota/state/"));
+        assert!(gitignore.contains(".ota/receipts/"));
     }
 
     #[test]
@@ -20154,7 +20155,26 @@ policies:
     }
 
     #[test]
-    fn init_pack_write_does_not_duplicate_existing_ota_state_ignore_rule() {
+    fn init_pack_write_does_not_duplicate_existing_ota_artifact_ignore_rules() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            ".gitignore",
+            "node_modules/\n.ota/state/*\n.ota/receipts/*\n",
+        );
+
+        let output = run_with(["ota", "init", "--pack", "node", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert_eq!(gitignore.matches(".ota/state/*").count(), 1);
+        assert_eq!(gitignore.matches(".ota/receipts/*").count(), 1);
+        assert!(!gitignore.contains("# Ota local runtime artifacts"));
+        assert!(!gitignore.contains(".ota/state/\n"));
+        assert!(!gitignore.contains(".ota/receipts/\n"));
+    }
+
+    #[test]
+    fn init_pack_write_appends_only_missing_ota_receipts_rule() {
         let fixture = ContractFixture::new_dir();
         fixture.write(".gitignore", "node_modules/\n.ota/state/*\n");
 
@@ -20163,7 +20183,7 @@ policies:
         assert_eq!(output.exit_code, 0);
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(gitignore.matches(".ota/state/*").count(), 1);
-        assert!(!gitignore.contains("# Ota local runtime state"));
+        assert_eq!(gitignore.matches(".ota/receipts/").count(), 1);
         assert!(!gitignore.contains(".ota/state/\n"));
     }
 
@@ -24702,7 +24722,7 @@ tasks:
     }
 
     #[test]
-    fn detect_write_creates_gitignore_for_ota_state() {
+    fn detect_write_creates_gitignore_for_ota_artifacts() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -24717,12 +24737,13 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
-        assert!(gitignore.contains("# Ota local runtime state"));
+        assert!(gitignore.contains("# Ota local runtime artifacts"));
         assert!(gitignore.contains(".ota/state/"));
+        assert!(gitignore.contains(".ota/receipts/"));
     }
 
     #[test]
-    fn doctor_reports_missing_ota_state_gitignore_rule_as_fixable() {
+    fn doctor_reports_missing_ota_artifact_gitignore_rules_as_fixable() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -24748,6 +24769,10 @@ tasks:
                     && finding["severity"] == "warn"
             })
             .expect("expected fixable gitignore finding");
+        assert_eq!(
+            finding["summary"],
+            "Repo local Ota artifacts are not ignored by git"
+        );
         assert!(
             finding["next"]
                 .as_str()
@@ -24776,8 +24801,9 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Fixes"));
         assert!(stdout.contains("preview mode: no files were modified"));
-        assert!(stdout.contains("# Ota local runtime state"));
+        assert!(stdout.contains("# Ota local runtime artifacts"));
         assert!(stdout.contains(".ota/state/"));
+        assert!(stdout.contains(".ota/receipts/"));
     }
 
     #[test]
@@ -24823,12 +24849,12 @@ tasks:
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(
             gitignore,
-            String::from("# Ota local runtime state\n.ota/state/\n")
+            String::from("# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n")
         );
     }
 
     #[test]
-    fn doctor_fix_appends_ota_state_rule_when_missing() {
+    fn doctor_fix_appends_ota_artifact_rules_when_missing() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -24848,12 +24874,14 @@ tasks:
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(
             gitignore,
-            String::from("node_modules/\n\n# Ota local runtime state\n.ota/state/\n")
+            String::from(
+                "node_modules/\n\n# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n"
+            )
         );
     }
 
     #[test]
-    fn doctor_fix_does_not_duplicate_existing_ota_state_ignore_rule() {
+    fn doctor_fix_does_not_duplicate_existing_ota_artifact_ignore_rules() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -24865,16 +24893,40 @@ tasks:
 "#,
         );
         fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
-        fixture.write(".gitignore", ".ota/state/*\n");
+        fixture.write(".gitignore", ".ota/state/*\n.ota/receipts/*\n");
 
         let output = run_with(["ota", "doctor", "--fix", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
-        assert_eq!(gitignore, String::from(".ota/state/*\n"));
+        assert_eq!(gitignore, String::from(".ota/state/*\n.ota/receipts/*\n"));
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("no supported deterministic repo-hygiene fixes are needed"));
         assert!(!stdout.contains("preview mode: no files were modified"));
+    }
+
+    #[test]
+    fn doctor_fix_appends_only_missing_ota_state_rule() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
+        fixture.write(".gitignore", ".ota/receipts/*\n");
+
+        let output = run_with(["ota", "doctor", "--fix", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
+        assert_eq!(gitignore.matches(".ota/receipts/*").count(), 1);
+        assert_eq!(gitignore.matches(".ota/state/").count(), 1);
+        assert!(!gitignore.contains(".ota/receipts/\n"));
     }
 
     #[test]
@@ -24976,8 +25028,9 @@ tasks:
         assert!(stdout.contains(
             "no contract-aware repo-hygiene fixes are available yet; preview a first contract with `ota detect --dry-run` or `ota init --dry-run` first"
         ));
-        assert!(!stdout.contains("Repo local runtime state is not ignored by git"));
+        assert!(!stdout.contains("Repo local Ota artifacts are not ignored by git"));
         assert!(!stdout.contains(".ota/state/"));
+        assert!(!stdout.contains(".ota/receipts/"));
     }
 
     #[test]

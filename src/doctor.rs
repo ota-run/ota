@@ -962,7 +962,7 @@ impl Finding {
     pub(crate) fn code(&self) -> &'static str {
         match self.summary.as_str() {
             "No tasks defined in contract" => "OTA_TASKS_MISSING",
-            "Repo local runtime state is not ignored by git" => {
+            "Repo local Ota artifacts are not ignored by git" => {
                 "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE"
             }
             "Ephemeral lifecycle is execution-only" => "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY",
@@ -5194,13 +5194,23 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime state";
+pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime artifacts";
 pub(crate) const OTA_STATE_GITIGNORE_ENTRY: &str = ".ota/state/";
+pub(crate) const OTA_RECEIPTS_GITIGNORE_ENTRY: &str = ".ota/receipts/";
 
 fn gitignore_has_ota_state_entry(contents: &str) -> bool {
     contents
         .lines()
         .any(|line| matches!(line.trim(), ".ota/state/" | ".ota/state" | ".ota/state/*"))
+}
+
+fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".ota/receipts/" | ".ota/receipts" | ".ota/receipts/*"
+        )
+    })
 }
 
 pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, String> {
@@ -5216,7 +5226,7 @@ pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, Stri
 
     let contents = fs::read_to_string(&gitignore_path)
         .map_err(|error| format!("failed to read `{}`: {}", gitignore_path.display(), error))?;
-    Ok(!gitignore_has_ota_state_entry(&contents))
+    Ok(!(gitignore_has_ota_state_entry(&contents) && gitignore_has_ota_receipts_entry(&contents)))
 }
 
 pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option<Finding> {
@@ -5224,19 +5234,21 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
     match repo_missing_ota_state_gitignore(root) {
         Ok(true) => Some(Finding {
             severity: FindingSeverity::Warn,
-            summary: String::from("Repo local runtime state is not ignored by git"),
+            summary: String::from("Repo local Ota artifacts are not ignored by git"),
             why: String::from(
-                "`.ota/state/` stores Ota-owned local runtime state; if it is tracked by git, local execution residue can pollute repo diffs and diagnosis artifacts",
+                "`.ota/state/` and `.ota/receipts/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue and archived receipts can pollute repo diffs and diagnosis artifacts",
             ),
             next: String::from(
-                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/` to `.gitignore`, or add the ignore rule manually",
+                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/` and `.ota/receipts/` to `.gitignore`, or add the ignore rules manually",
             ),
         }),
         Ok(false) => None,
         Err(error) => Some(Finding {
             severity: FindingSeverity::Warn,
             summary: String::from("Repo `.gitignore` could not be inspected"),
-            why: format!("ota could not inspect whether `.ota/state/` is ignored: {error}"),
+            why: format!(
+                "ota could not inspect whether `.ota/state/` and `.ota/receipts/` are ignored: {error}"
+            ),
             next: String::from("repair `.gitignore` readability and rerun `ota doctor`"),
         }),
     }
