@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- expanded the safe `doctor --fix` repo-hygiene surface so the same `.gitignore` fix path now protects both `.ota/state/` and `.ota/receipts/` as Ota-owned local artifacts, with matching init/detect write behavior and updated doctor messaging
 - hardened the doctor-first onboarding lane: `ota doctor` now renders the repo state as `READY`, `READY WITH WARNINGS`, or `BLOCKED`, warning-only reports still single out one highest-priority primary finding, ready repos no longer get told to rerun `ota up`, contractless guidance is preview-first (`ota detect --dry-run` / `ota init --dry-run`), and deterministic next steps now point into `ota assist` where Ota can safely author the missing contract surface
 - tightened doctor's service guidance further: unverifiable required services now route into `ota assist declare-readiness` when only the probe is missing, or `ota assist declare-service` when the managed service declaration still lacks a start path and wider service shape
 - tightened doctor's setup guidance too: missing-file precondition failures now point to `ota up` / `ota run setup` when `tasks.setup` already exists, or to `ota assist wire-setup` when the contract still lacks a setup path Ota can own
