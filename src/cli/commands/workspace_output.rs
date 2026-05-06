@@ -482,6 +482,8 @@ mod tests {
                 contract_path: String::from("api/ota.yaml"),
                 required: true,
                 acquired: true,
+                drift_kind: String::from("commit_divergence"),
+                target_source: Some(String::from("declared_ref")),
                 status: String::from("DIFFERENT"),
                 source_url: Some(String::from("https://example.com/api.git")),
                 source_ref: Some(String::from("main")),
@@ -535,6 +537,7 @@ mod tests {
         assert!(text.contains("Next:"));
         assert!(text.contains("ota workspace refresh --dry-run"));
         assert!(text.contains("ota workspace status"));
+        assert!(text.contains("Target: origin/main (declared source ref)"));
 
         let json = render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -546,6 +549,8 @@ mod tests {
             value["repos"][0]["next_steps"][2],
             "run `ota workspace status` after workspace changes to confirm readiness and drift together"
         );
+        assert_eq!(value["repos"][0]["drift_kind"], "commit_divergence");
+        assert_eq!(value["repos"][0]["target_source"], "declared_ref");
     }
 
     #[test]
@@ -557,6 +562,8 @@ mod tests {
                 contract_path: String::from("api/ota.yaml"),
                 required: true,
                 acquired: true,
+                drift_kind: String::from("local_dirty"),
+                target_source: Some(String::from("declared_ref")),
                 ready: false,
                 readiness_status: String::from("NOT READY"),
                 drift_status: String::from("DIRTY"),
@@ -604,6 +611,7 @@ mod tests {
         assert!(text.contains("Next:"));
         assert!(text.contains("ota workspace doctor"));
         assert!(text.contains("ota workspace refresh --dry-run"));
+        assert!(text.contains("Target: origin/main (declared source ref)"));
 
         let json =
             render_workspace_status("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
@@ -616,6 +624,139 @@ mod tests {
             value["repos"][0]["next"],
             "run `ota workspace doctor` to inspect readiness blockers before retrying workspace execution"
         );
+        assert_eq!(value["repos"][0]["drift_kind"], "local_dirty");
+        assert_eq!(value["repos"][0]["target_source"], "declared_ref");
+    }
+
+    #[test]
+    fn workspace_diff_summary_breaks_out_missing_and_unresolved_subkinds() {
+        let report = WorkspaceDiffReport {
+            repos: vec![
+                WorkspaceRepoDiffReport {
+                    name: String::from("missing-contract"),
+                    path: String::from("missing-contract"),
+                    contract_path: String::from("missing-contract/ota.yaml"),
+                    required: true,
+                    acquired: true,
+                    status: String::from("MISSING CONTRACT"),
+                    drift_kind: String::from("missing_contract"),
+                    target_source: None,
+                    source_url: None,
+                    source_ref: None,
+                    branch: None,
+                    head: None,
+                    target_ref: None,
+                    ahead: None,
+                    behind: None,
+                    dirty: false,
+                    findings: Vec::new(),
+                    next: None,
+                    next_steps: Vec::new(),
+                },
+                WorkspaceRepoDiffReport {
+                    name: String::from("no-target"),
+                    path: String::from("no-target"),
+                    contract_path: String::from("no-target/ota.yaml"),
+                    required: true,
+                    acquired: true,
+                    status: String::from("UNRESOLVED"),
+                    drift_kind: String::from("target_unavailable"),
+                    target_source: None,
+                    source_url: Some(String::from("https://example.com/no-target.git")),
+                    source_ref: None,
+                    branch: Some(String::from("main")),
+                    head: Some(String::from("abc123")),
+                    target_ref: None,
+                    ahead: None,
+                    behind: None,
+                    dirty: false,
+                    findings: Vec::new(),
+                    next: None,
+                    next_steps: Vec::new(),
+                },
+            ],
+            next: None,
+            next_steps: Vec::new(),
+        };
+
+        let text = strip_ansi_codes(
+            &render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Text).stdout,
+        );
+        assert!(text.contains("Missing contract: 1"));
+        assert!(text.contains("Target unavailable: 1"));
+
+        let json = render_workspace_diff("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["summary"]["missing_contract_count"], 1);
+        assert_eq!(value["summary"]["target_unavailable_count"], 1);
+    }
+
+    #[test]
+    fn workspace_status_summary_breaks_out_missing_and_unresolved_subkinds() {
+        let report = WorkspaceStatusReport {
+            repos: vec![
+                WorkspaceRepoStatusReport {
+                    name: String::from("missing-contract"),
+                    path: String::from("missing-contract"),
+                    contract_path: String::from("missing-contract/ota.yaml"),
+                    required: true,
+                    acquired: true,
+                    ready: false,
+                    readiness_status: String::from("NOT READY"),
+                    drift_status: String::from("MISSING CONTRACT"),
+                    drift_kind: String::from("missing_contract"),
+                    target_source: None,
+                    source_url: None,
+                    source_ref: None,
+                    branch: None,
+                    head: None,
+                    target_ref: None,
+                    ahead: None,
+                    behind: None,
+                    dirty: false,
+                    findings: Vec::new(),
+                    next: None,
+                    next_steps: Vec::new(),
+                },
+                WorkspaceRepoStatusReport {
+                    name: String::from("no-target"),
+                    path: String::from("no-target"),
+                    contract_path: String::from("no-target/ota.yaml"),
+                    required: true,
+                    acquired: true,
+                    ready: false,
+                    readiness_status: String::from("NOT READY"),
+                    drift_status: String::from("UNRESOLVED"),
+                    drift_kind: String::from("target_unavailable"),
+                    target_source: None,
+                    source_url: Some(String::from("https://example.com/no-target.git")),
+                    source_ref: None,
+                    branch: Some(String::from("main")),
+                    head: Some(String::from("abc123")),
+                    target_ref: None,
+                    ahead: None,
+                    behind: None,
+                    dirty: false,
+                    findings: Vec::new(),
+                    next: None,
+                    next_steps: Vec::new(),
+                },
+            ],
+            next: None,
+            next_steps: Vec::new(),
+        };
+
+        let text = strip_ansi_codes(
+            &render_workspace_status("./ota.workspace.yaml", &report, OutputFormat::Text).stdout,
+        );
+        assert!(text.contains("Missing contract: 1"));
+        assert!(text.contains("Target unavailable: 1"));
+
+        let json =
+            render_workspace_status("./ota.workspace.yaml", &report, OutputFormat::Json).stdout;
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["summary"]["missing_contract_count"], 1);
+        assert_eq!(value["summary"]["target_unavailable_count"], 1);
     }
 }
 
@@ -722,7 +863,11 @@ pub(crate) fn render_workspace_diff(
                     stdout.push_str(&format!("\n{} {head}", paint_key("Head:")));
                 }
                 if let Some(target_ref) = &repo.target_ref {
-                    stdout.push_str(&format!("\n{} {target_ref}", paint_key("Target:")));
+                    stdout.push_str(&format!(
+                        "\n{} {}",
+                        paint_key("Target:"),
+                        render_workspace_target_label(target_ref, repo.target_source.as_deref())
+                    ));
                 }
                 if let Some(ahead) = repo.ahead {
                     stdout.push_str(&format!("\n{} {ahead}", paint_key("Ahead:")));
@@ -842,7 +987,11 @@ pub(crate) fn render_workspace_status(
                     stdout.push_str(&format!("\n{} {head}", paint_key("Head:")));
                 }
                 if let Some(target_ref) = &repo.target_ref {
-                    stdout.push_str(&format!("\n{} {target_ref}", paint_key("Target:")));
+                    stdout.push_str(&format!(
+                        "\n{} {}",
+                        paint_key("Target:"),
+                        render_workspace_target_label(target_ref, repo.target_source.as_deref())
+                    ));
                 }
                 if let Some(ahead) = repo.ahead {
                     stdout.push_str(&format!("\n{} {ahead}", paint_key("Ahead:")));
@@ -1380,6 +1529,29 @@ fn render_workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> String {
             &paint(&summary.missing_count.to_string(), "1;38;2;255;255;255"),
         )
     ));
+    if summary.missing_repo_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Missing repo:", "1;38;2;255;80;80"),
+                &paint(&summary.missing_repo_count.to_string(), "1;38;2;255;255;255"),
+            )
+        ));
+    }
+    if summary.missing_contract_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Missing contract:", "1;38;2;255;80;80"),
+                &paint(
+                    &summary.missing_contract_count.to_string(),
+                    "1;38;2;255;255;255",
+                ),
+            )
+        ));
+    }
     stdout.push_str(&format!(
         "\n{}",
         section_list_row(
@@ -1388,7 +1560,41 @@ fn render_workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> String {
             &paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255"),
         )
     ));
+    if summary.target_unavailable_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Target unavailable:", "1;38;2;183;134;255"),
+                &paint(
+                    &summary.target_unavailable_count.to_string(),
+                    "1;38;2;255;255;255",
+                ),
+            )
+        ));
+    }
+    if summary.comparison_unresolved_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Comparison unavailable:", "1;38;2;183;134;255"),
+                &paint(
+                    &summary.comparison_unresolved_count.to_string(),
+                    "1;38;2;255;255;255",
+                ),
+            )
+        ));
+    }
     stdout
+}
+
+fn render_workspace_target_label(target_ref: &str, target_source: Option<&str>) -> String {
+    match target_source {
+        Some("declared_ref") => format!("{target_ref} (declared source ref)"),
+        Some("upstream_branch") => format!("{target_ref} (upstream branch)"),
+        _ => target_ref.to_string(),
+    }
 }
 
 fn workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> WorkspaceDiffSummary {
@@ -1405,6 +1611,13 @@ fn workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> WorkspaceDiffSum
             "MISSING" => summary.missing_count += 1,
             "MISSING CONTRACT" => summary.missing_count += 1,
             "UNRESOLVED" => summary.unresolved_count += 1,
+            _ => {}
+        }
+        match repo.drift_kind.as_str() {
+            "missing_repo" => summary.missing_repo_count += 1,
+            "missing_contract" => summary.missing_contract_count += 1,
+            "target_unavailable" => summary.target_unavailable_count += 1,
+            "comparison_unresolved" => summary.comparison_unresolved_count += 1,
             _ => {}
         }
         for finding in &repo.findings {
@@ -1478,6 +1691,29 @@ fn render_workspace_status_summary(summary: &WorkspaceStatusSummary) -> String {
             &paint(&summary.missing_count.to_string(), "1;38;2;255;255;255"),
         )
     ));
+    if summary.missing_repo_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Missing repo:", "1;38;2;255;80;80"),
+                &paint(&summary.missing_repo_count.to_string(), "1;38;2;255;255;255"),
+            )
+        ));
+    }
+    if summary.missing_contract_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Missing contract:", "1;38;2;255;80;80"),
+                &paint(
+                    &summary.missing_contract_count.to_string(),
+                    "1;38;2;255;255;255",
+                ),
+            )
+        ));
+    }
     stdout.push_str(&format!(
         "\n{}",
         section_list_row(
@@ -1486,6 +1722,32 @@ fn render_workspace_status_summary(summary: &WorkspaceStatusSummary) -> String {
             &paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255"),
         )
     ));
+    if summary.target_unavailable_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Target unavailable:", "1;38;2;183;134;255"),
+                &paint(
+                    &summary.target_unavailable_count.to_string(),
+                    "1;38;2;255;255;255",
+                ),
+            )
+        ));
+    }
+    if summary.comparison_unresolved_count > 0 {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Comparison unavailable:", "1;38;2;183;134;255"),
+                &paint(
+                    &summary.comparison_unresolved_count.to_string(),
+                    "1;38;2;255;255;255",
+                ),
+            )
+        ));
+    }
     stdout
 }
 
@@ -1571,6 +1833,13 @@ fn workspace_status_summary(repos: &[WorkspaceRepoStatusReport]) -> WorkspaceSta
             "MISSING" => summary.missing_count += 1,
             "MISSING CONTRACT" => summary.missing_count += 1,
             "UNRESOLVED" => summary.unresolved_count += 1,
+            _ => {}
+        }
+        match repo.drift_kind.as_str() {
+            "missing_repo" => summary.missing_repo_count += 1,
+            "missing_contract" => summary.missing_contract_count += 1,
+            "target_unavailable" => summary.target_unavailable_count += 1,
+            "comparison_unresolved" => summary.comparison_unresolved_count += 1,
             _ => {}
         }
         for finding in &repo.findings {
