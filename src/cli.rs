@@ -10802,6 +10802,49 @@ env:
     }
 
     #[test]
+    fn workspace_receipt_json_keeps_workspace_status_lifecycle_next_lane() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+    source:
+      git: https://example.com/api.git
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "receipt",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(json["receipt"]["next"]
+            .as_str()
+            .unwrap()
+            .contains("ota workspace up --dry-run"));
+        assert_eq!(
+            json["repos"][0]["next"],
+            "run `ota workspace up` to acquire `api` from `https://example.com/api.git`"
+        );
+        assert_eq!(
+            json["repos"][0]["next_steps"][0],
+            "run `ota workspace up` to acquire `api` from `https://example.com/api.git`"
+        );
+    }
+
+    #[test]
     fn up_dry_run_json_reports_root_monorepo_preview_with_members() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();

@@ -1220,6 +1220,10 @@ pub struct WorkspaceRepoDiffReport {
     pub dirty: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
@@ -1241,6 +1245,10 @@ pub struct WorkspaceDiffSuccess<'a> {
     pub path: &'a str,
     pub mode: &'a str,
     pub summary: WorkspaceDiffSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub next_steps: &'a [String],
     pub repos: &'a [WorkspaceRepoDiffReport],
 }
 
@@ -1272,6 +1280,10 @@ pub struct WorkspaceRepoStatusReport {
     pub dirty: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
@@ -1295,6 +1307,10 @@ pub struct WorkspaceStatusSuccess<'a> {
     pub path: &'a str,
     pub mode: &'a str,
     pub summary: WorkspaceStatusSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub next_steps: &'a [String],
     pub repos: &'a [WorkspaceRepoStatusReport],
 }
 

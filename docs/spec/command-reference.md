@@ -2597,6 +2597,8 @@ Current behavior:
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never mutates repo state
 - `--json` returns a workspace diff roll-up with `mode: "diff"`
+- text and JSON now carry an additive top-level lifecycle `next` lane when ota can name the safest refresh or acquisition follow-up directly
+- per-repo JSON items can also carry additive `next` and `next_steps` so automation can read the repo-owned follow-up lane without reparsing findings
 - differences do not fail the command; the command succeeds and surfaces drift in the report
 
 Current non-goals:
@@ -2623,6 +2625,8 @@ Current behavior:
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never mutates repo state
 - `--json` returns a workspace status roll-up with `mode: "status"`
+- text and JSON now carry an additive top-level lifecycle `next` lane when ota can name the safest doctor, refresh, or acquisition follow-up directly
+- per-repo JSON items can also carry additive `next` and `next_steps` so automation can read the repo-owned follow-up lane without reparsing findings
 - readiness findings and drift findings are surfaced in the same report
 
 Text output:
