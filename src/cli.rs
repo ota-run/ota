@@ -3406,7 +3406,7 @@ fn completion_env_completer(shell: CompletionShell) -> &'static dyn EnvCompleter
 fn parse_completion_shell_arg(shell: &str) -> Result<CompletionShell, String> {
     completion_shell_from_value(shell).ok_or_else(|| {
         format!(
-            "unknown shell `{shell}`\nNext: use one of `bash`, `zsh`, `fish`, `powershell`, `elvish`, or `check`"
+            "unknown shell `{shell}`\nNext: use one of `bash`, `zsh`, `fish`, `powershell`, `elvish`, or `check` so Ota can render setup, removal, or verification guidance for a supported shell"
         )
     })
 }
@@ -3719,7 +3719,7 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         Some(shell) => shell,
         None => {
             return CommandOutput::failure(
-                "could not detect the current shell automatically\nNext: run `ota completion zsh --setup` (or bash, fish, powershell, elvish)".to_string(),
+                "could not detect the current shell automatically\nNext: run `ota completion zsh --setup` (or bash, fish, powershell, elvish) to install completion explicitly when shell auto-detection is unavailable".to_string(),
             );
         }
     };
@@ -3808,7 +3808,7 @@ fn remove_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         Some(shell) => shell,
         None => {
             return CommandOutput::failure(
-                "could not detect the current shell automatically\nNext: run `ota completion zsh --remove` (or bash, fish, powershell, elvish)".to_string(),
+                "could not detect the current shell automatically\nNext: run `ota completion zsh --remove` (or bash, fish, powershell, elvish) to remove the managed hook explicitly when shell auto-detection is unavailable".to_string(),
             );
         }
     };
@@ -3887,7 +3887,7 @@ fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         Some(shell) => shell,
         None => {
             return CommandOutput::failure(
-                "could not detect the current shell automatically\nNext: run `ota completion check` from the shell you want to verify, or specify a shell for setup/script output".to_string(),
+                "could not detect the current shell automatically\nNext: run `ota completion check` from the shell you want to verify so Ota can inspect that environment directly, or specify a shell for setup/script output".to_string(),
             );
         }
     };
@@ -20432,8 +20432,14 @@ policies:
             "Write policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded"
         ));
         assert!(stdout.contains("Next:"));
-        assert!(stdout.contains("ota validate"));
-        assert!(stdout.contains("ota up --dry-run"));
+        assert!(stdout.contains("run `ota validate"));
+        assert!(stdout.contains("to confirm the written contract is structurally sound"));
+        assert!(stdout.contains("run `ota tasks --use"));
+        assert!(stdout.contains("to inspect the runnable tasks in the written contract"));
+        assert!(stdout.contains("run `ota doctor"));
+        assert!(stdout.contains("already ready, warning, or blocked"));
+        assert!(stdout.contains("run `ota up --dry-run"));
+        assert!(stdout.contains("to preview repo preparation before making changes"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
@@ -20484,8 +20490,12 @@ policies:
             .display()
             .to_string();
         assert!(stdout.contains(&format!("run `ota validate {repo_path}`")));
+        assert!(stdout.contains(&format!("run `ota tasks --use {repo_path}`")));
+        assert!(stdout.contains(&format!("run `ota doctor {repo_path}`")));
         assert!(stdout.contains(&format!("run `ota up --dry-run {repo_path}`")));
         assert!(!stdout.contains(&format!("ota validate {repo_path}/ota.yaml")));
+        assert!(!stdout.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
+        assert!(!stdout.contains(&format!("ota doctor {repo_path}/ota.yaml")));
         assert!(!stdout.contains(&format!("ota up --dry-run {repo_path}/ota.yaml")));
     }
 
@@ -20932,6 +20942,7 @@ policies:
         assert!(stdout.contains("`--package-manager` = `npm`, `pnpm`, `yarn`, `bun`"));
         assert!(stdout.contains("`--test-runner` = `pytest`, `unittest`"));
         assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("to preview the seeded starter contract before writing it"));
         assert!(!stdout.contains("Try:"));
         assert!(!stdout.contains("→"));
         assert!(stdout.contains("ota init --pack java-maven --dry-run ."));
@@ -26487,8 +26498,11 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DETECT WRITE"));
         assert!(stdout.contains("Excluded from automatic write:"));
-        assert!(stdout.contains("ota validate"));
-        assert!(stdout.contains("ota up --dry-run"));
+        assert!(stdout.contains("run `ota validate"));
+        assert!(stdout.contains("to confirm the written contract is structurally sound"));
+        assert!(stdout.contains("run `ota tasks --use"));
+        assert!(stdout.contains("run `ota doctor"));
+        assert!(stdout.contains("run `ota up --dry-run"));
         assert!(stdout.contains("runtimes.node"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
@@ -27740,6 +27754,8 @@ edition = "2024"
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("could not detect the current shell automatically"));
         assert!(stderr.contains("ota completion zsh --setup"));
+        assert!(stderr.contains("to install"));
+        assert!(stderr.contains("completion explicitly when shell auto-detection is unavailable"));
     }
 
     #[test]
