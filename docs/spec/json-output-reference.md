@@ -1074,6 +1074,7 @@ Success:
     "verify_after_changes": ["test"],
     "writable_paths": ["src", "docs"],
     "protected_paths": ["Cargo.lock", "LICENSE"],
+    "inferred_boundary_reviewed": false,
     "bootstrap": {
       "ota": {
         "note": "Only install ota if it is missing and installation is approved.",
@@ -1153,6 +1154,8 @@ Root monorepo summary output can also include grouped member results:
   "agent": {
     "entrypoint": "setup",
     "verify_after_changes": ["test"],
+    "protected_paths": ["ota.yaml"],
+    "inferred_boundary_reviewed": false,
     "bootstrap": {
       "ota": {
         "note": "Only install ota if it is missing and installation is approved.",
@@ -1289,6 +1292,10 @@ machine-readable `verdict` / `agent_verdict` values so hosted validation and edi
 not need to recompute them. When there is at least one finding, the summary may also include
 `primary_blocker` with the highest-priority blocker details so CI and editors can answer the
 question “what should I fix first?” without scanning the full list.
+
+When the repo contract declares an `agent` block, the additive `agent` summary can also include
+`inferred_boundary_reviewed`. `false` means the current writable and protected boundary still comes
+from starter or detector inference and has not been confirmed by the repo author yet.
 
 `ota doctor --json` also includes a top-level `mode` string. It is `native` for host readiness
 diagnosis and `container` when the report was produced with `ota doctor --mode container`, so

@@ -31,7 +31,8 @@ use crate::detector::{
     DetectTask, Inference,
 };
 use crate::schema::{
-    AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig, EnvSource, EnvSourceKind,
+    AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
+    AgentInferredBoundaryConfig, EnvSource, EnvSourceKind,
 };
 
 const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
@@ -661,14 +662,8 @@ fn starter_agent_from_detected_contract(
         return None;
     }
 
-    let writable_paths = starter_agent_writable_paths(contract, root);
-    starter_agent_config_from_parts(
-        contract,
-        root,
-        safe_tasks,
-        writable_paths,
-        vec![String::from("ota.yaml")],
-    )
+    let boundary = starter_agent_boundary_inference(contract, root);
+    starter_agent_config_from_parts(contract, root, safe_tasks, boundary)
 }
 
 fn starter_agent_from_detected_report(report: &DetectReport) -> Option<AgentConfig> {
@@ -688,23 +683,23 @@ fn starter_agent_from_detected_report(report: &DetectReport) -> Option<AgentConf
         return None;
     }
 
-    let writable_paths = starter_agent_writable_paths_for_detect_report(report);
-    let protected_paths = starter_agent_protected_paths_for_detect_report(report);
-    starter_agent_config_from_parts(
-        contract,
-        &report.root,
-        safe_tasks,
-        writable_paths,
-        protected_paths,
-    )
+    let boundary = starter_agent_boundary_inference_for_detect_report(report);
+    starter_agent_config_from_parts(contract, &report.root, safe_tasks, boundary)
+}
+
+#[derive(Debug, Default)]
+struct StarterAgentBoundaryInference {
+    writable_paths: Vec<String>,
+    protected_paths: Vec<String>,
+    writable_provenance: Vec<String>,
+    protected_provenance: Vec<String>,
 }
 
 fn starter_agent_config_from_parts(
     contract: &DetectContract,
     _root: &Path,
     safe_tasks: Vec<String>,
-    writable_paths: Vec<String>,
-    protected_paths: Vec<String>,
+    boundary: StarterAgentBoundaryInference,
 ) -> Option<AgentConfig> {
     let entrypoint = contract
         .tasks
@@ -714,7 +709,7 @@ fn starter_agent_config_from_parts(
     let verify_after_changes = preferred_agent_verify_tasks(&safe_tasks);
 
     let mut notes = String::from(
-        "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo.\nUse `ota validate` before changes and `ota doctor` after edits.\n",
+        "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo.\nUse `ota validate` before changes and `ota doctor` after edits.\n",
     );
     if let Some(task_name) = default_task
         .as_deref()
@@ -729,33 +724,83 @@ fn starter_agent_config_from_parts(
         default_task,
         safe_tasks,
         verify_after_changes,
-        writable_paths,
-        protected_paths,
+        writable_paths: boundary.writable_paths,
+        protected_paths: boundary.protected_paths,
+        inferred_boundary: Some(AgentInferredBoundaryConfig {
+            reviewed: false,
+            provenance: AgentBoundaryProvenanceConfig {
+                writable_paths: boundary.writable_provenance,
+                protected_paths: boundary.protected_provenance,
+            },
+        }),
         bootstrap: Some(starter_agent_bootstrap()),
         notes: Some(notes),
     })
 }
 
-fn starter_agent_writable_paths(contract: &DetectContract, root: &Path) -> Vec<String> {
-    starter_agent_writable_paths_with_semantic_roots(contract, root, &[])
+fn starter_agent_boundary_inference(
+    contract: &DetectContract,
+    root: &Path,
+) -> StarterAgentBoundaryInference {
+    let mut writable_provenance = BTreeSet::new();
+    let mut protected_provenance = BTreeSet::new();
+    let writable_paths = starter_agent_writable_paths_with_semantic_roots(
+        contract,
+        root,
+        &[],
+        "init",
+        &mut writable_provenance,
+    );
+    let protected_paths =
+        starter_agent_protected_paths(contract, root, "init", &mut protected_provenance);
+    StarterAgentBoundaryInference {
+        writable_paths,
+        protected_paths,
+        writable_provenance: writable_provenance.into_iter().collect(),
+        protected_provenance: protected_provenance.into_iter().collect(),
+    }
 }
 
-fn starter_agent_writable_paths_for_detect_report(report: &DetectReport) -> Vec<String> {
+fn starter_agent_boundary_inference_for_detect_report(
+    report: &DetectReport,
+) -> StarterAgentBoundaryInference {
     let semantic_roots = starter_agent_semantic_roots_from_detect_report(report);
-    starter_agent_writable_paths_with_semantic_roots(
+    let mut writable_provenance = BTreeSet::new();
+    let mut protected_provenance = BTreeSet::new();
+    let writable_paths = starter_agent_writable_paths_with_semantic_roots(
         &report.contract,
         &report.root,
         semantic_roots.as_slice(),
-    )
+        "detect",
+        &mut writable_provenance,
+    );
+    let protected_paths = starter_agent_protected_paths_for_detect_report(
+        report,
+        "detect",
+        &mut protected_provenance,
+    );
+    StarterAgentBoundaryInference {
+        writable_paths,
+        protected_paths,
+        writable_provenance: writable_provenance.into_iter().collect(),
+        protected_provenance: protected_provenance.into_iter().collect(),
+    }
 }
 
 fn starter_agent_writable_paths_with_semantic_roots(
     contract: &DetectContract,
     root: &Path,
     semantic_roots: &[String],
+    provenance_prefix: &str,
+    provenance: &mut BTreeSet<String>,
 ) -> Vec<String> {
     let mut writable_paths = BTreeSet::new();
     let allowed_extensions = starter_agent_stack_source_extensions(contract);
+    let mut added_common_roots = false;
+    let mut added_stack_roots = false;
+    let mut added_nested_roots = false;
+    let mut added_semantic_roots = false;
+    let mut added_scanned_roots = false;
 
     for candidate in [
         "tests",
@@ -787,6 +832,7 @@ fn starter_agent_writable_paths_with_semantic_roots(
     ] {
         if root.join(candidate).is_dir() {
             writable_paths.insert(candidate.to_string());
+            added_common_roots = true;
         }
     }
 
@@ -797,6 +843,7 @@ fn starter_agent_writable_paths_with_semantic_roots(
         }
         if starter_agent_dir_has_direct_source_files(&path, allowed_extensions.as_deref()) {
             writable_paths.insert(candidate.to_string());
+            added_stack_roots = true;
             continue;
         }
         for nested in starter_agent_collect_nested_source_roots(
@@ -806,12 +853,14 @@ fn starter_agent_writable_paths_with_semantic_roots(
             allowed_extensions.as_deref(),
         ) {
             writable_paths.insert(nested);
+            added_nested_roots = true;
         }
     }
 
     for candidate in semantic_roots {
         if starter_agent_valid_writable_path(root, candidate) {
             writable_paths.insert(candidate.clone());
+            added_semantic_roots = true;
         }
     }
 
@@ -836,8 +885,25 @@ fn starter_agent_writable_paths_with_semantic_roots(
             }
             if starter_agent_dir_contains_source_files(&path, 3, allowed_extensions.as_deref()) {
                 writable_paths.insert(name.to_string());
+                added_scanned_roots = true;
             }
         }
+    }
+
+    if added_common_roots {
+        provenance.insert(format!("{provenance_prefix}:common_source_roots"));
+    }
+    if added_stack_roots {
+        provenance.insert(format!("{provenance_prefix}:stack_source_roots"));
+    }
+    if added_nested_roots {
+        provenance.insert(format!("{provenance_prefix}:nested_project_root"));
+    }
+    if added_semantic_roots {
+        provenance.insert(format!("{provenance_prefix}:semantic_root_inference"));
+    }
+    if added_scanned_roots {
+        provenance.insert(format!("{provenance_prefix}:stack_source_scan"));
     }
 
     writable_paths.into_iter().collect()
@@ -863,8 +929,45 @@ fn starter_agent_semantic_roots_from_detect_report(report: &DetectReport) -> Vec
     roots.into_iter().collect()
 }
 
-fn starter_agent_protected_paths_for_detect_report(report: &DetectReport) -> Vec<String> {
+fn starter_agent_protected_paths(
+    contract: &DetectContract,
+    root: &Path,
+    provenance_prefix: &str,
+    provenance: &mut BTreeSet<String>,
+) -> Vec<String> {
     let mut protected_paths = BTreeSet::from([String::from("ota.yaml")]);
+    provenance.insert(format!("{provenance_prefix}:contract_file_default"));
+
+    let mut added_stack_companions = false;
+    for candidate in starter_agent_stack_companion_protected_paths(contract) {
+        if root.join(candidate).is_file() {
+            protected_paths.insert(candidate.to_string());
+            added_stack_companions = true;
+        }
+    }
+    if added_stack_companions {
+        provenance.insert(format!(
+            "{provenance_prefix}:stack_companion_control_files"
+        ));
+    }
+
+    protected_paths.into_iter().collect()
+}
+
+fn starter_agent_protected_paths_for_detect_report(
+    report: &DetectReport,
+    provenance_prefix: &str,
+    provenance: &mut BTreeSet<String>,
+) -> Vec<String> {
+    let mut protected_paths = starter_agent_protected_paths(
+        &report.contract,
+        &report.root,
+        provenance_prefix,
+        provenance,
+    )
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    let mut added_detected_control_files = false;
 
     for inference in &report.inferences {
         let source = inference
@@ -882,13 +985,11 @@ fn starter_agent_protected_paths_for_detect_report(report: &DetectReport) -> Vec
         }
         if starter_agent_is_protected_control_file(candidate) {
             protected_paths.insert(candidate.to_string_lossy().to_string());
+            added_detected_control_files = true;
         }
     }
-
-    for candidate in starter_agent_stack_companion_protected_paths(&report.contract) {
-        if report.root.join(candidate).is_file() {
-            protected_paths.insert(candidate.to_string());
-        }
+    if added_detected_control_files {
+        provenance.insert(format!("{provenance_prefix}:detected_control_files"));
     }
 
     protected_paths.into_iter().collect()
@@ -2155,6 +2256,15 @@ mod tests {
         assert_eq!(
             contract.tasks.get("setup").map(|task| task.internal),
             Some(true)
+        );
+        let agent = contract.agent.expect("starter pack agent");
+        let inferred_boundary = agent
+            .inferred_boundary
+            .expect("starter pack inferred boundary");
+        assert!(!inferred_boundary.reviewed);
+        assert_eq!(
+            inferred_boundary.provenance.protected_paths,
+            vec![String::from("init:contract_file_default")]
         );
     }
 

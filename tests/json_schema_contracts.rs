@@ -35,14 +35,20 @@ fn load_schema(path: &str) -> Value {
 fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
     let success = &schema["oneOf"][0]["properties"];
+    let agent_properties = &success["agent"]["properties"];
     let task_properties = &success["tasks"]["items"]["properties"];
     let member_properties = &success["members"]["items"]["properties"];
+    let member_agent_properties = &member_properties["agent"]["properties"];
     let member_task_properties = &member_properties["tasks"]["items"]["properties"];
 
     assert!(success.get("agent").is_some());
     assert!(success.get("members").is_some());
+    assert!(agent_properties.get("protected_paths").is_some());
+    assert!(agent_properties.get("inferred_boundary_reviewed").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("tasks").is_some());
+    assert!(member_agent_properties.get("protected_paths").is_some());
+    assert!(member_agent_properties.get("inferred_boundary_reviewed").is_some());
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("requires_services").is_some());
     assert!(task_properties.get("variants").is_some());
@@ -58,7 +64,9 @@ fn doctor_schema_includes_agent_summary() {
     let schema = load_schema("docs/spec/json-schemas/doctor.json");
     let shared = load_schema("docs/spec/json-schemas/shared.json");
     let properties = &schema["properties"];
+    let agent_properties = &properties["agent"]["properties"];
     let member_properties = &properties["members"]["items"]["properties"];
+    let member_agent_properties = &member_properties["agent"]["properties"];
     let execution_properties = &properties["execution"]["properties"];
     let execution_env_properties = &execution_properties["env"]["items"]["properties"];
     let provisioning_action = &shared["$defs"]["provisioningAction"]["properties"];
@@ -68,11 +76,15 @@ fn doctor_schema_includes_agent_summary() {
     assert!(properties.get("findings").is_some());
     assert!(properties.get("members").is_some());
     assert!(properties.get("mode").is_some());
+    assert!(agent_properties.get("protected_paths").is_some());
+    assert!(agent_properties.get("inferred_boundary_reviewed").is_some());
     assert!(properties.get("provisioning").is_some());
     assert!(properties.get("provisioning_request").is_some());
     assert!(properties.get("adapter_bootstrap").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
+    assert!(member_agent_properties.get("protected_paths").is_some());
+    assert!(member_agent_properties.get("inferred_boundary_reviewed").is_some());
     assert!(execution_properties.get("env").is_some());
     assert!(execution_env_properties.get("policy").is_some());
     assert!(provisioning_action.get("normalized_requirement").is_some());

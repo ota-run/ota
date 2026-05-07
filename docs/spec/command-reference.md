@@ -1155,7 +1155,8 @@ Current behavior:
 - canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
 - confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
 - when the detected tasks are confident enough, the starter contract now keeps a derived `agent` block and review notes even when writable-path inference is still partial; ota now combines broader common app/source directories with detector-backed nested project roots and a bounded stack-aware source-root scan so custom code roots can surface in `agent.writable_paths` without falling back to `.`, while detector-backed control files such as manifests and lockfiles now surface explicitly in `agent.protected_paths` and operational directories such as `config`, `database`, `migrations`, `manifests`, `deploy`, and `infra` stay out of the default starter allowlist
-- those starter `agent.notes` now explicitly tell authors to review `agent.writable_paths` and `agent.protected_paths` before trusting automation, so the inferred boundary is visible as something to confirm rather than silent starter magic
+- starter contracts now also carry `agent.inferred_boundary.reviewed: false` plus provenance for the inferred writable and protected paths, so the boundary is visible as inferred state rather than silent starter magic; detector-led init uses `detect:...` provenance, while explicit pack mode uses `init:...` provenance for the starter defaults it owns
+- those starter `agent.notes` now explicitly tell authors to review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before trusting automation
 
 Choosing an init path:
 

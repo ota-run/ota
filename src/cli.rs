@@ -19907,9 +19907,13 @@ policies:
         assert!(written.contains("- test"));
         assert!(written.contains("protected_paths:"));
         assert!(written.contains("- ota.yaml"));
+        assert!(written.contains("inferred_boundary:"));
+        assert!(written.contains("reviewed: false"));
+        assert!(written.contains("provenance:"));
+        assert!(written.contains("- detect:contract_file_default"));
         assert!(written.contains("notes: |"));
         assert!(written.contains(
-            "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo."
+            "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo."
         ));
         assert!(written.contains("Use `ota run test` to verify changes."));
         assert!(!written.contains("entrypoint: null"));
@@ -19942,6 +19946,10 @@ policies:
         assert!(preview_stdout.contains("\nagent:\n"));
         assert!(preview_stdout.contains("safe_tasks:"));
         assert!(preview_stdout.contains("protected_paths:"));
+        assert!(preview_stdout.contains("inferred_boundary:"));
+        assert!(preview_stdout.contains("reviewed: false"));
+        assert!(preview_stdout.contains("provenance:"));
+        assert!(preview_stdout.contains("- detect:contract_file_default"));
         assert!(!preview_stdout.contains("writable_paths:"));
         assert!(!preview_stdout.contains("\n  - .\n"));
 
@@ -19952,6 +19960,10 @@ policies:
         assert!(written.contains("\nagent:\n"));
         assert!(written.contains("safe_tasks:"));
         assert!(written.contains("protected_paths:"));
+        assert!(written.contains("inferred_boundary:"));
+        assert!(written.contains("reviewed: false"));
+        assert!(written.contains("provenance:"));
+        assert!(written.contains("- detect:contract_file_default"));
         assert!(!written.contains("writable_paths:"));
         assert!(!written.contains("\n- .\n"));
     }
@@ -19992,8 +20004,13 @@ policies:
         assert!(preview_stdout.contains("- ota.yaml"));
         assert!(preview_stdout.contains("- package.json"));
         assert!(preview_stdout.contains("- package-lock.json"));
+        assert!(preview_stdout.contains("inferred_boundary:"));
+        assert!(preview_stdout.contains("reviewed: false"));
+        assert!(preview_stdout.contains("provenance:"));
+        assert!(preview_stdout.contains("- detect:common_source_roots"));
+        assert!(preview_stdout.contains("- detect:detected_control_files"));
         assert!(preview_stdout.contains(
-            "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo."
+            "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo."
         ));
 
         let exact = run_with(["ota", "detect", "--contract", fixture.path()]);
@@ -20003,6 +20020,9 @@ policies:
         assert!(exact_stdout.contains("default_task: typecheck"));
         assert!(exact_stdout.contains("- package.json"));
         assert!(exact_stdout.contains("- package-lock.json"));
+        assert!(exact_stdout.contains("inferred_boundary:"));
+        assert!(exact_stdout.contains("reviewed: false"));
+        assert!(exact_stdout.contains("- detect:common_source_roots"));
 
         let write = run_with(["ota", "detect", "--write", fixture.path()]);
         assert_eq!(write.exit_code, 0);
@@ -20020,8 +20040,13 @@ policies:
         assert!(written.contains("- ota.yaml"));
         assert!(written.contains("- package.json"));
         assert!(written.contains("- package-lock.json"));
+        assert!(written.contains("inferred_boundary:"));
+        assert!(written.contains("reviewed: false"));
+        assert!(written.contains("provenance:"));
+        assert!(written.contains("- detect:common_source_roots"));
+        assert!(written.contains("- detect:detected_control_files"));
         assert!(written.contains(
-            "Review `agent.writable_paths` and `agent.protected_paths` before letting automation edit this repo."
+            "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo."
         ));
     }
 
@@ -20052,6 +20077,9 @@ policies:
         assert!(preview_stdout.contains("writable_paths:"));
         assert!(preview_stdout.contains("- ui-shell"));
         assert!(preview_stdout.contains("- api-server"));
+        assert!(preview_stdout.contains("inferred_boundary:"));
+        assert!(preview_stdout.contains("reviewed: false"));
+        assert!(preview_stdout.contains("- detect:stack_source_scan"));
     }
 
     #[test]
@@ -22836,6 +22864,78 @@ project:
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(stdout.contains("Provenance: repo contract"));
+    }
+
+    #[test]
+    fn doctor_warns_when_agent_boundary_is_inferred_and_unreviewed() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  default_task: test
+  safe_tasks:
+    - test
+  writable_paths:
+    - src
+  protected_paths:
+    - ota.yaml
+  inferred_boundary:
+    reviewed: false
+    provenance:
+      writable_paths:
+        - detect:semantic_root_inference
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY WITH WARNINGS"));
+        assert!(stdout.contains("Agent boundary is inferred and unreviewed"));
+        assert!(stdout.contains("Boundary review: inferred (needs review)"));
+        assert!(stdout.contains("set `agent.inferred_boundary.reviewed: true`"));
+        assert!(stdout.contains("rerun `ota validate`"));
+
+        let reviewed_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  default_task: test
+  safe_tasks:
+    - test
+  writable_paths:
+    - src
+  protected_paths:
+    - ota.yaml
+  inferred_boundary:
+    reviewed: true
+    provenance:
+      writable_paths:
+        - detect:semantic_root_inference
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let reviewed_output = run_with(["ota", "doctor", reviewed_fixture.path()]);
+
+        assert_eq!(reviewed_output.exit_code, 0);
+        let reviewed_stdout = strip_ansi(&reviewed_output.stdout);
+        assert!(!reviewed_stdout.contains("Agent boundary is inferred and unreviewed"));
+        assert!(reviewed_stdout.contains("Boundary review: reviewed"));
     }
 
     #[test]

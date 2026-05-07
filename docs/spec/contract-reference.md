@@ -1540,6 +1540,15 @@ agent:
   protected_paths:
     - Cargo.lock
     - LICENSE
+  inferred_boundary:
+    reviewed: false
+    provenance:
+      writable_paths:
+        - detect:semantic_root_inference
+        - detect:stack_source_scan
+      protected_paths:
+        - detect:contract_file_default
+        - detect:detected_control_files
   bootstrap:
     ota:
       note: Only install ota if it is missing and installation is approved.
@@ -1556,6 +1565,9 @@ Current validation rules:
 - `verify_after_changes` entries must reference known tasks
 - `writable_paths` entries must not be empty
 - `protected_paths` entries must not be empty
+- `inferred_boundary.provenance.writable_paths` entries must not be empty when present
+- `inferred_boundary.provenance.protected_paths` entries must not be empty when present
+- `inferred_boundary` must include at least one provenance entry when present
 - `bootstrap.ota` must include at least one install command when present
 
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
@@ -1577,6 +1589,8 @@ Agent semantics:
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
 - `protected_paths` are the paths an AI agent should avoid editing casually
+- `inferred_boundary.reviewed: false` means ota inferred the current agent boundary but the repo author has not confirmed it yet
+- `inferred_boundary.provenance` explains which starter or detector heuristics produced the current writable and protected boundary
 - `bootstrap.ota` provides an approved `ota` install path for agents when the binary is missing
 - `bootstrap.ota.note` should explain when that install path may be used
 - `bootstrap.ota.sh` and `bootstrap.ota.powershell` should give the approved shell and PowerShell install commands
