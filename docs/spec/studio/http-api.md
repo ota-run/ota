@@ -35,6 +35,7 @@ This document defines the local-only HTTP contract for interactive Studio.
 3. POST owns mutation and operation launch.
 4. The frontend consumes Studio-focused read models, not raw command output where avoidable.
 5. The server, not the browser, invokes Ota core actions.
+6. Read/write contracts must remain aligned with [`event-schema.md`](event-schema.md).
 
 ## Transport
 
@@ -46,8 +47,9 @@ Initial binding:
 The server must:
 
 - bind only to loopback
-- reject non-local origins unless explicitly allowed later
-- generate a per-session token for mutation endpoints
+- reject non-loopback hostnames and require explicit local host allowlist for non-browser clients
+- generate and require a per-session token for all mutation/action endpoints
+- reject requests that do not present matching token in `X-Studio-Session-Token`
 
 ## Session metadata
 
@@ -194,7 +196,7 @@ Purpose:
 
 All operation launch endpoints must:
 
-- require session token
+- require session token (`X-Studio-Session-Token`)
 - accept explicit launch parameters only
 - reject implicit shell-like command strings
 
@@ -250,9 +252,18 @@ Read responses may additionally include:
 
 Mutation or operation-launch responses should additionally include:
 
-- `operation_id`
+- `operation_id` (required)
 - `status`
 - optional `next`
+
+Mutation responses should include the canonical Studio result payload fields from [`event-schema.md`](event-schema.md),
+including:
+
+- `schema_version`
+- `ok`
+- optional `exit_code`
+- optional `receipt_path`
+- optional `archive_path`
 
 ## Stale-review protection
 

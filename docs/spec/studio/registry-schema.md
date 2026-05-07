@@ -33,8 +33,17 @@ This document defines the persisted local repo registry used by Studio Home and 
 Canonical path:
 
 ```text
-~/.ota/studio/registry.json
+$HOME/.ota/studio/registry.json
 ```
+
+On Windows users, equivalent behavior should use the user config appdata path:
+
+```text
+%APPDATA%\\ota\\studio\\registry.json
+```
+
+Path resolution is user-scoped and must be resolved through the configured Ota user-root helper, not by
+literal string replacement.
 
 The registry is local-user state, not repo state.
 It is intentionally file-backed JSON, not a local database.
@@ -46,6 +55,7 @@ It is intentionally file-backed JSON, not a local database.
 3. Registry writes must be atomic.
 4. Corrupt registry state must degrade safely.
 5. The registry must stay simple enough to inspect, back up, reset, or hand-edit when needed.
+6. Concurrent startup should not lose registry updates without an explicit merge step.
 
 ## Top-level shape
 
@@ -166,6 +176,8 @@ Registry writes must:
 - write to a temp file
 - fsync if the platform path already does that elsewhere
 - rename atomically into place
+- serialize writers with a registry lock or equivalent single-writer section when running multiple Studio sessions
+- merge latest file state using `(repo_root, contract_path)` before final write
 
 The registry is logically single-writer from the Studio server perspective, but clients must still
 tolerate concurrent writers by:

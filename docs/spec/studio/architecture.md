@@ -42,6 +42,9 @@ The right architecture is:
   - agents
   - later CI or hosted adapters where useful
 
+The operation/event model is the schema authority for Studio interactions and must remain aligned with
+[`event-schema.md`](event-schema.md).
+
 ## Primary model
 
 Studio is a local app served by Ota.
@@ -108,9 +111,13 @@ Studio needs a global local repo registry.
 
 Proposed path:
 
-```text
-~/.ota/studio/registry.json
-```
+- Linux/macOS: `$HOME/.ota/studio/registry.json`
+- Windows: `%APPDATA%\\ota\\studio\\registry.json`
+
+Platform resolution rule:
+
+- use the Ota user root resolution helper and the OS config-data path when available
+- ensure the resolved path is user-scoped and non-root-inaccessible
 
 Registry data should include:
 
