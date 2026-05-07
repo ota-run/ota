@@ -23552,6 +23552,32 @@ tasks:
     }
 
     #[test]
+    fn bump_version_scripts_recommend_canonical_ota_ci_task() {
+        let shell_script =
+            fs::read_to_string("scripts/bump-version.sh").expect("read bump-version.sh");
+        let powershell_script =
+            fs::read_to_string("scripts/bump-version.ps1").expect("read bump-version.ps1");
+
+        assert!(
+            shell_script
+                .contains("  » run `ota run ci` to execute the canonical local verification task"),
+            "{shell_script}"
+        );
+        assert!(!shell_script.contains("run `cargo test`"), "{shell_script}");
+        assert!(
+            powershell_script
+                .contains("  » run `ota run ci` to execute the canonical local verification task"),
+            "{powershell_script}"
+        );
+        assert!(
+            !powershell_script.contains("run `cargo test`"),
+            "{powershell_script}"
+        );
+        assert!(!shell_script.contains("▸"), "{shell_script}");
+        assert!(!powershell_script.contains("▸"), "{powershell_script}");
+    }
+
+    #[test]
     fn doctor_text_reports_ready_when_no_findings_exist() {
         let fixture = ContractFixture::new(
             r#"

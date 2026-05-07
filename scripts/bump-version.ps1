@@ -188,6 +188,6 @@ Write-Host "From: $currentVersion"
 Write-Host "To:   $TargetVersion"
 Write-Host ""
 Write-Host "Next:"
-Write-Host '▸  run `cargo test`'
-Write-Host ('▸  commit with message like `release: v{0}`' -f $TargetVersion)
-Write-Host ('▸  push to `main`; GitHub Actions will create `v{0}` after the gate passes' -f $TargetVersion)
+Write-Host '  » run `ota run ci` to execute the canonical local verification task'
+Write-Host ('  » commit with message like `release: v{0}`' -f $TargetVersion)
+Write-Host ('  » push to `main`; GitHub Actions will create `v{0}` after the gate passes' -f $TargetVersion)

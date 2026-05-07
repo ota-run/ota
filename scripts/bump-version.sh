@@ -231,6 +231,6 @@ printf 'Updated: Cargo.toml, CHANGELOG.md, .github/workflows/ota-readiness.yml\n
 printf 'From: %s\n' "$current_version"
 printf 'To:   %s\n' "$new_version"
 printf '\nNext:\n'
-printf '▸  run `cargo test`\n'
-printf '▸  commit with message like `release: v%s`\n' "$new_version"
-printf '▸  push to `main`; GitHub Actions will create `v%s` after the gate passes\n' "$new_version"
+printf '  » run `ota run ci` to execute the canonical local verification task\n'
+printf '  » commit with message like `release: v%s`\n' "$new_version"
+printf '  » push to `main`; GitHub Actions will create `v%s` after the gate passes\n' "$new_version"
