@@ -20063,6 +20063,8 @@ agent:
         assert!(stdout.contains("confirmed"));
         assert!(stdout.contains("Boundary sync:"));
         assert!(stdout.contains("update needed"));
+        assert!(!stdout.contains("\nOverview\n\n"));
+        assert!(!stdout.contains("\nBoundary\n\n"));
         assert!(stdout.contains("ota agents --write"));
         assert!(stdout.contains("ota doctor"));
     }
@@ -20097,6 +20099,7 @@ agent:
         assert!(stdout.contains("confirmed"));
         assert!(stdout.contains("Boundary sync:"));
         assert!(stdout.contains("update needed"));
+        assert!(!stdout.contains("\nOverview\n\n"));
         assert!(!stdout.contains("AUTHORED"));
         assert!(!stdout.contains("explicit"));
     }
@@ -20141,6 +20144,8 @@ agent:
         assert!(stdout.contains("REVIEWED"));
         assert!(stdout.contains("Boundary sync:"));
         assert!(stdout.contains("in sync"));
+        assert!(!stdout.contains("\nOverview\n\n"));
+        assert!(!stdout.contains("\nBoundary\n\n"));
         assert!(stdout.contains("Boundary is already synced."));
         assert!(stdout.contains("Next:"));
         assert!(stdout.contains("ota doctor"));
