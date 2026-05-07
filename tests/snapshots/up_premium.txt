@@ -10,10 +10,16 @@ Next: use `ota run <task>` for isolated execution; use `ota up` for readiness on
 
 🦦 UP SUMMARY
 
+Status:      success
 Scope:       repo
 Path:        .
 Contract:    ./ota.yaml
 Mode:        native
 Task:        post-setup diagnosis
-Status:      success
-Note:        running on the host environment
+Lifecycle:   ephemeral
+Note:        running on the host environment; requested `--lifecycle ephemeral` is advisory in native mode only
+
+
+Next:
+  » use `ota run <task>` for isolated execution
+  » use `ota up` for readiness only

@@ -7805,7 +7805,7 @@ services:
         assert!(
             report.findings[0]
                 .next
-                .contains("rerun `ota doctor --mode container`"),
+                .contains("rerun `ota doctor --mode container --lifecycle ephemeral`"),
             "{}",
             report.findings[0].next
         );
@@ -7989,7 +7989,9 @@ services:
             .find(|finding| finding.summary.starts_with("Service readiness"))
             .expect("expected service readiness finding");
         assert!(
-            finding.next.contains("rerun `ota doctor --mode container`"),
+            finding
+                .next
+                .contains("rerun `ota doctor --mode container --lifecycle ephemeral`"),
             "{}",
             finding.next
         );
