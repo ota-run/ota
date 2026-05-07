@@ -1040,6 +1040,8 @@ Diagnose repo readiness from a validated contract.
 ota doctor [PATH]
 ota doctor --mode native [PATH]
 ota doctor --mode container [PATH]
+ota doctor --container --persistent [PATH]
+ota doctor --remote --ephemeral [PATH]
 ota doctor --json [PATH]
 ota doctor --fix --dry-run [PATH]
 ota doctor --fix [PATH]
@@ -1063,7 +1065,9 @@ ota doctor --member api --member web --json [PATH]
 - when a contract has no tasks, doctor now keeps that path preview-first too: it suggests `ota detect --dry-run` before any detect write, while still offering `ota assist add-task` when the right fix is clearly one explicit task
 - checks configured env requirements, declared checks, and service healthchecks in native mode
 - checks required execution backends for the selected `--mode` and resolved contexts
+- `ota doctor` now accepts the same execution-selector family shape as the other mode-bearing repo commands: `--mode`, backend shorthands (`--native`, `--container`, `--remote`), `--lifecycle`, and lifecycle shorthands (`--persistent`, `--ephemeral`)
 - `--mode native` diagnoses host/native readiness; `--mode container` diagnoses selected container context requirements
+- when a lifecycle override is selected, doctor keeps that lifecycle on its reported execution identity and rerun guidance instead of silently collapsing container diagnosis back to ephemeral
 - context diagnostics use the resolved named-context shape after `extends` merge, while legacy shorthand remains supported for one-context contracts
 - warns on suspicious remote target shape:
 - `ssh` / `tsh` targets without `user@host`
@@ -1325,6 +1329,8 @@ Use this when you want a stable handoff between local readiness and CI history:
 ota receipt [PATH]
 ota receipt --json [PATH]
 ota receipt --mode container [PATH]
+ota receipt --container --persistent [PATH]
+ota receipt --remote --ephemeral [PATH]
 ota receipt --archive [PATH]
 ota receipt --archive --promote-baseline [PATH]
 ota receipt --baseline promoted [PATH]
@@ -1341,8 +1347,10 @@ Current behavior:
 - `--member <name>` captures the merged monorepo member contract instead of the root contract
 - validates the contract first
 - runs repo readiness diagnosis in the selected execution context
+- `ota receipt` now accepts the same execution-selector family as `ota doctor`: `--mode`, backend shorthands (`--native`, `--container`, `--remote`), `--lifecycle`, and lifecycle shorthands (`--persistent`, `--ephemeral`)
 - includes repo contract drift findings from the same `ota detect` comparison path used by `ota doctor`
 - captures the current repo state as an execution receipt with one `readiness` step
+- when a lifecycle override is selected, the receipt preserves that selected lifecycle, image, target, and rerun path instead of falling back to the default doctor container lifecycle
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives

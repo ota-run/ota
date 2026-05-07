@@ -2130,7 +2130,10 @@ impl AgentBoundaryProvenanceConfig {
 pub struct AgentInferredBoundaryConfig {
     #[serde(default)]
     pub reviewed: bool,
-    #[serde(default, skip_serializing_if = "AgentBoundaryProvenanceConfig::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "AgentBoundaryProvenanceConfig::is_empty"
+    )]
     pub provenance: AgentBoundaryProvenanceConfig,
 }
 

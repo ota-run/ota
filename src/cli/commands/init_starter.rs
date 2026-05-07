@@ -946,9 +946,7 @@ fn starter_agent_protected_paths(
         }
     }
     if added_stack_companions {
-        provenance.insert(format!(
-            "{provenance_prefix}:stack_companion_control_files"
-        ));
+        provenance.insert(format!("{provenance_prefix}:stack_companion_control_files"));
     }
 
     protected_paths.into_iter().collect()

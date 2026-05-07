@@ -183,11 +183,14 @@ enum Commands {
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
         /// Shorthand for `--mode native`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
         native: bool,
         /// Shorthand for `--mode container`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
         container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
@@ -236,8 +239,26 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue, requires = "fix")]
         dry_run: bool,
         /// Diagnose readiness in a specific execution context.
-        #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
-        mode: DoctorModeArg,
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
+        container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
+        /// Override the execution lifecycle for this diagnosis.
+        #[arg(long, value_enum)]
+        lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle persistent`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
+        persistent: bool,
+        /// Shorthand for `--lifecycle ephemeral`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
+        ephemeral: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
@@ -356,7 +377,18 @@ enum Commands {
         #[arg(
             long,
             action = ArgAction::SetTrue,
-            conflicts_with_all = ["archive", "member", "mode", "baseline"]
+            conflicts_with_all = [
+                "archive",
+                "member",
+                "backend",
+                "native",
+                "container",
+                "remote",
+                "lifecycle",
+                "persistent",
+                "ephemeral",
+                "baseline"
+            ]
         )]
         history: bool,
         /// Archive the receipt JSON to `.ota/receipts`.
@@ -371,8 +403,26 @@ enum Commands {
         )]
         promote_baseline: bool,
         /// Capture the receipt in a specific execution context.
-        #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
-        mode: DoctorModeArg,
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
+        container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
+        /// Override the execution lifecycle for this receipt.
+        #[arg(long, value_enum)]
+        lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle persistent`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
+        persistent: bool,
+        /// Shorthand for `--lifecycle ephemeral`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
+        ephemeral: bool,
         /// Run the command against one monorepo member declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
@@ -413,11 +463,14 @@ enum Commands {
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
         /// Shorthand for `--mode native`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
         native: bool,
         /// Shorthand for `--mode container`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
         container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
@@ -584,11 +637,14 @@ enum ExecutionCommands {
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
         /// Shorthand for `--mode native`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
         native: bool,
         /// Shorthand for `--mode container`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
         container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
         /// Override the execution lifecycle for this inspection.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
@@ -935,11 +991,14 @@ enum WorkspaceExecutionCommands {
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
         /// Shorthand for `--mode native`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
         native: bool,
         /// Shorthand for `--mode container`.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native"])]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
         container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
         /// Override the execution lifecycle for this inspection.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
@@ -1117,11 +1176,14 @@ fn resolve_run_backend_override(
     backend: Option<RunBackend>,
     native: bool,
     container: bool,
+    remote: bool,
 ) -> Option<crate::schema::Backend> {
     if native {
         Some(crate::schema::Backend::Native)
     } else if container {
         Some(crate::schema::Backend::Container)
+    } else if remote {
+        Some(crate::schema::Backend::Remote)
     } else {
         backend.map(Into::into)
     }
@@ -2986,23 +3048,25 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--native" | "--container" | "--ephemeral" | "--persistent" | "--receipt" | "--stream"
-        | "--log" | "--debug" | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
-            canonical: match name {
-                "--native" | "--container" => "mode",
-                "--ephemeral" | "--persistent" => "lifecycle",
-                "--receipt" => "receipt",
-                "--stream" => "stream",
-                "--log" => "log",
-                "--debug" => "debug",
-                "--plain" => "plain",
-                "--concise" => "concise",
-                "--verbose" => "verbose",
-                _ => unreachable!("matched repo run switch"),
-            },
-            takes_value: false,
-            value_kind: RunFlagValueKind::Any,
-        }),
+        "--native" | "--container" | "--remote" | "--ephemeral" | "--persistent" | "--receipt"
+        | "--stream" | "--log" | "--debug" | "--plain" | "--concise" | "--verbose" => {
+            Some(RunFlagSpec {
+                canonical: match name {
+                    "--native" | "--container" | "--remote" => "mode",
+                    "--ephemeral" | "--persistent" => "lifecycle",
+                    "--receipt" => "receipt",
+                    "--stream" => "stream",
+                    "--log" => "log",
+                    "--debug" => "debug",
+                    "--plain" => "plain",
+                    "--concise" => "concise",
+                    "--verbose" => "verbose",
+                    _ => unreachable!("matched repo run switch"),
+                },
+                takes_value: false,
+                value_kind: RunFlagValueKind::Any,
+            })
+        }
         _ => None,
     }
 }
@@ -4073,6 +4137,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     backend,
                     native,
                     container,
+                    remote,
                     lifecycle,
                     persistent,
                     ephemeral,
@@ -4084,7 +4149,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             member.as_deref(),
             ExecutionOverrides {
-                backend: resolve_run_backend_override(backend, native, container),
+                backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
@@ -4329,6 +4394,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             backend,
             native,
             container,
+            remote,
             lifecycle,
             persistent,
             host_port,
@@ -4345,7 +4411,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             ExecutionOverrides {
-                backend: resolve_run_backend_override(backend, native, container),
+                backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port,
                 memory,
@@ -4361,7 +4427,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
             json,
             fix,
             dry_run,
-            mode,
+            backend,
+            native,
+            container,
+            remote,
+            lifecycle,
+            persistent,
+            ephemeral,
             member,
             path,
         } => commands::doctor(
@@ -4370,7 +4442,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
             &member,
             fix,
             dry_run,
-            mode.into(),
+            ExecutionOverrides {
+                backend: resolve_run_backend_override(backend, native, container, remote),
+                lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
+                host_port: None,
+                memory: None,
+            },
             format_from_json(json),
             debug,
         ),
@@ -4401,14 +4478,25 @@ fn dispatch(cli: Cli) -> CommandOutput {
             history,
             archive,
             promote_baseline,
-            mode,
+            backend,
+            native,
+            container,
+            remote,
+            lifecycle,
+            persistent,
+            ephemeral,
             member,
             path,
         } => commands::receipt(
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
-            mode.into(),
+            ExecutionOverrides {
+                backend: resolve_run_backend_override(backend, native, container, remote),
+                lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
+                host_port: None,
+                memory: None,
+            },
             format_from_json(json),
             baseline.as_deref(),
             fail_on_new_blockers,
@@ -4445,6 +4533,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             backend,
             native,
             container,
+            remote,
             lifecycle,
             persistent,
             ephemeral,
@@ -4455,7 +4544,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             ExecutionOverrides {
-                backend: resolve_run_backend_override(backend, native, container),
+                backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
@@ -4786,6 +4875,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         backend,
                         native,
                         container,
+                        remote,
                         lifecycle,
                         persistent,
                         ephemeral,
@@ -4797,7 +4887,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 file.as_deref(),
                 repo.as_deref(),
                 ExecutionOverrides {
-                    backend: resolve_run_backend_override(backend, native, container),
+                    backend: resolve_run_backend_override(backend, native, container, remote),
                     lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                     host_port: None,
                     memory: None,
@@ -7985,6 +8075,57 @@ tasks:
         let archive_path = json["archive_path"].as_str().unwrap();
         assert!(archive_path.contains(".ota/receipts/"));
         assert!(Path::new(archive_path).is_file());
+    }
+
+    #[test]
+    fn receipt_archive_keeps_selected_doctor_lifecycle_in_serialized_findings() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: receipt/test:latest
+      engines: [docker]
+env:
+  vars:
+    CAPTION_SPEED_SECONDS:
+      default: "30"
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--archive",
+            "--container",
+            "--persistent",
+            fixture.path(),
+        ]);
+
+        assert_ne!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let archive_path = json["archive_path"].as_str().unwrap();
+        let archived: Value =
+            serde_json::from_str(&fs::read_to_string(archive_path).unwrap()).unwrap();
+        let findings = archived["findings"].as_array().unwrap();
+        assert!(findings.iter().any(|finding| {
+            finding["next"].as_str().is_some_and(|next| {
+                next.contains("ota doctor --mode container --lifecycle persistent")
+            })
+        }));
     }
 
     #[test]
@@ -14239,6 +14380,7 @@ tasks:
                 backend: None,
                 native: false,
                 container: false,
+                remote: false,
                 lifecycle: None,
                 persistent: false,
                 host_port: None,
@@ -14273,6 +14415,7 @@ tasks:
                 backend: None,
                 native: false,
                 container: false,
+                remote: false,
                 lifecycle: None,
                 persistent: false,
                 host_port: None,
@@ -15179,6 +15322,7 @@ tasks:
             backend: None,
             native: false,
             container: false,
+            remote: false,
             lifecycle: None,
             persistent: false,
             ephemeral: false,
@@ -15197,6 +15341,7 @@ tasks:
             backend: None,
             native: false,
             container: false,
+            remote: false,
             lifecycle: None,
             persistent: false,
             ephemeral: false,
@@ -15224,6 +15369,7 @@ tasks:
                 backend: None,
                 native: false,
                 container: false,
+                remote: false,
                 lifecycle: None,
                 persistent: false,
                 ephemeral: false,
@@ -15248,6 +15394,7 @@ tasks:
                 backend: None,
                 native: false,
                 container: false,
+                remote: false,
                 lifecycle: None,
                 persistent: false,
                 ephemeral: false,
@@ -15282,6 +15429,7 @@ tasks:
             backend: None,
             native: false,
             container: false,
+            remote: false,
             lifecycle: None,
             persistent: false,
             host_port: None,
@@ -17777,9 +17925,81 @@ policies:
     }
 
     #[test]
+    fn run_remote_shortcut_is_classified_as_repo_run_mode_flag() {
+        let occurrence = super::parse_run_flag_occurrence(
+            &[OsString::from("--remote")],
+            0,
+            super::RunCommandKind::Repo,
+        )
+        .expect("remote shorthand should be classified");
+
+        assert_eq!(occurrence.canonical, "mode");
+        assert!(!occurrence.takes_value);
+        assert_eq!(occurrence.span, 1);
+        assert!(occurrence.valid_for_flag);
+        assert_eq!(super::run_command_value_span("--remote"), Some(1));
+    }
+
+    #[test]
     fn run_shortcut_mode_flags_conflict() {
         let parsed = Cli::try_parse_from(["ota", "run", "dev", "--native", "--container"]);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn doctor_selector_flags_parse_as_backend_and_lifecycle_overrides() {
+        let cli = Cli::parse_from(["ota", "doctor", "--container", "--persistent", "./ota.yaml"]);
+        match cli.command {
+            Commands::Doctor {
+                backend,
+                native,
+                container,
+                remote,
+                lifecycle,
+                persistent,
+                ephemeral,
+                path,
+                ..
+            } => {
+                assert!(container);
+                assert!(!native);
+                assert!(!remote);
+                assert!(persistent);
+                assert!(!ephemeral);
+                assert!(backend.is_none());
+                assert!(lifecycle.is_none());
+                assert_eq!(path.as_deref(), Some(Path::new("./ota.yaml")));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn receipt_selector_flags_parse_as_backend_and_lifecycle_overrides() {
+        let cli = Cli::parse_from(["ota", "receipt", "--remote", "--ephemeral", "."]);
+        match cli.command {
+            Commands::Receipt {
+                backend,
+                native,
+                container,
+                remote,
+                lifecycle,
+                persistent,
+                ephemeral,
+                path,
+                ..
+            } => {
+                assert!(remote);
+                assert!(!native);
+                assert!(!container);
+                assert!(ephemeral);
+                assert!(!persistent);
+                assert!(backend.is_none());
+                assert!(lifecycle.is_none());
+                assert_eq!(path.as_deref(), Some(Path::new(".")));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
     }
 
     #[test]
@@ -18133,6 +18353,53 @@ runtimes:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["mode"], "container");
         assert_eq!(json["summary"]["error_count"], 0);
+    }
+
+    #[test]
+    fn doctor_json_rewrites_selected_lifecycle_in_finding_next_steps() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: lifecycle-json
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: doctor/test:latest
+      engines: [docker]
+env:
+  vars:
+    CAPTION_SPEED_SECONDS:
+      default: "30"
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+
+        let output = run_with([
+            "ota",
+            "doctor",
+            "--json",
+            "--container",
+            "--persistent",
+            fixture.path(),
+        ]);
+
+        assert_ne!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let findings = json["findings"].as_array().unwrap();
+        assert!(findings.iter().any(|finding| {
+            finding["next"].as_str().is_some_and(|next| {
+                next.contains("ota doctor --mode container --lifecycle persistent")
+            })
+        }));
     }
 
     #[test]
@@ -32740,12 +33007,14 @@ repos:
         assert!(stderr.contains("No strong repo signals were detected yet"));
         assert_eq!(stderr.matches("Next:").count(), 1);
         assert!(stderr.contains("run `ota detect --dry-run .` to review inferred fields"));
-        assert!(stderr.contains(
-            "run `ota detect --contract .` to inspect the exact detected contract text"
-        ));
-        assert!(stderr.contains(
-            "run `ota init --dry-run .` to compare the conservative starter path"
-        ));
+        assert!(
+            stderr.contains(
+                "run `ota detect --contract .` to inspect the exact detected contract text"
+            )
+        );
+        assert!(
+            stderr.contains("run `ota init --dry-run .` to compare the conservative starter path")
+        );
     }
 
     #[test]

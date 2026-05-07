@@ -38,7 +38,8 @@ use serde_json::Value as JsonValue;
 
 use crate::execution::{
     container_engine_candidates, container_engine_candidates_from_backend,
-    selected_container_engine, selected_container_engine_from_backend,
+    matching_declared_execution_context_name, selected_container_engine,
+    selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
     LoadPolicyPackError, LoadedOrgPolicyPack, ProvisioningAction, ProvisioningBackendRequest,
@@ -103,12 +104,35 @@ fn backend_for_mode(mode: DoctorMode) -> Backend {
     }
 }
 
-fn rerun_doctor_command(mode: DoctorMode) -> &'static str {
+fn doctor_selected_lifecycle(
+    mode: DoctorMode,
+    lifecycle_override: Option<Lifecycle>,
+) -> Option<Lifecycle> {
+    lifecycle_override.or(match mode {
+        DoctorMode::Container => Some(Lifecycle::Ephemeral),
+        DoctorMode::Native | DoctorMode::Remote => None,
+    })
+}
+
+fn doctor_command_string(mode: DoctorMode, lifecycle: Option<Lifecycle>) -> String {
+    let mut command = String::from("ota doctor");
     match mode {
-        DoctorMode::Native => "ota doctor",
-        DoctorMode::Container => "ota doctor --mode container",
-        DoctorMode::Remote => "ota doctor --mode remote",
+        DoctorMode::Container => command.push_str(" --mode container"),
+        DoctorMode::Remote => command.push_str(" --mode remote"),
+        DoctorMode::Native => {}
     }
+    if let Some(lifecycle) = lifecycle {
+        command.push_str(" --lifecycle ");
+        command.push_str(match lifecycle {
+            Lifecycle::Persistent => "persistent",
+            Lifecycle::Ephemeral => "ephemeral",
+        });
+    }
+    command
+}
+
+fn rerun_doctor_command(mode: DoctorMode, lifecycle_override: Option<Lifecycle>) -> String {
+    doctor_command_string(mode, doctor_selected_lifecycle(mode, lifecycle_override))
 }
 
 fn doctor_mode_for_service(contract: &Contract, service: &ServiceSpec) -> DoctorMode {
@@ -159,6 +183,18 @@ fn first_execution_context_for_backend<'a>(
         .iter()
         .find(|(_, context)| context.backend == backend)
         .map(|(name, context)| (name.as_str(), context))
+}
+
+fn execution_context_for_backend<'a>(
+    contract: &'a Contract,
+    backend: Backend,
+    lifecycle: Option<Lifecycle>,
+) -> Option<(&'a str, &'a crate::schema::ExecutionContext)> {
+    let execution = contract.execution.as_ref()?;
+    matching_declared_execution_context_name(Some(execution), backend, lifecycle)
+        .and_then(|name| execution.contexts.get_key_value(name))
+        .map(|(name, context)| (name.as_str(), context))
+        .or_else(|| first_execution_context_for_backend(contract, backend))
 }
 
 fn precondition_requirement_surface(contract: &Contract, mode: DoctorMode) -> RequirementSurface {
@@ -1745,6 +1781,7 @@ pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorRep
         contract_path,
         DoctorScope::All,
         DoctorMode::Native,
+        None,
     )
 }
 
@@ -1753,7 +1790,22 @@ pub fn diagnose_contract_in_mode(
     contract_path: &Path,
     mode: DoctorMode,
 ) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::All, mode)
+    diagnose_contract_with_scope(contract, contract_path, DoctorScope::All, mode, None)
+}
+
+pub fn diagnose_contract_with_mode_and_lifecycle(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    lifecycle_override: Option<Lifecycle>,
+) -> DoctorReport {
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::All,
+        mode,
+        lifecycle_override,
+    )
 }
 
 pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> PolicyReviewReport {
@@ -1804,7 +1856,13 @@ pub fn diagnose_preconditions_with_mode(
     contract_path: &Path,
     mode: DoctorMode,
 ) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::Preconditions, mode)
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        mode,
+        None,
+    )
 }
 
 pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
@@ -1813,6 +1871,7 @@ pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> Doctor
         contract_path,
         DoctorScope::ChecksOnly,
         DoctorMode::Native,
+        None,
     )
 }
 
@@ -1822,6 +1881,7 @@ pub fn diagnose_services_only(contract: &Contract, contract_path: &Path) -> Doct
         contract_path,
         DoctorScope::ServicesOnly,
         DoctorMode::Native,
+        None,
     )
 }
 
@@ -1836,6 +1896,7 @@ pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -
             service,
             working_dir,
             doctor_mode_for_service(contract, service),
+            None,
         )
     {
         findings.push(finding);
@@ -1865,11 +1926,13 @@ fn diagnose_contract_with_scope(
     contract_path: &Path,
     scope: DoctorScope,
     mode: DoctorMode,
+    lifecycle_override: Option<Lifecycle>,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
     let mut adapter_bootstrap = None;
     let mut execution_target = None;
+    let selected_lifecycle = doctor_selected_lifecycle(mode, lifecycle_override);
     let requirement_surface = precondition_requirement_surface(contract, mode);
     let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         match load_org_policy_pack_auto_details(contract_path) {
@@ -1902,8 +1965,9 @@ fn diagnose_contract_with_scope(
     }
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
-        diagnose_lifecycle(contract, &mut findings);
-        let container_probe = diagnose_execution_backend(contract, &mut findings, mode);
+        diagnose_lifecycle(contract, mode, selected_lifecycle, &mut findings);
+        let container_probe =
+            diagnose_execution_backend(contract, &mut findings, mode, selected_lifecycle);
         let declared_env_sources = load_declared_env_sources(contract, contract_path);
         diagnose_env_sources(&declared_env_sources, &mut findings);
         if mode == DoctorMode::Native {
@@ -1939,6 +2003,7 @@ fn diagnose_contract_with_scope(
                         contract_path,
                         loaded_policy.as_ref(),
                         mode,
+                        selected_lifecycle,
                         None,
                         Some(&remote_probe.backend),
                         remote_probe.context_name.as_deref(),
@@ -1951,6 +2016,7 @@ fn diagnose_contract_with_scope(
                         contract_path,
                         loaded_policy.as_ref(),
                         mode,
+                        selected_lifecycle,
                         None,
                         Some(&remote_probe.backend),
                         remote_probe.context_name.as_deref(),
@@ -1976,6 +2042,7 @@ fn diagnose_contract_with_scope(
                 contract_path,
                 loaded_policy.as_ref(),
                 mode,
+                selected_lifecycle,
                 container_probe.as_ref(),
                 None,
                 None,
@@ -1989,6 +2056,7 @@ fn diagnose_contract_with_scope(
                 contract_path,
                 loaded_policy.as_ref(),
                 mode,
+                selected_lifecycle,
                 container_probe.as_ref(),
                 None,
                 None,
@@ -2003,11 +2071,18 @@ fn diagnose_contract_with_scope(
             && container_probe_started
             && let Some(container_probe) = container_probe.as_ref()
         {
-            execution_target = Some(crate::runner::ephemeral_container_name(
-                contract_working_dir(contract_path),
-                &container_probe.image,
-                &container_probe.engine,
-            ));
+            execution_target = Some(match selected_lifecycle {
+                Some(Lifecycle::Persistent) => crate::runner::persistent_container_name(
+                    contract_working_dir(contract_path),
+                    &container_probe.image,
+                    &container_probe.engine,
+                ),
+                Some(Lifecycle::Ephemeral) | None => crate::runner::ephemeral_container_name(
+                    contract_working_dir(contract_path),
+                    &container_probe.image,
+                    &container_probe.engine,
+                ),
+            });
         }
         if mode != DoctorMode::Remote {
             provisioning = diagnose_org_policy(
@@ -2027,7 +2102,13 @@ fn diagnose_contract_with_scope(
         diagnose_contract_advisories(contract, &mut findings);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
-        diagnose_services(contract, contract_path, mode, &mut findings);
+        diagnose_services(
+            contract,
+            contract_path,
+            mode,
+            selected_lifecycle,
+            &mut findings,
+        );
     }
     if scope != DoctorScope::ServicesOnly {
         if mode == DoctorMode::Native {
@@ -2136,7 +2217,12 @@ fn project_type_allows_no_tasks(contract: &Contract) -> bool {
     }
 }
 
-fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
+fn diagnose_lifecycle(
+    contract: &Contract,
+    mode: DoctorMode,
+    selected_lifecycle: Option<Lifecycle>,
+    findings: &mut Vec<Finding>,
+) {
     let Some(execution) = contract.execution.as_ref() else {
         return;
     };
@@ -2146,15 +2232,25 @@ fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
     }
 
     if execution.preferred == Some(Backend::Container) {
+        let next = match (mode, selected_lifecycle) {
+            (DoctorMode::Container, Some(lifecycle)) => format!(
+                "use `ota run <task>` for isolated execution; use `ota up --mode container --lifecycle {}` for readiness only",
+                match lifecycle {
+                    Lifecycle::Persistent => "persistent",
+                    Lifecycle::Ephemeral => "ephemeral",
+                }
+            ),
+            _ => String::from(
+                "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
+            ),
+        };
         findings.push(Finding {
             severity: FindingSeverity::Warn,
             summary: String::from("Ephemeral lifecycle is execution-only"),
             why: String::from(
                 "`execution.lifecycle: ephemeral` only applies to task execution. Diagnosis, healthchecks, and teardown are not covered.",
             ),
-            next: String::from(
-                "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
-            ),
+            next,
         });
     } else {
         findings.push(Finding {
@@ -2174,6 +2270,7 @@ fn diagnose_execution_backend(
     contract: &Contract,
     findings: &mut Vec<Finding>,
     mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
 ) -> Option<ContainerProbeContext> {
     let Some(execution) = contract.execution.as_ref() else {
         if mode == DoctorMode::Container {
@@ -2186,7 +2283,7 @@ fn diagnose_execution_backend(
 
     if mode == DoctorMode::Container {
         if let Some((_, context)) =
-            first_execution_context_for_backend(contract, Backend::Container)
+            execution_context_for_backend(contract, Backend::Container, lifecycle)
             && let Some(container) = context.container.as_ref()
         {
             let Some(engine) = selected_container_engine_from_backend(Some(container)) else {
@@ -2221,7 +2318,7 @@ fn diagnose_execution_backend(
     }
 
     if mode == DoctorMode::Remote {
-        let Some(remote) = first_execution_context_for_backend(contract, Backend::Remote)
+        let Some(remote) = execution_context_for_backend(contract, Backend::Remote, lifecycle)
             .and_then(|(_, context)| context.remote.as_ref())
             .or_else(|| {
                 execution
@@ -2544,12 +2641,15 @@ fn diagnose_services(
     contract: &Contract,
     contract_path: &Path,
     mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
     findings: &mut Vec<Finding>,
 ) {
     let working_dir = contract_working_dir(contract_path);
 
     for (name, service) in &contract.services {
-        if let Some(finding) = service_finding(contract, name, service, working_dir, mode) {
+        if let Some(finding) =
+            service_finding(contract, name, service, working_dir, mode, lifecycle)
+        {
             findings.push(finding);
         }
     }
@@ -2561,8 +2661,9 @@ fn service_finding(
     service: &ServiceSpec,
     working_dir: &Path,
     mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
 ) -> Option<Finding> {
-    let rerun_doctor = rerun_doctor_command(mode);
+    let rerun_doctor = rerun_doctor_command(mode, lifecycle);
     if let Some(readiness) = &service.readiness {
         let from_context = readiness.from_context().unwrap_or_default();
         return match run_service_readiness(contract, name, service, working_dir, readiness) {
@@ -2601,7 +2702,7 @@ fn service_finding(
                     from_context,
                     &error,
                 ),
-                next: service_readiness_execution_next(name, from_context, mode),
+                next: service_readiness_execution_next(name, from_context, mode, lifecycle),
             }),
         };
     }
@@ -2716,10 +2817,15 @@ fn service_readiness_execution_why(
     }
 }
 
-fn service_readiness_execution_next(name: &str, context_name: &str, mode: DoctorMode) -> String {
+fn service_readiness_execution_next(
+    name: &str,
+    context_name: &str,
+    mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
+) -> String {
     format!(
         "repair execution context `{context_name}` or move `services.{name}.readiness.from` to a context Ota can execute, then rerun `{}`",
-        rerun_doctor_command(mode)
+        rerun_doctor_command(mode, lifecycle)
     )
 }
 
@@ -3128,6 +3234,7 @@ fn diagnose_runtimes(
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     mode: DoctorMode,
+    selected_lifecycle: Option<Lifecycle>,
     container_probe: Option<&ContainerProbeContext>,
     remote_probe: Option<&ResolvedExecutionBackend>,
     remote_context_name: Option<&str>,
@@ -3153,6 +3260,7 @@ fn diagnose_runtimes(
             required,
             runtime_provider_hint(requirement, target_os),
             mode,
+            selected_lifecycle,
             container_probe,
             remote_probe,
             remote_context_name,
@@ -3172,6 +3280,7 @@ fn diagnose_tools(
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     mode: DoctorMode,
+    selected_lifecycle: Option<Lifecycle>,
     container_probe: Option<&ContainerProbeContext>,
     remote_probe: Option<&ResolvedExecutionBackend>,
     remote_context_name: Option<&str>,
@@ -3197,6 +3306,7 @@ fn diagnose_tools(
             required,
             None,
             mode,
+            selected_lifecycle,
             container_probe,
             remote_probe,
             remote_context_name,
@@ -4010,6 +4120,7 @@ fn diagnose_command_version(
     required: bool,
     provider_hint: Option<&str>,
     mode: DoctorMode,
+    selected_lifecycle: Option<Lifecycle>,
     container_probe: Option<&ContainerProbeContext>,
     remote_probe: Option<&ResolvedExecutionBackend>,
     remote_context_name: Option<&str>,
@@ -4019,6 +4130,7 @@ fn diagnose_command_version(
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) -> bool {
+    let rerun_doctor = rerun_doctor_command(mode, selected_lifecycle);
     let target_kind = match kind {
         "runtime" => ProvisioningTargetKind::Runtime,
         _ => ProvisioningTargetKind::Tool,
@@ -4106,8 +4218,8 @@ fn diagnose_command_version(
                                 ),
                             };
                             let next = format!(
-                                "run `{}` inside the selected container image, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor --mode container`",
-                                probe.command
+                                "run `{}` inside the selected container image, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `{}`",
+                                probe.command, rerun_doctor
                             );
                             (why, next)
                         }
@@ -4127,8 +4239,8 @@ fn diagnose_command_version(
                                 ),
                             };
                             let next = format!(
-                                "run `{}` through the selected remote backend, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor --mode remote`",
-                                probe.command
+                                "run `{}` through the selected remote backend, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `{}`",
+                                probe.command, rerun_doctor
                             );
                             (why, next)
                         }
@@ -4148,8 +4260,8 @@ fn diagnose_command_version(
                                 ),
                             };
                             let next = format!(
-                                "run `{}` directly, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor`",
-                                probe.command
+                                "run `{}` directly, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `{}`",
+                                probe.command, rerun_doctor
                             );
                             (why, next)
                         }
@@ -4185,8 +4297,8 @@ fn diagnose_command_version(
                                 probe.command
                             );
                             let next = format!(
-                                "run `{}` inside the selected container image, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor --mode container`",
-                                probe.command
+                                "run `{}` inside the selected container image, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `{}`",
+                                probe.command, rerun_doctor
                             );
                             (why, next)
                         }
@@ -4196,8 +4308,8 @@ fn diagnose_command_version(
                                 probe.command
                             );
                             let next = format!(
-                                "run `{}` through the selected remote backend, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor --mode remote`",
-                                probe.command
+                                "run `{}` through the selected remote backend, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `{}`",
+                                probe.command, rerun_doctor
                             );
                             (why, next)
                         }
@@ -4207,8 +4319,8 @@ fn diagnose_command_version(
                                 probe.command
                             );
                             let next = format!(
-                                "run `{}` directly, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor`",
-                                probe.command
+                                "run `{}` directly, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `{}`",
+                                probe.command, rerun_doctor
                             );
                             (why, next)
                         }
@@ -4250,10 +4362,10 @@ fn diagnose_command_version(
                         .expect("container probe is present in container mode")
                         .engine
                         .clone(),
-                    lifecycle: Lifecycle::Ephemeral,
+                    lifecycle: selected_lifecycle.unwrap_or(Lifecycle::Ephemeral),
                     container_name: None,
                 },
-                "ota doctor --mode container",
+                &rerun_doctor,
             ));
             return probe_started;
         }
@@ -4272,7 +4384,7 @@ fn diagnose_command_version(
             findings.push(provisioning_installability_finding(
                 &failure,
                 &target,
-                "ota doctor --mode remote",
+                &rerun_doctor,
             ));
             return probe_started;
         }
@@ -4306,27 +4418,27 @@ fn diagnose_command_version(
             },
             next: match (mode, container_image) {
                 (DoctorMode::Container, Some(image)) => format!(
-                    "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` is available, then rerun `ota doctor --mode container`"
+                    "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` is available, then rerun `{rerun_doctor}`"
                 ),
                 (DoctorMode::Container, None) => format!(
-                    "update `execution.backends.container.image` so `{display_name}` is available, then rerun `ota doctor --mode container`"
+                    "update `execution.backends.container.image` so `{display_name}` is available, then rerun `{rerun_doctor}`"
                 ),
                 (DoctorMode::Remote, _) => remote_context_name
                     .map(|context_name| {
                         format!(
-                            "make `{display_name}` available in remote context `{context_name}` and rerun `ota doctor --mode remote`"
+                            "make `{display_name}` available in remote context `{context_name}` and rerun `{rerun_doctor}`"
                         )
                     })
                     .unwrap_or_else(|| {
                         format!(
-                            "make `{display_name}` available in the selected remote backend and rerun `ota doctor --mode remote`"
+                            "make `{display_name}` available in the selected remote backend and rerun `{rerun_doctor}`"
                         )
                     }),
                 _ => exact_remediation
-                    .map(|command| format!("run `{command}` and rerun `ota doctor`"))
+                    .map(|command| format!("run `{command}` and rerun `{rerun_doctor}`"))
                     .unwrap_or_else(|| {
                         format!(
-                            "install {display_name} and make it available on PATH, then rerun `ota doctor`"
+                            "install {display_name} and make it available on PATH, then rerun `{rerun_doctor}`"
                         )
                     }),
             },
@@ -4427,10 +4539,10 @@ fn diagnose_command_version(
                     .expect("container probe is present in container mode")
                     .engine
                     .clone(),
-                lifecycle: Lifecycle::Ephemeral,
+                lifecycle: selected_lifecycle.unwrap_or(Lifecycle::Ephemeral),
                 container_name: None,
             },
-            "ota doctor --mode container",
+            &rerun_doctor,
         ));
         return probe_started;
     }
@@ -4449,7 +4561,7 @@ fn diagnose_command_version(
         findings.push(provisioning_installability_finding(
             &failure,
             &target,
-            "ota doctor --mode remote",
+            &rerun_doctor,
         ));
         return probe_started;
     }
@@ -4515,27 +4627,27 @@ fn diagnose_command_version(
         },
         next: match (mode, container_image) {
             (DoctorMode::Container, Some(image)) => format!(
-                "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` satisfies `{requirement}`, then rerun `ota doctor --mode container`"
+                "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` satisfies `{requirement}`, then rerun `{rerun_doctor}`"
             ),
             (DoctorMode::Container, None) => format!(
-                "update `execution.backends.container.image` so `{display_name}` satisfies `{requirement}`, then rerun `ota doctor --mode container`"
+                "update `execution.backends.container.image` so `{display_name}` satisfies `{requirement}`, then rerun `{rerun_doctor}`"
             ),
             (DoctorMode::Remote, _) => remote_context_name
                 .map(|context_name| {
                     format!(
-                        "update `{display_name}` in remote context `{context_name}` so it satisfies `{requirement}`, then rerun `ota doctor --mode remote`"
+                        "update `{display_name}` in remote context `{context_name}` so it satisfies `{requirement}`, then rerun `{rerun_doctor}`"
                     )
                 })
                 .unwrap_or_else(|| {
                     format!(
-                        "update `{display_name}` in the selected remote backend so it satisfies `{requirement}`, then rerun `ota doctor --mode remote`"
+                        "update `{display_name}` in the selected remote backend so it satisfies `{requirement}`, then rerun `{rerun_doctor}`"
                     )
                 }),
             _ => exact_remediation
-                .map(|command| format!("run `{command}` and rerun `ota doctor`"))
+                .map(|command| format!("run `{command}` and rerun `{rerun_doctor}`"))
                 .unwrap_or_else(|| {
                     format!(
-                        "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `ota doctor`"
+                        "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `{rerun_doctor}`"
                     )
                 }),
         },
