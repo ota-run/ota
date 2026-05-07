@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- standardized implicit no-contract repo command failures around one blocked onboarding surface: commands like `ota agents`, `ota tasks`, `ota run`, `ota up`, `ota env`, `ota explain`, `ota receipt`, `ota policy review`, `ota extensions`, the assist commands, and related repo surfaces now report `Contract missing`, reuse the compare-first onboarding lane, and include `Repo Signals` instead of falling back to low-level contract-resolution errors
 - reshaped `ota doctor` execution environment output so execution facts stay compact, environment resolution gets its own section, required-missing counts are explicit, and env entries are grouped as policy-backed, process-backed, source-backed, defaulted, or missing instead of rendering as a flat repeated `Env:` list
 - normalized another public CLI output-coherence slice: workspace detect/init scaffold mutations now keep stable command headers with result status in-body, `ota workspace tasks` no longer fakes a readiness verdict, preview `Contract` sections now use the newer unpunctuated grammar, `ota assist` previews now use `Next:` instead of legacy `Apply:` tails, and `ota receipt` now groups archive metadata inside a proper `Archive` section
 - improved no-contract `ota doctor` signal formatting in rich mode so the detected values now stand out visually without changing the labels, plain output, or JSON behavior

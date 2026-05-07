@@ -32621,23 +32621,31 @@ repos:
     #[test]
     fn policy_review_not_found_from_current_directory_keeps_actionable_next() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
-        let previous = std::env::current_dir().unwrap();
-        std::env::set_current_dir(fixture.path()).unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.path());
 
         let output = run_with(["ota", "policy", "review"]);
-
-        std::env::set_current_dir(previous).unwrap();
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("POLICY REVIEW ."));
-        assert!(stderr.contains("Contract target could not be resolved"));
-        assert!(stderr.contains("Why: no `ota.yaml` found from `.` upward"));
+        assert!(stderr.contains("BLOCKED"));
+        assert!(stderr.contains("Primary Blocker Contract missing"));
+        assert!(stderr.contains(
+            "Why: no `ota.yaml` was found from `.` upward, so Ota cannot run `ota policy review` against a declared repo contract yet"
+        ));
+        assert!(stderr.contains("Provenance: repo signals"));
+        assert!(stderr.contains("Repo Signals"));
+        assert!(stderr.contains("No strong repo signals were detected yet"));
         assert_eq!(stderr.matches("Next:").count(), 1);
-        assert!(stderr.contains("run `ota init` to create a starter contract"));
-        assert!(stderr.contains("run this command from a repo directory that contains `ota.yaml`"));
-        assert!(stderr.contains("or run `ota init --dry-run` to preview what Ota would generate"));
+        assert!(stderr.contains("run `ota detect --dry-run .` to review inferred fields"));
+        assert!(stderr.contains(
+            "run `ota detect --contract .` to inspect the exact detected contract text"
+        ));
+        assert!(stderr.contains(
+            "run `ota init --dry-run .` to compare the conservative starter path"
+        ));
     }
 
     #[test]
@@ -32654,6 +32662,112 @@ repos:
         assert!(stderr.contains("run `ota init` to create a starter contract"));
         assert!(stderr.contains("run this command from a repo directory that contains `ota.yaml`"));
         assert!(stderr.contains("or run `ota init --dry-run` to preview what Ota would generate"));
+    }
+
+    #[test]
+    fn agents_without_contract_use_blocked_contract_missing_surface() {
+        let _guard = cwd_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+
+        fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "start": "next start"
+  }
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("package-lock.json"),
+            "{\n  \"name\": \"ota-site\"\n}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("app")).unwrap();
+        fs::create_dir_all(fixture.path().join("lib")).unwrap();
+        fs::write(
+            fixture.path().join("app/page.tsx"),
+            "export default function Page() { return null; }\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("lib/site.ts"),
+            "export const site = true;\n",
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "agents"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("AGENTS ."));
+        assert!(stderr.contains("BLOCKED"));
+        assert!(stderr.contains("Target"));
+        assert!(stderr.contains("File:"));
+        assert!(stderr.contains("Managed block:"));
+        assert!(stderr.contains("Primary Blocker Contract missing"));
+        assert!(stderr.contains(
+            "Why: no `ota.yaml` was found from `.` upward, so Ota cannot sync `AGENTS.md` from a declared repo contract yet"
+        ));
+        assert!(stderr.contains("Repo Signals"));
+        assert!(stderr.contains("Detected project name: ota-site"));
+        assert!(stderr.contains("Detected repo type: Node"));
+        assert!(stderr.contains("Detected package manager: npm"));
+        assert!(stderr.contains("Detected likely runnable tasks: dev, build, typecheck, start"));
+        assert!(stderr.contains("Inferred starter writable paths: app, lib"));
+        assert!(stderr.contains("Inferred protected paths:"));
+        assert!(stderr.contains("ota.yaml"));
+        assert!(stderr.contains("package.json"));
+        assert!(stderr.contains("package-lock.json"));
+        assert!(stderr.contains("ota detect --dry-run ."));
+        assert!(stderr.contains("ota detect --contract ."));
+        assert!(stderr.contains("ota init --dry-run ."));
+        assert!(stderr.contains("ota agents --write ."));
+    }
+
+    #[test]
+    fn tasks_missing_repo_directory_use_blocked_contract_missing_surface() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "tasks", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let compact = compact_path(fixture.path(), ".");
+        assert!(stderr.contains(&format!("TASKS {compact}")));
+        assert!(stderr.contains("BLOCKED"));
+        assert!(stderr.contains("Primary Blocker Contract missing"));
+        assert!(stderr.contains("ota detect --dry-run"));
+        assert!(stderr.contains("ota detect --contract"));
+        assert!(stderr.contains("ota init --dry-run"));
+    }
+
+    #[test]
+    fn run_without_contract_use_blocked_contract_missing_surface() {
+        let _guard = cwd_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+
+        let output = run_with(["ota", "run", "ci"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("RUN ."));
+        assert!(stderr.contains("BLOCKED"));
+        assert!(stderr.contains("Primary Blocker Contract missing"));
+        assert!(stderr.contains(
+            "Why: no `ota.yaml` was found from `.` upward, so Ota cannot run `ota run` against a declared repo contract yet"
+        ));
+        assert!(stderr.contains("Repo Signals"));
+        assert!(stderr.contains("No strong repo signals were detected yet"));
+        assert!(stderr.contains("ota detect --dry-run ."));
+        assert!(stderr.contains("ota detect --contract ."));
+        assert!(stderr.contains("ota init --dry-run ."));
     }
 
     #[test]
