@@ -27757,7 +27757,8 @@ edition = "2024"
         assert!(stderr.contains("could not detect the current shell automatically"));
         assert!(stderr.contains("ota completion zsh --setup"));
         assert!(stderr.contains("to install"));
-        assert!(stderr.contains("completion explicitly when shell auto-detection is unavailable"));
+        assert!(stderr.contains("completion explicitly"));
+        assert!(stderr.contains("auto-detection is unavailable"));
     }
 
     #[test]
