@@ -19647,6 +19647,7 @@ project:
 
     #[test]
     fn agents_review_without_contract_uses_contract_missing_lane() {
+        let _env_guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -19667,9 +19668,10 @@ project:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
+        let normalized = normalize_inline_whitespace(&stdout);
         assert!(stdout.contains("AGENTS REVIEW"));
         assert!(stdout.contains("Primary Blocker Contract missing"));
-        assert!(stdout.contains("cannot review or confirm an agent boundary"));
+        assert!(normalized.contains("cannot review or confirm an agent boundary"));
         assert!(stdout.contains("ota detect --dry-run"));
         assert!(stdout.contains("ota detect --contract"));
         assert!(stdout.contains("ota init --dry-run"));
@@ -33347,6 +33349,7 @@ repos:
 
     #[test]
     fn agents_without_contract_use_blocked_contract_missing_surface() {
+        let _env_guard = env_mutex_lock();
         let _guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let _cwd = CurrentDirGuard::enter(fixture.path());
@@ -33388,7 +33391,7 @@ repos:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("AGENTS ."));
         assert!(stderr.contains("BLOCKED"));
-        assert!(stderr.contains("Target"));
+        assert!(stderr.contains("➤ Target"));
         assert!(stderr.contains("File:"));
         assert!(stderr.contains("Managed block:"));
         assert!(stderr.contains("Primary Blocker Contract missing"));
@@ -33409,10 +33412,12 @@ repos:
         assert!(stderr.contains("ota detect --contract ."));
         assert!(stderr.contains("ota init --dry-run ."));
         assert!(stderr.contains("ota agents --write ."));
+        assert!(!stderr.contains("Operation failed"));
     }
 
     #[test]
     fn tasks_missing_repo_directory_use_blocked_contract_missing_surface() {
+        let _env_guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with(["ota", "tasks", fixture.path().to_str().unwrap()]);
@@ -33426,10 +33431,12 @@ repos:
         assert!(stderr.contains("ota detect --dry-run"));
         assert!(stderr.contains("ota detect --contract"));
         assert!(stderr.contains("ota init --dry-run"));
+        assert!(!stderr.contains("Operation failed"));
     }
 
     #[test]
     fn run_without_contract_use_blocked_contract_missing_surface() {
+        let _env_guard = env_mutex_lock();
         let _guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let _cwd = CurrentDirGuard::enter(fixture.path());
@@ -33449,6 +33456,7 @@ repos:
         assert!(stderr.contains("ota detect --dry-run ."));
         assert!(stderr.contains("ota detect --contract ."));
         assert!(stderr.contains("ota init --dry-run ."));
+        assert!(!stderr.contains("Operation failed"));
     }
 
     #[test]
