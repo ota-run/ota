@@ -65,6 +65,20 @@ The earlier static export prototype has served its purpose and should not remain
 Studio experience. Any reusable internals may be salvaged, but the product surface should converge
 on one interactive `ota studio` path.
 
+## Long-term delivery baseline
+
+Studio’s long-term baseline remains:
+
+- localserver + localhost browser UI as the default and free path
+- no separate desktop client as a product-critical execution environment
+- optional thin desktop wrapper only as an optional premium distribution layer
+
+The product boundary is therefore:
+
+- local Ota CLI owns contract and execution truth
+- Studio renders and orchestrates local Studio server payloads
+- the UI should remain easy to inspect, debug, and automate through the local HTTP/API contract
+
 ## Core principles
 
 1. Studio is an Ota client, not a second system.

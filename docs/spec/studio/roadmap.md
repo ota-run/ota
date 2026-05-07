@@ -49,6 +49,13 @@ This progression preserves the product trust boundary:
 - Studio should observe the same truth produced for CLI and agents, not a Studio-only execution
   model
 
+Delivery policy:
+
+- default/freemium path: `ota studio` local server + localhost browser UI
+- no separate desktop engine is the primary implementation path
+- premium desktop support may be introduced only as a wrapper/presentation layer once baseline
+  localserver quality is complete
+
 ## Phase 0: spec freeze
 
 Goal:

@@ -23724,6 +23724,26 @@ tasks:
     }
 
     #[test]
+    fn bootstrap_powershell_defers_locked_binary_replacement_for_wrapped_copy_item_errors() {
+        let script = fs::read_to_string("scripts/bootstrap.ps1").expect("read bootstrap.ps1");
+
+        assert!(
+            script.contains("function Resolve-OtaLockedReplacement"),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "Resolve-OtaLockedReplacement -ErrorRecord $_ -Staged $staged -Destination $destination"
+            ),
+            "{script}"
+        );
+        assert!(
+            !script.contains("catch [System.IO.IOException]"),
+            "{script}"
+        );
+    }
+
+    #[test]
     fn doctor_text_reports_ready_when_no_findings_exist() {
         let fixture = ContractFixture::new(
             r#"
