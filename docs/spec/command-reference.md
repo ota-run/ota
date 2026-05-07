@@ -1220,8 +1220,8 @@ Text output:
 - includes `Mode: blank` or `Mode: detected`
 - `pack` mode also includes `Pack: <name>`, optional `Options: ...` when the selected starter pack supports explicit knobs, plus an explicit pack-policy note
 - explicit pack mode can also include an advisory note with `Why`, weighted `Signals`, `Selected signals`, `Strength`, `Gap`, and `Next` rows when strong repo signals disagree with the selected pack; ota does not auto-switch or merge detector output into the pack
-- `--packs` renders `INIT PACKS starter packs`, one entry per pack, the exact `ota init --pack ...` command, any starter-specific option rows, and a `Next:` line with the matching `ota init --pack ... --dry-run .` preview command
-- includes a `Next:` line that tells the user how to review or validate the starter contract
+- `--packs` renders `INIT PACKS catalog`, one entry per pack, the exact `ota init --pack ...` command, any starter-specific option rows, and a `Next:` line with the matching `ota init --pack ... --dry-run .` preview command plus why that preview is the right next move
+- successful init writes now use explanatory `Next:` steps instead of bare commands: validate the written contract, inspect the runnable task surface, review readiness with doctor, then preview preparation with `ota up --dry-run`
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
 - `detected` mode write output explicitly calls out the write policy and any excluded low-confidence fields
 - includes inferred-field annotations with source and confidence
@@ -1994,7 +1994,7 @@ Current write behavior:
 - validates the generated contract before writing
 - refuses to overwrite an existing `ota.yaml`
 - when no `ota.yaml` exists yet, preview guidance stays compare-first: `ota detect --contract` for exact detected text, `ota init --dry-run` for the conservative starter path, then `ota detect --write` for the first detected write
-- after a successful first detect write, text output points directly to `ota validate` and `ota up --dry-run`
+- after a successful first detect write, text output uses explanatory `Next:` steps: validate the written contract, inspect the runnable task surface, review readiness with doctor, then preview preparation with `ota up --dry-run`
 
 Current merge-preview behavior:
 
@@ -2021,7 +2021,7 @@ Current merge-write behavior:
 - it is additive only in the current implementation
 - on mixed repos, lower-confidence fields can still appear in `comparison` without being written
 - if nothing eligible can be added, it returns success with `written: false` and leaves `ota.yaml` unchanged
-- after a successful merge write, text output points to `ota validate`, then keeps remaining detect drift on `ota detect --merge --dry-run` and `ota detect --rewrite --dry-run`; only drift-free merges hand directly to `ota up --dry-run`
+- after a successful merge write, text output uses explanatory `Next:` steps: validate the updated contract first, then review any remaining add-only drift with `ota detect --merge --dry-run`, review rewrite-only drift with `ota detect --rewrite --dry-run` when the current contract is stale, and only drift-free merges hand into the same task/doctor/preparation lane used by first writes
 
 Current rewrite behavior:
 
@@ -2030,7 +2030,7 @@ Current rewrite behavior:
 - `ota detect --rewrite --yes` replaces the existing `ota.yaml` with the regenerated detected contract
 - rewrite creates a timestamped backup file (`ota.yaml.bak-<timestamp>`) before writing
 - rewrite validates the regenerated contract before replacing the existing file
-- after a successful rewrite, text output points directly to `ota validate` and `ota up --dry-run`
+- after a successful rewrite, text output uses explanatory `Next:` steps: validate the rewritten contract, inspect the runnable task surface, review readiness with doctor, then preview preparation with `ota up --dry-run`
 
 Example dry-run annotations for detected Compose services:
 

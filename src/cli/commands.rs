@@ -18676,7 +18676,10 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                 append_aligned_labeled_text(
                     &mut stdout,
                     "Next:",
-                    &format!("`{}`", entry.pack.preview_command()),
+                    &format!(
+                        "`{}` to preview the seeded starter contract before writing it",
+                        entry.pack.preview_command()
+                    ),
                     "  ",
                     96,
                     |_| paint_next_label(),
@@ -24172,22 +24175,11 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         Ok(()) => match format {
             OutputFormat::Text => {
                 let highlighted_written = paint_code(&compact_path_display);
-                let highlighted_validate = paint_code(&command_for_repo_contract_target(
-                    "ota validate",
-                    &contract_path,
-                ));
-                let highlighted_up = paint_code(&command_for_repo_contract_target(
-                    "ota up --dry-run",
-                    &contract_path,
-                ));
                 let mut stdout = format!(
                     "{}\n\n{}\nPolicy: only high-confidence fields are written automatically{}",
                     format_command_header("DETECT WRITE", &compact_root_display),
                     format_result_line(&format!("wrote {highlighted_written}")),
-                    format_next_timeline(&[
-                        format!("run `{highlighted_validate}`"),
-                        format!("run `{highlighted_up}`"),
-                    ])
+                    format_next_timeline(&repo_contract_write_next_steps(&contract_path))
                 );
                 render_inference_section(
                     &mut stdout,
@@ -24557,39 +24549,36 @@ fn write_detected_merge(
             OutputFormat::Text => {
                 let post_write_comparison =
                     compare_detected_contract(&contract_path, &report, DetectRemovalScope::Drift);
-                let highlighted_validate = paint_code(&command_for_repo_contract_target(
-                    "ota validate",
-                    &contract_path,
-                ));
-                let mut next_steps = vec![format!("run `{highlighted_validate}`")];
+                let mut next_steps = vec![format!(
+                    "run `{}` to confirm the updated contract is structurally sound",
+                    command_for_repo_contract_target("ota validate", &contract_path)
+                )];
                 if let Some(comparison) = post_write_comparison.as_ref() {
                     if !comparison.changes.is_empty() {
-                        let highlighted_merge_review =
-                            paint_code(&command_for_repo_contract_target(
+                        next_steps.push(format!(
+                            "run `{}` to review remaining add-only detected changes without dropping existing fields",
+                            command_for_repo_contract_target(
                                 "ota detect --merge --dry-run",
                                 &contract_path,
-                            ));
-                        next_steps.push(format!(
-                            "run `{highlighted_merge_review}` to review remaining add-only detected changes"
+                            )
                         ));
                     }
                     if !comparison.removals.is_empty() {
-                        let highlighted_rewrite_review =
-                            paint_code(&command_for_repo_contract_target(
+                        next_steps.push(format!(
+                            "run `{}` to review rewrite-only drift when the current contract is stale",
+                            command_for_repo_contract_target(
                                 "ota detect --rewrite --dry-run",
                                 &contract_path,
-                            ));
-                        next_steps.push(format!(
-                            "run `{highlighted_rewrite_review}` to review rewrite-only drift"
+                            )
                         ));
                     }
                 }
                 if next_steps.len() == 1 {
-                    let highlighted_up = paint_code(&command_for_repo_contract_target(
-                        "ota up --dry-run",
-                        &contract_path,
-                    ));
-                    next_steps.push(format!("run `{highlighted_up}`"));
+                    next_steps.extend(
+                        repo_contract_write_next_steps(&contract_path)
+                            .into_iter()
+                            .skip(1),
+                    );
                 }
                 let mut stdout = format_command_header("DETECT MERGE", &compact_path_display);
                 stdout.push_str(&format!("\n\n{}\n", render_status_line("MERGED")));
@@ -24783,14 +24772,6 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let highlighted_validate = paint_code(&command_for_repo_contract_target(
-                    "ota validate",
-                    &contract_path,
-                ));
-                let highlighted_up = paint_code(&command_for_repo_contract_target(
-                    "ota up --dry-run",
-                    &contract_path,
-                ));
                 let mut stdout = format_command_header("DETECT REWRITE", &compact_path_display);
                 stdout.push_str(&format!("\n\n{}\n", render_status_line("REWRITTEN")));
                 stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
@@ -24810,10 +24791,9 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     comparison.as_ref(),
                     DetectComparisonMode::RewriteResult,
                 );
-                stdout.push_str(&format_next_timeline(&[
-                    format!("run `{highlighted_validate}`"),
-                    format!("run `{highlighted_up}`"),
-                ]));
+                stdout.push_str(&format_next_timeline(&repo_contract_write_next_steps(
+                    &contract_path,
+                )));
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -26501,14 +26481,6 @@ fn render_init(
             Ok(()) => match format {
                 OutputFormat::Text => {
                     let highlighted_written = paint_code(&compact_path_display);
-                    let highlighted_validate = paint_code(&command_for_repo_contract_target(
-                        "ota validate",
-                        &contract_path,
-                    ));
-                    let highlighted_up = paint_code(&command_for_repo_contract_target(
-                        "ota up --dry-run",
-                        &contract_path,
-                    ));
                     let mut stdout = format!(
                         "{}\n\n{}\n\n{}",
                         format_command_header("INIT WRITE", &compact_root_display),
@@ -26560,10 +26532,9 @@ fn render_init(
                             );
                         }
                     }
-                    stdout.push_str(&format_next_timeline(&[
-                        format!("run `{highlighted_validate}`"),
-                        format!("run `{highlighted_up}`"),
-                    ]));
+                    stdout.push_str(&format_next_timeline(&repo_contract_write_next_steps(
+                        &contract_path,
+                    )));
                     render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
                     CommandOutput::success(stdout)
                 }
@@ -26751,37 +26722,37 @@ fn detect_preview_next_steps(
             if comparison.is_none() {
                 vec![
                     format!(
-                        "run `ota detect --contract {root_display}` to inspect the exact detected starter contract"
+                        "run `ota detect --contract {root_display}` to inspect the exact detected starter contract text before writing"
                     ),
                     format!(
-                        "run `ota init --dry-run {root_display}` to compare the conservative starter contract path"
+                        "run `ota init --dry-run {root_display}` to compare the more conservative starter contract path"
                     ),
                     format!(
-                        "run `ota detect --write {root_display}` to write a high-confidence contract"
+                        "run `ota detect --write {root_display}` to write the detected high-confidence contract if it looks right"
                     ),
                 ]
             } else if has_removals {
                 vec![
                     format!(
-                        "run `ota detect --merge --dry-run {root_display}` to review add-only changes"
+                        "run `ota detect --merge --dry-run {root_display}` to review add-only changes without dropping existing fields"
                     ),
                     format!(
-                        "run `ota detect --rewrite --dry-run {root_display}` to review a full replacement contract"
+                        "run `ota detect --rewrite --dry-run {root_display}` to review a full replacement contract when the current one is stale"
                     ),
                 ]
             } else if has_changes {
                 vec![format!(
-                    "run `ota detect --merge --dry-run {root_display}` to review add-only changes"
+                    "run `ota detect --merge --dry-run {root_display}` to review add-only changes without dropping existing fields"
                 )]
             } else {
                 vec![format!(
-                    "run `ota doctor {root_display}` to verify repo readiness"
+                    "run `ota doctor {root_display}` to see whether the current contract is already ready, warning, or blocked"
                 )]
             }
         }
         DetectComparisonMode::MergePreview => {
             let mut lines = vec![format!(
-                "run `ota detect --merge {root_display}` to apply add-only high-confidence fields"
+                "run `ota detect --merge {root_display}` to apply add-only high-confidence fields after review"
             )];
             if has_removals {
                 lines.push(format!(
@@ -26791,7 +26762,7 @@ fn detect_preview_next_steps(
             lines
         }
         DetectComparisonMode::RewritePreview => vec![format!(
-            "run `ota detect --rewrite --yes {root_display}` to replace the existing contract"
+            "run `ota detect --rewrite --yes {root_display}` to replace the existing contract after review"
         )],
         DetectComparisonMode::MergeResult | DetectComparisonMode::RewriteResult => Vec::new(),
     }
@@ -26893,6 +26864,21 @@ fn render_detect_comparison_source_detail(change: &DetectComparisonChange) -> Op
         detail.push(']');
     }
     Some(detail)
+}
+
+fn repo_contract_write_next_steps(contract_path: &Path) -> Vec<String> {
+    let validate = command_for_repo_contract_target("ota validate", contract_path);
+    let tasks = command_for_repo_contract_target("ota tasks --use", contract_path);
+    let doctor = command_for_repo_contract_target("ota doctor", contract_path);
+    let up = command_for_repo_contract_target("ota up --dry-run", contract_path);
+    vec![
+        format!("run `{validate}` to confirm the written contract is structurally sound"),
+        format!("run `{tasks}` to inspect the runnable tasks in the written contract"),
+        format!(
+            "run `{doctor}` to see whether this contract is already ready, warning, or blocked"
+        ),
+        format!("run `{up}` to preview repo preparation before making changes"),
+    ]
 }
 
 fn render_detect_removals_section(
