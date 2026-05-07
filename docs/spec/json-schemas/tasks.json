@@ -28,6 +28,11 @@
               "type": "array",
               "items": { "type": "string" }
             },
+            "protected_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "inferred_boundary_reviewed": { "type": "boolean" },
             "bootstrap": {
               "type": "object",
               "additionalProperties": false,
@@ -131,6 +136,11 @@
                     "type": "array",
                     "items": { "type": "string" }
                   },
+                  "protected_paths": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "inferred_boundary_reviewed": { "type": "boolean" },
                   "bootstrap": {
                     "type": "object",
                     "additionalProperties": false,

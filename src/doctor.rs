@@ -2023,6 +2023,7 @@ fn diagnose_contract_with_scope(
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
+        diagnose_agent_boundary_review(contract, &mut findings);
         diagnose_contract_advisories(contract, &mut findings);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
@@ -2093,6 +2094,31 @@ fn diagnose_contract_advisories(contract: &Contract, findings: &mut Vec<Finding>
             },
         });
     }
+}
+
+fn diagnose_agent_boundary_review(contract: &Contract, findings: &mut Vec<Finding>) {
+    let Some(inferred_boundary) = contract
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.inferred_boundary.as_ref())
+    else {
+        return;
+    };
+
+    if inferred_boundary.reviewed {
+        return;
+    }
+
+    findings.push(Finding {
+        severity: FindingSeverity::Warn,
+        summary: String::from("Agent boundary is inferred and unreviewed"),
+        why: String::from(
+            "`agent.inferred_boundary.reviewed: false` means Ota inferred the current writable and protected paths, but the repo owner has not confirmed that boundary yet",
+        ),
+        next: String::from(
+            "review `agent.writable_paths` and `agent.protected_paths`, set `agent.inferred_boundary.reviewed: true`, then rerun `ota validate`",
+        ),
+    });
 }
 
 fn project_type_allows_no_tasks(contract: &Contract) -> bool {

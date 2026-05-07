@@ -30099,6 +30099,10 @@ fn agent_verdict_from_summary(agent: Option<&AgentSummary<'_>>) -> DoctorVerdict
         return DoctorVerdict::Risky;
     }
 
+    if agent.inferred_boundary_reviewed == Some(false) {
+        return DoctorVerdict::Risky;
+    }
+
     DoctorVerdict::Ready
 }
 
@@ -32951,6 +32955,18 @@ fn render_doctor_agent_summary_text(
             &render_inline_code_list(&agent.protected_paths),
         ));
     }
+    if let Some(reviewed) = agent.inferred_boundary_reviewed {
+        let review_status = if reviewed {
+            paint("reviewed", "1;38;2;255;255;255")
+        } else {
+            paint("inferred (needs review)", "1;38;2;255;216;107")
+        };
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Boundary review:"),
+            &review_status,
+        ));
+    }
     if agent
         .bootstrap
         .as_ref()
@@ -33308,6 +33324,16 @@ fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> 
         lines.push(format!(
             "  protected_paths: {}",
             agent.protected_paths.join(", ")
+        ));
+    }
+    if let Some(reviewed) = agent.inferred_boundary_reviewed {
+        lines.push(format!(
+            "  boundary_review: {}",
+            if reviewed {
+                "reviewed"
+            } else {
+                "inferred (needs review)"
+            }
         ));
     }
     if let Some(bootstrap) = agent.bootstrap.as_ref()
@@ -39428,6 +39454,7 @@ execution:
             verify_after_changes,
             writable_paths,
             protected_paths,
+            inferred_boundary_reviewed: None,
             bootstrap: None,
             notes: None,
         };

@@ -4297,6 +4297,28 @@ fn validate_agent(
         }
     }
 
+    if let Some(inferred_boundary) = agent.inferred_boundary.as_ref() {
+        for value in &inferred_boundary.provenance.writable_paths {
+            if value.trim().is_empty() {
+                errors.push(ValidationError::new(
+                    "`agent.inferred_boundary.provenance.writable_paths` entries must not be empty",
+                ));
+            }
+        }
+        for value in &inferred_boundary.provenance.protected_paths {
+            if value.trim().is_empty() {
+                errors.push(ValidationError::new(
+                    "`agent.inferred_boundary.provenance.protected_paths` entries must not be empty",
+                ));
+            }
+        }
+        if inferred_boundary.provenance.is_empty() {
+            errors.push(ValidationError::new(
+                "`agent.inferred_boundary` must declare at least one provenance entry",
+            ));
+        }
+    }
+
     if let Some(bootstrap) = agent.bootstrap.as_ref() {
         if let Some(ota) = bootstrap.ota.as_ref() {
             let sh = ota

@@ -2112,6 +2112,30 @@ pub struct AgentBootstrapConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct AgentBoundaryProvenanceConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writable_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub protected_paths: Vec<String>,
+}
+
+impl AgentBoundaryProvenanceConfig {
+    pub fn is_empty(&self) -> bool {
+        self.writable_paths.is_empty() && self.protected_paths.is_empty()
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentInferredBoundaryConfig {
+    #[serde(default)]
+    pub reviewed: bool,
+    #[serde(default, skip_serializing_if = "AgentBoundaryProvenanceConfig::is_empty")]
+    pub provenance: AgentBoundaryProvenanceConfig,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<String>,
@@ -2125,6 +2149,8 @@ pub struct AgentConfig {
     pub writable_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protected_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_boundary: Option<AgentInferredBoundaryConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap: Option<AgentBootstrapConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

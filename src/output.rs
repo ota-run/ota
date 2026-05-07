@@ -2125,6 +2125,8 @@ pub struct AgentSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub protected_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub inferred_boundary_reviewed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bootstrap: Option<AgentBootstrapSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
@@ -2139,6 +2141,10 @@ impl<'a> AgentSummary<'a> {
             verify_after_changes: agent.verify_after_changes.clone(),
             writable_paths: agent.writable_paths.clone(),
             protected_paths: agent.protected_paths.clone(),
+            inferred_boundary_reviewed: agent
+                .inferred_boundary
+                .as_ref()
+                .map(|boundary| boundary.reviewed),
             bootstrap: agent
                 .bootstrap
                 .as_ref()
@@ -2175,6 +2181,7 @@ impl<'a> AgentSummary<'a> {
             && self.verify_after_changes.is_empty()
             && self.writable_paths.is_empty()
             && self.protected_paths.is_empty()
+            && self.inferred_boundary_reviewed.is_none()
             && self.bootstrap.is_none()
             && self.notes.is_none()
     }
