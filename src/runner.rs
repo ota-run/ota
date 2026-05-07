@@ -626,6 +626,10 @@ fn runtime_listener_host_publication_mismatch_failed(
 pub enum RunError {
     #[error("task `{task}` is not defined in ota.yaml")]
     UnknownTask { task: String },
+    #[error(
+        "task `{task}` does not declare any `depends_on` entries, so `--skip-deps` has no effect"
+    )]
+    SkipDepsWithoutDependencies { task: String },
     #[error("task `{task}` does not have a valid execution form")]
     InvalidTaskExecution { task: String },
     #[error("environment variable `{name}` is required for task execution but is not set")]
@@ -1293,6 +1297,7 @@ pub struct ExecutionOverrides {
     pub lifecycle: Option<Lifecycle>,
     pub host_port: Option<u16>,
     pub memory: Option<u64>,
+    pub skip_deps: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3837,6 +3842,7 @@ fn execution_overrides_for_resolved_backend(
             ResolvedExecutionBackend::Container { memory_bytes, .. } => *memory_bytes,
             _ => None,
         },
+        skip_deps: false,
     }
 }
 
@@ -3866,6 +3872,16 @@ fn run_task_internal(
         Ok(backend) => backend,
         Err(error) => return Err(error),
     };
+    if overrides.skip_deps
+        && contract
+            .tasks
+            .get(task_name)
+            .is_some_and(|task| task.depends_on.is_empty())
+    {
+        return Err(RunError::SkipDepsWithoutDependencies {
+            task: task_name.to_string(),
+        });
+    }
     let mut preflight_execution_note = None;
     if let ResolvedExecutionBackend::Container { lifecycle, .. } = &backend
         && matches!(lifecycle, Lifecycle::Ephemeral)
@@ -4233,32 +4249,34 @@ fn execute_task_with_hooks(
     )?;
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
-    for dependency in &task.depends_on {
-        let dependency_backend = resolve_execution_backend_with_contract_path(
-            contract,
-            dependency,
-            requested_overrides,
-            Some(contract_path),
-        )?;
-        let dependency_exit = execute_task_with_hooks(
-            contract,
-            contract_path,
-            dependency,
-            &[],
-            requested_overrides.clone(),
-            policy_env,
-            &dependency_backend,
-            mode.clone(),
-            working_dir,
-            current_os,
-            TaskExecutionRelation::DependsOn {
-                parent: task_name.to_string(),
-            },
-            generation,
-            state,
-        )?;
-        if dependency_exit != 0 {
-            return Ok(dependency_exit);
+    if !(requested_relation && requested_overrides.skip_deps) {
+        for dependency in &task.depends_on {
+            let dependency_backend = resolve_execution_backend_with_contract_path(
+                contract,
+                dependency,
+                requested_overrides,
+                Some(contract_path),
+            )?;
+            let dependency_exit = execute_task_with_hooks(
+                contract,
+                contract_path,
+                dependency,
+                &[],
+                requested_overrides.clone(),
+                policy_env,
+                &dependency_backend,
+                mode.clone(),
+                working_dir,
+                current_os,
+                TaskExecutionRelation::DependsOn {
+                    parent: task_name.to_string(),
+                },
+                generation,
+                state,
+            )?;
+            if dependency_exit != 0 {
+                return Ok(dependency_exit);
+            }
         }
     }
 
@@ -4386,6 +4404,12 @@ fn execute_task_with_hooks(
             .collect::<Vec<_>>()
             .join("; ");
         notes.push(target_notes);
+    }
+    if requested_relation && requested_overrides.skip_deps && !task.depends_on.is_empty() {
+        notes.push(format!(
+            "declared depends_on skipped by local override: {}",
+            task.depends_on.join(", ")
+        ));
     }
     if let Some(note) = command_output.execution_note.clone() {
         notes.push(note);
@@ -24087,6 +24111,7 @@ tasks:
                 lifecycle: None,
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
         )
         .unwrap();
@@ -27377,6 +27402,101 @@ tasks:
     }
 
     #[test]
+    fn run_task_skip_deps_skips_declared_dependencies_but_keeps_requested_task() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      echo setup >> run.log
+  build:
+    depends_on:
+      - setup
+    script: |
+      echo build >> run.log
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            &[],
+            ExecutionOverrides {
+                skip_deps: true,
+                ..ExecutionOverrides::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.executed_tasks, vec![String::from("build")]);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["build"]
+        );
+        assert!(outcome.execution_note.as_deref().is_some_and(|note| {
+            note.contains("declared depends_on skipped by local override: setup")
+        }));
+    }
+
+    #[test]
+    fn run_task_skip_deps_still_starts_required_services_before_task() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    start: echo service >> run.log
+    healthcheck: test -f run.log
+tasks:
+  setup:
+    script: |
+      echo setup >> run.log
+  build:
+    depends_on:
+      - setup
+    requires_services:
+      - postgres
+    script: |
+      echo task >> run.log
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            &[],
+            ExecutionOverrides {
+                skip_deps: true,
+                ..ExecutionOverrides::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.executed_tasks, vec![String::from("build")]);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["service", "task"]
+        );
+    }
+
+    #[test]
     fn rejects_requested_task_inputs_before_running_dependencies() {
         let fixture = ContractFixture::new(
             r#"
@@ -27410,6 +27530,37 @@ tasks:
             if task == "version:bump" && input == "channel"
         ));
         assert!(!fixture.dir.path().join("run.log").exists());
+    }
+
+    #[test]
+    fn run_task_skip_deps_rejects_tasks_without_declared_dependencies() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+"#,
+        );
+
+        let error = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            &[],
+            ExecutionOverrides {
+                skip_deps: true,
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect_err("skip-deps should reject tasks without declared dependencies");
+
+        assert!(matches!(
+            error,
+            RunError::SkipDepsWithoutDependencies { ref task } if task == "build"
+        ));
     }
 
     #[test]
@@ -30799,6 +30950,7 @@ tasks:
                 lifecycle: Some(Lifecycle::Persistent),
                 host_port: Some(53124),
                 memory: None,
+                skip_deps: false,
             },
         )
         .unwrap();
@@ -31389,6 +31541,7 @@ tasks:
                 lifecycle: Some(crate::schema::Lifecycle::Ephemeral),
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
         )
         .unwrap();
@@ -31732,6 +31885,7 @@ tasks:
                 lifecycle: None,
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
         )
         .unwrap_err();

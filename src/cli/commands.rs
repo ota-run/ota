@@ -1315,6 +1315,9 @@ pub fn execution_plan(
             format_lifecycle(lifecycle)
         ));
     }
+    if overrides.skip_deps {
+        debug_lines.push(String::from("DEBUG skip_deps=true"));
+    }
     if let Some(host_port) = overrides.host_port {
         debug_lines.push(format!("DEBUG host_port_override={host_port}"));
     }
@@ -2250,6 +2253,7 @@ fn studio_snapshot_payload(
             lifecycle: None,
             host_port: None,
             memory: None,
+            skip_deps: false,
         },
         OutputFormat::Json,
         false,
@@ -41672,6 +41676,7 @@ tasks:
                 lifecycle: None,
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
             "test",
             None,
@@ -41702,6 +41707,7 @@ tasks:
                 lifecycle: Some(Lifecycle::Persistent),
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
             "test",
             None,
@@ -41743,6 +41749,7 @@ tasks:
                 lifecycle: Some(Lifecycle::Persistent),
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
             "test",
             None,
@@ -47244,6 +47251,13 @@ fn run_single_contract_target_streaming(
                 outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
+            if overrides.skip_deps {
+                receipt.next = Some(skip_deps_next(
+                    task_name.as_str(),
+                    member,
+                    receipt.next.take(),
+                ));
+            }
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -47308,6 +47322,13 @@ fn run_single_contract_target_streaming(
                 outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
+            if overrides.skip_deps {
+                receipt.next = Some(skip_deps_next(
+                    task_name.as_str(),
+                    member,
+                    receipt.next.take(),
+                ));
+            }
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -47390,6 +47411,13 @@ fn run_single_contract_target_streaming(
                 Some(next_note),
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
+            if overrides.skip_deps {
+                receipt.next = Some(skip_deps_next(
+                    task_name.as_str(),
+                    member,
+                    receipt.next.take(),
+                ));
+            }
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -47469,6 +47497,13 @@ fn run_single_contract_target_captured(
                 outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
+            if overrides.skip_deps {
+                receipt.next = Some(skip_deps_next(
+                    task_name.as_str(),
+                    member,
+                    receipt.next.take(),
+                ));
+            }
             let mut output = String::new();
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
@@ -47526,6 +47561,13 @@ fn run_single_contract_target_captured(
                 outcome.interrupted,
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
+            if overrides.skip_deps {
+                receipt.next = Some(skip_deps_next(
+                    task_name.as_str(),
+                    member,
+                    receipt.next.take(),
+                ));
+            }
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -47608,6 +47650,13 @@ fn run_single_contract_target_captured(
                 Some(next_note),
             );
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
+            if overrides.skip_deps {
+                receipt.next = Some(skip_deps_next(
+                    task_name.as_str(),
+                    member,
+                    receipt.next.take(),
+                ));
+            }
             let summary = render_execution_receipt_summary_block(
                 &receipt,
                 Some(task_name.as_str()),
@@ -49178,6 +49227,19 @@ fn render_run_structured_error_text(
                 format!("rerun `{}`", repo_run_stream_command(task_name, member)),
             ],
         ),
+        RunError::SkipDepsWithoutDependencies { task } => (
+            String::from("Dependency override has no effect"),
+            vec![format!(
+                "task `{task}` does not declare any `depends_on` entries, so `--skip-deps` cannot change this run"
+            )],
+            vec![
+                format!(
+                    "rerun `{}` without `--skip-deps`",
+                    repo_run_command(task, member)
+                ),
+                task_use_details_step(Some(contract_path), member),
+            ],
+        ),
         RunError::MissingContainerImage { .. } => (
             String::from("Container run is not configured"),
             run_execution_backend_why_lines(contract, overrides, task_name, Backend::Container),
@@ -49213,6 +49275,7 @@ fn render_run_structured_error_text(
                     lifecycle: None,
                     host_port: overrides.host_port,
                     memory: overrides.memory,
+                    skip_deps: false,
                 },
             )
             .backend;
@@ -54229,6 +54292,17 @@ struct PhaseExecutionContext {
     cwd: Option<String>,
 }
 
+fn skip_deps_next(task_name: &str, member: Option<&str>, existing: Option<String>) -> String {
+    let rerun_command = repo_run_stream_command(task_name, member);
+    let override_note = format!(
+        "rerun `{rerun_command}` without `--skip-deps` to validate the full declared task flow"
+    );
+    match existing {
+        Some(existing) if !existing.trim().is_empty() => format!("{override_note}; {existing}"),
+        _ => override_note,
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Default)]
 struct ArchivedReceiptSummaryData {
     #[serde(default)]
@@ -54475,6 +54549,7 @@ fn doctor_mode_execution_overrides(
         }),
         host_port: None,
         memory: None,
+        skip_deps: false,
     }
 }
 
