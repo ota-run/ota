@@ -260,7 +260,7 @@ pub fn set_json_mode(enabled: bool) {
 }
 
 pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
-    if message.contains("Where:") {
+    if message.contains("Where:") || looks_like_structured_command_surface(message) {
         return message.to_string();
     }
 
@@ -409,6 +409,83 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         stylize_inline_text,
     );
     append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
+    out
+}
+
+fn looks_like_structured_command_surface(message: &str) -> bool {
+    let normalized = strip_ansi_escape_codes(message);
+    let trimmed = normalized.trim_start();
+    let Some((header, remainder)) = trimmed.split_once("\n\n") else {
+        return false;
+    };
+    if !looks_like_command_header_line(header.trim()) {
+        return false;
+    }
+
+    let remainder = remainder.trim_start();
+    if !looks_like_status_surface(remainder) {
+        return false;
+    }
+
+    remainder.contains("Primary Blocker")
+        || remainder.contains("\nNext:")
+        || remainder.contains("\nTarget\n")
+        || remainder.contains("\nOverview\n")
+        || remainder.contains("\nRepo Signals\n")
+}
+
+fn looks_like_command_header_line(header: &str) -> bool {
+    let header = header.strip_prefix("🦦 ").unwrap_or(header).trim();
+    let Some(first_token) = header.split_whitespace().next() else {
+        return false;
+    };
+
+    first_token
+        .chars()
+        .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+}
+
+fn looks_like_status_surface(remainder: &str) -> bool {
+    [
+        "BLOCKED",
+        "READY",
+        "READY WITH WARNINGS",
+        "NOT READY",
+        "VALID",
+        "WARN",
+        "UNRESOLVED",
+        "RESOLVED",
+        "MERGED",
+        "REWRITTEN",
+        "NO CHANGES",
+    ]
+    .iter()
+    .any(|status| remainder.starts_with(status) || remainder.starts_with(&format!("➤ {status}")))
+}
+
+fn strip_ansi_escape_codes(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = String::with_capacity(value.len());
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        if bytes[idx] == 0x1b && idx + 1 < bytes.len() && bytes[idx + 1] == b'[' {
+            idx += 2;
+            while idx < bytes.len() {
+                let byte = bytes[idx];
+                idx += 1;
+                if (0x40..=0x7e).contains(&byte) {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        let ch = value[idx..].chars().next().unwrap();
+        out.push(ch);
+        idx += ch.len_utf8();
+    }
+
     out
 }
 
@@ -15021,16 +15098,20 @@ fn render_agents_missing_contract_text(
 
     let mut stdout = format_command_header("AGENTS", &compact_root_display);
     stdout.push_str(&format!("\n\n{}\n", render_status_line("BLOCKED")));
-    stdout.push_str(&format!("\n{}\n", paint_section_title("Target")));
+    stdout.push_str(&format!(
+        "\n{} {}\n",
+        primary_info_marker(),
+        paint_section_title("Target")
+    ));
     stdout.push_str(&format!(
         "\n {}  {} {}",
-        summary_bullet(),
+        verdict_bullet(),
         paint_key("File:"),
         paint_code(&compact_output_display)
     ));
     stdout.push_str(&format!(
         "\n {}  {} {}",
-        summary_bullet(),
+        verdict_bullet(),
         paint_key("Managed block:"),
         paint_code("Ota-generated content")
     ));
@@ -44756,6 +44837,20 @@ tasks:
         assert!(rendered.contains("Why: task failed | Why: missing tool"));
         assert!(rendered.contains("\nNext: install the missing tool and rerun"));
         assert!(!rendered.contains("\n\nNext: install the missing tool and rerun"));
+    }
+
+    #[test]
+    fn stylize_text_failure_preserves_structured_blocked_command_surfaces() {
+        let message = "AGENTS .\n\nBLOCKED\n\nTarget\n -  File: `./AGENTS.md`\n -  Managed block: `Ota-generated content`\n\n-> Primary Blocker Contract missing (1)\nWhy: no `ota.yaml` was found from `.` upward, so Ota cannot sync `AGENTS.md` from a declared repo contract yet\nProvenance: repo signals\nNext:\n  - run `ota detect --dry-run .` to review inferred contract fields\n\nRepo Signals\n -  Detected repo type: Java";
+
+        assert_eq!(stylize_text_failure("ota agents", message), message);
+    }
+
+    #[test]
+    fn stylize_text_failure_preserves_structured_status_without_where_label() {
+        let message = "RUN .\n\nBLOCKED\n\n-> Primary Blocker Contract missing (1)\nWhy: no `ota.yaml` was found from `.` upward, so Ota cannot run `ota run` against a declared repo contract yet\nProvenance: repo signals\nNext:\n  - run `ota detect --dry-run .` to review inferred contract fields";
+
+        assert_eq!(stylize_text_failure("ota run", message), message);
     }
 
     #[test]
