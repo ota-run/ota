@@ -70,6 +70,18 @@ Explicitly deferred:
 
 These belong to later roadmap phases and should not be smuggled into Phase 1.
 
+## Modeling-first gate
+
+Phase 1 starts after these Studio modeling docs are complete and reviewed:
+
+- [ui-pages-and-flows.md](./ui-pages-and-flows.md)
+- [ui-components.md](./ui-components.md)
+- [ui-user-journeys.md](./ui-user-journeys.md)
+- [ui-metrics-and-feedback.md](./ui-metrics-and-feedback.md)
+
+Implementation should not begin until each file has an explicit acceptance check or equivalent
+internal review note.
+
 ## Existing surfaces to reuse
 
 Phase 1 should start from existing Ota read surfaces and current Studio data paths.
@@ -338,6 +350,10 @@ When Phase 1 lands, update:
 - `/Users/bobai/Workspace/Ota.run/ota/docs/spec/command-reference.md`
 - `/Users/bobai/Workspace/Ota.run/ota/docs/spec/json-output-reference.md`
 - `/Users/bobai/Workspace/Ota.run/ota/CHANGELOG.md`
+- `/Users/bobai/Workspace/Ota.run/ota/docs/spec/studio/ui-pages-and-flows.md`
+- `/Users/bobai/Workspace/Ota.run/ota/docs/spec/studio/ui-components.md`
+- `/Users/bobai/Workspace/Ota.run/ota/docs/spec/studio/ui-user-journeys.md`
+- `/Users/bobai/Workspace/Ota.run/ota/docs/spec/studio/ui-metrics-and-feedback.md`
 
 Update public docs only after the interactive shell behavior is stable enough to teach honestly.
 
@@ -358,6 +374,7 @@ Phase 1 is done only when all of these are true:
 - the frontend does not parse CLI text or invent semantics
 - contractless repos still get a useful Studio experience
 - no Phase 2 registry persistence or Phase 4 execution launch logic was pulled in accidentally
+- UI modeling docs exist and are approved as the implementation contract for Phase 1 screens/components/journeys
 
 ## Validation checklist
 

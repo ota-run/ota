@@ -72,6 +72,7 @@ on one interactive `ota studio` path.
 - `ota.yaml` remains the source of truth
 - Ota core remains the execution engine
 - Studio does not invent runtime semantics
+- operation/event payloads are sourced from [`event-schema.md`](event-schema.md)
 
 2. Interactive is the default.
 

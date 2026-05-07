@@ -96,6 +96,25 @@ and premium enough to stand as a first-class Ota client.
   - pane and component rules
   - interaction and motion rules
 
+- [ui-pages-and-flows.md](ui-pages-and-flows.md)
+  - screen and route model
+  - page-level behavior
+  - cross-route flow and state transitions
+
+- [ui-components.md](ui-components.md)
+  - reusable component contracts
+  - behavior requirements and anti-patterns
+  - action and evidence render contracts
+
+- [ui-user-journeys.md](ui-user-journeys.md)
+  - journey-by-journey acceptance for pre-launch UX
+  - stale, blocked, and failure path checks
+
+- [ui-metrics-and-feedback.md](ui-metrics-and-feedback.md)
+  - feedback model and evidence quality rules
+  - operation result classes
+  - accessibility and recoverability expectations
+
 ## Source direction
 
 This spec set is driven by five product truths:
@@ -120,6 +139,15 @@ The product model for Studio is:
 4. Trigger
 5. Observe
 
+## Canonical schema anchors
+
+Treat these files as the Studio contract foundation. Update here first when any Studio API payload or
+operation semantics changes:
+
+- [event-schema.md](event-schema.md): operation and event payload truth
+- [registry-schema.md](registry-schema.md): persisted repo registry shape and behavior
+- [http-api.md](http-api.md): local Studio transport and endpoint contracts
+
 ## Change discipline
 
 Future notes, sketches, and implementation ideas should be folded into this spec set rather than
@@ -135,3 +163,7 @@ When Studio scope changes materially, update:
 - `registry-schema.md` for persisted repo-state truth
 - `http-api.md` for local integration truth
 - `design-system.md` for implementation-facing visual truth
+- `ui-pages-and-flows.md` for user-facing flow truth
+- `ui-components.md` for reusable component contracts
+- `ui-user-journeys.md` for UX acceptance and failure-path logic
+- `ui-metrics-and-feedback.md` for operation feedback quality standards

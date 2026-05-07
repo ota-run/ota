@@ -40,6 +40,7 @@ event exists.
 2. Events are append-only facts for one operation id.
 3. The event schema is repo-scoped and deterministic.
 4. Event consumers may render different views, but must not invent semantics missing from the event.
+5. `operation_id` is the durable correlation key shared across events, results, receipts, and log lines.
 
 ## Operation identity
 
@@ -48,12 +49,20 @@ Each operation must carry:
 - `schema_version`
 - `operation_id`
 - `repo_root`
+- optional `session_id`
 - optional `contract_path`
 - optional `member`
 - `kind`
 - `requested_at`
 - `source`
 - optional `requested_by`
+
+For cross-process visibility (e.g., terminal-launched operations surfaced in Studio), `operation_id`
+must be emitted in:
+
+- the final operation result object
+- generated receipt metadata
+- any machine-readable log event that belongs to the operation
 
 ### `operation_id`
 
@@ -308,14 +317,23 @@ These fields are additive and should be attached when the underlying operation t
 
 ## Result contract
 
+Final operation results use the same canonical fields for API and process boundaries:
+
 Events do not replace the final result. Every operation still needs a final result object with:
 
+Required:
+
+- `schema_version`
+- `operation_id`
 - `ok`
 - `status`
-- optional `exit_code`
-- optional `receipt_path`
-- optional `archive_path`
-- optional `next`
+
+Optional:
+
+- `exit_code`
+- `receipt_path`
+- `archive_path`
+- `next`
 - operation-kind-specific summary data
 
 Studio cards may render from events while active, but the final settled state should reconcile
