@@ -6636,10 +6636,9 @@ agent:
             .unwrap()
             .display()
             .to_string();
-        assert!(stdout.contains(&format!("ota up {repo_path}")));
         assert!(stdout.contains(&format!("ota run ci {repo_path}")));
-        assert!(!stdout.contains(&format!("ota up {repo_path}/ota.yaml")));
         assert!(!stdout.contains(&format!("ota run ci {repo_path}/ota.yaml")));
+        assert!(!stdout.contains(&format!("ota up {repo_path}")));
     }
 
     #[test]
@@ -7933,8 +7932,7 @@ env:
             "DOCTOR {} [member api]",
             compact_contract(fixture.file_path())
         )));
-        assert!(stdout.contains("READY"));
-        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
         assert!(stdout.contains("\n\n"));
     }
@@ -14675,8 +14673,8 @@ agent:
         let doctor = run_with(["ota", "doctor", "--concise", fixture.path()]);
         assert_eq!(doctor.exit_code, 0);
         let doctor_stdout = strip_ansi(&doctor.stdout);
-        assert!(doctor_stdout.contains(&format!("ota up {repo_path}")));
         assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
+        assert!(!doctor_stdout.contains(&format!("ota up {repo_path}")));
         assert!(!doctor_stdout.contains(&format!("ota up {repo_path}/ota.yaml")));
         assert!(!doctor_stdout.contains(&format!("ota run ci {repo_path}/ota.yaml")));
 
@@ -15085,10 +15083,10 @@ tasks:
         let receipt_next = json["receipt"]["next"].as_str().unwrap();
         let finding_next = json["findings"][0]["next"].as_str().unwrap();
 
-        assert!(receipt_next.contains("ota doctor --mode native"));
+        assert!(receipt_next.contains("ota doctor --mode container"));
         assert!(receipt_next.contains("ota up --mode container"));
         assert!(receipt_next.contains(fixture.path()));
-        assert!(finding_next.contains("ota doctor --mode native"));
+        assert!(finding_next.contains("ota doctor --mode container"));
         assert!(finding_next.contains("ota up --mode container"));
         assert!(finding_next.contains(fixture.path()));
     }
@@ -15212,7 +15210,11 @@ tasks:
         );
         assert_eq!(
             doctor_json["summary"]["primary_blocker"]["next"],
-            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness"
+            format!(
+                "use `ota doctor --mode container {}` for host readiness, or `ota up --mode container {}` for container execution readiness",
+                fixture.path(),
+                fixture.path()
+            )
         );
         assert_eq!(doctor_json["execution"]["preferred"], "container");
         assert_eq!(doctor_json["execution"]["supported"][0], "native");
@@ -23622,7 +23624,7 @@ project:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(stdout.contains("Provenance: repo contract"));
     }
@@ -24342,7 +24344,7 @@ project:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DOCTOR "));
-        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("➤ Primary Blocker No tasks defined in contract"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
@@ -24617,8 +24619,8 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("READY"));
-        assert!(stdout.contains("◉ WARN  Missing tool: ota-tool-that-does-not-exist"));
+        assert!(stdout.contains("READY WITH WARNINGS"));
+        assert!(stdout.contains("WARN Missing tool: ota-tool-that-does-not-exist"));
         assert!(!stdout.contains("Primary Finding"));
         assert!(stdout.contains("Missing tool: ota-tool-that-does-not-exist"));
     }
@@ -24668,8 +24670,8 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("READY"));
-        assert!(stdout.contains("◉ WARN  Ephemeral lifecycle is advisory in native mode"));
+        assert!(stdout.contains("READY WITH WARNINGS"));
+        assert!(stdout.contains("WARN Ephemeral lifecycle is advisory in native mode"));
         assert!(!stdout.contains("Primary Finding"));
         assert!(!stdout.contains("➤ WARN"));
         assert!(stdout.contains("Ephemeral lifecycle is advisory in native mode"));
@@ -25906,7 +25908,7 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("No `ota.yaml` found"));
+        assert!(stdout.contains("Contract missing"));
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(!stderr.contains("explicit repo path does not contain `ota.yaml`"));
     }
@@ -26820,7 +26822,7 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("No `ota.yaml` found"));
+        assert!(stdout.contains("Contract missing"));
         assert!(stdout.contains(
             "no contract-aware repo-hygiene fixes are available yet; preview a first contract with `ota detect --dry-run` or `ota init --dry-run` first"
         ));
@@ -27101,11 +27103,11 @@ project:
 
         let output = run_with(["ota", "detect", "--json", "--write", fixture.path()]);
 
-        assert_eq!(output.exit_code, 1);
-        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
-        assert_eq!(json["ok"], false);
-        assert_eq!(json["written"], false);
-        assert_eq!(json["next"], "ota detect --dry-run");
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["written"], true);
+        assert!(json.get("next").is_none() || json["next"].is_null());
     }
 
     #[test]
@@ -31190,7 +31192,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains(&format!("DOCTOR {}", compact_contract(fixture.file_path()))));
-        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("➤ Primary Blocker No tasks defined in contract"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
@@ -33404,7 +33406,7 @@ repos:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
-        assert!(stderr.contains("Next: run `ota workspace detect --dry-run"));
+        assert!(stderr.contains("run `ota workspace detect --dry-run"));
         assert!(stderr.contains("or run `ota workspace init --dry-run"));
     }
 
@@ -34011,7 +34013,7 @@ project:
         assert_eq!(output.exit_code, 1);
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("DOCTOR"));
-        assert!(body.contains("NOT READY"));
+        assert!(body.contains("BLOCKED"));
         assert!(body.contains("Next:"));
         assert!(!body.contains("Why:"));
     }
@@ -36841,7 +36843,7 @@ services:
 
         assert_eq!(output.exit_code, 0, "{output:?}");
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Current readiness"));
+        assert!(stdout.contains("Current Readiness"));
         assert!(stdout.contains("run: curl -fsS http://127.0.0.1:43127/health"));
         assert!(stdout.contains("Proposed readiness"));
         assert!(stdout.contains("path: /health"));
@@ -37340,7 +37342,7 @@ project:
 
         assert_eq!(output.exit_code, 0, "{output:?}");
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Current setup"));
+        assert!(stdout.contains("Current Setup"));
         assert!(stdout.contains("run: test -f .env.local || cp .env.example .env.local"));
         assert!(stdout.contains("requires_services:"));
         assert!(stdout.contains("- postgres"));

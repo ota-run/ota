@@ -1,9 +1,9 @@
 🦦 DOCTOR ./ota.yaml
 
-➤ NOT READY
+➤ BLOCKED
 
 Verdict
- ●  Repo: not ready
+ ●  Repo: blocked
  ●  Agent: ready
 
 ➤ Primary Blocker Version mismatch for runtime: node (1)

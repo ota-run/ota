@@ -16,7 +16,7 @@ Existing contract comparison:
     Owner: detected
     Source: package.json#scripts.dev [high]
 
-Contract:
+Contract
 version: 1
 project:
   name: ota-web
@@ -53,4 +53,4 @@ Annotations:
   Confidence: high
 
 Next:
-  » run `ota detect --merge --dry-run .` to review add-only changes
+  » run `ota detect --merge --dry-run .` to review add-only changes without dropping existing fields

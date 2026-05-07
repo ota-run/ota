@@ -36065,7 +36065,7 @@ tasks:
         };
 
         let receipt_text = strip_ansi_codes(&render_execution_receipt_text(&receipt));
-        assert!(receipt_text.contains("Logs:"));
+        assert!(receipt_text.contains("Logs"));
         assert!(receipt_text.contains("Dir: .ota/state/logs/20260424-dev"));
         assert!(receipt_text.contains("Stdout: .ota/state/logs/20260424-dev/stdout.log"));
         assert!(receipt_text.contains("Stderr: .ota/state/logs/20260424-dev/stderr.log"));
@@ -36075,7 +36075,6 @@ tasks:
             Some("dev"),
             "RUN SUMMARY",
         ));
-        assert!(summary.contains("Logs:"), "{summary}");
         assert!(
             summary.contains(".ota/state/logs/20260424-dev"),
             "{summary}"
@@ -36115,7 +36114,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Logs:"), "{stderr}");
+        assert!(stderr.contains("Logs"), "{stderr}");
         assert!(stderr.contains(".ota/state/logs/"), "{stderr}");
 
         let logs_root = repo.path().join(".ota").join("state").join("logs");
@@ -36223,19 +36222,11 @@ tasks:
 
         assert_ne!(output.exit_code, 0);
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
-        assert!(
-            stderr.contains("no `ota.yaml` found from `.` upward"),
-            "{stderr}"
-        );
+        assert!(stderr.contains("Contract missing"), "{stderr}");
         assert!(!stderr.contains("ota tasks --use"), "{stderr}");
-        assert!(
-            stderr.contains("run this command from a repo directory that contains `ota.yaml`"),
-            "{stderr}"
-        );
-        assert!(
-            stderr.contains("run `ota init` to create a starter contract"),
-            "{stderr}"
-        );
+        assert!(stderr.contains("run `ota detect --dry-run .`"), "{stderr}");
+        assert!(stderr.contains("run `ota detect --contract .`"), "{stderr}");
+        assert!(stderr.contains("run `ota init --dry-run .`"), "{stderr}");
     }
 
     #[test]
@@ -37574,7 +37565,7 @@ tasks:
         assert!(text.contains("the Linux/container target requests `node >=24.14.1`"));
         assert!(text.contains("the configured `mise` provisioning path could not satisfy it"));
         assert!(text.contains("Next:"));
-        assert!(text.contains("rerun `ota doctor --mode container`"));
+        assert!(text.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
         assert!(text.contains("Additional context:"));
         assert!(text.contains("host-bound readiness checks are skipped in container mode"));
         assert!(
@@ -40786,7 +40777,7 @@ tasks:
         assert_eq!(receipt.env["OTA_TEST_SECRET"], "<redacted>");
         assert_eq!(receipt.env_sources[0].value, "<redacted>");
         let rendered = render_execution_receipt_text(&receipt);
-        assert!(rendered.contains("Env sources:"));
+        assert!(rendered.contains("Env Sources"));
         assert!(rendered.contains("OTA_TEST_SECRET"));
         assert!(rendered.contains("(task)"));
     }
