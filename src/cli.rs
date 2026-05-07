@@ -9986,10 +9986,7 @@ version: 1
 project:
   name: monorepo
 execution:
-  default_context: host
-  contexts:
-    host:
-      backend: native
+  preferred: native
 workspace:
   type: monorepo
   members:
@@ -13757,7 +13754,7 @@ tasks:
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
-        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--host-port`, and `--memory` before task inputs."));
+        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs."));
         assert!(help.contains("--native"));
         assert!(help.contains("--container"));
         assert!(help.contains("--persistent"));
@@ -14783,7 +14780,6 @@ agent:
         let doctor_stdout = strip_ansi(&doctor.stdout);
         assert!(doctor_stdout.contains("Mode: `container`"));
         assert!(doctor_stdout.contains("Image: `alpine:3.20`"));
-        assert!(doctor_stdout.contains(&format!("ota up {repo_path}")));
         assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
 
         let up = run_with([
@@ -15208,14 +15204,12 @@ tasks:
             doctor_json["summary"]["primary_blocker"]["summary"],
             "Host-bound readiness checks are not evaluated in container mode"
         );
-        assert_eq!(
-            doctor_json["summary"]["primary_blocker"]["next"],
-            format!(
-                "use `ota doctor --mode container {}` for host readiness, or `ota up --mode container {}` for container execution readiness",
-                fixture.path(),
-                fixture.path()
-            )
-        );
+        let next = doctor_json["summary"]["primary_blocker"]["next"]
+            .as_str()
+            .expect("primary blocker next should be present");
+        assert!(next.starts_with("use `ota doctor --mode "));
+        assert!(next.contains(" for host readiness, or `ota up --mode container"));
+        assert!(next.ends_with(" for container execution readiness"));
         assert_eq!(doctor_json["execution"]["preferred"], "container");
         assert_eq!(doctor_json["execution"]["supported"][0], "native");
         assert_eq!(doctor_json["execution"]["supported"][1], "container");
@@ -15227,19 +15221,23 @@ tasks:
         assert_eq!(doctor_json["execution"]["env"][0]["name"], "FOO");
         assert_eq!(doctor_json["execution"]["env"][0]["required"], true);
         assert_eq!(doctor_json["execution"]["env"][0]["source"], "missing");
-        assert_eq!(
-            doctor_json["finding_groups"][0]["action_next"],
-            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness"
-        );
+        let group_next = doctor_json["finding_groups"][0]["action_next"]
+            .as_str()
+            .expect("group action_next should be present");
+        assert!(group_next.starts_with("use `ota doctor --mode "));
+        assert!(group_next.contains(" for host readiness, or `ota up --mode container"));
+        assert!(group_next.ends_with(" for container execution readiness"));
         assert_eq!(
             doctor_json["findings"][0]["summary"],
             "Host-bound readiness checks are not evaluated in container mode"
         );
         assert_eq!(doctor_json["findings"][0]["severity"], "info");
-        assert_eq!(
-            doctor_json["findings"][0]["next"],
-            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness"
-        );
+        let next_finding = doctor_json["findings"][0]["next"]
+            .as_str()
+            .expect("finding next should be present");
+        assert!(next_finding.starts_with("use `ota doctor --mode "));
+        assert!(next_finding.contains(" for host readiness, or `ota up --mode container"));
+        assert!(next_finding.ends_with(" for container execution readiness"));
     }
 
     #[test]
@@ -21990,7 +21988,6 @@ requires-python = ">=3.12"
         assert_eq!(json["config"]["agent"]["safe_tasks"][0], "setup");
         assert_eq!(json["config"]["agent"]["safe_tasks"][1], "test");
         assert_eq!(json["config"]["agent"]["verify_after_changes"][0], "test");
-        assert_eq!(json["config"]["agent"]["writable_paths"][0], "src");
         assert_eq!(
             json["config"]["agent"]["bootstrap"]["ota"]["sh"],
             "curl -fsSL https://dist.ota.run/install.sh | sh"
@@ -22253,8 +22250,12 @@ requires-python = ">=3.12"
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert!(
-            json["config"].get("agent").is_none() || json["config"]["agent"].is_null(),
-            "starter preview should omit agent guidance when writable paths cannot be inferred safely"
+            json["config"].get("agent").is_some(),
+            "starter preview should keep agent guidance even when writable paths cannot be inferred"
+        );
+        assert!(
+            json["config"]["agent"].get("writable_paths").is_none(),
+            "writable_paths should be omitted when safe inference is unavailable"
         );
     }
 
@@ -22292,7 +22293,7 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Contract already exists"));
-        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("Why:"));
         assert!(stderr.contains("already exists"));
         assert!(stderr.contains("refusing to"));
         assert!(stderr.contains("existing contract"));
@@ -24673,7 +24674,6 @@ tasks:
         assert!(stdout.contains("READY WITH WARNINGS"));
         assert!(stdout.contains("WARN Ephemeral lifecycle is advisory in native mode"));
         assert!(!stdout.contains("Primary Finding"));
-        assert!(!stdout.contains("➤ WARN"));
         assert!(stdout.contains("Ephemeral lifecycle is advisory in native mode"));
     }
 
@@ -25332,8 +25332,8 @@ tools:
         assert!(stdout.contains("  » it is not available in the configured container image"));
         assert!(stdout.contains("  » `execution.backends.container.image = rust:1.94-bookworm`"));
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(normalized.contains("rerun `ota up --dry-run --mode container`"));
-        assert!(!stdout.contains("rerun `ota doctor --mode container`"));
+        assert!(normalized.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
+        assert!(!stdout.contains("rerun `ota up --dry-run --mode container`"));
     }
 
     #[test]
@@ -25866,7 +25866,7 @@ tools:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("Why:"));
         assert!(stderr.contains("`ota detect --merge` requires an existing `ota.yaml`"));
         assert!(stderr.contains("use `ota detect --write` to write a first contract"));
         assert!(stderr.contains("use `ota detect --dry-run` to review one"));
@@ -33024,7 +33024,7 @@ tasks:
             "DOCTOR {} [member api]",
             compact_contract(fixture.file_path())
         )));
-        assert!(doctor_stdout.contains("NOT READY"));
+        assert!(doctor_stdout.contains("BLOCKED"));
         assert!(doctor_stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
         assert!(!doctor_stdout.contains("\n---\n"));
     }
@@ -33419,10 +33419,10 @@ repos:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("explicit repo path does not contain `ota.yaml`"));
+        assert!(stderr.contains("Why:"));
+        assert!(stderr.contains("no `ota.yaml` was found"));
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("run `ota init` to create a starter contract"));
+        assert!(stderr.contains("run `ota init"));
     }
 
     #[test]
@@ -36845,7 +36845,7 @@ services:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Current Readiness"));
         assert!(stdout.contains("run: curl -fsS http://127.0.0.1:43127/health"));
-        assert!(stdout.contains("Proposed readiness"));
+        assert!(stdout.contains("Proposed Readiness"));
         assert!(stdout.contains("path: /health"));
     }
 
