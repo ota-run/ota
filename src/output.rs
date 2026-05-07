@@ -2328,6 +2328,7 @@ impl<'a> TaskSummary<'a> {
                                     lifecycle: None,
                                     host_port: None,
                                     memory: None,
+                                    skip_deps: false,
                                 },
                             );
                             let branch_execution = branch.execution();

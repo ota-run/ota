@@ -912,6 +912,7 @@ ota run <task> --member api --member web [PATH]
 ota run <task> --mode native [PATH]
 ota run <task> --mode container --ephemeral [PATH]
 ota run <task> --mode remote [PATH]
+ota run <task> --skip-deps [PATH]
 ota run <task> --memory 4GiB [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
@@ -922,6 +923,8 @@ Current behavior:
 - when `--member` is set, resolves the merged member contract from the monorepo root
 - repeated `--member` values run the task across those members in the provided order
 - `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
+- `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
+- `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
 - when a task input overlaps an ota command flag name such as `mode` or `jobs`, put the ota command flag before the task and the task input after the task
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
@@ -942,6 +945,7 @@ Current behavior:
 - persistent container runs reconcile shape before reuse and recreate when projection/publication drift would make runtime endpoint metadata stale
 - Compose attachment namespace drift also counts as persistent execution-shape drift, so changing `attachments.compose` recreates the persistent backend instead of reusing a container bound to the old Compose network family
 - service tasks with projected listeners classify post-readiness exits as service-stop failures (including `interrupted`) so summaries and receipts stay truthful across both ephemeral and persistent lifecycle modes
+- when `--skip-deps` is used, receipts and run summaries mark the override explicitly and point back to rerunning without it when you need to validate the full declared task flow
 - on success, text output includes the compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
 
@@ -972,9 +976,11 @@ ota run version:bump --version 0.2.0
 ota run version:bump --version major
 ota run dev --host-port 4000
 ota run dev --memory 4GiB
+ota run build --skip-deps
 ```
 
 - resolves task dependencies before execution
+- `--skip-deps` suppresses that dependency execution for the requested task only; required service acquisition, hooks, and the selected task body still run
 - if the task body exits successfully, runs `after_success` hooks in declared order
 - if the task body exits with a failure, runs `after_failure` hooks in declared order
 - runs `after_always` hooks after either outcome when the task body was actually attempted

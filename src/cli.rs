@@ -172,7 +172,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run dev --log\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -206,6 +206,9 @@ enum Commands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
+        /// Skip declared task dependencies for this local invocation only.
+        #[arg(long, action = ArgAction::SetTrue)]
+        skip_deps: bool,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue)]
         receipt: bool,
@@ -3057,25 +3060,25 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--native" | "--container" | "--remote" | "--ephemeral" | "--persistent" | "--receipt"
-        | "--stream" | "--log" | "--debug" | "--plain" | "--concise" | "--verbose" => {
-            Some(RunFlagSpec {
-                canonical: match name {
-                    "--native" | "--container" | "--remote" => "mode",
-                    "--ephemeral" | "--persistent" => "lifecycle",
-                    "--receipt" => "receipt",
-                    "--stream" => "stream",
-                    "--log" => "log",
-                    "--debug" => "debug",
-                    "--plain" => "plain",
-                    "--concise" => "concise",
-                    "--verbose" => "verbose",
-                    _ => unreachable!("matched repo run switch"),
-                },
-                takes_value: false,
-                value_kind: RunFlagValueKind::Any,
-            })
-        }
+        "--native" | "--container" | "--remote" | "--ephemeral" | "--persistent"
+        | "--skip-deps" | "--receipt" | "--stream" | "--log" | "--debug" | "--plain"
+        | "--concise" | "--verbose" => Some(RunFlagSpec {
+            canonical: match name {
+                "--native" | "--container" | "--remote" => "mode",
+                "--ephemeral" | "--persistent" => "lifecycle",
+                "--skip-deps" => "skip-deps",
+                "--receipt" => "receipt",
+                "--stream" => "stream",
+                "--log" => "log",
+                "--debug" => "debug",
+                "--plain" => "plain",
+                "--concise" => "concise",
+                "--verbose" => "verbose",
+                _ => unreachable!("matched repo run switch"),
+            },
+            takes_value: false,
+            value_kind: RunFlagValueKind::Any,
+        }),
         _ => None,
     }
 }
@@ -4162,6 +4165,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
             format_from_json(json),
             debug,
@@ -4409,6 +4413,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             host_port,
             memory,
             ephemeral,
+            skip_deps,
             receipt,
             stream,
             log,
@@ -4424,6 +4429,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port,
                 memory,
+                skip_deps,
             },
             &member,
             &inputs,
@@ -4456,6 +4462,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
             format_from_json(json),
             debug,
@@ -4505,6 +4512,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
             format_from_json(json),
             baseline.as_deref(),
@@ -4557,6 +4565,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                 host_port: None,
                 memory: None,
+                skip_deps: false,
             },
             &member,
             format_from_json(json),
@@ -4906,6 +4915,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
                     host_port: None,
                     memory: None,
+                    skip_deps: false,
                 },
                 format_from_json(json),
                 debug,
@@ -14401,6 +14411,7 @@ tasks:
                 host_port: None,
                 memory: None,
                 ephemeral: false,
+                skip_deps: false,
                 receipt: false,
                 stream: false,
                 log: false,
@@ -14436,6 +14447,7 @@ tasks:
                 host_port: None,
                 memory: None,
                 ephemeral: false,
+                skip_deps: false,
                 receipt: false,
                 stream: false,
                 log: false,
@@ -15450,6 +15462,7 @@ tasks:
             host_port: None,
             memory: None,
             ephemeral: false,
+            skip_deps: false,
             receipt: false,
             stream: false,
             log: false,
@@ -17953,6 +17966,22 @@ policies:
         assert_eq!(occurrence.span, 1);
         assert!(occurrence.valid_for_flag);
         assert_eq!(super::run_command_value_span("--remote"), Some(1));
+    }
+
+    #[test]
+    fn run_skip_deps_is_classified_as_repo_run_switch() {
+        let occurrence = super::parse_run_flag_occurrence(
+            &[OsString::from("--skip-deps")],
+            0,
+            super::RunCommandKind::Repo,
+        )
+        .expect("skip-deps should be classified");
+
+        assert_eq!(occurrence.canonical, "skip-deps");
+        assert!(!occurrence.takes_value);
+        assert_eq!(occurrence.span, 1);
+        assert!(occurrence.valid_for_flag);
+        assert_eq!(super::run_command_value_span("--skip-deps"), Some(1));
     }
 
     #[test]
@@ -23406,6 +23435,120 @@ tasks:
         let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 17);
+    }
+
+    #[test]
+    fn run_skip_deps_surfaces_override_in_receipt_and_next_steps() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      echo setup >> run.log
+  build:
+    depends_on:
+      - setup
+    script: |
+      echo build >> run.log
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "run",
+            "build",
+            "--skip-deps",
+            "--receipt",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            std::fs::read_to_string(fixture.dir.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["build"]
+        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("declared depends_on skipped by local override: setup"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("without `--skip-deps` to validate the full declared task flow"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn run_skip_deps_rejects_tasks_without_declared_dependencies() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+"#,
+        );
+
+        let output = run_with(["ota", "run", "build", "--skip-deps", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("does not declare any `depends_on` entries"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn run_skip_deps_rejection_keeps_member_in_rerun_guidance() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  build:
+    run: echo build
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "run",
+            "build",
+            "--member",
+            "api",
+            "--skip-deps",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("rerun `ota run --member api build` without `--skip-deps`"),
+            "{stderr}"
+        );
     }
 
     #[test]
