@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.8
+
 - added a first-class contract confirmation workflow for inferred agent boundaries: `ota agents --review` now inspects the current `agent` boundary and provenance directly from `ota.yaml`, `ota agents --confirm --dry-run` previews the exact reviewed-boundary contract mutation, and `ota agents --confirm` writes `agent.inferred_boundary.reviewed: true` before any downstream `AGENTS.md` sync
 - extended the execution-selector family onto `ota doctor` and `ota receipt`: both commands now accept backend shorthands (`--native`, `--container`, `--remote`), real lifecycle override via `--lifecycle`, and lifecycle shorthands (`--persistent`, `--ephemeral`), while preserving the selected lifecycle in receipt identity, doctor execution context reporting, and rerun guidance instead of silently collapsing container diagnosis back to ephemeral
 - evolved the starter `agent` contract surface beyond raw writable/protected path inference: starter init/detect now emit `agent.inferred_boundary.reviewed: false` plus provenance for inferred boundary entries, `ota doctor` warns when that inferred boundary has not been confirmed yet, and doctor’s agent summary now shows whether the current boundary is reviewed or still inferred
