@@ -48,7 +48,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("tasks").is_some());
     assert!(member_agent_properties.get("protected_paths").is_some());
-    assert!(member_agent_properties.get("inferred_boundary_reviewed").is_some());
+    assert!(
+        member_agent_properties
+            .get("inferred_boundary_reviewed")
+            .is_some()
+    );
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("requires_services").is_some());
     assert!(task_properties.get("variants").is_some());
@@ -84,7 +88,11 @@ fn doctor_schema_includes_agent_summary() {
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
     assert!(member_agent_properties.get("protected_paths").is_some());
-    assert!(member_agent_properties.get("inferred_boundary_reviewed").is_some());
+    assert!(
+        member_agent_properties
+            .get("inferred_boundary_reviewed")
+            .is_some()
+    );
     assert!(execution_properties.get("env").is_some());
     assert!(execution_env_properties.get("policy").is_some());
     assert!(provisioning_action.get("normalized_requirement").is_some());

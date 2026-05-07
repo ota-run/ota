@@ -56,10 +56,10 @@ use crate::detector::{Confidence, DetectContract, DetectReport, Inference, detec
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_RECEIPTS_GITIGNORE_ENTRY,
     OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY, command_available, command_version,
-    diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
-    diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
-    diagnose_services_only, finding_targets_container_image, finding_targets_remote_backend,
-    provisioning_installability_finding,
+    diagnose_checks_only, diagnose_contract, diagnose_contract_with_mode_and_lifecycle,
+    diagnose_policy_review, diagnose_preconditions, diagnose_preconditions_with_mode,
+    diagnose_service, diagnose_services_only, finding_targets_container_image,
+    finding_targets_remote_backend, provisioning_installability_finding,
 };
 use crate::execution::{
     container_engine_candidates, container_engine_candidates_from_backend,
@@ -896,12 +896,10 @@ pub fn validate(
         Err(error) => {
             return finalize_debug(
                 match format {
-                    OutputFormat::Text => missing_repo_contract_command_output(
-                        "VALIDATE",
-                        "ota validate",
-                        &error,
-                    )
-                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("VALIDATE", "ota validate", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
                     OutputFormat::Json => CommandOutput::failure(error.to_string()),
                 },
                 debug,
@@ -2170,7 +2168,12 @@ fn studio_snapshot_payload(
         &member_args,
         false,
         false,
-        crate::doctor::DoctorMode::Native,
+        ExecutionOverrides {
+            backend: Some(Backend::Native),
+            lifecycle: None,
+            host_port: None,
+            memory: None,
+        },
         OutputFormat::Json,
         false,
     ))?;
@@ -14139,7 +14142,7 @@ fn policy_review_group_metadata(
     (
         group.action_key.clone(),
         doctor_finding_group_title(&group.kind, &group.findings),
-        doctor_finding_group_next(&group.kind, &group.findings, None),
+        doctor_finding_group_next(&group.kind, &group.findings, None, None),
     )
 }
 
@@ -14250,10 +14253,12 @@ pub fn doctor(
     members: &[String],
     fix: bool,
     fix_dry_run: bool,
-    mode: DoctorMode,
+    overrides: ExecutionOverrides,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    let mode = doctor_mode_from_execution_overrides(overrides.backend);
+    let doctor_lifecycle = overrides.lifecycle;
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -14298,6 +14303,7 @@ pub fn doctor(
                             None,
                             &empty_extensions,
                             None,
+                            None,
                             report,
                         );
                         if let Some(summary) = fix_summary.as_ref() {
@@ -14318,6 +14324,7 @@ pub fn doctor(
                                 finding_groups: doctor_finding_group_summaries(
                                     &report.findings,
                                     Some(mode),
+                                    doctor_lifecycle,
                                 ),
                                 agent: None,
                                 execution: None,
@@ -14390,8 +14397,12 @@ pub fn doctor(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let mut report =
-                    diagnose_contract_in_mode(&target.contract, &target.contract_path, mode);
+                let mut report = diagnose_contract_with_mode_and_lifecycle(
+                    &target.contract,
+                    &target.contract_path,
+                    mode,
+                    doctor_lifecycle,
+                );
                 append_contract_drift_findings(
                     &target.contract,
                     &target.contract_path,
@@ -14443,6 +14454,7 @@ pub fn doctor(
                         execution_summary.as_ref(),
                         &target.contract.extensions,
                         Some(mode),
+                        doctor_lifecycle,
                         &report,
                     )];
                     let mut member_results = Vec::new();
@@ -14525,15 +14537,16 @@ pub fn doctor(
                                         );
                                     }
                                 };
-                            let member_report = diagnose_contract_in_mode(
+                            let mut member_report = diagnose_contract_with_mode_and_lifecycle(
                                 &member_target.contract,
                                 &member_target.contract_path,
                                 mode,
+                                doctor_lifecycle,
                             );
                             append_contract_drift_findings(
                                 &member_target.contract,
                                 &member_target.contract_path,
-                                &mut member_report.findings.clone(),
+                                &mut member_report.findings,
                             );
                             if !member_report.ok {
                                 overall_ok = false;
@@ -14554,6 +14567,12 @@ pub fn doctor(
                                 &member_target.contract,
                                 &member_target.contract_path,
                             );
+                            let rewritten_member_findings = rewrite_doctor_findings_for_contract(
+                                &member_report.findings,
+                                &member_target.contract_path,
+                                Some(mode),
+                                doctor_lifecycle,
+                            );
                             text_sections.push(render_doctor_section(
                                 &display_contract_target(
                                     &compact_path_display,
@@ -14564,13 +14583,14 @@ pub fn doctor(
                                 member_execution.as_ref(),
                                 &member_target.contract.extensions,
                                 Some(mode),
+                                doctor_lifecycle,
                                 &member_report,
                             ));
                             member_results.push(json!({
                                 "member": member,
                                 "ok": member_report.ok,
                                 "agent": member_agent,
-                                "findings": member_report.findings,
+                                "findings": rewritten_member_findings,
                             }));
                         }
                     }
@@ -14590,19 +14610,27 @@ pub fn doctor(
                             }
                             output
                         }
-                        OutputFormat::Json => CommandOutput {
-                            stdout: to_json_value(json!({
-                                "ok": overall_ok,
-                                "path": path_display,
-                                "summary": check_summary,
-                                "agent": agent_summary,
-                                "fix": fix_summary,
-                                "findings": report.findings,
-                                "members": member_results,
-                            })),
-                            stderr: None,
-                            exit_code: if overall_ok && !fix_failed { 0 } else { 1 },
-                        },
+                        OutputFormat::Json => {
+                            let rewritten_findings = rewrite_doctor_findings_for_contract(
+                                &report.findings,
+                                &target.contract_path,
+                                Some(mode),
+                                doctor_lifecycle,
+                            );
+                            CommandOutput {
+                                stdout: to_json_value(json!({
+                                    "ok": overall_ok,
+                                    "path": path_display,
+                                    "summary": check_summary,
+                                    "agent": agent_summary,
+                                    "fix": fix_summary,
+                                    "findings": rewritten_findings,
+                                    "members": member_results,
+                                })),
+                                stderr: None,
+                                exit_code: if overall_ok && !fix_failed { 0 } else { 1 },
+                            }
+                        }
                     }
                 } else {
                     match format {
@@ -14614,6 +14642,7 @@ pub fn doctor(
                                 execution_summary.as_ref(),
                                 &target.contract.extensions,
                                 Some(mode),
+                                doctor_lifecycle,
                                 report,
                             );
                             if let Some(summary) = fix_summary.as_ref() {
@@ -14625,6 +14654,12 @@ pub fn doctor(
                             output
                         }
                         OutputFormat::Json => {
+                            let rewritten_findings = rewrite_doctor_findings_for_contract(
+                                &report.findings,
+                                &target.contract_path,
+                                Some(mode),
+                                doctor_lifecycle,
+                            );
                             let exit_code = if report.ok && !fix_failed { 0 } else { 1 };
                             CommandOutput {
                                 stdout: to_json(&DoctorSuccess {
@@ -14638,8 +14673,9 @@ pub fn doctor(
                                         ),
                                     ),
                                     finding_groups: doctor_finding_group_summaries(
-                                        &report.findings,
+                                        &rewritten_findings,
                                         Some(mode),
+                                        doctor_lifecycle,
                                     ),
                                     agent: agent_summary,
                                     execution: ExecutionSummary::from_contract(
@@ -14657,7 +14693,7 @@ pub fn doctor(
                                     adapter_bootstrap: report.adapter_bootstrap.as_ref(),
                                     extensions: &target.contract.extensions,
                                     fix: fix_summary.clone(),
-                                    findings: &report.findings,
+                                    findings: &rewritten_findings,
                                 }),
                                 stderr: None,
                                 exit_code,
@@ -14721,8 +14757,12 @@ pub fn doctor(
                                 );
                             }
                         };
-                    let mut report =
-                        diagnose_contract_in_mode(&target.contract, &target.contract_path, mode);
+                    let mut report = diagnose_contract_with_mode_and_lifecycle(
+                        &target.contract,
+                        &target.contract_path,
+                        mode,
+                        doctor_lifecycle,
+                    );
                     append_contract_drift_findings(
                         &target.contract,
                         &target.contract_path,
@@ -14736,6 +14776,12 @@ pub fn doctor(
                         .agent
                         .as_ref()
                         .and_then(AgentSummary::from_config);
+                    let rewritten_findings = rewrite_doctor_findings_for_contract(
+                        &report.findings,
+                        &target.contract_path,
+                        Some(mode),
+                        doctor_lifecycle,
+                    );
                     let execution_summary =
                         ExecutionSummary::from_contract(&target.contract, &target.contract_path);
                     text_sections.push(render_doctor_section(
@@ -14745,13 +14791,14 @@ pub fn doctor(
                         execution_summary.as_ref(),
                         &target.contract.extensions,
                         Some(mode),
+                        doctor_lifecycle,
                         &report,
                     ));
                     member_results.push(json!({
                         "member": member,
                         "ok": report.ok,
                         "agent": agent,
-                        "findings": report.findings,
+                        "findings": rewritten_findings,
                     }));
                 }
 
@@ -16912,6 +16959,7 @@ pub fn check(
                         None,
                         execution_summary.as_ref(),
                         None,
+                        None,
                         &report,
                         None,
                     )];
@@ -17075,6 +17123,7 @@ pub fn check(
                                 None,
                                 member_execution.as_ref(),
                                 None,
+                                None,
                                 &member_report,
                                 None,
                             ));
@@ -17117,6 +17166,7 @@ pub fn check(
                             None,
                             execution_summary.as_ref(),
                             None,
+                            None,
                             report,
                             None,
                         ),
@@ -17134,6 +17184,7 @@ pub fn check(
                                     ),
                                     finding_groups: doctor_finding_group_summaries(
                                         &report.findings,
+                                        None,
                                         None,
                                     ),
                                     findings: &report.findings,
@@ -17283,6 +17334,7 @@ pub fn check(
                         None,
                         execution_summary.as_ref(),
                         None,
+                        None,
                         &report,
                         None,
                     ));
@@ -17405,7 +17457,7 @@ pub fn receipt(
     path: Option<&Path>,
     file_override: Option<&Path>,
     member: Option<&str>,
-    mode: DoctorMode,
+    overrides: ExecutionOverrides,
     format: OutputFormat,
     baseline: Option<&str>,
     fail_on_new_blockers: bool,
@@ -17414,6 +17466,8 @@ pub fn receipt(
     promote_baseline: bool,
     debug: bool,
 ) -> CommandOutput {
+    let mode = doctor_mode_from_execution_overrides(overrides.backend);
+    let doctor_lifecycle = overrides.lifecycle;
     if history {
         let history_root = match resolve_receipt_history_root(path, file_override) {
             Ok(root) => root,
@@ -17527,8 +17581,12 @@ pub fn receipt(
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(target) => {
-                let mut report =
-                    diagnose_contract_in_mode(&target.contract, &target.contract_path, mode);
+                let mut report = diagnose_contract_with_mode_and_lifecycle(
+                    &target.contract,
+                    &target.contract_path,
+                    mode,
+                    doctor_lifecycle,
+                );
                 append_contract_drift_findings(
                     &target.contract,
                     &target.contract_path,
@@ -17538,9 +17596,15 @@ pub fn receipt(
                     &report.findings,
                     &target.contract_path,
                     Some(mode),
+                    doctor_lifecycle,
                 );
-                let mut receipt =
-                    repo_readiness_receipt(&target.contract_path, &target.contract, mode, &report);
+                let mut receipt = repo_readiness_receipt(
+                    &target.contract_path,
+                    &target.contract,
+                    mode,
+                    doctor_lifecycle,
+                    &report,
+                );
                 receipt.next = receipt
                     .next
                     .as_deref()
@@ -17576,7 +17640,7 @@ pub fn receipt(
                         receipt: receipt.clone(),
                         archive_path: Some(archive_path_display.as_str()),
                         promoted_baseline: None,
-                        findings: &report.findings,
+                        findings: &findings,
                     };
                     if let Err(error) = write_receipt_archive(&archive_path, &payload) {
                         return CommandOutput::failure(error);
@@ -17750,12 +17814,10 @@ pub fn extensions(
         Err(error) => {
             return finalize_debug(
                 match format {
-                    OutputFormat::Text => missing_repo_contract_command_output(
-                        "EXTENSIONS",
-                        "ota extensions",
-                        &error,
-                    )
-                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("EXTENSIONS", "ota extensions", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
                     OutputFormat::Json => CommandOutput::failure(error.to_string()),
                 },
                 debug,
@@ -22637,6 +22699,7 @@ pub fn workspace_doctor(
                             finding_groups: doctor_finding_group_summaries(
                                 report.repos.iter().flat_map(|repo| repo.findings.iter()),
                                 None,
+                                None,
                             ),
                             repos: &report.repos,
                         }),
@@ -22866,6 +22929,7 @@ pub fn workspace_check(
                             summary: workspace_doctor_summary(&report),
                             finding_groups: doctor_finding_group_summaries(
                                 report.repos.iter().flat_map(|repo| repo.findings.iter()),
+                                None,
                                 None,
                             ),
                             repos: &report.repos,
@@ -29938,6 +30002,7 @@ fn render_doctor_text(
     execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
     report: DoctorReport,
 ) -> CommandOutput {
     let summary = doctor_summary(&report, agent_verdict_from_summary(agent));
@@ -29948,6 +30013,7 @@ fn render_doctor_text(
         agent,
         execution,
         doctor_mode,
+        doctor_lifecycle,
         report,
         Some(&summary),
     );
@@ -30201,6 +30267,7 @@ fn render_doctor_section(
     execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
     report: &DoctorReport,
 ) -> String {
     let summary = doctor_summary(report, agent_verdict_from_summary(agent));
@@ -30211,6 +30278,7 @@ fn render_doctor_section(
         agent,
         execution,
         doctor_mode,
+        doctor_lifecycle,
         report,
         Some(&summary),
     );
@@ -30454,6 +30522,7 @@ fn render_report_text(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
     report: DoctorReport,
     summary: Option<&DoctorSummary>,
 ) -> CommandOutput {
@@ -30464,6 +30533,7 @@ fn render_report_text(
         agent,
         execution,
         doctor_mode,
+        doctor_lifecycle,
         &report,
         summary,
     );
@@ -30481,6 +30551,7 @@ fn render_report_section(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
     report: &DoctorReport,
     summary: Option<&DoctorSummary>,
 ) -> String {
@@ -30524,6 +30595,7 @@ fn render_report_section(
             stdout.push_str(&render_contractless_primary_finding_text(
                 primary_blocker,
                 doctor_mode,
+                doctor_lifecycle,
                 contract_path,
                 contractless_repo_root.as_deref(),
             ));
@@ -30535,6 +30607,7 @@ fn render_report_section(
                 &primary_blocker.next,
                 primary_blocker.provenance.clone(),
                 doctor_mode,
+                doctor_lifecycle,
                 contract_path,
             ));
         }
@@ -30552,6 +30625,7 @@ fn render_report_section(
             stdout.push_str(&render_doctor_execution_summary_text(
                 execution,
                 doctor_mode,
+                doctor_lifecycle,
             ));
         } else {
             stdout.push_str(&render_execution_summary_text(execution));
@@ -30588,7 +30662,8 @@ fn render_report_section(
             let finding = group.findings[0];
             let (display_why, display_next, container_image) =
                 render_container_image_finding_text(&finding.why, &finding.next, doctor_mode);
-            let rewritten_next = rewrite_doctor_mode_command(&display_next, doctor_mode);
+            let rewritten_next =
+                rewrite_doctor_mode_command(&display_next, doctor_mode, doctor_lifecycle);
             if !concise_mode() {
                 stdout.push_str("\n\n");
                 if render_depends_on_boundary_doctor_finding(
@@ -30722,6 +30797,7 @@ fn contractless_doctor_signal_findings<'a>(
 fn render_contractless_primary_finding_text(
     primary_blocker: &DoctorPrimaryBlocker,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
     contract_path: Option<&Path>,
     repo_root: Option<&Path>,
 ) -> String {
@@ -30769,6 +30845,7 @@ fn render_contractless_primary_finding_text(
             vec![rewrite_doctor_mode_command(
                 &primary_blocker.next,
                 doctor_mode,
+                doctor_lifecycle,
             )]
         });
     append_finding_section(
@@ -31274,15 +31351,17 @@ fn render_primary_finding_text_with_next_rewriter(
     next: &str,
     provenance: Option<String>,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
     contract_path: Option<&Path>,
-    rewrite_next: fn(&str, Option<DoctorMode>) -> String,
+    rewrite_next: fn(&str, Option<DoctorMode>, Option<Lifecycle>) -> String,
 ) -> String {
     let mut stdout = String::new();
     let (display_why, display_next, container_image) =
         render_container_image_finding_text(why, next, doctor_mode);
     let diagnosis = finding_diagnosis_text(summary, &display_why, container_image.as_deref());
     let why_lines = finding_why_lines(summary, &display_why, container_image.as_deref());
-    let next_steps = finding_next_steps(&rewrite_next(&display_next, doctor_mode));
+    let next_steps =
+        finding_next_steps(&rewrite_next(&display_next, doctor_mode, doctor_lifecycle));
     let (marker, title_color, title) = match severity {
         FindingSeverity::Error => (
             primary_error_marker(),
@@ -31343,6 +31422,7 @@ fn render_primary_finding_text(
     next: &str,
     provenance: Option<String>,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
     contract_path: Option<&Path>,
 ) -> String {
     render_primary_finding_text_with_next_rewriter(
@@ -31352,6 +31432,7 @@ fn render_primary_finding_text(
         next,
         provenance,
         doctor_mode,
+        doctor_lifecycle,
         contract_path,
         rewrite_doctor_mode_command,
     )
@@ -31413,6 +31494,7 @@ where
 fn doctor_finding_group_summaries<'a, I>(
     findings: I,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
 ) -> Vec<DoctorFindingGroupSummary>
 where
     I: IntoIterator<Item = &'a Finding>,
@@ -31424,7 +31506,12 @@ where
             DoctorFindingGroupSummary {
                 action_key: group.action_key.clone(),
                 action_title: doctor_finding_group_title(&group.kind, &group.findings),
-                action_next: doctor_finding_group_next(&group.kind, &group.findings, doctor_mode),
+                action_next: doctor_finding_group_next(
+                    &group.kind,
+                    &group.findings,
+                    doctor_mode,
+                    doctor_lifecycle,
+                ),
                 count: display_items.len(),
             }
         })
@@ -31683,7 +31770,7 @@ fn render_grouped_doctor_findings(
     append_wrapped_labeled_text(
         &mut stdout,
         "Next:",
-        &doctor_finding_group_next(&group.kind, &group.findings, doctor_mode),
+        &doctor_finding_group_next(&group.kind, &group.findings, doctor_mode, None),
         "",
         DOCTOR_DETAIL_WRAP_WIDTH,
         true,
@@ -31816,6 +31903,7 @@ fn doctor_finding_group_next(
     kind: &DoctorFindingGroupKind,
     findings: &[&Finding],
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
 ) -> String {
     let has_missing_tooling = tooling_group_has_missing(findings);
     let has_probe_issues = tooling_group_has_probe_issues(findings);
@@ -31898,17 +31986,27 @@ fn doctor_finding_group_next(
             .unwrap_or_default(),
     };
 
-    rewrite_doctor_mode_command(&next, doctor_mode)
+    rewrite_doctor_mode_command(&next, doctor_mode, doctor_lifecycle)
 }
 
-fn rewrite_doctor_mode_command(next: &str, doctor_mode: Option<DoctorMode>) -> String {
-    match doctor_mode {
-        Some(DoctorMode::Container) => {
-            next.replace("`ota doctor`", "`ota doctor --mode container`")
-        }
-        Some(DoctorMode::Remote) => next.replace("`ota doctor`", "`ota doctor --mode remote`"),
-        _ => next.to_string(),
-    }
+fn rewrite_doctor_mode_command(
+    next: &str,
+    doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
+) -> String {
+    let Some(command) = doctor_selected_command(doctor_mode, doctor_lifecycle) else {
+        return next.to_string();
+    };
+    [
+        "ota doctor --mode container",
+        "ota doctor --mode remote",
+        "ota doctor --mode native",
+        "ota doctor",
+    ]
+    .into_iter()
+    .fold(next.to_string(), |rewritten, source| {
+        rewritten.replace(&format!("`{source}`"), &format!("`{command}`"))
+    })
 }
 
 fn rewrite_repo_scoped_command_targets(next: &str, contract_path: &Path) -> String {
@@ -31938,32 +32036,36 @@ fn rewrite_doctor_findings_for_contract(
     findings: &[Finding],
     contract_path: &Path,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
 ) -> Vec<Finding> {
     findings
         .iter()
         .cloned()
         .map(|mut finding| {
-            let next = rewrite_doctor_mode_command(&finding.next, doctor_mode);
+            let next = rewrite_doctor_mode_command(&finding.next, doctor_mode, doctor_lifecycle);
             finding.next = rewrite_repo_scoped_command_targets(&next, contract_path);
             finding
         })
         .collect()
 }
 
-fn rewrite_up_preview_next_command(next: &str, doctor_mode: Option<DoctorMode>) -> String {
-    let next = rewrite_doctor_mode_command(next, doctor_mode);
-    match doctor_mode {
-        Some(DoctorMode::Container) => next.replace(
-            "`ota doctor --mode container`",
-            "`ota up --dry-run --mode container`",
-        ),
-        Some(DoctorMode::Remote) => next.replace(
-            "`ota doctor --mode remote`",
-            "`ota up --dry-run --mode remote`",
-        ),
-        Some(DoctorMode::Native) => next.replace("`ota doctor`", "`ota up --dry-run`"),
-        None => next.replace("`ota doctor`", "`ota up --dry-run`"),
-    }
+fn rewrite_up_preview_next_command(
+    next: &str,
+    doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
+) -> String {
+    let next = rewrite_doctor_mode_command(next, doctor_mode, doctor_lifecycle);
+    let target = up_preview_selected_command(doctor_mode, doctor_lifecycle);
+    [
+        "ota doctor --mode container",
+        "ota doctor --mode remote",
+        "ota doctor --mode native",
+        "ota doctor",
+    ]
+    .into_iter()
+    .fold(next, |rewritten, source| {
+        rewritten.replace(&format!("`{source}`"), &format!("`{target}`"))
+    })
 }
 
 fn doctor_finding_group_display_items(group: &DoctorFindingGroup<'_>) -> Vec<String> {
@@ -32629,6 +32731,7 @@ fn render_execution_plan_text(
 fn render_doctor_execution_summary_text(
     execution: &ExecutionSummary<'_>,
     doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
 ) -> String {
     let mut lines = vec![paint_section_title("Execution")];
     if let Some(mode) = doctor_mode {
@@ -32659,11 +32762,24 @@ fn render_doctor_execution_summary_text(
             &render_inline_code_list(&execution.supported),
         ));
     }
-    if let Some(lifecycle) = execution.lifecycle {
+    let selected_lifecycle = doctor_lifecycle
+        .map(format_lifecycle)
+        .or(execution.lifecycle);
+    if let Some(lifecycle) = selected_lifecycle {
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Lifecycle:"),
             &paint_backticked_code(lifecycle),
+        ));
+    }
+    if let (Some(selected), Some(declared)) =
+        (doctor_lifecycle.map(format_lifecycle), execution.lifecycle)
+        && selected != declared
+    {
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Declared Lifecycle:"),
+            &paint_backticked_code(declared),
         ));
     }
     if let Some(backends) = execution.backends.as_ref() {
@@ -35874,6 +35990,7 @@ tasks:
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -35932,6 +36049,7 @@ tasks:
         let text = strip_ansi_codes(&render_report_section(
             "DOCTOR",
             "./ota.yaml",
+            None,
             None,
             None,
             None,
@@ -37734,6 +37852,7 @@ tasks:
             &contract,
             Path::new("/tmp/ota.yaml"),
             DoctorMode::Container,
+            None,
         );
         let expected_target = crate::runner::ephemeral_container_name(
             Path::new("/tmp"),
@@ -37743,6 +37862,55 @@ tasks:
 
         assert_eq!(phase.context.as_deref(), Some("z-ephemeral"));
         assert_eq!(phase.image.as_deref(), Some("ghcr.io/ota/ephemeral:latest"));
+        assert_eq!(phase.target.as_deref(), Some(expected_target.as_str()));
+    }
+
+    #[test]
+    fn doctor_container_phase_honors_persistent_lifecycle_override() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: doctor-context
+execution:
+  contexts:
+    app-persistent:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/persistent:latest
+        engines:
+          - docker
+    app-ephemeral:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/ephemeral:latest
+        engines:
+          - docker
+"#,
+        )
+        .expect("contract should parse");
+
+        let phase = super::doctor_phase_execution_context(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            DoctorMode::Container,
+            Some(Lifecycle::Persistent),
+        );
+        let expected_target = crate::runner::persistent_container_name(
+            Path::new("/tmp"),
+            "ghcr.io/ota/persistent:latest",
+            "docker",
+        );
+
+        assert_eq!(phase.context.as_deref(), Some("app-persistent"));
+        assert_eq!(phase.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(
+            phase.image.as_deref(),
+            Some("ghcr.io/ota/persistent:latest")
+        );
         assert_eq!(phase.target.as_deref(), Some(expected_target.as_str()));
     }
 
@@ -37798,6 +37966,7 @@ tasks:
             &contract,
             Path::new("/tmp/ota.yaml"),
             DoctorMode::Container,
+            None,
             &report,
         );
 
@@ -38045,7 +38214,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None, None);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].action_key, "tooling-version");
         assert_eq!(groups[0].action_title, "Fix version mismatches");
@@ -38081,7 +38250,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None, None);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].action_title, "Diagnose runtime and tool probes");
         assert_eq!(
@@ -38115,7 +38284,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None, None);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].action_key, "policy-surface");
         assert_eq!(groups[0].action_title, "Review active policy surfaces");
@@ -38151,7 +38320,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None, None);
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].action_key, "service-health-failed-postgres");
         assert_eq!(groups[1].action_key, "service-health-failed-redis");
@@ -38193,7 +38362,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None, None);
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].action_key, "check-failed-health-check");
         assert_eq!(groups[1].action_key, "check-timeout-lint");
@@ -38261,6 +38430,7 @@ tasks:
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -38314,6 +38484,7 @@ tasks:
         let text = strip_ansi_codes(&render_report_section(
             "DOCTOR",
             "./ota.yaml",
+            None,
             None,
             None,
             None,
@@ -38376,6 +38547,7 @@ tasks:
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -38431,6 +38603,7 @@ tasks:
             None,
             None,
             Some(DoctorMode::Container),
+            None,
             &report,
             Some(&summary),
         ));
@@ -38479,6 +38652,7 @@ tasks:
         let text = strip_ansi_codes(&render_report_section(
             "DOCTOR",
             "./ota.yaml",
+            None,
             None,
             None,
             None,
@@ -38596,6 +38770,7 @@ tasks:
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -38663,6 +38838,7 @@ tasks:
             None,
             None,
             Some(DoctorMode::Container),
+            None,
             &report,
             Some(&summary),
         ));
@@ -38706,6 +38882,7 @@ tasks:
             None,
             None,
             Some(DoctorMode::Container),
+            None,
             &report,
             Some(&summary),
         ));
@@ -38856,6 +39033,7 @@ tasks:
         let rendered = strip_ansi_codes(&super::render_doctor_execution_summary_text(
             &execution,
             Some(DoctorMode::Container),
+            None,
         ));
 
         assert!(rendered.contains("\n »  Mode: `container`"));
@@ -38914,6 +39092,7 @@ tasks:
         let rendered = strip_ansi_codes(&super::render_doctor_execution_summary_text(
             &execution,
             Some(DoctorMode::Container),
+            None,
         ));
 
         assert!(rendered.contains("\nEnvironment"));
@@ -38947,7 +39126,7 @@ tasks:
         };
 
         let rendered = strip_ansi_codes(&super::render_doctor_execution_summary_text(
-            &execution, None,
+            &execution, None, None,
         ));
 
         assert!(rendered.contains("\nSource-backed Values (1)"));
@@ -39117,6 +39296,7 @@ execution:
             &contract,
             Path::new("/tmp/ota.yaml"),
             DoctorMode::Container,
+            None,
         );
         assert_eq!(doctor_container.context.as_deref(), Some("app"));
         assert_eq!(
@@ -39128,6 +39308,7 @@ execution:
             &contract,
             Path::new("/tmp/ota.yaml"),
             DoctorMode::Remote,
+            None,
         );
         assert_eq!(doctor_remote.context.as_deref(), Some("remote-db"));
         assert_eq!(doctor_remote.provider.as_deref(), Some("ssh"));
@@ -39358,6 +39539,7 @@ execution:
             None,
             None,
             Some(DoctorMode::Container),
+            None,
             &report,
             Some(&summary),
         ));
@@ -39410,6 +39592,7 @@ execution:
             None,
             None,
             Some(DoctorMode::Container),
+            None,
             &report,
             Some(&summary),
         ));
@@ -39463,6 +39646,7 @@ execution:
             "./ota.yaml",
             None,
             Some(&agent),
+            None,
             None,
             None,
             &report,
@@ -39520,6 +39704,7 @@ execution:
         let text = strip_ansi_codes(&render_report_section(
             "DOCTOR",
             "./ota.yaml",
+            None,
             None,
             None,
             None,
@@ -39863,12 +40048,16 @@ tasks:
     #[test]
     fn doctor_mode_execution_overrides_select_expected_backend() {
         assert_eq!(
-            doctor_mode_execution_overrides(DoctorMode::Native).backend,
+            doctor_mode_execution_overrides(DoctorMode::Native, None).backend,
             Some(crate::schema::Backend::Native)
         );
         assert_eq!(
-            doctor_mode_execution_overrides(DoctorMode::Container).backend,
+            doctor_mode_execution_overrides(DoctorMode::Container, None).backend,
             Some(crate::schema::Backend::Container)
+        );
+        assert_eq!(
+            doctor_mode_execution_overrides(DoctorMode::Container, None).lifecycle,
+            Some(Lifecycle::Ephemeral)
         );
     }
 
@@ -43770,6 +43959,7 @@ execution:
                 &contract,
                 Path::new("./ota.yaml"),
                 DoctorMode::Container,
+                None,
             ),
             "READY",
             "post-setup diagnosis",
@@ -43874,6 +44064,7 @@ execution:
             Path::new("./ota.yaml"),
             &contract,
             DoctorMode::Container,
+            None,
             &report,
         );
 
@@ -43888,6 +44079,56 @@ execution:
         assert!(rendered.contains("Image:"));
         assert!(rendered.contains("ghcr.io/ota/dev:latest"));
         assert!(!rendered.contains("Container:"));
+    }
+
+    #[test]
+    fn repo_readiness_receipt_preserves_selected_persistent_lifecycle() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: receipt-persistent
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/persistent:latest
+        engines:
+          - docker
+"#,
+        )
+        .unwrap();
+
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+        let expected_target = crate::runner::persistent_container_name(
+            Path::new("."),
+            "ghcr.io/ota/persistent:latest",
+            "docker",
+        );
+
+        let receipt = super::repo_readiness_receipt(
+            Path::new("./ota.yaml"),
+            &contract,
+            DoctorMode::Container,
+            Some(Lifecycle::Persistent),
+            &report,
+        );
+
+        assert_eq!(receipt.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(
+            receipt.image.as_deref(),
+            Some("ghcr.io/ota/persistent:latest")
+        );
+        assert_eq!(receipt.target.as_deref(), Some(expected_target.as_str()));
     }
 
     #[test]
@@ -50823,12 +51064,16 @@ fn render_up_blocked_provisioning_section(
             append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
         } else {
             let doctor_mode = doctor_mode_from_backend(receipt.backend.as_deref());
+            let doctor_lifecycle = lifecycle_from_display_value(receipt.lifecycle.as_deref());
             let (display_why, display_next, container_image) =
                 render_container_image_finding_text(&primary.why, &primary.next, doctor_mode);
             let why_lines =
                 finding_why_lines(&primary.summary, &display_why, container_image.as_deref());
-            let mut next_steps =
-                finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
+            let mut next_steps = finding_next_steps(&rewrite_doctor_mode_command(
+                &display_next,
+                doctor_mode,
+                doctor_lifecycle,
+            ));
             if let Some(contract_path) = contract_path
                 && matches!(receipt.backend.as_deref(), Some("container" | "remote"))
                 && !next_steps
@@ -51093,6 +51338,7 @@ fn render_up_preview_text(
             &blocker.next,
             blocker.provenance(),
             doctor_mode_from_backend(Some(execution.backend.as_str())),
+            lifecycle_from_display_value(execution.lifecycle.as_deref()),
             None,
             rewrite_up_preview_next_command,
         ));
@@ -51237,7 +51483,7 @@ fn render_up_section_from_parts(
         if group.findings.len() == 1 {
             let finding = group.findings[0];
             stdout.push_str("\n\n");
-            let rewritten_next = rewrite_doctor_mode_command(&finding.next, doctor_mode);
+            let rewritten_next = rewrite_doctor_mode_command(&finding.next, doctor_mode, None);
             let rewritten_next =
                 if should_prepend_up_execution_plan_for_finding(status, phase, finding, backend) {
                     prepend_up_execution_plan_next_step(
@@ -51424,6 +51670,14 @@ fn doctor_mode_from_backend(backend: Option<&str>) -> Option<DoctorMode> {
         Some("container") => Some(DoctorMode::Container),
         Some("remote") => Some(DoctorMode::Remote),
         Some("native") => Some(DoctorMode::Native),
+        _ => None,
+    }
+}
+
+fn lifecycle_from_display_value(lifecycle: Option<&str>) -> Option<Lifecycle> {
+    match lifecycle.map(str::trim) {
+        Some("persistent") => Some(Lifecycle::Persistent),
+        Some("ephemeral") => Some(Lifecycle::Ephemeral),
         _ => None,
     }
 }
@@ -53290,27 +53544,84 @@ fn aggregate_execution_summary_status(
     String::from("failed")
 }
 
-#[cfg(test)]
-fn doctor_mode_execution_overrides(mode: DoctorMode) -> ExecutionOverrides {
+fn doctor_mode_execution_overrides(
+    mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
+) -> ExecutionOverrides {
     ExecutionOverrides {
-        backend: Some(match mode {
-            DoctorMode::Native => Backend::Native,
-            DoctorMode::Container => Backend::Container,
-            DoctorMode::Remote => Backend::Remote,
+        backend: Some(backend_for_doctor_mode(mode)),
+        lifecycle: lifecycle.or(match mode {
+            DoctorMode::Container => Some(Lifecycle::Ephemeral),
+            DoctorMode::Native | DoctorMode::Remote => None,
         }),
-        lifecycle: None,
         host_port: None,
         memory: None,
     }
+}
+
+fn backend_for_doctor_mode(mode: DoctorMode) -> Backend {
+    match mode {
+        DoctorMode::Native => Backend::Native,
+        DoctorMode::Container => Backend::Container,
+        DoctorMode::Remote => Backend::Remote,
+    }
+}
+
+fn doctor_mode_from_execution_overrides(backend: Option<Backend>) -> DoctorMode {
+    match backend.unwrap_or(Backend::Native) {
+        Backend::Native => DoctorMode::Native,
+        Backend::Container => DoctorMode::Container,
+        Backend::Remote => DoctorMode::Remote,
+    }
+}
+
+fn doctor_selected_command(
+    doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
+) -> Option<String> {
+    let mode = doctor_mode?;
+    let mut command = match mode {
+        DoctorMode::Native => String::from("ota doctor"),
+        DoctorMode::Container => String::from("ota doctor --mode container"),
+        DoctorMode::Remote => String::from("ota doctor --mode remote"),
+    };
+    if let Some(lifecycle) = doctor_lifecycle {
+        command.push_str(" --lifecycle ");
+        command.push_str(match lifecycle {
+            Lifecycle::Persistent => "persistent",
+            Lifecycle::Ephemeral => "ephemeral",
+        });
+    }
+    Some(command)
+}
+
+fn up_preview_selected_command(
+    doctor_mode: Option<DoctorMode>,
+    doctor_lifecycle: Option<Lifecycle>,
+) -> String {
+    let mut command = match doctor_mode.unwrap_or(DoctorMode::Native) {
+        DoctorMode::Native => String::from("ota up --dry-run"),
+        DoctorMode::Container => String::from("ota up --dry-run --mode container"),
+        DoctorMode::Remote => String::from("ota up --dry-run --mode remote"),
+    };
+    if let Some(lifecycle) = doctor_lifecycle {
+        command.push_str(" --lifecycle ");
+        command.push_str(match lifecycle {
+            Lifecycle::Persistent => "persistent",
+            Lifecycle::Ephemeral => "ephemeral",
+        });
+    }
+    command
 }
 
 fn repo_readiness_receipt(
     contract_path: &Path,
     contract: &Contract,
     mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
     report: &DoctorReport,
 ) -> ExecutionReceipt {
-    let context = doctor_report_execution_context(contract, contract_path, mode, report);
+    let context = doctor_report_execution_context(contract, contract_path, mode, lifecycle, report);
     let mut receipt = repo_execution_receipt(
         contract_path,
         contract,
@@ -53326,7 +53637,7 @@ fn repo_readiness_receipt(
             .iter()
             .find(|finding| finding.severity == FindingSeverity::Error)
             .or_else(|| report.findings.first())
-            .map(|finding| rewrite_doctor_mode_command(&finding.next, Some(mode))),
+            .map(|finding| rewrite_doctor_mode_command(&finding.next, Some(mode), lifecycle)),
     );
     receipt.blocked = report
         .findings
@@ -53637,70 +53948,23 @@ fn doctor_phase_execution_context(
     contract: &Contract,
     path: &Path,
     mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
 ) -> PhaseExecutionContext {
-    match mode {
-        DoctorMode::Native => PhaseExecutionContext {
-            context: matching_phase_execution_context_name(contract, Backend::Native, None),
-            ..native_phase_execution_context()
-        },
-        DoctorMode::Container => {
-            let context = matching_phase_execution_context_name(
-                contract,
-                Backend::Container,
-                Some(Lifecycle::Ephemeral),
-            )
-            .or_else(|| matching_phase_execution_context_name(contract, Backend::Container, None));
-            PhaseExecutionContext {
-                backend: Some(String::from("container")),
-                context: context.clone(),
-                lifecycle: Some(String::from("ephemeral")),
-                image: phase_execution_image(contract, Backend::Container, context.as_deref()),
-                container_memory_bytes: receipt_container_memory_bytes(
-                    effective_phase_container_backend(
-                        contract,
-                        Backend::Container,
-                        context.as_deref(),
-                    ),
-                    None,
-                ),
-                target: phase_execution_target(
-                    contract,
-                    path,
-                    Backend::Container,
-                    Some(Lifecycle::Ephemeral),
-                    context.as_deref(),
-                ),
-                provider: None,
-                cwd: None,
-            }
-        }
-        DoctorMode::Remote => {
-            let context = matching_phase_execution_context_name(contract, Backend::Remote, None);
-            PhaseExecutionContext {
-                backend: Some(String::from("remote")),
-                context: context.clone(),
-                target: phase_execution_target(
-                    contract,
-                    path,
-                    Backend::Remote,
-                    None,
-                    context.as_deref(),
-                ),
-                provider: phase_execution_provider(contract, context.as_deref()),
-                cwd: phase_execution_cwd(contract, context.as_deref()),
-                ..PhaseExecutionContext::default()
-            }
-        }
-    }
+    selected_phase_execution_context(
+        contract,
+        path,
+        doctor_mode_execution_overrides(mode, lifecycle),
+    )
 }
 
 fn doctor_report_execution_context(
     contract: &Contract,
     path: &Path,
     mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
     report: &DoctorReport,
 ) -> PhaseExecutionContext {
-    let mut context = doctor_phase_execution_context(contract, path, mode);
+    let mut context = doctor_phase_execution_context(contract, path, mode, lifecycle);
     if mode == DoctorMode::Container && contract_container_host_bound_scope_note_present(report) {
         context.target = None;
     } else if mode == DoctorMode::Container && context.target.is_none() {
@@ -55448,6 +55712,7 @@ fn execute_repo_up(
                         contract,
                         resolved_path,
                         doctor_mode,
+                        overrides.lifecycle,
                         &preflight,
                     ),
                     "NOT READY",
@@ -55865,7 +56130,13 @@ fn execute_repo_up(
             receipt: repo_execution_receipt(
                 resolved_path,
                 contract,
-                doctor_report_execution_context(contract, resolved_path, doctor_mode, &preflight),
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &preflight,
+                ),
                 "NOT READY",
                 "preconditions",
                 None,
@@ -55974,6 +56245,7 @@ fn execute_repo_up(
                                     contract,
                                     resolved_path,
                                     doctor_mode,
+                                    overrides.lifecycle,
                                     &refreshed,
                                 ),
                                 "BLOCKED",
@@ -56049,12 +56321,23 @@ fn execute_repo_up(
         });
     }
 
-    let report = diagnose_contract_in_mode(contract, resolved_path, doctor_mode);
+    let report = diagnose_contract_with_mode_and_lifecycle(
+        contract,
+        resolved_path,
+        doctor_mode,
+        overrides.lifecycle,
+    );
     let workloads = resolve_up_workloads(setup_runtime.as_ref());
     let mut receipt = repo_execution_receipt(
         resolved_path,
         contract,
-        doctor_report_execution_context(contract, resolved_path, doctor_mode, &report),
+        doctor_report_execution_context(
+            contract,
+            resolved_path,
+            doctor_mode,
+            overrides.lifecycle,
+            &report,
+        ),
         if report.ok { "READY" } else { "NOT READY" },
         "post-setup diagnosis",
         None,

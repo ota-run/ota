@@ -236,7 +236,7 @@ fn render_explain_group(
     }
     append_explain_next_text(
         output,
-        &doctor_finding_group_next(&group.kind, &group.findings, None),
+        &doctor_finding_group_next(&group.kind, &group.findings, None, None),
         "  ",
         84,
         contract_path,
@@ -289,7 +289,7 @@ fn render_explain_context_group(
     if show_next {
         append_explain_next_text(
             output,
-            &doctor_finding_group_next(&group.kind, &group.findings, None),
+            &doctor_finding_group_next(&group.kind, &group.findings, None, None),
             "  ",
             84,
             contract_path,
@@ -327,6 +327,7 @@ fn shared_group_next(groups: &[DoctorFindingGroup<'_>]) -> Option<String> {
         compact_backticked_paths(&doctor_finding_group_next(
             &group.kind,
             &group.findings,
+            None,
             None,
         ))
     });
@@ -400,7 +401,7 @@ fn explain_severity_priority(severity: FindingSeverity) -> usize {
 }
 
 fn explain_action_priority(group: &DoctorFindingGroup<'_>) -> usize {
-    let next = doctor_finding_group_next(&group.kind, &group.findings, None);
+    let next = doctor_finding_group_next(&group.kind, &group.findings, None, None);
     if next.contains("`ota detect --dry-run") || next.contains("`ota init --dry-run") {
         0
     } else if next.contains("`ota assist ") {
@@ -455,7 +456,7 @@ pub(super) fn explain_actions(findings: &[Finding]) -> Vec<ExplainAction> {
             severity: group.severity,
             count: group.findings.len(),
             why: explain_group_why_lines(&group).join("; "),
-            next: doctor_finding_group_next(&group.kind, &group.findings, None),
+            next: doctor_finding_group_next(&group.kind, &group.findings, None, None),
             provenance: explain_group_provenance(&group),
         })
         .collect()
