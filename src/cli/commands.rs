@@ -895,7 +895,15 @@ pub fn validate(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "VALIDATE",
+                        "ota validate",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=validate")],
             );
@@ -1195,7 +1203,15 @@ pub fn execution_plan(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "EXECUTION PLAN",
+                        "ota execution plan",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=execution-plan")],
             );
@@ -1383,7 +1399,15 @@ pub fn execution_topology(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "EXECUTION TOPOLOGY",
+                        "ota execution topology",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=execution-topology")],
             );
@@ -3322,7 +3346,13 @@ pub fn env(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("ENV", "ota env", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=env")],
             );
@@ -3526,7 +3556,15 @@ pub fn assist_declare_readiness(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "ASSIST DECLARE-READINESS",
+                        "ota assist declare-readiness",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=assist declare-readiness")],
             );
@@ -5257,7 +5295,15 @@ pub fn assist_declare_service(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "ASSIST DECLARE-SERVICE",
+                        "ota assist declare-service",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=assist declare-service")],
             );
@@ -5687,7 +5733,15 @@ pub fn assist_wire_setup(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "ASSIST WIRE-SETUP",
+                        "ota assist wire-setup",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=assist wire-setup")],
             );
@@ -6174,7 +6228,15 @@ pub fn assist_bind_task(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "ASSIST BIND-TASK",
+                        "ota assist bind-task",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=assist bind-task")],
             );
@@ -6874,7 +6936,15 @@ pub fn assist_declare_env(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "ASSIST DECLARE-ENV",
+                        "ota assist declare-env",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=assist declare-env")],
             );
@@ -7364,7 +7434,15 @@ pub fn assist_add_task(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "ASSIST ADD-TASK",
+                        "ota assist add-task",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=assist add-task")],
             );
@@ -7742,7 +7820,15 @@ pub fn assist_normalize(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "ASSIST NORMALIZE",
+                        "ota assist normalize",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=assist normalize")],
             );
@@ -11324,7 +11410,13 @@ pub fn tasks(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("TASKS", "ota tasks", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=tasks")],
             );
@@ -11640,7 +11732,13 @@ pub fn services(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("SERVICES", "ota services", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=services")],
             );
@@ -12141,7 +12239,9 @@ pub fn run_command(
         Ok(target) => target,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(stylize_text_failure("ota run", &error.to_string())),
+                missing_repo_contract_command_output("RUN", "ota run", &error).unwrap_or_else(
+                    || CommandOutput::failure(stylize_text_failure("ota run", &error.to_string())),
+                ),
                 debug,
                 vec![
                     String::from("DEBUG command=run"),
@@ -13619,13 +13719,23 @@ pub fn policy_review(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(command_message_failure_text(
-                    "POLICY REVIEW",
-                    "ota policy review",
-                    "Contract target could not be resolved",
-                    &error.to_string(),
-                    &[],
-                )),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "POLICY REVIEW",
+                        "ota policy review",
+                        &error,
+                    )
+                    .unwrap_or_else(|| {
+                        CommandOutput::failure(command_message_failure_text(
+                            "POLICY REVIEW",
+                            "ota policy review",
+                            "Contract target could not be resolved",
+                            &error.to_string(),
+                            &[],
+                        ))
+                    }),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=policy.review")],
             );
@@ -14760,6 +14870,171 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
         execution_target: None,
         findings,
     }
+}
+
+fn missing_repo_contract_root(error: &ResolveContractError) -> Option<PathBuf> {
+    match error {
+        ResolveContractError::NotFound { start } => Some(PathBuf::from(start)),
+        ResolveContractError::MissingExplicitDirectory { path } => Some(PathBuf::from(path)),
+        _ => None,
+    }
+}
+
+fn render_missing_repo_contract_text(
+    command: &str,
+    command_invocation: &str,
+    repo_root: &Path,
+) -> String {
+    let compact_root_display = compact_repo_path(repo_root);
+    let report = diagnose_contractless_repo(repo_root);
+    let signal_refs = report.findings.iter().skip(1).collect::<Vec<_>>();
+    let mut stdout = format_command_header(command, &compact_root_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line("BLOCKED")));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        primary_error_marker(),
+        paint("Primary Blocker", "1;38;2;255;168;168"),
+        render_finding_summary_with_count(FindingSeverity::Error, "Contract missing", 1)
+    ));
+    append_finding_section(
+        &mut stdout,
+        "Why:",
+        &[format!(
+            "no `ota.yaml` was found from `{}` upward, so Ota cannot run `{command_invocation}` against a declared repo contract yet",
+            compact_root_display
+        )],
+        FindingSeverity::Error,
+        None,
+    );
+    append_wrapped_labeled_text(
+        &mut stdout,
+        "Provenance:",
+        "repo signals",
+        "",
+        DOCTOR_DETAIL_WRAP_WIDTH,
+        false,
+        paint_key,
+        |value| value.to_string(),
+    );
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &contractless_repo_onboarding_next_steps(repo_root, true),
+        FindingSeverity::Error,
+        None,
+    );
+    if !signal_refs.is_empty() {
+        stdout.push_str(&render_contractless_doctor_signal_section(&signal_refs));
+    }
+    stdout
+}
+
+fn missing_repo_contract_command_output(
+    command: &str,
+    command_invocation: &str,
+    error: &ResolveContractError,
+) -> Option<CommandOutput> {
+    missing_repo_contract_root(error).map(|root| {
+        CommandOutput::failure(render_missing_repo_contract_text(
+            command,
+            command_invocation,
+            &root,
+        ))
+    })
+}
+
+fn render_agents_missing_contract_text(
+    repo_root: &Path,
+    output_path: &Path,
+    inferred_context: Option<&InferredMissingAgentContext>,
+) -> String {
+    let compact_root_display = compact_repo_path(repo_root);
+    let compact_output_display = compact_path(&normalized_display_path(output_path), "AGENTS.md");
+    let detect_dry_run_command = format!(
+        "`{}`",
+        contractless_repo_command("ota detect --dry-run", repo_root)
+    );
+    let detect_contract_command = format!(
+        "`{}`",
+        contractless_repo_command("ota detect --contract", repo_root)
+    );
+    let init_dry_run_command = format!(
+        "`{}`",
+        contractless_repo_command("ota init --dry-run", repo_root)
+    );
+    let init_write_command = format!("`{}`", contractless_repo_command("ota init", repo_root));
+    let detect_write_command = format!(
+        "`{}`",
+        contractless_repo_command("ota detect --write", repo_root)
+    );
+    let agents_write_command = format!(
+        "`{}`",
+        contractless_repo_command("ota agents --write", repo_root)
+    );
+
+    let mut stdout = format_command_header("AGENTS", &compact_root_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line("BLOCKED")));
+    stdout.push_str(&format!("\n{}\n", paint_section_title("Target")));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("File:"),
+        paint_code(&compact_output_display)
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Managed block:"),
+        paint_code("Ota-generated content")
+    ));
+    stdout.push_str(&format!(
+        "\n\n{} {} {}",
+        primary_error_marker(),
+        paint("Primary Blocker", "1;38;2;255;168;168"),
+        render_finding_summary_with_count(FindingSeverity::Error, "Contract missing", 1)
+    ));
+    append_finding_section(
+        &mut stdout,
+        "Why:",
+        &[format!(
+            "no `ota.yaml` was found from `{}` upward, so Ota cannot sync `AGENTS.md` from a declared repo contract yet",
+            compact_root_display
+        )],
+        FindingSeverity::Error,
+        None,
+    );
+    append_wrapped_labeled_text(
+        &mut stdout,
+        "Provenance:",
+        "repo signals",
+        "",
+        DOCTOR_DETAIL_WRAP_WIDTH,
+        false,
+        paint_key,
+        |value| value.to_string(),
+    );
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[
+            format!("run {detect_dry_run_command} to review inferred contract fields"),
+            format!("run {detect_contract_command} to inspect the exact detected contract text"),
+            format!("run {init_dry_run_command} to compare the conservative starter path"),
+            format!(
+                "write a contract only after review with {init_write_command} or {detect_write_command}"
+            ),
+            format!("run {agents_write_command} after the contract declares the agent boundary"),
+        ],
+        FindingSeverity::Error,
+        None,
+    );
+    if let Some(inferred_context) = inferred_context
+        && !inferred_context.signal_findings.is_empty()
+    {
+        let signal_refs = inferred_context.signal_findings.iter().collect::<Vec<_>>();
+        stdout.push_str(&render_contractless_doctor_signal_section(&signal_refs));
+    }
+    stdout
 }
 
 fn append_contractless_repo_findings(
@@ -16373,7 +16648,13 @@ pub fn explain(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("EXPLAIN", "ota explain", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=explain")],
             );
@@ -16566,7 +16847,13 @@ pub fn check(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("CHECK", "ota check", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=check")],
             );
@@ -17195,7 +17482,13 @@ pub fn receipt(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("RECEIPT", "ota receipt", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=receipt")],
             );
@@ -17456,7 +17749,15 @@ pub fn extensions(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => missing_repo_contract_command_output(
+                        "EXTENSIONS",
+                        "ota extensions",
+                        &error,
+                    )
+                    .unwrap_or_else(|| CommandOutput::failure(error.to_string())),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=extensions")],
             );
@@ -18328,15 +18629,44 @@ pub fn agents(
 ) -> CommandOutput {
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
+        Err(ResolveContractError::NotFound { start })
+        | Err(ResolveContractError::MissingExplicitDirectory { path: start })
+            if matches!(format, OutputFormat::Text) =>
+        {
+            let repo_root = PathBuf::from(&start);
+            let output_path = output
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| repo_root.join("AGENTS.md"));
+            let inferred_context = detect_repo(&repo_root)
+                .ok()
+                .map(|report| inferred_agents_missing_block_context(&repo_root, &report));
+            return finalize_debug(
+                CommandOutput::failure(render_agents_missing_contract_text(
+                    &repo_root,
+                    &output_path,
+                    inferred_context.as_ref(),
+                )),
+                debug,
+                vec![String::from("DEBUG command=agents")],
+            );
+        }
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(command_message_failure_text(
-                    "AGENTS",
-                    "ota agents",
-                    "Contract target could not be resolved",
-                    &error.to_string(),
-                    &[],
-                )),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("AGENTS", "ota agents", &error)
+                            .unwrap_or_else(|| {
+                                CommandOutput::failure(command_message_failure_text(
+                                    "AGENTS",
+                                    "ota agents",
+                                    "Contract target could not be resolved",
+                                    &error.to_string(),
+                                    &[],
+                                ))
+                            })
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=agents")],
             );
@@ -18812,7 +19142,13 @@ pub fn up(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("UP", "ota up", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=up")],
             );
@@ -19266,13 +19602,21 @@ pub fn clean(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(command_message_failure_text(
-                    "CLEAN",
-                    "ota clean",
-                    "Contract target could not be resolved",
-                    &error.to_string(),
-                    &[],
-                )),
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("CLEAN", "ota clean", &error)
+                            .unwrap_or_else(|| {
+                                CommandOutput::failure(command_message_failure_text(
+                                    "CLEAN",
+                                    "ota clean",
+                                    "Contract target could not be resolved",
+                                    &error.to_string(),
+                                    &[],
+                                ))
+                            })
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=clean")],
             );
