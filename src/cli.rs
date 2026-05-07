@@ -330,6 +330,15 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Review the current agent boundary declared in ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["write", "output", "confirm", "dry_run"])]
+        review: bool,
+        /// Confirm the inferred agent boundary in ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["write", "output", "review"])]
+        confirm: bool,
+        /// Preview the contract mutation for `--confirm` without writing ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue, requires = "confirm")]
+        dry_run: bool,
         /// Write the generated AGENTS.md to disk.
         #[arg(long, action = ArgAction::SetTrue)]
         write: bool,
@@ -4709,12 +4718,18 @@ fn dispatch(cli: Cli) -> CommandOutput {
         }
         Commands::Agents {
             json,
+            review,
+            confirm,
+            dry_run,
             write,
             output,
             path,
         } => commands::agents(
             path.as_deref(),
             file.as_deref(),
+            review,
+            confirm,
+            dry_run,
             write,
             output.as_deref(),
             format_from_json(json),
@@ -19607,6 +19622,106 @@ project:
     }
 
     #[test]
+    fn agents_review_blocks_on_missing_agent_contract_with_contract_first_lane() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--review", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENTS REVIEW"));
+        assert!(stdout.contains("BLOCKED"));
+        assert!(stdout.contains("Primary Blocker Agent contract missing"));
+        assert!(stdout.contains("cannot review or confirm an agent boundary in the contract"));
+        assert!(stdout.contains("ota detect --dry-run"));
+        assert!(stdout.contains("ota init --dry-run"));
+        assert!(!stdout.contains("Managed block:"));
+        assert!(!stdout.contains("ota agents --write"));
+    }
+
+    #[test]
+    fn agents_review_without_contract_uses_contract_missing_lane() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        fixture.write(
+            "app/page.tsx",
+            "export default function Page() { return null; }\n",
+        );
+
+        let output = run_with(["ota", "agents", "--review", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENTS REVIEW"));
+        assert!(stdout.contains("Primary Blocker Contract missing"));
+        assert!(stdout.contains("cannot review or confirm an agent boundary"));
+        assert!(stdout.contains("ota detect --dry-run"));
+        assert!(stdout.contains("ota detect --contract"));
+        assert!(stdout.contains("ota init --dry-run"));
+        assert!(stdout.contains("Repo Signals"));
+    }
+
+    #[test]
+    fn agents_review_json_without_contract_reports_compare_first_next() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-site",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "agents", "--review", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "review");
+        assert_eq!(json["written"], false);
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("no `ota.yaml` was found")
+        );
+        assert!(
+            json["next"][0]
+                .as_str()
+                .unwrap()
+                .starts_with("ota detect --dry-run ")
+        );
+        assert!(
+            json["next"][1]
+                .as_str()
+                .unwrap()
+                .starts_with("ota detect --contract ")
+        );
+        assert!(
+            json["next"][2]
+                .as_str()
+                .unwrap()
+                .starts_with("ota init --dry-run ")
+        );
+    }
+
+    #[test]
     fn agents_preview_external_contract_uses_explicit_paths() {
         let _env_guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
@@ -19675,6 +19790,203 @@ project:
                 .as_str()
                 .unwrap()
                 .contains("No explicit `agent` block is declared in `ota.yaml` yet.")
+        );
+    }
+
+    #[test]
+    fn agents_review_shows_inferred_boundary_provenance_and_confirm_next() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+agent:
+  safe_tasks:
+    - typecheck
+  writable_paths:
+    - app
+    - lib
+  protected_paths:
+    - ota.yaml
+    - package.json
+  inferred_boundary:
+    reviewed: false
+    provenance:
+      writable_paths:
+        - detect:nested_project_root
+        - detect:stack_source_scan
+      protected_paths:
+        - detect:contract_file_default
+        - detect:manifest_protection
+tasks:
+  typecheck:
+    run: npm run typecheck
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--review", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENTS REVIEW"));
+        assert!(stdout.contains("REVIEW REQUIRED"));
+        assert!(stdout.contains("Boundary review:"));
+        assert!(stdout.contains("inferred (needs review)"));
+        assert!(stdout.contains("Writable paths:"));
+        assert!(stdout.contains("`app`, `lib`"));
+        assert!(stdout.contains("Protected paths:"));
+        assert!(stdout.contains("`ota.yaml`, `package.json`"));
+        assert!(stdout.contains("Provenance"));
+        assert!(stdout.contains("detect:nested_project_root"));
+        assert!(stdout.contains("detect:stack_source_scan"));
+        assert!(stdout.contains("detect:contract_file_default"));
+        assert!(stdout.contains("detect:manifest_protection"));
+        assert!(stdout.contains("ota agents --confirm --dry-run"));
+        assert!(stdout.contains("ota agents --confirm"));
+        assert!(stdout.contains("ota agents --write"));
+    }
+
+    #[test]
+    fn agents_confirm_dry_run_previews_review_toggle_without_writing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+agent:
+  writable_paths:
+    - app
+  protected_paths:
+    - ota.yaml
+  inferred_boundary:
+    reviewed: false
+    provenance:
+      writable_paths:
+        - detect:nested_project_root
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let before = fs::read_to_string(fixture.file_path()).unwrap();
+        let output = run_with(["ota", "agents", "--confirm", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENTS CONFIRM"));
+        assert!(stdout.contains("PREVIEW"));
+        assert!(stdout.contains("agent.inferred_boundary.reviewed"));
+        assert!(stdout.contains("reviewed: true"));
+        assert!(stdout.contains("ota agents --confirm"));
+        assert!(stdout.contains("ota agents --write"));
+        assert_eq!(fs::read_to_string(fixture.file_path()).unwrap(), before);
+    }
+
+    #[test]
+    fn agents_confirm_writes_reviewed_true_to_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+agent:
+  writable_paths:
+    - app
+  protected_paths:
+    - ota.yaml
+  inferred_boundary:
+    reviewed: false
+    provenance:
+      writable_paths:
+        - detect:nested_project_root
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--confirm", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("CONFIRMED"));
+        assert!(stdout.contains("Marked `agent.inferred_boundary.reviewed` as reviewed"));
+        assert!(stdout.contains("ota validate"));
+        assert!(stdout.contains("ota agents --write"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("reviewed: true"));
+        assert!(!written.contains("reviewed: false"));
+    }
+
+    #[test]
+    fn agents_confirm_reports_already_reviewed_without_rewriting() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+agent:
+  writable_paths:
+    - app
+  protected_paths:
+    - ota.yaml
+  inferred_boundary:
+    reviewed: true
+    provenance:
+      writable_paths:
+        - detect:nested_project_root
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let before = fs::read_to_string(fixture.file_path()).unwrap();
+        let output = run_with(["ota", "agents", "--confirm", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("ALREADY REVIEWED"));
+        assert!(stdout.contains("already marked as reviewed"));
+        assert_eq!(fs::read_to_string(fixture.file_path()).unwrap(), before);
+    }
+
+    #[test]
+    fn agents_review_json_reports_review_state_and_provenance() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+agent:
+  writable_paths:
+    - app
+  protected_paths:
+    - ota.yaml
+  inferred_boundary:
+    reviewed: false
+    provenance:
+      writable_paths:
+        - detect:nested_project_root
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--review", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "review");
+        assert_eq!(json["review_state"], "inferred_needs_review");
+        assert_eq!(json["reviewed"], false);
+        assert_eq!(json["boundary"]["writable_paths"][0], "app");
+        assert_eq!(json["boundary"]["protected_paths"][0], "ota.yaml");
+        assert_eq!(
+            json["boundary"]["provenance"]["writable_paths"][0],
+            "detect:nested_project_root"
+        );
+        assert_eq!(
+            json["boundary"]["provenance"]["protected_paths"][0],
+            "detect:contract_file_default"
         );
     }
 

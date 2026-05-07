@@ -131,7 +131,7 @@ use crate::runner::{
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
 };
 use crate::schema::{
-    Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
+    AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
     ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessSpec,
     TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
     TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
@@ -18684,11 +18684,28 @@ fn render_init_pack_catalog_options_text(
 pub fn agents(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    review: bool,
+    confirm: bool,
+    dry_run: bool,
     write: bool,
     output: Option<&Path>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    let command_label = if review {
+        "AGENTS REVIEW"
+    } else if confirm {
+        "AGENTS CONFIRM"
+    } else {
+        "AGENTS"
+    };
+    let command_name = if review {
+        "ota agents --review"
+    } else if confirm {
+        "ota agents --confirm"
+    } else {
+        "ota agents"
+    };
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(ResolveContractError::NotFound { start })
@@ -18696,12 +18713,40 @@ pub fn agents(
             if matches!(format, OutputFormat::Text) =>
         {
             let repo_root = PathBuf::from(&start);
-            let output_path = output
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| repo_root.join("AGENTS.md"));
             let inferred_context = detect_repo(&repo_root)
                 .ok()
                 .map(|report| inferred_agents_missing_block_context(&repo_root, &report));
+            if review || confirm {
+                let command_label = if review {
+                    "AGENTS REVIEW"
+                } else {
+                    "AGENTS CONFIRM"
+                };
+                return finalize_debug(
+                    if confirm {
+                        CommandOutput {
+                            stdout: render_agents_missing_contract_review_text(
+                                command_label,
+                                &repo_root,
+                                inferred_context.as_ref(),
+                            ),
+                            stderr: None,
+                            exit_code: 1,
+                        }
+                    } else {
+                        CommandOutput::success(render_agents_missing_contract_review_text(
+                            command_label,
+                            &repo_root,
+                            inferred_context.as_ref(),
+                        ))
+                    },
+                    debug,
+                    vec![String::from("DEBUG command=agents")],
+                );
+            }
+            let output_path = output
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| repo_root.join("AGENTS.md"));
             return finalize_debug(
                 CommandOutput::failure(render_agents_missing_contract_text(
                     &repo_root,
@@ -18712,15 +18757,49 @@ pub fn agents(
                 vec![String::from("DEBUG command=agents")],
             );
         }
+        Err(ResolveContractError::NotFound { start })
+        | Err(ResolveContractError::MissingExplicitDirectory { path: start })
+            if review || confirm =>
+        {
+            let repo_root = PathBuf::from(&start);
+            let next = vec![
+                command_for_repo("ota detect --dry-run", &repo_root),
+                command_for_repo("ota detect --contract", &repo_root),
+                command_for_repo("ota init --dry-run", &repo_root),
+            ];
+            return finalize_debug(
+                if confirm {
+                    CommandOutput::failure(to_json_value(json!({
+                        "ok": false,
+                        "path": repo_root.display().to_string(),
+                        "written": false,
+                        "mode": if dry_run { "confirm_preview" } else { "confirm" },
+                        "error": "no `ota.yaml` was found from the selected repo root upward",
+                        "next": next,
+                    })))
+                } else {
+                    CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": repo_root.display().to_string(),
+                        "written": false,
+                        "mode": "review",
+                        "error": "no `ota.yaml` was found from the selected repo root upward",
+                        "next": next,
+                    })))
+                },
+                debug,
+                vec![String::from("DEBUG command=agents")],
+            );
+        }
         Err(error) => {
             return finalize_debug(
                 match format {
                     OutputFormat::Text => {
-                        missing_repo_contract_command_output("AGENTS", "ota agents", &error)
+                        missing_repo_contract_command_output(command_label, command_name, &error)
                             .unwrap_or_else(|| {
                                 CommandOutput::failure(command_message_failure_text(
-                                    "AGENTS",
-                                    "ota agents",
+                                    command_label,
+                                    command_name,
                                     "Contract target could not be resolved",
                                     &error.to_string(),
                                     &[],
@@ -18757,17 +18836,17 @@ pub fn agents(
     if is_org_policy_pack_path(&resolved_path) {
         return finalize_debug(
             wrong_repo_contract_target_output(
-                "AGENTS",
+                command_label,
                 &resolved_path,
                 "Wrong command target",
                 &[
-                    String::from("`ota agents` reads repo contracts such as `ota.yaml`"),
+                    format!("`{command_name}` reads repo contracts such as `ota.yaml`"),
                     format!(
                         "{} is an org policy pack, not a repo contract",
                         paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
                     ),
                 ],
-                wrong_target_next_steps_for_repo_command("ota agents", &resolved_path),
+                wrong_target_next_steps_for_repo_command(command_name, &resolved_path),
                 format,
             ),
             debug,
@@ -18781,7 +18860,7 @@ pub fn agents(
             return finalize_debug(
                 match format {
                     OutputFormat::Text => invalid_repo_contract_output(
-                        "AGENTS",
+                        command_label,
                         &resolved_path,
                         &errors
                             .errors()
@@ -18807,7 +18886,7 @@ pub fn agents(
                                 "rerun {}",
                                 paint_code(&format!(
                                     "`{}`",
-                                    command_for_repo_contract_target("ota agents", &resolved_path)
+                                    command_for_repo_contract_target(command_name, &resolved_path)
                                 ))
                             ),
                         ],
@@ -18830,7 +18909,7 @@ pub fn agents(
             return finalize_debug(
                 match format {
                     OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
-                        "AGENTS",
+                        command_label,
                         &resolved_path,
                         "Contract could not be loaded",
                         &error.to_string(),
@@ -18853,7 +18932,7 @@ pub fn agents(
                                 "rerun {}",
                                 paint_code(&format!(
                                     "`{}`",
-                                    command_for_repo_contract_target("ota agents", &resolved_path)
+                                    command_for_repo_contract_target(command_name, &resolved_path)
                                 ))
                             ),
                         ],
@@ -18899,6 +18978,15 @@ pub fn agents(
     let doctor_command = format!("`{}`", command_for_contract("ota doctor", &contract_path));
     let detect_dry_run_command = format!("`{}`", detect_dry_run_raw);
     let init_dry_run_command = format!("`{}`", init_dry_run_raw);
+    let review_raw = command_for_contract("ota agents --review", &contract_path);
+    let review_command = format!("`{}`", review_raw);
+    let confirm_raw = command_for_contract("ota agents --confirm", &contract_path);
+    let confirm_command = format!("`{}`", confirm_raw);
+    let confirm_dry_run_raw =
+        command_for_contract("ota agents --confirm --dry-run", &contract_path);
+    let confirm_dry_run_command = format!("`{}`", confirm_dry_run_raw);
+    let validate_raw = command_for_contract("ota validate", &contract_path);
+    let validate_command = format!("`{}`", validate_raw);
 
     let render_text = |status: &str| {
         let mut stdout = format_command_header("AGENTS", &compact_path_display);
@@ -18933,6 +19021,54 @@ pub fn agents(
         let inferred_context = detect_repo(contract_root)
             .ok()
             .map(|report| inferred_agents_missing_block_context(contract_root, &report));
+        if review || confirm {
+            let render_missing_boundary_text = || {
+                render_agents_missing_boundary_review_text(
+                    if review {
+                        "AGENTS REVIEW"
+                    } else {
+                        "AGENTS CONFIRM"
+                    },
+                    &compact_path_display,
+                    &detect_dry_run_command,
+                    &init_dry_run_command,
+                    inferred_context.as_ref(),
+                )
+            };
+
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => {
+                        if confirm {
+                            CommandOutput {
+                                stdout: render_missing_boundary_text(),
+                                stderr: None,
+                                exit_code: 1,
+                            }
+                        } else {
+                            CommandOutput::success(render_missing_boundary_text())
+                        }
+                    }
+                    OutputFormat::Json => {
+                        let payload = to_json_value(json!({
+                            "ok": !confirm,
+                            "path": path_display,
+                            "written": false,
+                            "mode": if review { "review" } else { "confirm" },
+                            "error": "the repo contract does not declare an `agent` block yet",
+                            "next": [detect_dry_run_raw, init_dry_run_raw],
+                        }));
+                        if confirm {
+                            CommandOutput::failure(payload)
+                        } else {
+                            CommandOutput::success(payload)
+                        }
+                    }
+                },
+                debug,
+                debug_lines,
+            );
+        }
         let render_missing_agent_text = || {
             render_agents_missing_agent_text(
                 &compact_path_display,
@@ -18976,6 +19112,175 @@ pub fn agents(
                     mode: "preview",
                     content: &content,
                 })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
+    let agent_config = contract.agent.as_ref().expect("checked above");
+    let agent_summary = agent.as_ref().expect("checked above");
+    let review_state = agent_boundary_review_state(agent_config);
+
+    if review || confirm {
+        if review {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::success(render_agents_review_text(
+                        &compact_path_display,
+                        agent_summary,
+                        agent_config,
+                        review_state,
+                        &confirm_dry_run_command,
+                        &confirm_command,
+                        &write_command,
+                    )),
+                    OutputFormat::Json => CommandOutput::success(render_agents_review_json(
+                        &path_display,
+                        agent_summary,
+                        agent_config,
+                        review_state,
+                        &confirm_dry_run_raw,
+                        &confirm_raw,
+                        &write_raw,
+                    )),
+                },
+                debug,
+                debug_lines,
+            );
+        }
+
+        return finalize_debug(
+            match review_state {
+                AgentBoundaryReviewState::InferredNeedsReview => {
+                    if dry_run {
+                        match render_confirmed_agent_boundary_preview(&contract_path) {
+                            Ok(review_yaml) => match format {
+                                OutputFormat::Text => {
+                                    CommandOutput::success(render_agents_confirm_preview_text(
+                                        &compact_path_display,
+                                        &compact_contract_path(&contract_path),
+                                        &confirm_command,
+                                        &write_command,
+                                        &review_yaml,
+                                    ))
+                                }
+                                OutputFormat::Json => {
+                                    CommandOutput::success(render_agents_confirm_preview_json(
+                                        &path_display,
+                                        agent_summary,
+                                        agent_config,
+                                        &confirm_raw,
+                                        &write_raw,
+                                        &review_yaml,
+                                    ))
+                                }
+                            },
+                            Err(error) => match format {
+                                OutputFormat::Text => {
+                                    CommandOutput::failure(command_message_failure_text(
+                                        "AGENTS CONFIRM",
+                                        &compact_path_display,
+                                        "Agent boundary confirmation preview failed",
+                                        &error,
+                                        &[format!(
+                                            "review the inferred boundary with {}",
+                                            paint_code(&review_command)
+                                        )],
+                                    ))
+                                }
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json_value(json!({
+                                        "ok": false,
+                                        "path": path_display,
+                                        "written": false,
+                                        "mode": "confirm_preview",
+                                        "error": error,
+                                        "next": [review_raw],
+                                    })))
+                                }
+                            },
+                        }
+                    } else {
+                        match write_confirmed_agent_boundary(&contract_path) {
+                            Ok(()) => match format {
+                                OutputFormat::Text => {
+                                    CommandOutput::success(render_agents_confirm_success_text(
+                                        &compact_path_display,
+                                        &compact_contract_path(&contract_path),
+                                        &validate_command,
+                                        &write_command,
+                                    ))
+                                }
+                                OutputFormat::Json => {
+                                    CommandOutput::success(render_agents_confirm_success_json(
+                                        &path_display,
+                                        &validate_raw,
+                                        &write_raw,
+                                    ))
+                                }
+                            },
+                            Err(error) => match format {
+                                OutputFormat::Text => {
+                                    CommandOutput::failure(command_message_failure_text(
+                                        "AGENTS CONFIRM",
+                                        &compact_path_display,
+                                        "Agent boundary could not be confirmed",
+                                        &error,
+                                        &[format!(
+                                            "review the inferred boundary with {}",
+                                            paint_code(&review_command)
+                                        )],
+                                    ))
+                                }
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json_value(json!({
+                                        "ok": false,
+                                        "path": path_display,
+                                        "written": false,
+                                        "mode": "confirm",
+                                        "error": error,
+                                        "next": [review_raw],
+                                    })))
+                                }
+                            },
+                        }
+                    }
+                }
+                AgentBoundaryReviewState::Reviewed => match format {
+                    OutputFormat::Text => CommandOutput::success(render_agents_confirm_noop_text(
+                        &compact_path_display,
+                        "ALREADY REVIEWED",
+                        "Ota does not need to change `ota.yaml` because the inferred agent boundary is already marked as reviewed",
+                        &write_command,
+                    )),
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": path_display,
+                        "written": false,
+                        "mode": "already_reviewed",
+                        "review_state": "reviewed",
+                        "reviewed": true,
+                        "next": [write_raw],
+                    }))),
+                },
+                AgentBoundaryReviewState::Authored => match format {
+                    OutputFormat::Text => CommandOutput::success(render_agents_confirm_noop_text(
+                        &compact_path_display,
+                        "AUTHORED",
+                        "This contract does not mark the agent boundary as inferred, so no confirmation write is needed",
+                        &write_command,
+                    )),
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": path_display,
+                        "written": false,
+                        "mode": "authored_boundary",
+                        "review_state": "authored",
+                        "reviewed": null,
+                        "next": [write_raw],
+                    }))),
+                },
             },
             debug,
             debug_lines,
@@ -33352,6 +33657,525 @@ fn render_agents_missing_agent_text(
         stdout.push_str(&render_contractless_doctor_signal_section(&signal_refs));
     }
     stdout
+}
+
+fn render_agents_missing_boundary_review_text(
+    command_label: &str,
+    compact_path_display: &str,
+    detect_dry_run_command: &str,
+    init_dry_run_command: &str,
+    inferred_context: Option<&InferredMissingAgentContext>,
+) -> String {
+    let mut stdout = format_command_header(command_label, compact_path_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line("BLOCKED")));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        primary_error_marker(),
+        paint("Primary Blocker", "1;38;2;255;168;168"),
+        render_finding_summary_with_count(FindingSeverity::Error, "Agent contract missing", 1)
+    ));
+    append_finding_section(
+        &mut stdout,
+        "Why:",
+        &[String::from(
+            "`ota.yaml` does not declare an `agent` block yet, so Ota cannot review or confirm an agent boundary in the contract",
+        )],
+        FindingSeverity::Error,
+        None,
+    );
+    append_wrapped_labeled_text(
+        &mut stdout,
+        "Provenance:",
+        "repo contract",
+        "",
+        DOCTOR_DETAIL_WRAP_WIDTH,
+        false,
+        paint_key,
+        |value| value.to_string(),
+    );
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[
+            format!("run {detect_dry_run_command} to review inferred `agent` defaults"),
+            format!("run {init_dry_run_command} to compare the starter contract path"),
+            String::from(
+                "add and review `agent.safe_tasks`, `agent.writable_paths`, and `agent.protected_paths` before confirming the boundary",
+            ),
+        ],
+        FindingSeverity::Error,
+        None,
+    );
+    if let Some(inferred_context) = inferred_context
+        && !inferred_context.signal_findings.is_empty()
+    {
+        let signal_refs = inferred_context.signal_findings.iter().collect::<Vec<_>>();
+        stdout.push_str(&render_contractless_doctor_signal_section(&signal_refs));
+    }
+    stdout
+}
+
+fn render_agents_missing_contract_review_text(
+    command_label: &str,
+    repo_root: &Path,
+    inferred_context: Option<&InferredMissingAgentContext>,
+) -> String {
+    let compact_repo_display = compact_repo_path(repo_root);
+    let detect_dry_run_command =
+        format!("`{}`", command_for_repo("ota detect --dry-run", repo_root));
+    let detect_contract_command =
+        format!("`{}`", command_for_repo("ota detect --contract", repo_root));
+    let init_dry_run_command = format!("`{}`", command_for_repo("ota init --dry-run", repo_root));
+
+    let mut stdout = format_command_header(command_label, &compact_repo_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line("BLOCKED")));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        primary_error_marker(),
+        paint("Primary Blocker", "1;38;2;255;168;168"),
+        render_finding_summary_with_count(FindingSeverity::Error, "Contract missing", 1)
+    ));
+    append_finding_section(
+        &mut stdout,
+        "Why:",
+        &[format!(
+            "no `ota.yaml` was found from {} upward, so Ota cannot review or confirm an agent boundary in the repo contract yet",
+            paint_code(&format!("`{compact_repo_display}`"))
+        )],
+        FindingSeverity::Error,
+        None,
+    );
+    append_wrapped_labeled_text(
+        &mut stdout,
+        "Provenance:",
+        "repo signals",
+        "",
+        DOCTOR_DETAIL_WRAP_WIDTH,
+        false,
+        paint_key,
+        |value| value.to_string(),
+    );
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[
+            format!("run {detect_dry_run_command} to review inferred contract fields"),
+            format!("run {detect_contract_command} to inspect the exact detected contract text"),
+            format!("run {init_dry_run_command} to compare the conservative starter path"),
+        ],
+        FindingSeverity::Error,
+        None,
+    );
+    if let Some(inferred_context) = inferred_context
+        && !inferred_context.signal_findings.is_empty()
+    {
+        let signal_refs = inferred_context.signal_findings.iter().collect::<Vec<_>>();
+        stdout.push_str(&render_contractless_doctor_signal_section(&signal_refs));
+    }
+    stdout
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentBoundaryReviewState {
+    Authored,
+    InferredNeedsReview,
+    Reviewed,
+}
+
+fn agent_boundary_review_state(agent: &AgentConfig) -> AgentBoundaryReviewState {
+    match agent
+        .inferred_boundary
+        .as_ref()
+        .map(|boundary| boundary.reviewed)
+    {
+        Some(true) => AgentBoundaryReviewState::Reviewed,
+        Some(false) => AgentBoundaryReviewState::InferredNeedsReview,
+        None => AgentBoundaryReviewState::Authored,
+    }
+}
+
+fn render_agents_review_text(
+    compact_path_display: &str,
+    agent: &AgentSummary<'_>,
+    agent_config: &AgentConfig,
+    review_state: AgentBoundaryReviewState,
+    confirm_dry_run_command: &str,
+    confirm_command: &str,
+    write_command: &str,
+) -> String {
+    let (status, review_label, next_steps) = match review_state {
+        AgentBoundaryReviewState::InferredNeedsReview => (
+            "REVIEW REQUIRED",
+            "inferred (needs review)",
+            vec![
+                format!("run {confirm_dry_run_command} to preview the contract mutation"),
+                format!("run {confirm_command} to mark the inferred boundary as reviewed"),
+                format!("run {write_command} after confirmation to sync `AGENTS.md`"),
+            ],
+        ),
+        AgentBoundaryReviewState::Reviewed => (
+            "REVIEWED",
+            "reviewed",
+            vec![format!(
+                "run {write_command} to sync `AGENTS.md` from the confirmed boundary"
+            )],
+        ),
+        AgentBoundaryReviewState::Authored => (
+            "AUTHORED",
+            "explicit",
+            vec![format!(
+                "run {write_command} to sync `AGENTS.md` from the declared boundary"
+            )],
+        ),
+    };
+
+    let mut stdout = format_command_header("AGENTS REVIEW", compact_path_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line(status)));
+    stdout.push_str(&format!("\n{}\n", paint_section_title("Overview")));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Contract:"),
+        paint_code(compact_path_display)
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Boundary review:"),
+        review_label
+    ));
+    append_agents_boundary_section(&mut stdout, agent);
+    append_agents_boundary_provenance_section(&mut stdout, agent_config);
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &next_steps,
+        FindingSeverity::Info,
+        None,
+    );
+    stdout
+}
+
+fn render_agents_review_json(
+    path_display: &str,
+    agent: &AgentSummary<'_>,
+    agent_config: &AgentConfig,
+    review_state: AgentBoundaryReviewState,
+    confirm_dry_run_raw: &str,
+    confirm_raw: &str,
+    write_raw: &str,
+) -> String {
+    let (review_state_label, reviewed, next) = match review_state {
+        AgentBoundaryReviewState::InferredNeedsReview => (
+            "inferred_needs_review",
+            Some(false),
+            vec![
+                confirm_dry_run_raw.to_string(),
+                confirm_raw.to_string(),
+                write_raw.to_string(),
+            ],
+        ),
+        AgentBoundaryReviewState::Reviewed => ("reviewed", Some(true), vec![write_raw.to_string()]),
+        AgentBoundaryReviewState::Authored => ("authored", None, vec![write_raw.to_string()]),
+    };
+
+    to_json_value(json!({
+        "ok": true,
+        "path": path_display,
+        "written": false,
+        "mode": "review",
+        "review_state": review_state_label,
+        "reviewed": reviewed,
+        "boundary": {
+            "writable_paths": agent.writable_paths,
+            "protected_paths": agent.protected_paths,
+            "provenance": agent_boundary_provenance_json(agent_config),
+        },
+        "next": next,
+    }))
+}
+
+fn render_agents_confirm_preview_text(
+    compact_path_display: &str,
+    compact_contract_display: &str,
+    confirm_command: &str,
+    write_command: &str,
+    review_yaml: &str,
+) -> String {
+    let mut stdout = format_command_header("AGENTS CONFIRM", compact_path_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line("PREVIEW")));
+    stdout.push_str(&format!("\n{}\n", paint_section_title("Change")));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Contract:"),
+        paint_code(compact_contract_display)
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Boundary review:"),
+        format!(
+            "{} {} {}",
+            paint_code("`agent.inferred_boundary.reviewed`"),
+            paint("→", "1;38;2;255;255;255"),
+            paint_code("`true`")
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n\n{}\n\n{}",
+        paint_section_title("Contract"),
+        stylize_yaml_preview(review_yaml.trim_end())
+    ));
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[
+            format!("run {confirm_command} to write the reviewed boundary into `ota.yaml`"),
+            format!("run {write_command} after confirmation to sync `AGENTS.md`"),
+        ],
+        FindingSeverity::Info,
+        None,
+    );
+    stdout
+}
+
+fn render_agents_confirm_preview_json(
+    path_display: &str,
+    agent: &AgentSummary<'_>,
+    agent_config: &AgentConfig,
+    confirm_raw: &str,
+    write_raw: &str,
+    review_yaml: &str,
+) -> String {
+    to_json_value(json!({
+        "ok": true,
+        "path": path_display,
+        "written": false,
+        "mode": "confirm_preview",
+        "review_state": "inferred_needs_review",
+        "reviewed": false,
+        "changes": [{
+            "field": "agent.inferred_boundary.reviewed",
+            "from": false,
+            "to": true
+        }],
+        "boundary": {
+            "writable_paths": agent.writable_paths,
+            "protected_paths": agent.protected_paths,
+            "provenance": agent_boundary_provenance_json(agent_config),
+        },
+        "content": review_yaml,
+        "next": [confirm_raw, write_raw],
+    }))
+}
+
+fn render_agents_confirm_success_text(
+    compact_path_display: &str,
+    compact_contract_display: &str,
+    validate_command: &str,
+    write_command: &str,
+) -> String {
+    let mut stdout = format_command_header("AGENTS CONFIRM", compact_path_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line("CONFIRMED")));
+    stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
+    stdout.push_str(&format!(
+        "\n {}  Marked {} as reviewed in {}",
+        summary_bullet(),
+        paint_code("`agent.inferred_boundary.reviewed`"),
+        paint_code(compact_contract_display)
+    ));
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[
+            format!("run {validate_command} to revalidate the updated contract"),
+            format!("run {write_command} to sync `AGENTS.md` from the confirmed boundary"),
+        ],
+        FindingSeverity::Info,
+        None,
+    );
+    stdout
+}
+
+fn render_agents_confirm_success_json(
+    path_display: &str,
+    validate_raw: &str,
+    write_raw: &str,
+) -> String {
+    to_json_value(json!({
+        "ok": true,
+        "path": path_display,
+        "written": true,
+        "mode": "confirmed",
+        "review_state": "reviewed",
+        "reviewed": true,
+        "next": [validate_raw, write_raw],
+    }))
+}
+
+fn render_agents_confirm_noop_text(
+    compact_path_display: &str,
+    status: &str,
+    why: &str,
+    write_command: &str,
+) -> String {
+    let mut stdout = format_command_header("AGENTS CONFIRM", compact_path_display);
+    stdout.push_str(&format!("\n\n{}\n", render_status_line(status)));
+    stdout.push_str(&format!("\n{}\n", paint_section_title("Result")));
+    stdout.push_str(&format!("\n {}  {}", summary_bullet(), why));
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[format!(
+            "run {write_command} to sync `AGENTS.md` from the current contract"
+        )],
+        FindingSeverity::Info,
+        None,
+    );
+    stdout
+}
+
+fn append_agents_boundary_section(stdout: &mut String, agent: &AgentSummary<'_>) {
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Boundary")));
+    if !agent.writable_paths.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Writable paths:"),
+            render_inline_code_list(&agent.writable_paths)
+        ));
+    }
+    if !agent.protected_paths.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Protected paths:"),
+            render_inline_code_list(&agent.protected_paths)
+        ));
+    }
+}
+
+fn append_agents_boundary_provenance_section(stdout: &mut String, agent: &AgentConfig) {
+    let Some(inferred_boundary) = agent.inferred_boundary.as_ref() else {
+        return;
+    };
+    if inferred_boundary.provenance.is_empty() {
+        return;
+    }
+
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Provenance")));
+    if !inferred_boundary.provenance.writable_paths.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Writable paths:"),
+            render_inline_code_list(&inferred_boundary.provenance.writable_paths)
+        ));
+    }
+    if !inferred_boundary.provenance.protected_paths.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Protected paths:"),
+            render_inline_code_list(&inferred_boundary.provenance.protected_paths)
+        ));
+    }
+}
+
+fn agent_boundary_provenance_json(agent: &AgentConfig) -> JsonValue {
+    match agent.inferred_boundary.as_ref() {
+        Some(boundary) => json!({
+            "writable_paths": boundary.provenance.writable_paths,
+            "protected_paths": boundary.provenance.protected_paths,
+        }),
+        None => json!({
+            "writable_paths": Vec::<String>::new(),
+            "protected_paths": Vec::<String>::new(),
+        }),
+    }
+}
+
+fn render_confirmed_agent_boundary_preview(contract_path: &Path) -> Result<String, String> {
+    let contents = fs::read_to_string(contract_path).map_err(|error| {
+        format!(
+            "failed to read `{}`: {error}",
+            compact_contract_path(contract_path)
+        )
+    })?;
+    let review_yaml = confirm_agent_boundary_contract_yaml(contract_path, &contents)?;
+    parse_contract_str(contract_path, &review_yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(contract_path))
+                .map_err(|error| error.to_string())
+        })?;
+    Ok(review_yaml)
+}
+
+fn write_confirmed_agent_boundary(contract_path: &Path) -> Result<(), String> {
+    let contents = fs::read_to_string(contract_path).map_err(|error| {
+        format!(
+            "failed to read `{}`: {error}",
+            compact_contract_path(contract_path)
+        )
+    })?;
+    let review_yaml = confirm_agent_boundary_contract_yaml(contract_path, &contents)?;
+    parse_contract_str(contract_path, &review_yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| {
+            validate_contract_with_path(&contract, Some(contract_path))
+                .map_err(|error| error.to_string())
+        })?;
+    fs::write(contract_path, review_yaml).map_err(|error| {
+        format!(
+            "failed to write `{}`: {error}",
+            compact_contract_path(contract_path)
+        )
+    })
+}
+
+fn confirm_agent_boundary_contract_yaml(
+    contract_path: &Path,
+    contents: &str,
+) -> Result<String, String> {
+    let mut document: YamlValue = serde_yaml::from_str(contents).map_err(|error| {
+        format!(
+            "failed to parse `{}`: {error}",
+            compact_contract_path(contract_path)
+        )
+    })?;
+    let root = document.as_mapping_mut().ok_or_else(|| {
+        format!(
+            "`{}` is not a valid mapping contract",
+            compact_contract_path(contract_path)
+        )
+    })?;
+    let agent = root
+        .get_mut(YamlValue::String(String::from("agent")))
+        .and_then(YamlValue::as_mapping_mut)
+        .ok_or_else(|| String::from("the repo contract does not declare an `agent` block yet"))?;
+    let inferred_boundary = agent
+        .get_mut(YamlValue::String(String::from("inferred_boundary")))
+        .and_then(YamlValue::as_mapping_mut)
+        .ok_or_else(|| String::from("the contract does not mark the agent boundary as inferred"))?;
+    let reviewed_key = YamlValue::String(String::from("reviewed"));
+    match inferred_boundary.get(&reviewed_key) {
+        Some(YamlValue::Bool(true)) => return Ok(contents.to_string()),
+        Some(YamlValue::Bool(false)) | None => {}
+        Some(_) => {
+            return Err(String::from(
+                "`agent.inferred_boundary.reviewed` must be a boolean before Ota can confirm it",
+            ));
+        }
+    }
+    inferred_boundary.insert(reviewed_key, YamlValue::Bool(true));
+    serde_yaml::to_string(&document).map_err(|error| {
+        format!(
+            "failed to serialize `{}`: {error}",
+            compact_contract_path(contract_path)
+        )
+    })
 }
 
 fn render_agents_task_list(output: &mut String, label: &str, tasks: &[String]) {

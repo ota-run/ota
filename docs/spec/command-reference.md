@@ -1243,6 +1243,9 @@ produce reviewable agent guidance for humans and coding agents.
 
 ```bash
 ota agents [PATH]
+ota agents --review [PATH]
+ota agents --confirm --dry-run [PATH]
+ota agents --confirm [PATH]
 ota agents --write [PATH]
 ota agents --json [PATH]
 ota agents --write --output AGENTS.md [PATH]
@@ -1250,6 +1253,7 @@ ota agents --write --output AGENTS.md [PATH]
 
 Current behavior:
 
+- keeps the contract-first boundary workflow inside `ota.yaml`: `ota agents --review` inspects the current writable/protected path boundary and provenance, `ota agents --confirm --dry-run` previews the exact `reviewed: true` mutation, and `ota agents --confirm` writes that confirmation into the contract before any `AGENTS.md` sync
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
 - when the repo contract does not declare `agent`, preview mode now behaves like a blocked agent-boundary sync surface instead of a generic scaffold preview: it reports `Agent contract missing`, shows compare-first next steps through `ota detect --dry-run` and `ota init --dry-run`, and surfaces any trustworthy inferred repo signals plus inferred starter agent boundaries under `Repo Signals`
 - `ota agents --write` now refuses when the repo contract still lacks `agent`, so Ota does not write generic guidance that looks more authoritative than the authored contract
@@ -1266,6 +1270,9 @@ Current behavior:
 Text output:
 
 - header: `AGENTS <path>`
+- `--review` uses `AGENTS REVIEW <path>` and reports whether the boundary is `REVIEW REQUIRED`, `REVIEWED`, or `AUTHORED`
+- `--confirm --dry-run` uses `AGENTS CONFIRM <path>` with `PREVIEW` and shows the exact reviewed-boundary contract preview before any write
+- `--confirm` uses `AGENTS CONFIRM <path>` and reports whether the boundary was just confirmed or was already reviewed/authored
 - when `agent` exists, preview mode shows the generated markdown content together with the write and verification next steps
 - when `agent` is missing, preview mode shows a blocked boundary-sync diagnosis with `Target`, `Primary Blocker`, `Next`, and `Repo Signals`
 - write mode reports whether the target was written or already in sync and points back to `ota doctor`
