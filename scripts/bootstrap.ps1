@@ -300,6 +300,39 @@ exit 1
     return $false
 }
 
+function Resolve-OtaLockedReplacement
+{
+    param(
+        [System.Management.Automation.ErrorRecord]$ErrorRecord,
+        [string]$Staged,
+        [string]$Destination
+    )
+
+    if (-not $IsWindows -or -not (Test-OtaFileInUseError $ErrorRecord))
+    {
+        return $null
+    }
+
+    if (-not (Test-Path $Staged))
+    {
+        return $null
+    }
+
+    if (-not (Schedule-OtaReplacementAfterExit -Source $Staged -Destination $Destination -ParentPid (Get-OtaSelfUpdateParentPid)))
+    {
+        Write-OtaError "error: ota is running but the staged replacement could not be scheduled"
+        if (Test-Path $Staged)
+        {
+            Remove-Item -LiteralPath $Staged -Force -ErrorAction SilentlyContinue
+        }
+        return "failed"
+    }
+
+    Write-OtaError "error: ota is still running; staged update at $Staged but replacement is not yet verified"
+    Write-OtaWarn "close running ota processes, then rerun `ota --version` to confirm the new version"
+    return "pending"
+}
+
 function Install-FromSource {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Write-OtaError "cargo is required for source install"
@@ -429,32 +462,25 @@ function Install-ReleaseBinary {
                 Copy-Item -Path $staged -Destination $destination -Force
                 Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
             }
-            catch [System.IO.IOException]
+            catch
             {
-                if (-not $IsWindows -or -not (Test-OtaFileInUseError $_))
+                $replacementStatus = Resolve-OtaLockedReplacement -ErrorRecord $_ -Staged $staged -Destination $destination
+                if ($replacementStatus)
                 {
-                    throw
+                    return $replacementStatus
                 }
-
-                if (-not (Schedule-OtaReplacementAfterExit -Source $staged -Destination $destination -ParentPid (Get-OtaSelfUpdateParentPid)))
-                {
-                    Write-OtaError "error: ota is running but the staged replacement could not be scheduled"
-                    if (Test-Path $staged)
-                    {
-                        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
-                    }
-                    return "failed"
-                }
-
-                Write-OtaError "error: ota is still running; staged update at $staged but replacement is not yet verified"
-                Write-OtaWarn "close running ota processes, then rerun `ota --version` to confirm the new version"
-                return "pending"
+                throw
             }
 
             Ensure-OtaOnPath $binDir
             Write-OtaInfo "installed ota to $destination"
             return "installed"
-        } catch [System.IO.IOException] {
+        } catch {
+            $replacementStatus = Resolve-OtaLockedReplacement -ErrorRecord $_ -Staged $staged -Destination $destination
+            if ($replacementStatus)
+            {
+                return $replacementStatus
+            }
             if ($IsWindows) {
                 Write-OtaError "error: could not replace ${destination}: $($_.Exception.Message)"
                 if (Test-Path $staged) {

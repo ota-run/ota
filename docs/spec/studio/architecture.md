@@ -42,6 +42,14 @@ The right architecture is:
   - agents
   - later CI or hosted adapters where useful
 
+Long-term baseline for Studio deployment:
+
+- Ota CLI remains the only execution authority.
+- The free and default Studio path is a local `ota studio` server on loopback with a browser UI.
+- No separate desktop runtime is a required execution path in phase 1+ baseline.
+- A desktop shell is optional later, only as a thin distribution wrapper around the same localhost server,
+  not as a separate semantic engine.
+
 The operation/event model is the schema authority for Studio interactions and must remain aligned with
 [`event-schema.md`](event-schema.md).
 
