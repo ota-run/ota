@@ -19862,7 +19862,9 @@ tasks:
         assert!(stdout.contains("AGENTS REVIEW"));
         assert!(stdout.contains("REVIEW REQUIRED"));
         assert!(stdout.contains("Boundary review:"));
-        assert!(stdout.contains("inferred (needs review)"));
+        assert!(stdout.contains("inferred"));
+        assert!(stdout.contains("Boundary sync:"));
+        assert!(stdout.contains("blocked until review"));
         assert!(stdout.contains("Writable paths:"));
         assert!(stdout.contains("`app`, `lib`"));
         assert!(stdout.contains("Protected paths:"));
@@ -20009,6 +20011,7 @@ agent:
         assert_eq!(json["mode"], "review");
         assert_eq!(json["review_state"], "inferred_needs_review");
         assert_eq!(json["reviewed"], false);
+        assert_eq!(json["sync_state"], "blocked_until_review");
         assert_eq!(json["boundary"]["writable_paths"][0], "app");
         assert_eq!(json["boundary"]["protected_paths"][0], "ota.yaml");
         assert_eq!(
@@ -20019,6 +20022,130 @@ agent:
             json["boundary"]["provenance"]["protected_paths"][0],
             "detect:contract_file_default"
         );
+    }
+
+    #[test]
+    fn agents_review_reports_confirmed_boundary_update_needed_when_agents_md_is_stale() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: cargo test
+agent:
+  default_task: ci
+  safe_tasks:
+    - ci
+  writable_paths:
+    - src
+    - docs
+  protected_paths:
+    - Cargo.lock
+    - ota.yaml
+  inferred_boundary:
+    reviewed: true
+    provenance:
+      writable_paths:
+        - detect:semantic_root_inference
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--review", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("REVIEWED"));
+        assert!(stdout.contains("Boundary review:"));
+        assert!(stdout.contains("confirmed"));
+        assert!(stdout.contains("Boundary sync:"));
+        assert!(stdout.contains("update needed"));
+        assert!(stdout.contains("ota agents --write"));
+        assert!(stdout.contains("ota doctor"));
+    }
+
+    #[test]
+    fn agents_review_treats_authored_boundary_as_confirmed_with_sync_state() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: cargo test
+agent:
+  default_task: ci
+  safe_tasks:
+    - ci
+  writable_paths:
+    - src
+  protected_paths:
+    - ota.yaml
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--review", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("REVIEWED"));
+        assert!(stdout.contains("Boundary review:"));
+        assert!(stdout.contains("confirmed"));
+        assert!(stdout.contains("Boundary sync:"));
+        assert!(stdout.contains("update needed"));
+        assert!(!stdout.contains("AUTHORED"));
+        assert!(!stdout.contains("explicit"));
+    }
+
+    #[test]
+    fn agents_review_reports_confirmed_boundary_in_sync_when_agents_md_matches() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: cargo test
+agent:
+  default_task: ci
+  safe_tasks:
+    - ci
+  writable_paths:
+    - src
+    - docs
+  protected_paths:
+    - Cargo.lock
+    - ota.yaml
+  inferred_boundary:
+    reviewed: true
+    provenance:
+      writable_paths:
+        - detect:semantic_root_inference
+      protected_paths:
+        - detect:contract_file_default
+"#,
+        );
+
+        let write_output = run_with(["ota", "agents", "--write", fixture.path()]);
+        assert_eq!(write_output.exit_code, 0);
+
+        let output = run_with(["ota", "agents", "--review", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("REVIEWED"));
+        assert!(stdout.contains("Boundary sync:"));
+        assert!(stdout.contains("in sync"));
+        assert!(stdout.contains("Boundary is already synced."));
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("ota doctor"));
+        assert!(stdout.contains("to inspect readiness and task safety."));
+        assert!(!stdout.contains("ota agents --write"));
     }
 
     #[test]
