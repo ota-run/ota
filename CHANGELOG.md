@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- redesigned `ota agents --review` around the real boundary states: reviewed boundaries now report `Boundary sync` as `in sync` or `update needed`, inferred boundaries report `blocked until review`, fully synced reviews end with `Boundary is already synced.` plus an inline `Next: run \`ota doctor\` ...`, and the older `AUTHORED` / `explicit` wording is gone
+
 ## 1.6.8
 
 - added a first-class contract confirmation workflow for inferred agent boundaries: `ota agents --review` now inspects the current `agent` boundary and provenance directly from `ota.yaml`, `ota agents --confirm --dry-run` previews the exact reviewed-boundary contract mutation, and `ota agents --confirm` writes `agent.inferred_boundary.reviewed: true` before any downstream `AGENTS.md` sync

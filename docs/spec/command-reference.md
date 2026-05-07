@@ -1276,12 +1276,13 @@ Current behavior:
 Text output:
 
 - header: `AGENTS <path>`
-- `--review` uses `AGENTS REVIEW <path>` and reports whether the boundary is `REVIEW REQUIRED`, `REVIEWED`, or `AUTHORED`
+- `--review` uses `AGENTS REVIEW <path>`, reports whether the boundary is `REVIEW REQUIRED` or `REVIEWED`, and shows `Boundary sync` as `blocked until review`, `update needed`, or `in sync`
 - `--confirm --dry-run` uses `AGENTS CONFIRM <path>` with `PREVIEW` and shows the exact reviewed-boundary contract preview before any write
-- `--confirm` uses `AGENTS CONFIRM <path>` and reports whether the boundary was just confirmed or was already reviewed/authored
+- `--confirm` uses `AGENTS CONFIRM <path>` and reports whether the boundary was just confirmed or whether no confirmation write was needed because the boundary was already reviewed or already declared as confirmed
 - when `agent` exists, preview mode shows the generated markdown content together with the write and verification next steps
 - when `agent` is missing, preview mode shows a blocked boundary-sync diagnosis with `Target`, `Primary Blocker`, `Next`, and `Repo Signals`
 - write mode reports whether the target was written or already in sync and points back to `ota doctor`
+- reviewed boundaries that are already synced end with `Boundary is already synced.` plus an inline `Next: run \`ota doctor\` ...`; reviewed boundaries that still need sync keep a two-step `Next:` lane for `ota agents --write` and `ota doctor`
 
 JSON output:
 

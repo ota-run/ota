@@ -19063,7 +19063,8 @@ pub fn agents(
     let init_dry_run_raw = command_for_contract("ota init --dry-run", &contract_path);
     let write_raw = command_for_contract("ota agents --write", &contract_path);
     let write_command = format!("`{}`", write_raw);
-    let doctor_command = format!("`{}`", command_for_contract("ota doctor", &contract_path));
+    let doctor_raw = command_for_contract("ota doctor", &contract_path);
+    let doctor_command = format!("`{}`", doctor_raw);
     let detect_dry_run_command = format!("`{}`", detect_dry_run_raw);
     let init_dry_run_command = format!("`{}`", init_dry_run_raw);
     let review_raw = command_for_contract("ota agents --review", &contract_path);
@@ -19075,6 +19076,15 @@ pub fn agents(
     let confirm_dry_run_command = format!("`{}`", confirm_dry_run_raw);
     let validate_raw = command_for_contract("ota validate", &contract_path);
     let validate_command = format!("`{}`", validate_raw);
+    let review_sync_state = agent.as_ref().and_then(|_| {
+        contract.agent.as_ref().map(|agent_config| {
+            agent_boundary_sync_state(
+                agent_boundary_review_state(agent_config),
+                &output_path,
+                &content,
+            )
+        })
+    });
 
     let render_text = |status: &str| {
         let mut stdout = format_command_header("AGENTS", &compact_path_display);
@@ -19219,18 +19229,22 @@ pub fn agents(
                         agent_summary,
                         agent_config,
                         review_state,
+                        review_sync_state.expect("review sync state"),
                         &confirm_dry_run_command,
                         &confirm_command,
                         &write_command,
+                        &doctor_command,
                     )),
                     OutputFormat::Json => CommandOutput::success(render_agents_review_json(
                         &path_display,
                         agent_summary,
                         agent_config,
                         review_state,
+                        review_sync_state.expect("review sync state"),
                         &confirm_dry_run_raw,
                         &confirm_raw,
                         &write_raw,
+                        &doctor_raw,
                     )),
                 },
                 debug,
@@ -19355,8 +19369,8 @@ pub fn agents(
                 AgentBoundaryReviewState::Authored => match format {
                     OutputFormat::Text => CommandOutput::success(render_agents_confirm_noop_text(
                         &compact_path_display,
-                        "AUTHORED",
-                        "This contract does not mark the agent boundary as inferred, so no confirmation write is needed",
+                        "REVIEWED",
+                        "This contract already declares a confirmed agent boundary, so no confirmation write is needed",
                         &write_command,
                     )),
                     OutputFormat::Json => CommandOutput::success(to_json_value(json!({
@@ -33853,6 +33867,13 @@ enum AgentBoundaryReviewState {
     Reviewed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentBoundarySyncState {
+    InSync,
+    UpdateNeeded,
+    BlockedUntilReview,
+}
+
 fn agent_boundary_review_state(agent: &AgentConfig) -> AgentBoundaryReviewState {
     match agent
         .inferred_boundary
@@ -33865,39 +33886,46 @@ fn agent_boundary_review_state(agent: &AgentConfig) -> AgentBoundaryReviewState 
     }
 }
 
+fn agent_boundary_sync_state(
+    review_state: AgentBoundaryReviewState,
+    output_path: &Path,
+    content: &str,
+) -> AgentBoundarySyncState {
+    if matches!(review_state, AgentBoundaryReviewState::InferredNeedsReview) {
+        return AgentBoundarySyncState::BlockedUntilReview;
+    }
+
+    match fs::read_to_string(output_path) {
+        Ok(existing)
+            if existing == content || agents_markdown_already_present(&existing, content) =>
+        {
+            AgentBoundarySyncState::InSync
+        }
+        _ => AgentBoundarySyncState::UpdateNeeded,
+    }
+}
+
 fn render_agents_review_text(
     compact_path_display: &str,
     agent: &AgentSummary<'_>,
     agent_config: &AgentConfig,
     review_state: AgentBoundaryReviewState,
+    sync_state: AgentBoundarySyncState,
     confirm_dry_run_command: &str,
     confirm_command: &str,
     write_command: &str,
+    doctor_command: &str,
 ) -> String {
-    let (status, review_label, next_steps) = match review_state {
-        AgentBoundaryReviewState::InferredNeedsReview => (
-            "REVIEW REQUIRED",
-            "inferred (needs review)",
-            vec![
-                format!("run {confirm_dry_run_command} to preview the contract mutation"),
-                format!("run {confirm_command} to mark the inferred boundary as reviewed"),
-                format!("run {write_command} after confirmation to sync `AGENTS.md`"),
-            ],
-        ),
-        AgentBoundaryReviewState::Reviewed => (
-            "REVIEWED",
-            "reviewed",
-            vec![format!(
-                "run {write_command} to sync `AGENTS.md` from the confirmed boundary"
-            )],
-        ),
-        AgentBoundaryReviewState::Authored => (
-            "AUTHORED",
-            "explicit",
-            vec![format!(
-                "run {write_command} to sync `AGENTS.md` from the declared boundary"
-            )],
-        ),
+    let (status, review_label) = match review_state {
+        AgentBoundaryReviewState::InferredNeedsReview => ("REVIEW REQUIRED", "inferred"),
+        AgentBoundaryReviewState::Reviewed | AgentBoundaryReviewState::Authored => {
+            ("REVIEWED", "confirmed")
+        }
+    };
+    let sync_label = match sync_state {
+        AgentBoundarySyncState::InSync => "in sync",
+        AgentBoundarySyncState::UpdateNeeded => "update needed",
+        AgentBoundarySyncState::BlockedUntilReview => "blocked until review",
     };
 
     let mut stdout = format_command_header("AGENTS REVIEW", compact_path_display);
@@ -33915,15 +33943,44 @@ fn render_agents_review_text(
         paint_key("Boundary review:"),
         review_label
     ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Boundary sync:"),
+        sync_label
+    ));
     append_agents_boundary_section(&mut stdout, agent);
     append_agents_boundary_provenance_section(&mut stdout, agent_config);
-    append_finding_section(
-        &mut stdout,
-        "Next:",
-        &next_steps,
-        FindingSeverity::Info,
-        None,
-    );
+    match sync_state {
+        AgentBoundarySyncState::BlockedUntilReview => append_finding_section(
+            &mut stdout,
+            "Next:",
+            &[
+                format!("run {confirm_dry_run_command} to preview the contract mutation"),
+                format!("run {confirm_command} to mark the inferred boundary as reviewed"),
+                format!("run {write_command} to sync `AGENTS.md` from the confirmed boundary"),
+            ],
+            FindingSeverity::Info,
+            None,
+        ),
+        AgentBoundarySyncState::UpdateNeeded => append_finding_section(
+            &mut stdout,
+            "Next:",
+            &[
+                format!("run {write_command} to sync `AGENTS.md` from the confirmed boundary"),
+                format!("run {doctor_command} to inspect readiness and task safety"),
+            ],
+            FindingSeverity::Info,
+            None,
+        ),
+        AgentBoundarySyncState::InSync => {
+            stdout.push_str("\n\nBoundary is already synced.");
+            stdout.push_str(&format!(
+                "\n\n{} run {doctor_command} to inspect readiness and task safety.",
+                paint_key("Next:")
+            ));
+        }
+    }
     stdout
 }
 
@@ -33932,22 +33989,31 @@ fn render_agents_review_json(
     agent: &AgentSummary<'_>,
     agent_config: &AgentConfig,
     review_state: AgentBoundaryReviewState,
+    sync_state: AgentBoundarySyncState,
     confirm_dry_run_raw: &str,
     confirm_raw: &str,
     write_raw: &str,
+    doctor_raw: &str,
 ) -> String {
-    let (review_state_label, reviewed, next) = match review_state {
-        AgentBoundaryReviewState::InferredNeedsReview => (
-            "inferred_needs_review",
-            Some(false),
+    let (review_state_label, reviewed) = match review_state {
+        AgentBoundaryReviewState::InferredNeedsReview => ("inferred_needs_review", Some(false)),
+        AgentBoundaryReviewState::Reviewed => ("reviewed", Some(true)),
+        AgentBoundaryReviewState::Authored => ("authored", None),
+    };
+    let (sync_state_label, next) = match sync_state {
+        AgentBoundarySyncState::BlockedUntilReview => (
+            "blocked_until_review",
             vec![
                 confirm_dry_run_raw.to_string(),
                 confirm_raw.to_string(),
                 write_raw.to_string(),
             ],
         ),
-        AgentBoundaryReviewState::Reviewed => ("reviewed", Some(true), vec![write_raw.to_string()]),
-        AgentBoundaryReviewState::Authored => ("authored", None, vec![write_raw.to_string()]),
+        AgentBoundarySyncState::UpdateNeeded => (
+            "update_needed",
+            vec![write_raw.to_string(), doctor_raw.to_string()],
+        ),
+        AgentBoundarySyncState::InSync => ("in_sync", vec![doctor_raw.to_string()]),
     };
 
     to_json_value(json!({
@@ -33957,6 +34023,7 @@ fn render_agents_review_json(
         "mode": "review",
         "review_state": review_state_label,
         "reviewed": reviewed,
+        "sync_state": sync_state_label,
         "boundary": {
             "writable_paths": agent.writable_paths,
             "protected_paths": agent.protected_paths,

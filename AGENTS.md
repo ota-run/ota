@@ -828,3 +828,54 @@ Apply first-principles thinking especially to:
 When a proposal is stronger by first-principles reasoning, and the blocker is fixable without violating security, determinism, trust, or product scope, prefer the stronger design and fix the blocker.
 Do not optimize for local convenience over product truth.
 Do not optimize for a workaround over the correct solution just because the workaround is faster.
+
+<!-- ota-generated-agent-guidance:start -->
+# AGENTS.md
+
+Generated from `./ota.yaml` by `ota agents`.
+
+## Repo
+
+- `project`: `ota`
+- `description`: `Ota CLI and Contract Engine`
+
+## Agent Contract
+
+- `entrypoint`: `setup` (`ota run setup`)
+- `default_task`: `ci` (`ota run ci`)
+- `safe_tasks`:
+  - `setup` (`ota run setup`)
+  - `build` (`ota run build`)
+  - `fmt` (`ota run fmt`)
+  - `check` (`ota run check`)
+  - `test` (`ota run test`)
+  - `ci` (`ota run ci`)
+  - `contract:validate` (`ota run contract:validate`)
+  - `doctor-annotations` (`ota run doctor-annotations`)
+- `verify_after_changes`:
+  - `fmt` (`ota run fmt`)
+  - `check` (`ota run check`)
+  - `test` (`ota run test`)
+  - `ci` (`ota run ci`)
+- `writable_paths`: `src`, `docs`, `README.md`, `scripts`, `tests`
+- `protected_paths`: `Cargo.lock`, `ota.yaml`, `LICENSE`
+
+## Bootstrap
+
+Only install ota if it is missing and installation is approved.
+
+- `sh`: `curl -fsSL https://dist.ota.run/install.sh | sh`
+- `powershell`: `irm https://dist.ota.run/install.ps1 | iex`
+
+## Notes
+
+Treat Ota as the default workflow, the way npm is the default in Node repos.
+Use `ota validate` to verify the contract.
+Use `ota doctor` to inspect readiness and agent guidance.
+Use `ota tasks` to discover runnable repo actions.
+Use `ota run setup` to prepare the repo.
+Use `ota run contract:validate` to self-host the contract validator against this checkout.
+Use `ota run ci` to run the canonical verification path.
+Prefer narrow changes with regression tests.
+Keep public docs and contracts aligned with implementation.
+<!-- ota-generated-agent-guidance:end -->
