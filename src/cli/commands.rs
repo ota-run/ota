@@ -33930,24 +33930,26 @@ fn render_agents_review_text(
 
     let mut stdout = format_command_header("AGENTS REVIEW", compact_path_display);
     stdout.push_str(&format!("\n\n{}\n", render_status_line(status)));
-    stdout.push_str(&format!("\n{}\n", paint_section_title("Overview")));
+    stdout.push_str(&format!("\n{}", paint_section_title("Overview")));
     stdout.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
-        paint_key("Contract:"),
-        paint_code(compact_path_display)
+        "\n{}",
+        section_list_row(
+            &verdict_bullet(),
+            &paint_key("Contract:"),
+            &paint_code(compact_path_display)
+        )
     ));
     stdout.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
-        paint_key("Boundary review:"),
-        review_label
+        "\n{}",
+        section_list_row(
+            &verdict_bullet(),
+            &paint_key("Boundary review:"),
+            review_label
+        )
     ));
     stdout.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
-        paint_key("Boundary sync:"),
-        sync_label
+        "\n{}",
+        section_list_row(&verdict_bullet(), &paint_key("Boundary sync:"), sync_label)
     ));
     append_agents_boundary_section(&mut stdout, agent);
     append_agents_boundary_provenance_section(&mut stdout, agent_config);
@@ -34175,21 +34177,25 @@ fn render_agents_confirm_noop_text(
 }
 
 fn append_agents_boundary_section(stdout: &mut String, agent: &AgentSummary<'_>) {
-    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Boundary")));
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Boundary")));
     if !agent.writable_paths.is_empty() {
         stdout.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Writable paths:"),
-            render_inline_code_list(&agent.writable_paths)
+            "\n{}",
+            section_list_row(
+                &verdict_bullet(),
+                &paint_key("Writable paths:"),
+                &render_inline_code_list(&agent.writable_paths)
+            )
         ));
     }
     if !agent.protected_paths.is_empty() {
         stdout.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Protected paths:"),
-            render_inline_code_list(&agent.protected_paths)
+            "\n{}",
+            section_list_row(
+                &verdict_bullet(),
+                &paint_key("Protected paths:"),
+                &render_inline_code_list(&agent.protected_paths)
+            )
         ));
     }
 }
@@ -34202,21 +34208,25 @@ fn append_agents_boundary_provenance_section(stdout: &mut String, agent: &AgentC
         return;
     }
 
-    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Provenance")));
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Provenance")));
     if !inferred_boundary.provenance.writable_paths.is_empty() {
         stdout.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Writable paths:"),
-            render_inline_code_list(&inferred_boundary.provenance.writable_paths)
+            "\n{}",
+            section_list_row(
+                &verdict_bullet(),
+                &paint_key("Writable paths:"),
+                &render_inline_code_list(&inferred_boundary.provenance.writable_paths)
+            )
         ));
     }
     if !inferred_boundary.provenance.protected_paths.is_empty() {
         stdout.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Protected paths:"),
-            render_inline_code_list(&inferred_boundary.provenance.protected_paths)
+            "\n{}",
+            section_list_row(
+                &verdict_bullet(),
+                &paint_key("Protected paths:"),
+                &render_inline_code_list(&inferred_boundary.provenance.protected_paths)
+            )
         ));
     }
 }
@@ -53561,13 +53571,13 @@ fn render_status_line(status: &str) -> String {
         "NOT READY" => render_readiness_status(false),
         "VALID" => render_valid_status(),
         "RESOLVED" => render_resolved_status(),
-        "MERGED" | "REWRITTEN" => {
+        "MERGED" | "REWRITTEN" | "REVIEWED" | "CONFIRMED" | "ALREADY REVIEWED" => {
             render_named_status(status.trim(), primary_success_marker(), "1;38;2;0;255;120")
         }
-        "NO CHANGES" => {
+        "NO CHANGES" | "PREVIEW" => {
             render_named_status(status.trim(), primary_info_marker(), "1;38;2;102;245;255")
         }
-        "BLOCKED" | "UNRESOLVED" | "WARN" => {
+        "BLOCKED" | "UNRESOLVED" | "WARN" | "REVIEW REQUIRED" => {
             render_named_status(status.trim(), primary_warn_marker(), "1;38;2;255;235;59")
         }
         value if value.contains("INVALID") || value.contains("UNREADABLE") => {
