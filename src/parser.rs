@@ -186,12 +186,19 @@ fn contract_cache() -> &'static Mutex<HashMap<ContractCacheKey, Contract>> {
 }
 
 fn lock_contract_cache() -> MutexGuard<'static, HashMap<ContractCacheKey, Contract>> {
-    match contract_cache().lock() {
+    lock_contract_cache_map(contract_cache())
+}
+
+fn lock_contract_cache_map(
+    cache: &Mutex<HashMap<ContractCacheKey, Contract>>,
+) -> MutexGuard<'_, HashMap<ContractCacheKey, Contract>> {
+    match cache.lock() {
         Ok(cache) => cache,
         Err(poisoned) => {
-            let mut cache = poisoned.into_inner();
-            cache.clear();
-            cache
+            let mut cache_guard = poisoned.into_inner();
+            cache_guard.clear();
+            cache.clear_poison();
+            cache_guard
         }
     }
 }
@@ -338,8 +345,10 @@ fn merge_yaml_mapping(root: &mut Mapping, override_map: Mapping) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
+    use std::sync::Mutex;
 
     use tempfile::TempDir;
 
@@ -733,28 +742,19 @@ project:
     }
 
     #[test]
-    fn load_contract_recovers_from_poisoned_cache_mutex() {
+    fn contract_cache_lock_recovers_from_poisoned_mutex() {
+        let cache = Mutex::new(HashMap::new());
+
         let _ = std::panic::catch_unwind(|| {
-            let _cache = super::contract_cache().lock().unwrap();
+            let _cache = cache.lock().unwrap();
             panic!("poison contract cache");
         });
 
-        let fixture = TempDir::new().unwrap();
-        let contract_path = fixture.path().join("ota.yaml");
-        fs::write(
-            &contract_path,
-            r#"
-version: 1
-project:
-  name: recovered
-"#,
-        )
-        .unwrap();
+        let cache_guard = super::lock_contract_cache_map(&cache);
 
-        let contract = super::load_contract(&contract_path).unwrap();
-
-        assert_eq!(contract.project.name, "recovered");
-        assert_eq!(super::contract_cache_entries_for_path(&contract_path), 0);
+        assert_eq!(cache_guard.len(), 0);
+        drop(cache_guard);
+        assert!(!cache.is_poisoned());
     }
 
     #[test]

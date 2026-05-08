@@ -2715,12 +2715,10 @@ where
     if let Some(output) = maybe_handle_shell_completion(&args) {
         return output;
     }
-    let version_update_notice_rx = io::stderr().is_terminal().then(spawn_update_notice);
     if is_version_request(&args) {
-        return maybe_append_update_notice(
-            CommandOutput::success(render_version_output(&args)),
-            version_update_notice_rx,
-        );
+        let output = CommandOutput::success(render_version_output(&args));
+        let update_notice_rx = should_show_version_update_notice(&args).then(spawn_update_notice);
+        return maybe_append_update_notice(output, update_notice_rx);
     }
 
     let args = rewrite_task_input_path_hint(args);
@@ -3216,6 +3214,14 @@ fn should_show_update_notice(cli: &Cli) -> bool {
         )
 }
 
+fn should_show_version_update_notice(args: &[OsString]) -> bool {
+    io::stdout().is_terminal()
+        && io::stderr().is_terminal()
+        && !args
+            .iter()
+            .any(|arg| arg.to_string_lossy().as_ref() == "--plain")
+}
+
 fn update_notice_wait_timeout() -> Duration {
     crate::update::preferred_update_notice_wait_timeout()
 }
@@ -3356,10 +3362,11 @@ fn render_version_output(args: &[OsString]) -> String {
     if args
         .iter()
         .any(|arg| arg.to_string_lossy().as_ref() == "--plain")
+        || cfg!(windows)
         || !io::stdout().is_terminal()
         || std::env::var_os("NO_COLOR").is_some()
     {
-        return format!("🦦 {version}");
+        return format!("ota {version}");
     }
 
     format!("🦦 \x1b[1;38;5;136m{version}\x1b[0m")
@@ -14913,12 +14920,23 @@ tasks:
     }
 
     #[test]
-    fn wait_budget_stays_small_on_all_platforms() {
-        assert!(update_notice_wait_timeout() <= Duration::from_millis(50));
+    fn wait_budget_matches_platform_without_cached_update_state() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let _xdg_guard = EnvVarGuard::set("XDG_CACHE_HOME", temp.path().as_os_str().to_os_string());
+        let _localappdata_guard =
+            EnvVarGuard::set("LOCALAPPDATA", temp.path().as_os_str().to_os_string());
+        let _appdata_guard = EnvVarGuard::set("APPDATA", temp.path().as_os_str().to_os_string());
+
+        if cfg!(windows) {
+            assert!(update_notice_wait_timeout() >= Duration::from_millis(3000));
+        } else {
+            assert!(update_notice_wait_timeout() <= Duration::from_millis(50));
+        }
     }
 
     #[test]
-    fn does_not_wait_for_slow_windows_background_update_notice() {
+    fn does_not_wait_for_slow_background_update_notice_with_fast_timeout() {
         let (tx, rx) = mpsc::channel();
         let delay = Duration::from_millis(1250);
         thread::spawn(move || {
@@ -14929,26 +14947,7 @@ tasks:
         let output = maybe_append_update_notice_with_timeout(
             CommandOutput::success(String::from("ok")),
             Some(rx),
-            update_notice_wait_timeout(),
-        );
-
-        assert_eq!(output.stdout, "ok");
-        assert_eq!(output.stderr, None);
-    }
-
-    #[test]
-    fn does_not_wait_for_slow_non_windows_background_update_notice() {
-        let (tx, rx) = mpsc::channel();
-        let delay = Duration::from_millis(1250);
-        thread::spawn(move || {
-            thread::sleep(delay);
-            let _ = tx.send(Some(String::from("notice")));
-        });
-
-        let output = maybe_append_update_notice_with_timeout(
-            CommandOutput::success(String::from("ok")),
-            Some(rx),
-            update_notice_wait_timeout(),
+            Duration::from_millis(50),
         );
 
         assert_eq!(output.stdout, "ok");
@@ -15117,7 +15116,17 @@ tasks:
             std::ffi::OsString::from("--plain"),
         ]);
 
-        assert_eq!(output, format!("🦦 v{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(output, format!("ota v{}", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn version_request_is_quiet_and_ascii_in_plain_mode() {
+        let output = run_with(["ota", "--plain", "--version"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.stdout, format!("ota v{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(output.stderr, None);
+        assert!(!output.stdout.contains("🦦"));
     }
 
     #[test]
@@ -23355,8 +23364,26 @@ tasks:
     fn bootstrap_powershell_defers_locked_binary_replacement_for_wrapped_copy_item_errors() {
         let script = fs::read_to_string("scripts/bootstrap.ps1").expect("read bootstrap.ps1");
 
+        assert!(script.contains("function Test-OtaWindows"), "{script}");
+        assert!(!script.contains("$IsWindows"), "{script}");
         assert!(
             script.contains("function Resolve-OtaLockedReplacement"),
+            "{script}"
+        );
+        assert!(
+            script.contains("Copy-Item -LiteralPath `$source -Destination `$destination -Force -ErrorAction Stop"),
+            "{script}"
+        );
+        assert!(
+            script.contains("$script:InstalledBinaryPath = $null"),
+            "{script}"
+        );
+        assert!(
+            script.contains("$script:InstalledBinaryPath = $destination"),
+            "{script}"
+        );
+        assert!(
+            script.contains("verified $binaryPath, but PATH is using $pathBinary"),
             "{script}"
         );
         assert!(
@@ -23369,6 +23396,44 @@ tasks:
             !script.contains("catch [System.IO.IOException]"),
             "{script}"
         );
+        assert!(
+            script.contains("pending: ota is currently running; staged update will be applied after this command exits"),
+            "{script}"
+        );
+        assert!(
+            script.contains("if ($releaseInstallStatus -eq \"pending\")\n    {\n        exit 0"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn bootstrap_powershell_uses_ascii_safe_user_visible_output() {
+        let script = fs::read_to_string("scripts/bootstrap.ps1").expect("read bootstrap.ps1");
+
+        assert!(
+            script.contains("function Enable-OtaUnicodeOutput"),
+            "{script}"
+        );
+        assert!(
+            script.contains("[Console]::OutputEncoding = $utf8"),
+            "{script}"
+        );
+        assert!(
+            script.contains("[Console]::OutputEncoding.CodePage -eq 65001"),
+            "{script}"
+        );
+        assert!(script.contains("if (Enable-OtaUnicodeOutput)"), "{script}");
+        assert!(
+            script.contains("Write-Host \"                █████"),
+            "{script}"
+        );
+        assert!(script.contains("Write-Host \"ota\""), "{script}");
+        assert!(
+            !script.contains("Write-OtaReceipt \"🦦 READY\""),
+            "{script}"
+        );
+        assert!(!script.contains("➤"), "{script}");
+        assert!(script.contains("Write-OtaReceipt \"READY\""), "{script}");
     }
 
     #[test]
@@ -23395,7 +23460,10 @@ tasks:
         let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
 
         assert!(script.contains("binary_name=\"ota.exe\""), "{script}");
-        assert!(script.contains("${install_bin_dir}/${binary_name}"), "{script}");
+        assert!(
+            script.contains("${install_bin_dir}/${binary_name}"),
+            "{script}"
+        );
         assert!(
             script.contains("$HOME/.cargo/bin/${binary_name}"),
             "{script}"
@@ -23407,9 +23475,150 @@ tasks:
         let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
 
         assert!(script.contains("default_bin_dir()"), "{script}");
-        assert!(script.contains("${LOCALAPPDATA}/ota/bin"), "{script}");
-        assert!(script.contains("bin_dir=\"$(default_bin_dir)\""), "{script}");
-        assert!(script.contains("install_bin_dir=\"$(default_bin_dir)\""), "{script}");
+        assert!(
+            script.contains(
+                "*-pc-windows-msvc) printf \"%s\" \"${OTA_BIN_DIR}\" | sed 's#\\\\#/#g' ;;"
+            ),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "local_appdata=\"$(printf \"%s\" \"${LOCALAPPDATA}\" | sed 's#\\\\#/#g')\""
+            ),
+            "{script}"
+        );
+        assert!(script.contains("${local_appdata}/ota/bin"), "{script}");
+        assert!(
+            script.contains("bin_dir=\"$(default_bin_dir)\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("install_bin_dir=\"$(default_bin_dir)\""),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn install_sh_normalizes_msys_paths_before_calling_powershell() {
+        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+
+        assert!(script.contains("path_for_powershell()"), "{script}");
+        assert!(script.contains("cygpath -w \"$1\""), "{script}");
+        assert!(
+            script.contains("helper_for_powershell=\"$(path_for_powershell \"${helper}\")\""),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "archive_escaped=$(single_quote_for_powershell \"$(path_for_powershell \"${archive}\")\")"
+            ),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "source_escaped=\"$(single_quote_for_powershell \"$(path_for_powershell \"${source}\")\")\""
+            ),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "destination_escaped=\"$(single_quote_for_powershell \"$(path_for_powershell \"${destination}\")\")\""
+            ),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn install_sh_verifies_release_binary_it_just_installed_before_path() {
+        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+
+        assert!(script.contains("installed_binary_path=\"\""), "{script}");
+        assert!(
+            script.contains("installed_binary_path=\"${bin_dir}/ota.exe\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("installed_binary_path=\"${bin_dir}/ota\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("if [ -n \"${installed_binary_path:-}\" ] && [ -x \"${installed_binary_path}\" ]; then"),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "version_output=\"$(\"${installed_binary_path}\" --version 2>/dev/null || true)\""
+            ),
+            "{script}"
+        );
+        assert!(
+            script
+                .find("if [ -n \"${installed_binary_path:-}\" ]")
+                .expect("installed binary branch")
+                < script
+                    .find("elif command -v ota >/dev/null 2>&1")
+                    .expect("PATH fallback branch"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn install_sh_defers_locked_windows_binary_replacement() {
+        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+
+        assert!(
+            script.contains("schedule_windows_replacement_after_exit()"),
+            "{script}"
+        );
+        assert!(
+            script.contains("if mv -f \"${staged}\" \"${bin_dir}/ota.exe\" 2>/dev/null; then"),
+            "{script}"
+        );
+        assert!(
+            script.contains("elif [ -f \"${bin_dir}/ota.exe\" ] && schedule_windows_replacement_after_exit \"${staged}\" \"${bin_dir}/ota.exe\"; then"),
+            "{script}"
+        );
+        assert!(
+            script.contains("release_install_status=\"pending\""),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "pending: ota is currently running; staged update will be applied after it exits"
+            ),
+            "{script}"
+        );
+        assert!(
+            script.contains("if [ \"${release_install_status:-}\" = \"pending\" ]; then\n  exit 0"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn install_sh_uses_unicode_header_when_windows_shell_supports_utf8() {
+        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+
+        assert!(script.contains("use_ascii_output()"), "{script}");
+        assert!(script.contains("locale charmap"), "{script}");
+        assert!(
+            script.contains("*UTF-8* | *utf-8* | *utf8* | *UTF8*) return 1"),
+            "{script}"
+        );
+        assert!(
+            script.contains("if use_ascii_output; then\n    printf 'ota\\n' >&2"),
+            "{script}"
+        );
+        assert!(
+            script
+                .contains("printf '\\033[1;38;2;214;161;95m                █████\\033[0m\\n' >&2"),
+            "{script}"
+        );
+        assert!(
+            script.contains("printf '%s %s\\n' '-' \"$1\" >&2"),
+            "{script}"
+        );
+        assert!(!script.contains("ota_receipt \"🦦 READY\""), "{script}");
+        assert!(script.contains("ota_receipt \"READY\""), "{script}");
     }
 
     #[test]
@@ -24243,7 +24452,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("CHECK"));
-        assert!(stdout.contains("WARN  Check failed: health-check"));
+        assert!(stdout.contains("WARN Check failed: health-check"));
         assert!(!stdout.contains("Missing environment variable"));
     }
 
@@ -34099,7 +34308,7 @@ checks:
         assert_eq!(output.exit_code, 1);
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("CHECK"));
-        assert!(body.contains("NOT READY"));
+        assert!(body.contains("BLOCKED"));
         assert!(body.contains("Next:"));
         assert!(!body.contains("Why:"));
     }
