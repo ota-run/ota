@@ -23767,15 +23767,21 @@ tasks:
         let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
 
         assert!(script.contains("binary_name=\"ota.exe\""), "{script}");
-        assert!(script.contains("${OTA_BIN_DIR}/${binary_name}"), "{script}");
-        assert!(
-            script.contains("$HOME/.local/bin/${binary_name}"),
-            "{script}"
-        );
+        assert!(script.contains("${install_bin_dir}/${binary_name}"), "{script}");
         assert!(
             script.contains("$HOME/.cargo/bin/${binary_name}"),
             "{script}"
         );
+    }
+
+    #[test]
+    fn install_sh_uses_localappdata_default_bin_dir_for_windows() {
+        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+
+        assert!(script.contains("default_bin_dir()"), "{script}");
+        assert!(script.contains("${LOCALAPPDATA}/ota/bin"), "{script}");
+        assert!(script.contains("bin_dir=\"$(default_bin_dir)\""), "{script}");
+        assert!(script.contains("install_bin_dir=\"$(default_bin_dir)\""), "{script}");
     }
 
     #[test]
