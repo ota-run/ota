@@ -4711,15 +4711,19 @@ fn execute_task_command(
     preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
 
     match backend {
-        ResolvedExecutionBackend::Native { .. } => execute_native_task_command(
-            task_name,
-            runtime,
-            command,
-            working_dir,
-            env_overrides,
-            mode,
-            backend,
-        ),
+        ResolvedExecutionBackend::Native { .. } => {
+            let mut resolved_env = env_overrides.clone();
+            extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
+            execute_native_task_command(
+                task_name,
+                runtime,
+                command,
+                working_dir,
+                &resolved_env,
+                mode,
+                backend,
+            )
+        }
         ResolvedExecutionBackend::Container {
             context_name,
             shared_local_backend,
@@ -9438,6 +9442,33 @@ fn runtime_bind_env(runtime: Option<&TaskRuntimeSpec>) -> BTreeMap<String, Strin
         }
     }
 
+    env
+}
+
+fn runtime_bind_env_for_native(runtime: Option<&TaskRuntimeSpec>) -> BTreeMap<String, String> {
+    let mut env = runtime_bind_env(runtime);
+    let Some(runtime) = runtime else {
+        return env;
+    };
+
+    let Some(primary_listener_name) = runtime_primary_bind_listener_name(runtime) else {
+        return env;
+    };
+    let Some(listener) = runtime.listeners.get(primary_listener_name) else {
+        return env;
+    };
+    let Some(host) = listener.project.host.as_ref() else {
+        return env;
+    };
+    let host_address = host.address.trim();
+    if host_address.is_empty() {
+        return env;
+    }
+
+    env.insert(String::from("HOST"), host_address.to_string());
+    env.insert(String::from("HOSTNAME"), host_address.to_string());
+    env.insert(String::from("BIND_ADDRESS"), host_address.to_string());
+    env.insert(String::from("SERVER_ADDRESS"), host_address.to_string());
     env
 }
 
@@ -25155,6 +25186,116 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn run_task_captured_injects_projected_host_alias_env_for_native_runtime() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+tasks:
+  dev:
+    context: app
+    run: |
+      printf '%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+        "$PORT" "$HOST" "$HOSTNAME" "$SERVER_PORT" "$SERVER_ADDRESS" \
+        "$OTA_BIND_PORT" "$OTA_BIND_ADDRESS" "$OTA_BIND_PORT_HTTP" "$OTA_BIND_ADDRESS_HTTP" > runtime-env.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        let runtime = outcome
+            .runtime
+            .expect("native service task should report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        assert_eq!(listener.bind.address, "0.0.0.0");
+        assert_eq!(listener.bind.port, 3000);
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("native listener should resolve a host endpoint");
+        assert_eq!(host.address, "127.0.0.1");
+        assert_eq!(host.port, 3000);
+        assert_eq!(host.url.as_deref(), Some("http://127.0.0.1:3000/"));
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            "3000|127.0.0.1|127.0.0.1|3000|127.0.0.1|3000|0.0.0.0|3000|0.0.0.0"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_uses_bind_alias_env_for_native_runtime_without_host_projection() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+tasks:
+  dev:
+    context: app
+    run: |
+      printf '%s|%s|%s|%s|%s|%s|%s' \
+        "$PORT" "$HOST" "$HOSTNAME" "$SERVER_PORT" "$SERVER_ADDRESS" \
+        "$OTA_BIND_PORT" "$OTA_BIND_ADDRESS" > runtime-env.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            "3000|0.0.0.0|0.0.0.0|3000|0.0.0.0|3000|0.0.0.0"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_task_captured_preserves_explicit_bind_alias_env_over_fallbacks() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -25240,6 +25381,62 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
             "9999|127.0.0.1|8888|3000|0.0.0.0"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_preserves_explicit_native_bind_alias_env_over_projected_fallbacks() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+tasks:
+  dev:
+    context: app
+    env:
+      PORT: "9999"
+      HOST: dev.local
+      HOSTNAME: 1.2.3.4
+      SERVER_PORT: "8888"
+      SERVER_ADDRESS: 1.2.3.4
+    run: |
+      printf '%s|%s|%s|%s|%s|%s|%s' \
+        "$PORT" "$HOST" "$HOSTNAME" "$SERVER_PORT" "$SERVER_ADDRESS" \
+        "$OTA_BIND_PORT" "$OTA_BIND_ADDRESS" > runtime-env.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
+            "9999|dev.local|1.2.3.4|8888|1.2.3.4|3000|0.0.0.0"
         );
     }
 
