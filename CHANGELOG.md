@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- hardened repo status trust across `ota doctor`, `ota check`, and `ota up --dry-run`: single-repo `check` text now uses the shared verdict-driven readiness header, `up --dry-run --json` now carries the shared `summary` verdict block, and warning-only previews now surface the first actionable readiness finding instead of looking silently `READY`
+- hardened parser and workspace cache behavior so poisoned cache mutexes now clear the tainted cache and fall back to fresh parsing instead of panicking the CLI on the next contract or workspace load
 - removed the shipped `ota studio` CLI surface so the supported product stays aligned with the current doctor/init/detect/up/run adoption path instead of carrying an unadvertised local Studio export mode
 - fixed Windows release installs again so Git Bash/MSYS/MINGW and PowerShell now both use the published Windows `.zip` release path instead of a nonexistent `.tar.gz`, verify `ota.exe` correctly in shell-installer post-install checks, and make explicit release-mode installs/self-updates fail honestly instead of silently falling back to Cargo git builds when the prebuilt asset download fails
 - tightened `ota detect --write` to fail fast when project name/contract confidence is insufficient, so weak detections no longer produce an auto-written starter contract; this also applies detector-inferred agent boundaries (`agent.writable_paths`, `agent.protected_paths`, and provenance) before writing and keeps blocked JSON/text next steps explicit for the targeted repo path

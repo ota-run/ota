@@ -1838,6 +1838,7 @@ pub struct UpPreviewStatus<'a> {
     pub dry_run: bool,
     pub status: &'a str,
     pub phase: &'a str,
+    pub summary: DoctorSummary,
     pub contract_identity: ContractIdentity,
     pub execution: UpPreviewExecution,
     pub plan: UpPreviewPlan,

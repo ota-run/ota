@@ -24285,6 +24285,33 @@ tasks:
     }
 
     #[test]
+    fn check_warning_only_reports_ready_with_warnings() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: health-check
+    kind: health
+    severity: warn
+    run: exit 1
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY WITH WARNINGS"));
+        assert!(stdout.contains("WARN Check failed: health-check"));
+        assert!(stdout.contains("Verdict"));
+    }
+
+    #[test]
     fn check_json_reports_findings() {
         let fixture = ContractFixture::new(
             r#"
@@ -25108,8 +25135,10 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["dry_run"], true);
-        assert_eq!(json["status"], "READY");
+        assert_eq!(json["status"], "READY WITH WARNINGS");
         assert_eq!(json["phase"], "preview");
+        assert_eq!(json["summary"]["verdict"], "risky");
+        assert_eq!(json["summary"]["agent_verdict"], "not_ready");
         assert_eq!(json["contract_identity"]["project"]["name"], "ota");
         assert_eq!(
             json["contract_identity"]["execution"]["preferred"],
@@ -25132,6 +25161,44 @@ tasks:
                 .any(|value| value == "run task `setup`")
         );
         assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_dry_run_warning_preview_surfaces_shared_verdict_and_primary_warning() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
+    required: false
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let text_output = run_with(["ota", "up", "--dry-run", fixture.path()]);
+
+        assert_eq!(text_output.exit_code, 0);
+        let stdout = strip_ansi(&text_output.stdout);
+        assert!(stdout.contains("READY WITH WARNINGS"));
+        assert!(stdout.contains("Missing tool: ota-tool-that-does-not-exist"));
+
+        let json_output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(json_output.exit_code, 0);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert_eq!(json["status"], "READY WITH WARNINGS");
+        assert_eq!(json["summary"]["verdict"], "risky");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "Missing tool: ota-tool-that-does-not-exist"
+        );
+        assert!(json.get("blockers").is_none());
     }
 
     #[test]

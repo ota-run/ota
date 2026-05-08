@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
@@ -373,12 +373,12 @@ pub fn load_workspace_contract(path: &Path) -> Result<WorkspaceContract, LoadWor
         source,
     })?;
     let key = workspace_cache_key(path, &contents);
-    if let Some(contract) = workspace_cache().lock().unwrap().get(&key).cloned() {
+    if let Some(contract) = lock_workspace_cache().get(&key).cloned() {
         return Ok(contract);
     }
 
     let contract = parse_workspace_contract_str(path, &contents)?;
-    let mut cache = workspace_cache().lock().unwrap();
+    let mut cache = lock_workspace_cache();
     cache.retain(|existing_key, _| existing_key.path != key.path);
     cache.insert(key, contract.clone());
     Ok(contract)
@@ -398,12 +398,21 @@ fn workspace_cache() -> &'static Mutex<HashMap<WorkspaceCacheKey, WorkspaceContr
     WORKSPACE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn lock_workspace_cache() -> MutexGuard<'static, HashMap<WorkspaceCacheKey, WorkspaceContract>> {
+    match workspace_cache().lock() {
+        Ok(cache) => cache,
+        Err(poisoned) => {
+            let mut cache = poisoned.into_inner();
+            cache.clear();
+            cache
+        }
+    }
+}
+
 #[cfg(test)]
 fn workspace_cache_entries_for_path(path: &Path) -> usize {
     let normalized_path = normalized_path_identity(path);
-    workspace_cache()
-        .lock()
-        .unwrap()
+    lock_workspace_cache()
         .keys()
         .filter(|key| key.path == normalized_path)
         .count()
@@ -1421,6 +1430,34 @@ repos:
         .unwrap();
         load_workspace_contract(&workspace_path).unwrap();
         assert_eq!(super::workspace_cache_entries_for_path(&workspace_path), 1);
+    }
+
+    #[test]
+    fn load_workspace_contract_recovers_from_poisoned_cache_mutex() {
+        let _ = std::panic::catch_unwind(|| {
+            let _cache = super::workspace_cache().lock().unwrap();
+            panic!("poison workspace cache");
+        });
+
+        let fixture = TempDir::new().unwrap();
+        let workspace_path = fixture.path().join("ota.workspace.yaml");
+        std::fs::write(
+            &workspace_path,
+            r#"
+version: 1
+workspace:
+  name: recovered
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let contract = load_workspace_contract(&workspace_path).unwrap();
+
+        assert_eq!(contract.workspace.name, "recovered");
+        assert_eq!(super::workspace_cache_entries_for_path(&workspace_path), 0);
     }
 
     #[test]

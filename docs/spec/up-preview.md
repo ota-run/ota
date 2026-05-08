@@ -83,7 +83,7 @@ Current shape:
 ```text
 🦦 UP PREVIEW ./ota.yaml
 
-➤ NOT READY
+➤ BLOCKED
 
 ❖ Mode: dry-run (no write)
 
@@ -113,13 +113,14 @@ Dry run only
 Required text fields:
 
 - preview mode line: `Mode: dry-run (no write)`
+- top-level readiness status using the shared repo vocabulary: `READY`, `READY WITH WARNINGS`, or `BLOCKED`
 - selected `Backend`
 - selected `Lifecycle` when one exists
 - selected container `Image` when container execution is active
 - selected `Target` when one exists
 - effective `Task` when `setup` would run
 - the ordered action plan
-- the first actionable blocker, when one exists
+- the first actionable readiness finding, when one exists
 - an explicit dry-run note that nothing mutated
 
 The preview should show:
@@ -146,8 +147,21 @@ Suggested shape:
   "ok": false,
   "path": "./ota.yaml",
   "dry_run": true,
-  "status": "NOT READY",
+  "status": "BLOCKED",
   "phase": "preview",
+  "summary": {
+    "verdict": "not_ready",
+    "agent_verdict": "ready",
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "primary_blocker": {
+      "severity": "error",
+      "summary": "Adapter bootstrap failed: sdkman",
+      "why": "required commands are missing from the container: `curl` and `zip`",
+      "next": "install `curl` and `zip` in the container image, then rerun `ota up --dry-run --mode container`"
+    }
+  },
   "execution": {
     "backend": "container",
     "lifecycle": "persistent",
@@ -184,6 +198,7 @@ Required JSON fields:
 - `dry_run`
 - `status`
 - `phase`
+- `summary`
 - `execution`
 - `plan.actions`
 - `plan.skipped`
@@ -202,8 +217,11 @@ next mutating work.
 
 `plan.skipped[]` only includes actions whose skip reason ota can prove from current state.
 
+`summary` reuses the same verdict vocabulary and primary-blocker semantics as `ota doctor` and
+`ota check`, so warning-only previews can stay actionable without pretending the repo is blocked.
+
 `blockers[]` uses the same finding shape and `why` / `next` semantics as the rest of ota’s
-machine-readable surfaces.
+machine-readable surfaces and remains limited to execution-stopping preview blockers.
 
 ## Exit codes
 

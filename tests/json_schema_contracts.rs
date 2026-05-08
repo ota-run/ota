@@ -159,6 +159,7 @@ fn workspace_execution_schema_reports_per_repo_resolved_and_declared_fields() {
 #[test]
 fn up_schema_preview_execution_includes_optional_image() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
+    let preview_properties = &schema["oneOf"][0]["properties"];
     let preview_execution = &schema["oneOf"][0]["properties"]["execution"]["properties"];
     let preview_contract_identity =
         &schema["oneOf"][0]["properties"]["contract_identity"]["properties"];
@@ -166,11 +167,20 @@ fn up_schema_preview_execution_includes_optional_image() {
         &schema["oneOf"][0]["properties"]["members"]["items"]["properties"];
     let preview_member_execution = &preview_member_properties["execution"]["properties"];
 
+    assert!(preview_properties.get("summary").is_some());
+    assert_eq!(
+        preview_properties["summary"]["$ref"],
+        serde_json::json!("./doctor.json#/properties/summary")
+    );
     assert!(preview_execution.get("image").is_some());
     assert!(preview_contract_identity.get("project").is_some());
     assert!(preview_contract_identity.get("execution").is_some());
     assert!(preview_contract_identity.get("counts").is_some());
     assert!(preview_member_properties.get("contract_identity").is_some());
+    assert_eq!(
+        preview_member_properties["summary"]["$ref"],
+        serde_json::json!("./doctor.json#/properties/summary")
+    );
     assert!(preview_member_execution.get("image").is_some());
 }
 

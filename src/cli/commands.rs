@@ -16438,6 +16438,10 @@ pub fn check(
                         },
                     }
                 } else {
+                    let check_summary = doctor_summary(
+                        &report,
+                        crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
+                    );
                     match format {
                         OutputFormat::Text => render_report_text(
                             "CHECK",
@@ -16448,7 +16452,7 @@ pub fn check(
                             None,
                             None,
                             report,
-                            None,
+                            Some(&check_summary),
                         ),
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
@@ -16456,12 +16460,7 @@ pub fn check(
                                 stdout: to_json(&CheckSuccess {
                                     ok: report.ok,
                                     path: &path_display,
-                                    summary: doctor_summary(
-                                        &report,
-                                        crate::workspace::agent_verdict_from_agent(
-                                            target.contract.agent.as_ref(),
-                                        ),
-                                    ),
+                                    summary: check_summary,
                                     finding_groups: doctor_finding_group_summaries(
                                         &report.findings,
                                         None,
@@ -30157,7 +30156,7 @@ fn render_report_section(
     report: &DoctorReport,
     summary: Option<&DoctorSummary>,
 ) -> String {
-    let status = if command == "DOCTOR" {
+    let status = if command == "DOCTOR" || command == "CHECK" {
         summary
             .map(|summary| render_doctor_readiness_status(summary.verdict))
             .unwrap_or_else(|| render_readiness_status(report.ok))
@@ -31787,6 +31786,16 @@ fn render_doctor_readiness_status(verdict: DoctorVerdict) -> String {
         ),
         DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
             render_named_status("BLOCKED", primary_error_marker(), "1;38;2;255;122;122")
+        }
+    }
+}
+
+fn doctor_readiness_status_label(verdict: DoctorVerdict) -> &'static str {
+    match verdict {
+        DoctorVerdict::Ready => "READY",
+        DoctorVerdict::Risky => "READY WITH WARNINGS",
+        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
+            "BLOCKED"
         }
     }
 }
@@ -33741,6 +33750,7 @@ fn render_up_result(
             text_path,
             result.status,
             result.phase,
+            &preview.summary,
             &preview.contract_identity,
             &preview.execution,
             &preview.plan,
@@ -33813,6 +33823,7 @@ fn render_up_preview_result(
     text_path: &str,
     status: &str,
     phase: &str,
+    summary: &DoctorSummary,
     contract_identity: &ContractIdentity,
     execution: &UpPreviewExecution,
     plan: &UpPreviewPlan,
@@ -33824,11 +33835,10 @@ fn render_up_preview_result(
         OutputFormat::Text => CommandOutput {
             stdout: render_up_preview_text(
                 text_path,
-                status,
+                summary,
                 contract_identity,
                 execution,
                 plan,
-                blockers,
             ),
             stderr: None,
             exit_code: if ready { 0 } else { 1 },
@@ -33840,6 +33850,7 @@ fn render_up_preview_result(
                 dry_run: true,
                 status,
                 phase,
+                summary: summary.clone(),
                 contract_identity: contract_identity.clone(),
                 execution: execution.clone(),
                 plan: plan.clone(),
@@ -33859,6 +33870,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "dry_run": true,
             "status": result.status,
             "phase": result.phase,
+            "summary": preview.summary,
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
             "plan": preview.plan,
@@ -33907,6 +33919,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "dry_run": true,
             "status": result.status,
             "phase": result.phase,
+            "summary": preview.summary,
             "contract_identity": preview.contract_identity,
             "execution": preview.execution,
             "plan": preview.plan,
@@ -50735,11 +50748,10 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
     if let Some(preview) = result.preview.as_ref() {
         return render_up_preview_text(
             path,
-            result.status,
+            &preview.summary,
             &preview.contract_identity,
             &preview.execution,
             &preview.plan,
-            &preview.blockers,
         );
     }
 
@@ -51253,16 +51265,15 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
 
 fn render_up_preview_text(
     path: &str,
-    status: &str,
+    summary: &DoctorSummary,
     contract_identity: &ContractIdentity,
     execution: &UpPreviewExecution,
     plan: &UpPreviewPlan,
-    blockers: &[Finding],
 ) -> String {
     let mut stdout = format!(
         "{}\n\n{}\n\n{}",
         format_command_header("UP PREVIEW", path),
-        render_status_line(status),
+        render_doctor_readiness_status(summary.verdict),
         format_mode_line("dry-run (no write)")
     );
 
@@ -51415,14 +51426,14 @@ fn render_up_preview_text(
         }
     }
 
-    if let Some(blocker) = blockers.first() {
+    if let Some(primary_finding) = summary.primary_blocker.as_ref() {
         stdout.push_str("\n\n");
         stdout.push_str(&render_primary_finding_text_with_next_rewriter(
-            blocker.severity,
-            &blocker.summary,
-            &blocker.why,
-            &blocker.next,
-            blocker.provenance(),
+            primary_finding.severity,
+            &primary_finding.summary,
+            &primary_finding.why,
+            &primary_finding.next,
+            primary_finding.provenance.clone(),
             doctor_mode_from_backend(Some(execution.backend.as_str())),
             lifecycle_from_display_value(execution.lifecycle.as_deref()),
             None,
@@ -53308,6 +53319,7 @@ struct RepoUpResult {
 
 #[derive(Debug, Clone)]
 struct RepoUpPreview {
+    summary: DoctorSummary,
     contract_identity: ContractIdentity,
     execution: UpPreviewExecution,
     plan: UpPreviewPlan,
@@ -55361,6 +55373,10 @@ fn build_up_preview(
     actions.push(String::from("re-check repo readiness"));
 
     RepoUpPreview {
+        summary: doctor_summary(
+            preflight,
+            crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+        ),
         contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
             backend: format_backend(backend).to_string(),
@@ -55755,8 +55771,8 @@ fn execute_repo_up(
     let execution_dir = contract_working_dir(resolved_path);
     let mut preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
     if dry_run {
-        let status = if preflight.ok { "READY" } else { "NOT READY" };
         let preview = build_up_preview(contract, resolved_path, overrides, &preflight);
+        let status = doctor_readiness_status_label(preview.summary.verdict);
         let receipt = preview_receipt(
             contract,
             resolved_path,

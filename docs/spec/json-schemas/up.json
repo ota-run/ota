@@ -6,13 +6,14 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
+      "required": ["ok", "path", "dry_run", "status", "phase", "summary", "contract_identity", "execution", "plan"],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
         "dry_run": { "const": true },
         "status": { "type": "string" },
         "phase": { "const": "preview" },
+        "summary": { "$ref": "./doctor.json#/properties/summary" },
         "contract_identity": {
           "type": "object",
           "additionalProperties": false,
@@ -105,13 +106,14 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["member", "ok", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
+            "required": ["member", "ok", "dry_run", "status", "phase", "summary", "contract_identity", "execution", "plan"],
             "properties": {
               "member": { "type": "string" },
               "ok": { "type": "boolean" },
               "dry_run": { "const": true },
               "status": { "type": "string" },
               "phase": { "const": "preview" },
+              "summary": { "$ref": "./doctor.json#/properties/summary" },
               "contract_identity": {
                 "type": "object",
                 "additionalProperties": false,
@@ -389,13 +391,14 @@
               {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["member", "ok", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
+                "required": ["member", "ok", "dry_run", "status", "phase", "summary", "contract_identity", "execution", "plan"],
                 "properties": {
                   "member": { "type": "string" },
                   "ok": { "type": "boolean" },
                   "dry_run": { "const": true },
                   "status": { "type": "string" },
                   "phase": { "const": "preview" },
+                  "summary": { "$ref": "./doctor.json#/properties/summary" },
                   "contract_identity": {
                     "type": "object",
                     "additionalProperties": false,
@@ -528,13 +531,14 @@
               {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["member", "ok", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
+                "required": ["member", "ok", "dry_run", "status", "phase", "summary", "contract_identity", "execution", "plan"],
                 "properties": {
                   "member": { "type": "string" },
                   "ok": { "type": "boolean" },
                   "dry_run": { "const": true },
                   "status": { "type": "string" },
                   "phase": { "const": "preview" },
+                  "summary": { "$ref": "./doctor.json#/properties/summary" },
                   "contract_identity": {
                     "type": "object",
                     "additionalProperties": false,

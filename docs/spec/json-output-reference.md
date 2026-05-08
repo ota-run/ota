@@ -2371,8 +2371,15 @@ Example contract-validation failure (before `up` execution starts):
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
   "dry_run": true,
-  "status": "READY",
+  "status": "READY WITH WARNINGS",
   "phase": "preview",
+  "summary": {
+    "verdict": "risky",
+    "agent_verdict": "not_ready",
+    "error_count": 0,
+    "warn_count": 1,
+    "info_count": 0
+  },
   "contract_identity": {
     "version": 1,
     "project": {
@@ -2412,6 +2419,7 @@ Current preview JSON fields:
 - `dry_run`
 - `status`
 - `phase` (`preview`)
+- `summary` with the shared `doctor` / `check` verdict model; warning-only previews keep `ok: true` while surfacing `summary.verdict: "risky"`
 - `contract_identity` with the declared project, selected metadata, execution intent, and compact contract counts
 - `execution.backend`
 - `execution.lifecycle` when one is selected
