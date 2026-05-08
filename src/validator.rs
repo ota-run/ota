@@ -28,7 +28,7 @@ use crate::execution::{
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::schema::{
-    AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext,
+    Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
@@ -107,8 +107,9 @@ pub fn validate_contract_with_path(
     validate_env(&contract.env, &mut errors);
     validate_services(contract, contract_path, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
+    validate_workflows(contract, &mut errors);
     validate_checks(contract, &mut errors);
-    validate_agent(contract.agent.as_ref(), &contract.tasks, &mut errors);
+    validate_agent(contract, &mut errors);
 
     if errors.is_empty() {
         Ok(())
@@ -4603,11 +4604,77 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
     }
 }
 
-fn validate_agent(
-    agent: Option<&AgentConfig>,
-    tasks: &BTreeMap<String, TaskSpec>,
-    errors: &mut Vec<ValidationError>,
-) {
+fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(workflows) = contract.workflows.as_ref() else {
+        return;
+    };
+
+    if workflows.default.trim().is_empty() {
+        errors.push(ValidationError::new("`workflows.default` must not be empty"));
+    }
+    if workflows.items.is_empty() {
+        errors.push(ValidationError::new(
+            "`workflows` must declare at least one named workflow in addition to `default`",
+        ));
+        return;
+    }
+    if !workflows.items.contains_key(workflows.default.as_str()) {
+        errors.push(ValidationError::new(format!(
+            "`workflows.default` references unknown workflow `{}`",
+            workflows.default
+        )));
+    }
+
+    for (name, workflow) in &workflows.items {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`workflows` must not declare an empty workflow name",
+            ));
+        }
+        if workflow
+            .intent
+            .as_deref()
+            .is_some_and(|intent| intent.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.intent` must not be empty"
+            )));
+        }
+        if let Some(setup) = workflow.setup.as_ref() {
+            validate_task_reference(
+                &format!("workflows.{name}.setup.task"),
+                Some(setup.task.as_str()),
+                &contract.tasks,
+                errors,
+            );
+        }
+        if let Some(run) = workflow.run.as_ref() {
+            validate_task_reference(
+                &format!("workflows.{name}.run.task"),
+                Some(run.task.as_str()),
+                &contract.tasks,
+                errors,
+            );
+        }
+        for service in &workflow.services.required {
+            if !contract.services.contains_key(service) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.services.required` references unknown service `{service}`"
+                )));
+            }
+        }
+        for check in &workflow.readiness.checks {
+            if !contract.checks.iter().any(|declared| declared.name == *check) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.readiness.checks` references unknown check `{check}`"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let agent = contract.agent.as_ref();
     let Some(agent) = agent else {
         return;
     };
@@ -4615,27 +4682,40 @@ fn validate_agent(
     validate_task_reference(
         "agent.entrypoint",
         agent.entrypoint.as_deref(),
-        tasks,
+        &contract.tasks,
         errors,
     );
     validate_task_reference(
         "agent.default_task",
         agent.default_task.as_deref(),
-        tasks,
+        &contract.tasks,
         errors,
     );
 
     for task in &agent.safe_tasks {
-        validate_task_reference("agent.safe_tasks", Some(task.as_str()), tasks, errors);
+        validate_task_reference(
+            "agent.safe_tasks",
+            Some(task.as_str()),
+            &contract.tasks,
+            errors,
+        );
     }
 
     for task in &agent.verify_after_changes {
         validate_task_reference(
             "agent.verify_after_changes",
             Some(task.as_str()),
-            tasks,
+            &contract.tasks,
             errors,
         );
+    }
+
+    if let Some((name, workflow)) = contract.default_workflow() {
+        if workflow.run.is_none() && agent.default_task.is_none() && agent.entrypoint.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}` does not declare `run.task`, and the agent surface also lacks `agent.default_task` or `agent.entrypoint`"
+            )));
+        }
     }
 
     for path in &agent.writable_paths {
@@ -4709,8 +4789,8 @@ fn validate_agent(
         }
     }
 
-    for task in tasks.values() {
-        for name in task.env.keys() {
+    for task in contract.tasks.values() {
+        for name in task.env.keys().map(String::as_str) {
             if name.trim().is_empty() {
                 errors.push(ValidationError::new("task env keys must not be empty"));
             }
@@ -4823,6 +4903,87 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_workflow_references_and_default_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  app:
+    start: echo app
+checks:
+  - name: app-health
+    kind: health
+    severity: error
+    run: test -f .env.local
+tasks:
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    intent: local_development
+    setup:
+      task: setup
+    run:
+      task: dev
+    services:
+      required:
+        - app
+    readiness:
+      checks:
+        - app-health
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_workflow_references_to_missing_contract_members() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+    services:
+      required:
+        - app
+    readiness:
+      checks:
+        - app-health
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("workflow should be rejected");
+        let message = error.to_string();
+        assert!(message.contains("`workflows.app.setup.task` references unknown task `setup`"));
+        assert!(
+            message.contains("`workflows.app.services.required` references unknown service `app`")
+        );
+        assert!(message.contains(
+            "`workflows.app.readiness.checks` references unknown check `app-health`"
+        ));
     }
 
     #[test]

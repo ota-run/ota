@@ -50,6 +50,7 @@ In practice, most useful contracts also define tasks, runtimes, or checks.
 - `services`: supporting services such as databases, queues, or local infra.
 - `checks`: explicit preconditions and health checks that should pass.
 - `tasks`: named commands humans and agents can run deterministically.
+- `workflows`: canonical operational paths built from setup/run tasks, required services, and readiness checks.
 - `execution`: where tasks run, such as native, container, or remote backends.
 - `agent`: AI-agent task hints and writable-path boundaries.
 - `exports`: downstream generation preferences and export metadata.
@@ -88,6 +89,12 @@ env:
 tasks:
   setup:
     run: pnpm install
+workflows:
+  default: app
+  app:
+    intent: local_development
+    setup:
+      task: setup
 checks:
   - name: node-installed
     kind: precondition
@@ -1075,10 +1082,12 @@ Task input semantics:
 - if every declared input has a default, the task can be run with no input flags
 - task input names may overlap ota command flags such as `mode` or `jobs`; when they do, put ota command flags before the task and task inputs after the task
 - `requires_services` resolves declared services before the task body and keeps lifecycle ownership with `services.<name>.manager`
-- `setup.requires_services` is also the pre-setup service phase for `ota up`: ota starts and verifies those services before running `setup`, then starts the remaining required services after `setup`
+- the selected workflow setup task's `requires_services` entries become the pre-setup service phase for `ota up`
+- `setup.requires_services` remains the compatibility fallback when the default workflow setup task is `setup`
+- `workflows.<default>.services.required` defines the canonical post-setup service plane for `ota up`; repo-level `services.<name>.required` remains the fallback when no workflow services are declared
 - `runtime.listeners` keep workload ingress with the task instead of overloading `services`
 - `ota run` records the resolved runtime endpoint in receipts and JSON output when ota can authoritatively resolve it
-- `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`
+- `ota up` reports workload endpoints for runtime-bearing tasks it actually executes while bringing the selected workflow to readiness
 - container runtime listeners export these env values before process start when host projection resolves:
 - `OTA_PUBLIC_URL`
 - `OTA_PUBLIC_HOST`
@@ -1512,6 +1521,51 @@ Current execution model:
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec
 - use task names to describe intent: `setup`, `dev`, `dev_clean`, `test`, `lint`
+
+## `workflows`
+
+Optional.
+
+```yaml
+workflows:
+  default: app
+  app:
+    intent: local_development
+    description: Canonical local app workflow
+    setup:
+      task: setup
+    run:
+      task: dev
+    services:
+      required:
+        - postgres
+    readiness:
+      checks:
+        - app-health
+    exposes:
+      - http://127.0.0.1:5678
+```
+
+Fields:
+
+- `default`: required when `workflows` is declared; names the canonical repo workflow
+- `<name>.intent`: optional workflow classification such as `local_development`
+- `<name>.description`: optional operator-facing summary
+- `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
+- `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
+- `<name>.services.required`: optional services that belong to that workflow
+- `<name>.readiness.checks`: optional readiness checks that belong to that workflow
+- `<name>.exposes`: optional human-readable endpoints or URLs the workflow is expected to surface
+
+Current behavior:
+
+- workflows do not replace `tasks`, `services`, or `checks`; they compose those primitives into one canonical operational path
+- `doctor` and `check` diagnose the default workflow by default when it declares `readiness.checks` or `services.required`
+- `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
+- if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
+- if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness
+- `tasks.setup` remains the compatibility fallback when no workflow setup task is declared
+- `agent.default_task` and `agent.entrypoint` remain agent-facing hints, but the default workflow is now the canonical repo operational path
 
 ## `checks`
 

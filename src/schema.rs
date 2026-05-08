@@ -130,6 +130,8 @@ pub struct Contract {
     pub env: EnvConfig,
     #[serde(default)]
     pub services: BTreeMap<String, ServiceSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflows: Option<WorkflowCatalog>,
     #[serde(default)]
     pub tasks: BTreeMap<String, TaskSpec>,
     #[serde(default)]
@@ -144,6 +146,67 @@ pub struct Contract {
     pub agent: Option<AgentConfig>,
 }
 
+impl Contract {
+    pub fn workflow(&self, name: &str) -> Option<&WorkflowSpec> {
+        self.workflows
+            .as_ref()
+            .and_then(|workflows| workflows.items.get(name))
+    }
+
+    pub fn default_workflow(&self) -> Option<(&str, &WorkflowSpec)> {
+        let workflows = self.workflows.as_ref()?;
+        workflows
+            .items
+            .get_key_value(workflows.default.as_str())
+            .map(|(name, workflow)| (name.as_str(), workflow))
+    }
+
+    pub fn selected_workflow(&self, name: Option<&str>) -> Option<(&str, &WorkflowSpec)> {
+        match name {
+            Some(name) => self
+                .workflows
+                .as_ref()
+                .and_then(|workflows| workflows.items.get_key_value(name))
+                .map(|(name, workflow)| (name.as_str(), workflow)),
+            None => self.default_workflow(),
+        }
+    }
+
+    pub fn selected_setup_task_name(&self) -> Option<&str> {
+        self.selected_setup_task_name_for(None)
+    }
+
+    pub fn selected_setup_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.setup.as_ref())
+            .map(|phase| phase.task.as_str())
+            .filter(|task| !task.trim().is_empty())
+            .or_else(|| self.tasks.contains_key("setup").then_some("setup"))
+    }
+
+    pub fn selected_run_task_name(&self) -> Option<&str> {
+        self.selected_run_task_name_for(None)
+    }
+
+    pub fn selected_run_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
+        let selected_workflow = self.selected_workflow(workflow_name);
+        selected_workflow
+            .and_then(|(_, workflow)| workflow.run.as_ref())
+            .map(|phase| phase.task.as_str())
+            .filter(|task| !task.trim().is_empty())
+            .or_else(|| {
+                selected_workflow.is_none().then(|| {
+                    self.agent.as_ref().and_then(|agent| {
+                        agent
+                            .default_task
+                            .as_deref()
+                            .or(agent.entrypoint.as_deref())
+                    })
+                })?
+            })
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
@@ -152,6 +215,52 @@ pub struct Project {
     pub description: Option<String>,
     #[serde(rename = "type", default)]
     pub project_type: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct WorkflowCatalog {
+    pub default: String,
+    #[serde(flatten)]
+    pub items: BTreeMap<String, WorkflowSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowSpec {
+    #[serde(default)]
+    pub intent: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub setup: Option<WorkflowTaskRefSpec>,
+    #[serde(default)]
+    pub run: Option<WorkflowTaskRefSpec>,
+    #[serde(default)]
+    pub services: WorkflowServicesSpec,
+    #[serde(default)]
+    pub readiness: WorkflowReadinessSpec,
+    #[serde(default)]
+    pub exposes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowTaskRefSpec {
+    pub task: String,
+}
+
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowServicesSpec {
+    #[serde(default)]
+    pub required: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowReadinessSpec {
+    #[serde(default)]
+    pub checks: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1620,6 +1729,21 @@ impl TaskSpec {
         self.runtime_for_backend(backend)
             .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
     }
+
+    pub fn has_any_service_runtime(&self) -> bool {
+        self.runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+            || self
+                .execution
+                .as_ref()
+                .is_some_and(|execution| execution.modes.iter().any(|(_, branch)| {
+                    branch
+                        .runtime
+                        .as_ref()
+                        .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+                }))
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -2283,5 +2407,54 @@ tasks:
             .env_for_backend(contract.execution.as_ref(), Backend::Container);
 
         assert_eq!(env.get("FOO").map(String::as_str), Some("container"));
+    }
+
+    #[test]
+    fn selected_run_task_name_for_does_not_fall_back_to_agent_for_selected_workflow() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  agent-dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    intent: local_development
+agent:
+  default_task: agent-dev
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(contract.selected_run_task_name_for(Some("app")), None);
+        assert_eq!(contract.selected_run_task_name_for(None), None);
+        assert_eq!(contract.selected_run_task_name(), None);
+    }
+
+    #[test]
+    fn selected_run_task_name_without_workflows_can_fall_back_to_agent() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  agent-dev:
+    run: echo dev
+agent:
+  default_task: agent-dev
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_run_task_name_for(None),
+            Some("agent-dev")
+        );
     }
 }

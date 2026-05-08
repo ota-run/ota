@@ -113,6 +113,9 @@ enum Commands {
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
+        /// Show tasks for one declared workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -250,6 +253,9 @@ enum Commands {
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
+        /// Diagnose one declared workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -345,6 +351,9 @@ enum Commands {
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
+        /// Check one declared workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -483,6 +492,9 @@ enum Commands {
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
+        /// Prepare one declared workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -654,6 +666,9 @@ enum ExecutionCommands {
         /// Inspect one merged monorepo member contract declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
+        /// Inspect one declared repo workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -1955,6 +1970,49 @@ fn load_extension_names(contract_path: &Path, members: &[String]) -> Vec<String>
         .unwrap_or_default()
 }
 
+fn shared_workflow_names_from_contracts(
+    contracts: impl IntoIterator<Item = crate::schema::Contract>,
+) -> Vec<String> {
+    let contracts = contracts.into_iter().collect::<Vec<_>>();
+    let mut shared: Option<BTreeSet<String>> = None;
+
+    for contract in &contracts {
+        let workflow_names = contract
+            .workflows
+            .as_ref()
+            .map(|workflows| workflows.items.keys().cloned().collect::<BTreeSet<_>>())
+            .unwrap_or_default();
+        shared = Some(match shared {
+            Some(existing) => existing.intersection(&workflow_names).cloned().collect(),
+            None => workflow_names,
+        });
+    }
+
+    shared.unwrap_or_default().into_iter().collect()
+}
+
+fn load_repo_workflow_names(contract_path: &Path, members: &[String]) -> Vec<String> {
+    if members.is_empty() {
+        if let Ok(contract) = crate::parser::load_contract(contract_path) {
+            return shared_workflow_names_from_contracts([contract]);
+        }
+    } else {
+        let mut contracts = Vec::new();
+        for member in members {
+            if let Ok((contract, _)) =
+                crate::parser::load_contract_for_member(contract_path, member)
+            {
+                contracts.push(contract);
+            } else {
+                return Vec::new();
+            }
+        }
+        return shared_workflow_names_from_contracts(contracts);
+    }
+
+    Vec::new()
+}
+
 fn complete_env_task_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
     let Some(current) = current.to_str() else {
         return Vec::new();
@@ -1973,6 +2031,29 @@ fn complete_env_task_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCand
         .into_iter()
         .filter(|candidate| current.is_empty() || candidate.name.starts_with(current))
         .map(completion_task_candidate)
+        .collect()
+}
+
+fn complete_repo_workflow_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_repo_command_completion_path(&words);
+    let Some(contract_path) = resolve_completion_contract_path(explicit_path.as_deref(), &words)
+    else {
+        return Vec::new();
+    };
+    let Some(members) = selected_repo_members_for_completion(&words, current) else {
+        return Vec::new();
+    };
+    let selected = selected_option_values(&words, "--workflow", current);
+
+    load_repo_workflow_names(&contract_path, &members)
+        .into_iter()
+        .filter(|name| !selected.contains(name))
+        .filter(|name| current.is_empty() || name.starts_with(current))
+        .map(CompletionCandidate::new)
         .collect()
 }
 
@@ -4110,11 +4191,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
             all,
             use_cmd,
             member,
+            workflow,
             path,
         } => commands::tasks(
             path.as_deref(),
             file.as_deref(),
             &member,
+            workflow.as_deref(),
             use_cmd,
             all,
             format_from_json(json),
@@ -4152,12 +4235,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     persistent,
                     ephemeral,
                     member,
+                    workflow,
                     path,
                 },
         } => commands::execution_plan(
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
+            workflow.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
@@ -4439,11 +4524,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
             persistent,
             ephemeral,
             member,
+            workflow,
             path,
         } => commands::doctor(
             path.as_deref(),
             file.as_deref(),
             &member,
+            workflow.as_deref(),
             fix,
             dry_run,
             ExecutionOverrides {
@@ -4469,10 +4556,16 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
-        Commands::Check { json, member, path } => commands::check(
+        Commands::Check {
+            json,
+            member,
+            workflow,
+            path,
+        } => commands::check(
             path.as_deref(),
             file.as_deref(),
             &member,
+            workflow.as_deref(),
             format_from_json(json),
             debug,
         ),
@@ -4545,6 +4638,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ephemeral,
             receipt,
             member,
+            workflow,
             path,
         } => commands::up(
             path.as_deref(),
@@ -4557,6 +4651,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps: false,
             },
             &member,
+            workflow.as_deref(),
             format_from_json(json),
             debug,
             dry_run,
@@ -14993,6 +15088,7 @@ tasks:
             ephemeral: false,
             receipt: false,
             member: Vec::new(),
+            workflow: None,
         }));
     }
 
@@ -15012,6 +15108,7 @@ tasks:
             ephemeral: false,
             receipt: false,
             member: Vec::new(),
+            workflow: None,
         }));
     }
 
@@ -15040,6 +15137,7 @@ tasks:
                 ephemeral: false,
                 receipt: false,
                 member: Vec::new(),
+                workflow: None,
             },
         };
 
@@ -15065,6 +15163,7 @@ tasks:
                 ephemeral: false,
                 receipt: false,
                 member: Vec::new(),
+                workflow: None,
             }),
             Some("Preparing environment...")
         );
