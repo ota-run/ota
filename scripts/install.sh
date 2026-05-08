@@ -195,6 +195,30 @@ download_to() {
   return 1
 }
 
+extract_zip_to() {
+  archive="$1"
+  dest="$2"
+
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -oq "${archive}" -d "${dest}"
+    return $?
+  fi
+
+  if command -v pwsh >/dev/null 2>&1; then
+    pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \
+      "Expand-Archive -Path '${archive}' -DestinationPath '${dest}' -Force" >/dev/null
+    return $?
+  fi
+
+  if command -v powershell >/dev/null 2>&1; then
+    powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \
+      "Expand-Archive -Path '${archive}' -DestinationPath '${dest}' -Force" >/dev/null
+    return $?
+  fi
+
+  return 1
+}
+
 resolve_target() {
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
@@ -223,14 +247,17 @@ checksum_expected_value() {
 install_release_binary() {
   target="$(resolve_target || true)"
   if [ -z "${target}" ]; then
-    ota_warn "warning: no published prebuilt ota release is configured for this OS/arch; trying cargo fallback"
+    ota_warn "warning: no published prebuilt ota release is configured for this OS/arch"
     return 1
   fi
 
   version="${OTA_VERSION:-latest}"
   release_base="${OTA_RELEASE_BASE:-https://github.com/ota-run/ota/releases}"
   bin_dir="${OTA_BIN_DIR:-$HOME/.local/bin}"
-  asset="ota-${target}.tar.gz"
+  case "${target}" in
+    *-pc-windows-msvc) asset="ota-${target}.zip" ;;
+    *) asset="ota-${target}.tar.gz" ;;
+  esac
   checksum_asset="ota-checksums.txt"
 
   case "${version}" in
@@ -245,7 +272,7 @@ install_release_binary() {
 
   ota_info "installing ota ${version} for ${target}..."
   if ! download_to "${download_prefix}/${asset}" "${archive}"; then
-    ota_warn "warning: prebuilt ota release asset is not published for ${target} at ${version} (${asset}); trying cargo fallback"
+    ota_warn "warning: could not download prebuilt ota release asset for ${target} at ${version} (${asset})"
     return 1
   fi
 
@@ -275,12 +302,21 @@ install_release_binary() {
     ota_warn "warning: checksums not found; skipping checksum verification"
   fi
 
-  if ! command -v tar >/dev/null 2>&1; then
-    ota_error "error: tar is required to unpack release artifacts"
-    return 1
-  fi
-
-  tar -xzf "${archive}" -C "${tmpdir}"
+  case "${asset}" in
+    *.zip)
+      if ! extract_zip_to "${archive}" "${tmpdir}"; then
+        ota_error "error: unzip or PowerShell Expand-Archive is required to unpack Windows release artifacts"
+        return 1
+      fi
+      ;;
+    *)
+      if ! command -v tar >/dev/null 2>&1; then
+        ota_error "error: tar is required to unpack release artifacts"
+        return 1
+      fi
+      tar -xzf "${archive}" -C "${tmpdir}"
+      ;;
+  esac
   mkdir -p "${bin_dir}"
   if printf '%s' "${target}" | grep -q 'windows-msvc$'; then
     if [ ! -f "${tmpdir}/ota.exe" ]; then
@@ -398,6 +434,10 @@ elif [ "${install_mode}" = "git" ]; then
   install_from_cargo "false"
 else
   if ! install_release_binary; then
+    if [ "${install_mode}" = "release" ] && [ "${install_mode_forced}" = "true" ]; then
+      ota_error "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
+      exit 1
+    fi
     ota_warn "warning: falling back to git install via cargo"
     install_from_cargo "false"
   fi
@@ -405,25 +445,29 @@ fi
 
 version_output=""
 binary_path=""
+binary_name="ota"
+case "$(resolve_target || true)" in
+  *-pc-windows-msvc) binary_name="ota.exe" ;;
+esac
 
 if command -v ota >/dev/null 2>&1; then
   binary_path="$(command -v ota)"
   version_output="$(ota --version 2>/dev/null || true)"
-elif [ -n "${OTA_BIN_DIR:-}" ] && [ -x "${OTA_BIN_DIR}/ota" ]; then
-  binary_path="${OTA_BIN_DIR}/ota"
-  version_output="$("${OTA_BIN_DIR}/ota" --version 2>/dev/null || true)"
-elif [ -x "$HOME/.local/bin/ota" ]; then
-  binary_path="$HOME/.local/bin/ota"
-  version_output="$("$HOME/.local/bin/ota" --version 2>/dev/null || true)"
+elif [ -n "${OTA_BIN_DIR:-}" ] && [ -x "${OTA_BIN_DIR}/${binary_name}" ]; then
+  binary_path="${OTA_BIN_DIR}/${binary_name}"
+  version_output="$("${OTA_BIN_DIR}/${binary_name}" --version 2>/dev/null || true)"
+elif [ -x "$HOME/.local/bin/${binary_name}" ]; then
+  binary_path="$HOME/.local/bin/${binary_name}"
+  version_output="$("$HOME/.local/bin/${binary_name}" --version 2>/dev/null || true)"
   if [ "${setup_path}" = "true" ]; then
     persist_path_update "$HOME/.local/bin"
   else
     ota_warn "warning: add $HOME/.local/bin to PATH to run 'ota' directly"
     ota_warn "next: rerun \`$(setup_path_rerun_command)\` to persist it automatically"
   fi
-elif [ -x "$HOME/.cargo/bin/ota" ]; then
-  binary_path="$HOME/.cargo/bin/ota"
-  version_output="$("$HOME/.cargo/bin/ota" --version 2>/dev/null || true)"
+elif [ -x "$HOME/.cargo/bin/${binary_name}" ]; then
+  binary_path="$HOME/.cargo/bin/${binary_name}"
+  version_output="$("$HOME/.cargo/bin/${binary_name}" --version 2>/dev/null || true)"
   if [ "${setup_path}" = "true" ]; then
     persist_path_update "$HOME/.cargo/bin"
   else
@@ -449,11 +493,11 @@ version_text="${version_output#🦦 }"
 version_text="${version_text#ota }"
 
 duplicate_paths=""
-if [ -x "$HOME/.local/bin/ota" ] && [ "$binary_path" != "$HOME/.local/bin/ota" ]; then
-  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.local/bin/ota"
+if [ -x "$HOME/.local/bin/${binary_name}" ] && [ "$binary_path" != "$HOME/.local/bin/${binary_name}" ]; then
+  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.local/bin/${binary_name}"
 fi
-if [ -x "$HOME/.cargo/bin/ota" ] && [ "$binary_path" != "$HOME/.cargo/bin/ota" ]; then
-  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.cargo/bin/ota"
+if [ -x "$HOME/.cargo/bin/${binary_name}" ] && [ "$binary_path" != "$HOME/.cargo/bin/${binary_name}" ]; then
+  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.cargo/bin/${binary_name}"
 fi
 if [ -n "$duplicate_paths" ]; then
   ota_warn "warning: multiple ota binaries were found; PATH is using $binary_path"
