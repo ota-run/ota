@@ -1282,7 +1282,7 @@ Text output:
 - when `agent` exists, preview mode shows the generated markdown content together with the write and verification next steps
 - when `agent` is missing, preview mode shows a blocked boundary-sync diagnosis with `Target`, `Primary Blocker`, `Next`, and `Repo Signals`
 - write mode reports whether the target was written or already in sync and points back to `ota doctor`
-- reviewed boundaries that are already synced end with `Boundary is already synced.` plus an inline `Next: run \`ota doctor\` ...`; reviewed boundaries that still need sync keep a two-step `Next:` lane for `ota agents --write` and `ota doctor`
+- reviewed boundaries that are already synced end with `Boundary is already synced.` plus a plain Next hint to run `ota doctor`; reviewed boundaries that still need sync keep a two-step next lane for `ota agents --write` and `ota doctor`
 
 JSON output:
 
