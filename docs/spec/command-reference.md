@@ -1463,7 +1463,8 @@ Current behavior:
 - `--stream` is text-only and is only supported for mutating `ota up`
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in repo-target JSON output; the compact `UP SUMMARY` now leads with `Status` for faster scan time, and monorepo aggregate JSON keeps grouped `members` results instead of inventing a top-level receipt
 - when the execution receipt carries follow-up guidance, text output appends that shared `Next:` block after `UP SUMMARY`, and the same receipt-backed lane stays on the repo-target JSON `receipt.next` surface so repo and workspace preparation flows end the same way
-- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, a real named target when one would exist, the setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, the compact contract identity, and the first blocking readiness finding when one exists
+- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, a real named target when one would exist, the setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, the compact contract identity, and the first actionable readiness finding when one exists
+- `--dry-run` now uses the same top-level readiness vocabulary as `doctor` and `check`: `READY`, `READY WITH WARNINGS`, or `BLOCKED`
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files
 - `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
 - the detailed preview contract lives in [up-preview.md](up-preview.md)
