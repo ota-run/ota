@@ -23744,6 +23744,45 @@ tasks:
     }
 
     #[test]
+    fn install_sh_uses_zip_release_asset_for_windows_targets() {
+        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+
+        assert!(
+            script.contains("*-pc-windows-msvc) asset=\"ota-${target}.zip\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("error: unzip or PowerShell Expand-Archive is required to unpack Windows release artifacts"),
+            "{script}"
+        );
+        assert!(
+            !script
+                .contains("asset=\"ota-${target}.tar.gz\"\n  checksum_asset=\"ota-checksums.txt\""),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn release_install_scripts_refuse_cargo_fallback_in_explicit_release_mode() {
+        let shell_script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let powershell_script =
+            fs::read_to_string("scripts/bootstrap.ps1").expect("read bootstrap.ps1");
+
+        assert!(
+            shell_script.contains(
+                "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
+            ),
+            "{shell_script}"
+        );
+        assert!(
+            powershell_script.contains(
+                "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
+            ),
+            "{powershell_script}"
+        );
+    }
+
+    #[test]
     fn doctor_text_reports_ready_when_no_findings_exist() {
         let fixture = ContractFixture::new(
             r#"
@@ -27236,16 +27275,108 @@ project:
             "detected fields are not sufficient to write a valid contract automatically"
         ));
         assert!(stderr.contains("`project.name` is still low confidence"));
-        assert!(
-            stderr
-                .contains("run `ota detect --dry-run` to review medium and low confidence fields")
-        );
-        assert!(stderr.contains("confirm or add `project.name`, then rerun `ota detect --write`"));
+        assert!(stderr.contains("run `ota detect --dry-run "));
+        assert!(stderr.contains("run `ota detect --contract "));
+        assert!(stderr.contains("run `ota init --dry-run "));
+        assert!(stderr.contains("confirm or add `project.name`, then rerun `ota detect --write "));
         assert!(stderr.contains("eligible inferred fields:"));
         assert!(stderr.contains("`tasks.check.run = npm run check`"));
         assert!(stderr.contains("`tasks.pdf.run = npm run pdf`"));
         assert!(stderr.contains("`tasks.pptx.run = npm run pptx`"));
         assert!(!fixture.file_path().exists());
+    }
+
+    #[test]
+    fn detect_refuses_to_write_when_project_name_is_only_medium_confidence() {
+        let _env_guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "demo.csproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Detect write blocked"));
+        assert!(stderr.contains(
+            "detected fields are not sufficient to write a valid contract automatically"
+        ));
+        assert!(stderr.contains("run `ota detect --dry-run"));
+        assert!(stderr.contains("run `ota detect --contract"));
+        assert!(stderr.contains("run `ota init --dry-run"));
+        assert!(stderr.contains("eligible inferred fields:"));
+        assert!(stderr.contains("`project.name = demo`"));
+        assert!(!fixture.file_path().exists());
+    }
+
+    #[test]
+    fn detect_write_blocked_error_uses_explicit_repo_path_in_next_steps() {
+        let _env_guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "scripts": {
+    "check": "npm run check"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap_or_else(|_| fixture.file_path().parent().unwrap().to_path_buf())
+            .display()
+            .to_string();
+        let expected_dry_run = format!("run `ota detect --dry-run {repo_path}`");
+        let expected_contract = format!("run `ota detect --contract {repo_path}`");
+        let expected_init = format!("run `ota init --dry-run {repo_path}`");
+        let expected_write = format!("rerun `ota detect --write {repo_path}`");
+        assert!(stderr.contains(&expected_dry_run));
+        assert!(stderr.contains(&expected_contract));
+        assert!(stderr.contains(&expected_init));
+        assert!(stderr.contains(&expected_write));
+    }
+
+    #[test]
+    fn detect_write_blocked_json_uses_explicit_repo_path_in_next() {
+        let _env_guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "scripts": {
+    "check": "npm run check"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--json", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let payload = output
+            .stderr
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or(&output.stdout);
+        let json: Value = serde_json::from_str(payload).unwrap();
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap_or_else(|_| fixture.file_path().parent().unwrap().to_path_buf())
+            .display()
+            .to_string();
+        assert_eq!(
+            json["next"],
+            Value::String(format!("ota detect --dry-run {repo_path}"))
+        );
     }
 
     #[test]

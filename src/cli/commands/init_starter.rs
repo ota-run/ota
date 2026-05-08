@@ -604,6 +604,40 @@ pub(super) fn apply_starter_contract_defaults(contract: &mut DetectContract, roo
     }
 }
 
+pub(super) fn apply_detected_agent_boundary(contract: &mut DetectContract, report: &DetectReport) {
+    let Some(agent) = contract.agent.as_mut() else {
+        return;
+    };
+
+    let boundary = starter_agent_boundary_inference_for_detect_report(report);
+    merge_agent_paths(&mut agent.writable_paths, &boundary.writable_paths);
+    merge_agent_paths(&mut agent.protected_paths, &boundary.protected_paths);
+
+    let inferred = agent
+        .inferred_boundary
+        .get_or_insert_with(|| AgentInferredBoundaryConfig {
+            reviewed: false,
+            provenance: AgentBoundaryProvenanceConfig::default(),
+        });
+
+    merge_agent_paths(
+        &mut inferred.provenance.writable_paths,
+        &boundary.writable_provenance,
+    );
+    merge_agent_paths(
+        &mut inferred.provenance.protected_paths,
+        &boundary.protected_provenance,
+    );
+}
+
+fn merge_agent_paths(existing: &mut Vec<String>, incoming: &[String]) {
+    let mut merged: BTreeSet<String> = existing.iter().cloned().collect();
+    merged.extend(incoming.iter().cloned());
+    let mut merged = merged.into_iter().collect::<Vec<_>>();
+    merged.sort_unstable();
+    *existing = merged;
+}
+
 pub(super) fn apply_detected_starter_contract_defaults(
     contract: &mut DetectContract,
     report: &DetectReport,

@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- fixed Windows release installs again so Git Bash/MSYS now requests the published `.zip` asset instead of a nonexistent `.tar.gz`, and explicit release-mode installs/self-updates now fail honestly instead of silently falling back to Cargo git builds when the prebuilt asset download fails
+- tightened `ota detect --write` to fail fast when project name/contract confidence is insufficient, so weak detections no longer produce an auto-written starter contract; this also applies detector-inferred agent boundaries (`agent.writable_paths`, `agent.protected_paths`, and provenance) before writing and keeps blocked JSON/text next steps explicit for the targeted repo path
 - fixed the Windows bootstrap/self-update replacement path again so locked `ota.exe` updates no longer leak raw PowerShell `Copy-Item` file-in-use failures; the bootstrap script now routes wrapped locked-file errors through the deferred replacement scheduler consistently and reports the update as pending until verification
 - redesigned `ota agents --review` around the real boundary states: reviewed boundaries now report `Boundary sync` as `in sync` or `update needed`, inferred boundaries report `blocked until review`, fully synced reviews end with `Boundary is already synced.` plus an inline `Next: run \`ota doctor\` ...`, and the older `AUTHORED` / `explicit` wording is gone
 

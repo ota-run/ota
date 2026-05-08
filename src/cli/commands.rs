@@ -173,8 +173,9 @@ pub(crate) use self::init_starter::{
     NodePackageManager, PythonTestRunner, StarterPack, StarterPackConfig, StarterPackOptions,
 };
 use self::init_starter::{
-    apply_detected_starter_contract_defaults, apply_inferred_init_env_sources,
-    bootstrap_init_contract, starter_pack_advisory, starter_pack_catalog, starter_pack_contract,
+    apply_detected_agent_boundary, apply_detected_starter_contract_defaults,
+    apply_inferred_init_env_sources, bootstrap_init_contract, starter_pack_advisory,
+    starter_pack_catalog, starter_pack_contract,
 };
 use self::studio_output::render_studio_snapshot_html;
 use self::workspace_diagnostics::{
@@ -24128,8 +24129,24 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     }
 
     let detected_candidate = report.high_confidence_contract();
+    if detected_candidate.project.is_none() {
+        let stderr = render_detect_write_blocked_error(&report);
+        let next = command_for_repo("ota detect --dry-run", &report.root);
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(stderr),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &stderr,
+                next: Some(&next),
+            })),
+        };
+    }
+
     let mut candidate = detected_candidate.clone();
     apply_detected_starter_contract_defaults(&mut candidate, &report);
+    apply_detected_agent_boundary(&mut candidate, &report);
     let mut document = serde_yaml::to_value(&candidate)
         .expect("serializing detected write candidate should not fail");
     if let Err(error) =
@@ -24159,6 +24176,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         Ok(()) => {}
         Err(_) => {
             let stderr = render_detect_write_blocked_error(&report);
+            let next = command_for_repo("ota detect --dry-run", &report.root);
             return match format {
                 OutputFormat::Text => CommandOutput::failure(stderr),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -24166,7 +24184,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     path: &path_display,
                     written: false,
                     error: &stderr,
-                    next: Some("ota detect --dry-run"),
+                    next: Some(&next),
                 })),
             };
         }
@@ -60800,13 +60818,19 @@ fn render_detect_write_blocked_error(report: &DetectReport) -> String {
         ));
     }
 
-    let mut next_steps = vec![String::from(
-        "run `ota detect --dry-run` to review medium and low confidence fields",
-    )];
+    let detect_dry_run = command_for_repo("ota detect --dry-run", &report.root);
+    let detect_contract = command_for_repo("ota detect --contract", &report.root);
+    let init_dry_run = command_for_repo("ota init --dry-run", &report.root);
+    let detect_write = command_for_repo("ota detect --write", &report.root);
+    let mut next_steps = vec![
+        format!("run `{detect_dry_run}` to review medium and low confidence fields"),
+        format!("run `{detect_contract}` to inspect the exact detected contract text"),
+        format!("run `{init_dry_run}` to compare the conservative starter path"),
+    ];
     if !low_confidence.is_empty() {
         next_steps.push(format!(
-            "confirm or add {}, then rerun `ota detect --write`",
-            join_detect_inference_fields(&low_confidence)
+            "confirm or add {}, then rerun `{detect_write}`",
+            join_detect_inference_fields(&low_confidence),
         ));
     }
     if !eligible.is_empty() {
