@@ -25,13 +25,42 @@
 set -eu
 
 setup_path=false
+release_install_status=""
+installed_binary_path=""
+
+is_windows_target() {
+  case "$(resolve_target 2>/dev/null || true)" in
+    *-pc-windows-msvc) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+use_ascii_output() {
+  [ -n "${OTA_ASCII:-}" ] && return 0
+  [ -n "${NO_COLOR:-}" ] && return 0
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8* | *utf-8* | *utf8* | *UTF8*) return 1 ;;
+  esac
+
+  charmap="$(locale charmap 2>/dev/null || true)"
+  case "${charmap}" in
+    *UTF-8* | *utf-8* | *utf8* | *UTF8*) return 1 ;;
+  esac
+
+  is_windows_target
+}
 
 supports_color() {
-  [ -t 2 ] && [ -z "${NO_COLOR-}" ]
+  [ -t 2 ] && ! use_ascii_output
 }
 
 ota_header() {
-  if supports_color; then
+  if use_ascii_output; then
+    printf 'ota\n' >&2
+    printf '\n' >&2
+    printf 'DOCTOR FIRST, CONTRACT SECOND\n' >&2
+    printf '\n' >&2
+  elif supports_color; then
     printf '\033[1;38;2;214;161;95m                █████\033[0m\n' >&2
     printf '\033[1;38;2;214;161;95m               ░░███\033[0m\n' >&2
     printf '\033[1;38;2;214;161;95m       ██████  ███████    ██████\033[0m\n' >&2
@@ -78,7 +107,7 @@ ota_receipt_line() {
   if supports_color; then
     printf '\033[1;38;2;214;161;95m➤\033[0m \033[1;37m%s\033[0m\n' "$1" >&2
   else
-    printf '➤ %s\n' "$1" >&2
+    printf '%s %s\n' '-' "$1" >&2
   fi
 }
 
@@ -197,14 +226,18 @@ download_to() {
 
 default_bin_dir() {
   if [ -n "${OTA_BIN_DIR:-}" ]; then
-    printf "%s" "${OTA_BIN_DIR}"
+    case "$(resolve_target || true)" in
+      *-pc-windows-msvc) printf "%s" "${OTA_BIN_DIR}" | sed 's#\\#/#g' ;;
+      *) printf "%s" "${OTA_BIN_DIR}" ;;
+    esac
     return 0
   fi
 
   case "$(resolve_target || true)" in
     *-pc-windows-msvc)
       if [ -n "${LOCALAPPDATA:-}" ]; then
-        printf "%s" "${LOCALAPPDATA}/ota/bin"
+        local_appdata="$(printf "%s" "${LOCALAPPDATA}" | sed 's#\\#/#g')"
+        printf "%s" "${local_appdata}/ota/bin"
       else
         printf "%s" "$HOME/.local/bin"
       fi
@@ -215,30 +248,99 @@ default_bin_dir() {
   esac
 }
 
+single_quote_for_powershell() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+path_for_powershell() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1" 2>/dev/null && return 0
+  fi
+  printf "%s" "$1" | sed 's#\\#/#g'
+}
+
+powershell_runner() {
+  if command -v pwsh >/dev/null 2>&1; then
+    printf "pwsh"
+    return 0
+  fi
+  if command -v pwsh.exe >/dev/null 2>&1; then
+    printf "pwsh.exe"
+    return 0
+  fi
+  if command -v powershell >/dev/null 2>&1; then
+    printf "powershell"
+    return 0
+  fi
+  if command -v powershell.exe >/dev/null 2>&1; then
+    printf "powershell.exe"
+    return 0
+  fi
+  return 1
+}
+
 extract_zip_to() {
   archive="$1"
   dest="$2"
-  archive_escaped=$(printf "%s" "${archive}" | sed "s/'/''/g")
-  dest_escaped=$(printf "%s" "${dest}" | sed "s/'/''/g")
+  archive_escaped=$(single_quote_for_powershell "$(path_for_powershell "${archive}")")
+  dest_escaped=$(single_quote_for_powershell "$(path_for_powershell "${dest}")")
 
   if command -v unzip >/dev/null 2>&1; then
     unzip -oq "${archive}" -d "${dest}"
     return $?
   fi
 
-  if command -v pwsh >/dev/null 2>&1; then
-    pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \
-      "Expand-Archive -Path '${archive_escaped}' -DestinationPath '${dest_escaped}' -Force" >/dev/null
-    return $?
-  fi
-
-  if command -v powershell >/dev/null 2>&1; then
-    powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \
+  ps="$(powershell_runner || true)"
+  if [ -n "${ps}" ]; then
+    "${ps}" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \
       "Expand-Archive -Path '${archive_escaped}' -DestinationPath '${dest_escaped}' -Force" >/dev/null
     return $?
   fi
 
   return 1
+}
+
+schedule_windows_replacement_after_exit() {
+  source="$1"
+  destination="$2"
+  ps="$(powershell_runner || true)"
+  if [ -z "${ps}" ]; then
+    return 1
+  fi
+
+  helper="${source}.replace.ps1"
+  source_escaped="$(single_quote_for_powershell "$(path_for_powershell "${source}")")"
+  destination_escaped="$(single_quote_for_powershell "$(path_for_powershell "${destination}")")"
+
+  if ! cat > "${helper}" <<EOF
+\$source = '${source_escaped}'
+\$destination = '${destination_escaped}'
+\$helper = \$MyInvocation.MyCommand.Path
+\$attempt = 0
+while (\$attempt -lt 1800) {
+    try {
+        if (-not (Test-Path -LiteralPath \$source)) {
+            Remove-Item -LiteralPath \$helper -Force -ErrorAction SilentlyContinue
+            exit 0
+        }
+        Copy-Item -LiteralPath \$source -Destination \$destination -Force -ErrorAction Stop
+        Remove-Item -LiteralPath \$source -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath \$helper -Force -ErrorAction SilentlyContinue
+        exit 0
+    } catch {
+        Start-Sleep -Milliseconds 200
+        \$attempt += 1
+    }
+}
+exit 1
+EOF
+  then
+    return 1
+  fi
+
+  helper_for_powershell="$(path_for_powershell "${helper}")"
+  "${ps}" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${helper_for_powershell}" >/dev/null 2>&1 &
+  return 0
 }
 
 resolve_target() {
@@ -267,6 +369,7 @@ checksum_expected_value() {
 }
 
 install_release_binary() {
+  release_install_status="installed"
   target="$(resolve_target || true)"
   if [ -z "${target}" ]; then
     ota_warn "warning: no published prebuilt ota release is configured for this OS/arch"
@@ -347,8 +450,19 @@ install_release_binary() {
     fi
     staged="${bin_dir}/ota.exe.new"
     install -m 0755 "${tmpdir}/ota.exe" "${staged}"
-    mv -f "${staged}" "${bin_dir}/ota.exe"
-    ota_info "installed ota to ${bin_dir}/ota.exe"
+    if mv -f "${staged}" "${bin_dir}/ota.exe" 2>/dev/null; then
+      ota_info "installed ota to ${bin_dir}/ota.exe"
+      installed_binary_path="${bin_dir}/ota.exe"
+    elif [ -f "${bin_dir}/ota.exe" ] && schedule_windows_replacement_after_exit "${staged}" "${bin_dir}/ota.exe"; then
+      release_install_status="pending"
+      ota_warn "pending: ota is currently running; staged update will be applied after it exits"
+      ota_warn "pending: staged update at ${staged}"
+      ota_warn "next: open a new shell and run 'ota --version' to confirm the new version"
+    else
+      ota_error "error: could not replace ${bin_dir}/ota.exe"
+      ota_error "close running ota processes and rerun the installer"
+      return 1
+    fi
   else
     if [ ! -f "${tmpdir}/ota" ]; then
       ota_error "error: release artifact did not contain ota binary"
@@ -358,6 +472,7 @@ install_release_binary() {
     install -m 0755 "${tmpdir}/ota" "${staged}"
     mv -f "${staged}" "${bin_dir}/ota"
     ota_info "installed ota to ${bin_dir}/ota"
+    installed_binary_path="${bin_dir}/ota"
   fi
   return 0
 }
@@ -465,16 +580,34 @@ else
   fi
 fi
 
+if [ "${release_install_status:-}" = "pending" ]; then
+  exit 0
+fi
+
 version_output=""
 binary_path=""
+path_binary=""
 binary_name="ota"
 install_bin_dir="$(default_bin_dir)"
 case "$(resolve_target || true)" in
   *-pc-windows-msvc) binary_name="ota.exe" ;;
 esac
 
-if command -v ota >/dev/null 2>&1; then
+if [ -n "${installed_binary_path:-}" ] && [ -x "${installed_binary_path}" ]; then
+  binary_path="${installed_binary_path}"
+  version_output="$("${installed_binary_path}" --version 2>/dev/null || true)"
+  path_binary="$(command -v ota 2>/dev/null || true)"
+  if [ "${path_binary}" != "${installed_binary_path}" ]; then
+    if [ "${setup_path}" = "true" ]; then
+      persist_path_update "${install_bin_dir}"
+    else
+      ota_warn "warning: add ${install_bin_dir} to PATH to run 'ota' directly"
+      ota_warn "next: rerun \`$(setup_path_rerun_command)\` to persist it automatically"
+    fi
+  fi
+elif command -v ota >/dev/null 2>&1; then
   binary_path="$(command -v ota)"
+  path_binary="${binary_path}"
   version_output="$(ota --version 2>/dev/null || true)"
 elif [ -x "${install_bin_dir}/${binary_name}" ]; then
   binary_path="${install_bin_dir}/${binary_name}"
@@ -511,6 +644,7 @@ fi
 
 version_text="${version_output#🦦 }"
 version_text="${version_text#ota }"
+version_text="$(printf '%s' "${version_text}" | sed 's/^[^0-9vV]*//')"
 
 duplicate_paths=""
 if [ -x "${install_bin_dir}/${binary_name}" ] && [ "$binary_path" != "${install_bin_dir}/${binary_name}" ]; then
@@ -520,9 +654,15 @@ if [ -x "$HOME/.cargo/bin/${binary_name}" ] && [ "$binary_path" != "$HOME/.cargo
   duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.cargo/bin/${binary_name}"
 fi
 if [ -n "$duplicate_paths" ]; then
-  ota_warn "warning: multiple ota binaries were found; PATH is using $binary_path"
+  if [ -n "${path_binary}" ] && [ "${path_binary}" != "${binary_path}" ]; then
+    ota_warn "warning: multiple ota binaries were found; verified $binary_path, but PATH is using $path_binary"
+  elif [ -z "${path_binary}" ] && [ -n "${installed_binary_path:-}" ]; then
+    ota_warn "warning: multiple ota binaries were found; verified $binary_path, but ota is not on PATH"
+  else
+    ota_warn "warning: multiple ota binaries were found; PATH is using $binary_path"
+  fi
   ota_warn "warning: remove or de-prioritize the other copy/copies: $duplicate_paths"
 fi
 
-ota_receipt "🦦 READY"
+ota_receipt "READY"
 ota_receipt_line "${version_text}"
