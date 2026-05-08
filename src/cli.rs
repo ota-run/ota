@@ -6530,6 +6530,7 @@ tasks:
 
     #[test]
     fn validate_text_external_contract_next_steps_include_explicit_target() {
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14258,6 +14259,7 @@ tasks:
 
     #[test]
     fn repo_adoption_loop_stays_repo_oriented_for_default_contracts() {
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14348,6 +14350,7 @@ agent:
     #[test]
     fn container_repo_adoption_loop_stays_repo_oriented_for_default_contracts() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1

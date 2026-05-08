@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- taught Ota to diagnose task mutation of managed isolated attachment paths end-to-end: `ota validate` and `ota doctor` now warn when an obvious task body cleanup like `rm -rf .next` targets a declared `execution.contexts.*.attachments.isolated_paths` path, and `ota run` now upgrades matching `resource busy` task failures into a product-level `Task mutated managed isolated path` blocker instead of leaking only the raw runtime error
 - hardened native service bind env projection so tasks can keep container-friendly `bind.address: 0.0.0.0` while native runs prefer the declared local `project.host.address` for app-facing aliases like `HOST` and `SERVER_ADDRESS`
 - improved installer ASCII fallback branding so PowerShell and shell install scripts now render a real `ota` wordmark instead of collapsing to a bare `ota` line when Unicode output is unavailable
 
