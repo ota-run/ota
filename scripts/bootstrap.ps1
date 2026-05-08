@@ -65,9 +65,19 @@ function Write-OtaHeader {
         Write-Host "     DOCTOR FIRST, CONTRACT SECOND" -ForegroundColor DarkYellow
         Write-Host ""
     } else {
-        Write-Host "ota" -ForegroundColor DarkYellow
+        $asciiHeader = @(
+            "    ________   __          "
+            "    \\_____  \\_/  |______   "
+            "     /   |   \\   __\\__  \\  "
+            "    /    |    \\  |  / __ \\_"
+            "    \\_______  /__| (____  /"
+            "            \\/          \\/ "
+        )
+        foreach ($line in $asciiHeader) {
+            Write-Host $line -ForegroundColor DarkYellow
+        }
         Write-Host ""
-        Write-Host "DOCTOR FIRST, CONTRACT SECOND" -ForegroundColor DarkYellow
+        Write-Host "  DOCTOR FIRST, CONTRACT SECOND" -ForegroundColor DarkYellow
         Write-Host ""
     }
 }

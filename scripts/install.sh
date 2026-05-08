@@ -56,9 +56,16 @@ supports_color() {
 
 ota_header() {
   if use_ascii_output; then
-    printf 'ota\n' >&2
+    cat <<'EOF' >&2
+    ________   __
+    \_____  \_/  |______
+     /   |   \   __\__  \
+    /    |    \  |  / __ \_
+    \_______  /__| (____  /
+            \/          \/
+EOF
     printf '\n' >&2
-    printf 'DOCTOR FIRST, CONTRACT SECOND\n' >&2
+    printf '  DOCTOR FIRST, CONTRACT SECOND\n' >&2
     printf '\n' >&2
   elif supports_color; then
     printf '\033[1;38;2;214;161;95m                █████\033[0m\n' >&2

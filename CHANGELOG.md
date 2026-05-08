@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- improved installer ASCII fallback branding so PowerShell and shell install scripts now render a real `ota` wordmark instead of collapsing to a bare `ota` line when Unicode output is unavailable
+
 ## 1.6.9
 
 - hardened repo status trust across `ota doctor`, `ota check`, and `ota up --dry-run`: single-repo `check` text now uses the shared verdict-driven readiness header, `up --dry-run --json` now carries the shared `summary` verdict block, and warning-only previews now surface the first actionable readiness finding instead of looking silently `READY`

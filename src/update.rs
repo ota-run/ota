@@ -138,7 +138,7 @@ fn release_target_triple() -> String {
 fn render_up_to_date_output(version: &str) -> String {
     if cfg!(windows) || env::var_os("NO_COLOR").is_some() {
         return format!(
-            "ota\n\nDOCTOR FIRST, CONTRACT SECOND\n\nchecking release channel for {target}...\nyou already have the latest version installed\nUP TO DATE\n- v{}\n",
+            "    ________   __\n    \\_____  \\_/  |______\n     /   |   \\   __\\__  \\\n    /    |    \\  |  / __ \\_\n    \\_______  /__| (____  /\n            \\/          \\/\n\n  DOCTOR FIRST, CONTRACT SECOND\n\nchecking release channel for {target}...\nyou already have the latest version installed\nUP TO DATE\n- v{}\n",
             normalize_version(version),
             target = release_target_triple()
         );
