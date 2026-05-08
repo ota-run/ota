@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.9
+
 - hardened repo status trust across `ota doctor`, `ota check`, and `ota up --dry-run`: single-repo `check` text now uses the shared verdict-driven readiness header, `up --dry-run --json` now carries the shared `summary` verdict block, and warning-only previews now surface the first actionable readiness finding instead of looking silently `READY`
 - hardened parser and workspace cache behavior so poisoned cache mutexes now clear the tainted cache and fall back to fresh parsing instead of panicking the CLI on the next contract or workspace load
 - removed the shipped `ota studio` CLI surface so the supported product stays aligned with the current doctor/init/detect/up/run adoption path instead of carrying an unadvertised local Studio export mode
