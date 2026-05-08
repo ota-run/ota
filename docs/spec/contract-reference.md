@@ -505,6 +505,11 @@ services:
 Fields:
 
 - `required`: optional boolean
+- `producer`: optional object declaring that this service is owned by another workspace repo task instead of local service-manager truth
+- `producer.repo`: required workspace repo name declared under `ota.workspace.yaml`
+- `producer.task`: required producing task name in that repo's `ota.yaml`
+- `producer.listener`: optional named runtime listener on that producer task; omit it only when the producer exposes exactly one declared listener
+- `producer.address_view`: optional reachable address shape; the current shipped cross-repo service slice supports `host` only and defaults to `host`
 - `provider`: optional string
 - `start`: optional string
 - `stop`: optional string
@@ -534,6 +539,13 @@ Fields:
 Current behavior:
 
 - services are part of the accepted V1 contract surface
+- `services.<name>.producer` is the canonical cross-repo service-ownership surface when a required service is produced by another repo in the same `ota.workspace.yaml`
+- producer-owned services stay intentionally explicit today:
+  - only `producer.address_view: host` is supported
+  - the producer listener must declare one fixed `project.host` endpoint
+  - `ota doctor`, `ota up`, and `ota run` may reuse or start that producer through the owning repo contract before the consumer proceeds
+- producer-owned services must not also declare local manager truth such as `manager`, `provider`, `start`, `stop`, `healthcheck`, `endpoints`, `readiness`, or `timeout`
+- `tasks.<name>.requires_services` remains the consumer-side dependency truth; producer ownership lives on `services.<name>`, not inside each consumer task
 - service declarations may use legacy `provider/start/stop/healthcheck` fields or new context-aware `manager/endpoints/readiness` fields
 - `services.<name>.readiness` now supports two valid forms:
   - legacy command form: `from` + `run`

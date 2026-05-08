@@ -30,12 +30,13 @@ use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path}
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
-    ExtensionKind, Lifecycle, RuntimeRequirement, ServiceSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
+    ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
     parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
-use crate::workspace::load_contract_for_workspace_repo;
+use crate::workspace::load_contract_for_workspace_repo_ref;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -104,7 +105,7 @@ pub fn validate_contract_with_path(
     validate_tool_details(&contract.tools, &mut errors);
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
-    validate_services(contract, &mut errors);
+    validate_services(contract, contract_path, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
     validate_checks(contract, &mut errors);
     validate_agent(contract.agent.as_ref(), &contract.tasks, &mut errors);
@@ -1697,7 +1698,11 @@ fn resolve_target_service_validation_task(
             )));
             return None;
         };
-        let producer_contract = match load_contract_for_workspace_repo(contract_path, repo) {
+        let producer_contract = match load_contract_for_workspace_repo_ref(
+            contract_path,
+            repo,
+            "service.repo",
+        ) {
             Ok((contract, _)) => contract,
             Err(error) => {
                 errors.push(ValidationError::new(format!(
@@ -1903,6 +1908,111 @@ fn validate_cross_repo_target_shape(
             "task `{task_name}` target `{target_name}` uses workspace repo `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare a fixed `project.host.port.value`"
         )));
     }
+}
+
+fn service_producer_target_spec(producer: &ServiceProducerSpec) -> TaskTargetSpec {
+    TaskTargetSpec {
+        service: Some(TaskTargetServiceRefSpec {
+            member: None,
+            repo: Some(producer.repo.clone()),
+            task: producer.task.clone(),
+            listener: producer.listener.clone(),
+            address_view: producer.address_view,
+        }),
+        url: None,
+        override_input: None,
+        activation: crate::schema::TaskTargetActivationSpec {
+            mode: TaskTargetActivationMode::Manual,
+        },
+    }
+}
+
+fn validate_service_producer(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    service_name: &str,
+    service: &ServiceSpec,
+    producer: &ServiceProducerSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let repo = producer.repo.trim();
+    let task = producer.task.trim();
+    let listener = producer.listener.as_deref().map(str::trim);
+
+    if repo.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` producer field `repo` must not be empty"
+        )));
+    }
+    if task.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` producer field `task` must not be empty"
+        )));
+    }
+    if matches!(listener, Some("")) {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` producer field `listener` must not be empty"
+        )));
+    }
+    if producer.address_view != TaskTargetAddressView::Host {
+        errors.push(ValidationError::new(format!(
+            "service `{service_name}` producer currently supports only `address_view: host`"
+        )));
+    }
+
+    for (field_name, present) in [
+        ("manager", service.manager.is_some()),
+        ("provider", service.provider.is_some()),
+        ("start", service.start.is_some()),
+        ("stop", service.stop.is_some()),
+        ("endpoints", !service.endpoints.is_empty()),
+        ("healthcheck", service.healthcheck.is_some()),
+        ("readiness", service.readiness.is_some()),
+        ("timeout", service.timeout.is_some()),
+    ] {
+        if present {
+            errors.push(ValidationError::new(format!(
+                "service `{service_name}` uses `producer`, so it must not also declare `services.{service_name}.{field_name}`"
+            )));
+        }
+    }
+
+    if repo.is_empty() || task.is_empty() {
+        return;
+    }
+
+    let target = service_producer_target_spec(producer);
+    let Some(producer_task) = resolve_target_service_validation_task(
+        contract,
+        contract_path,
+        None,
+        Some(repo),
+        task,
+        service_name,
+        "producer",
+        errors,
+    ) else {
+        return;
+    };
+    let Some(listener_name) = resolve_declared_service_listener_name(
+        service_name,
+        "producer",
+        task,
+        &producer_task,
+        listener,
+        errors,
+    ) else {
+        return;
+    };
+    validate_cross_repo_target_shape(
+        service_name,
+        "producer",
+        &target,
+        task,
+        listener_name.as_str(),
+        &producer_task,
+        errors,
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3896,7 +4006,8 @@ fn validate_task_service_reference(
         return;
     };
 
-    if service.start_command(service_name).is_none()
+    if service.producer.is_none()
+        && service.start_command(service_name).is_none()
         && service.healthcheck.is_none()
         && service.readiness.is_none()
     {
@@ -3917,7 +4028,11 @@ fn is_task_input_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
+fn validate_services(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    errors: &mut Vec<ValidationError>,
+) {
     let services = &contract.services;
 
     for (name, service) in services {
@@ -3997,6 +4112,10 @@ fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     "service `{name}` field `{field}` must not be empty"
                 )));
             }
+        }
+
+        if let Some(producer) = &service.producer {
+            validate_service_producer(contract, contract_path, name, service, producer, errors);
         }
 
         if let Some(readiness) = &service.readiness {
@@ -4185,6 +4304,7 @@ fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
 
         if service.manager.is_none()
+            && service.producer.is_none()
             && service.provider.is_none()
             && service.start.is_none()
             && service.stop.is_none()
@@ -4193,7 +4313,7 @@ fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
             && service.endpoints.is_empty()
         {
             errors.push(ValidationError::new(format!(
-                "service `{name}` must declare at least one of `manager`, `provider`, `start`, `stop`, `healthcheck`, `readiness`, or `endpoints`"
+                "service `{name}` must declare at least one of `producer`, `manager`, `provider`, `start`, `stop`, `healthcheck`, `readiness`, or `endpoints`"
             )));
         }
 
@@ -6849,7 +6969,7 @@ services:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "service `postgres` must declare at least one of `manager`, `provider`, `start`, `stop`, `healthcheck`, `readiness`, or `endpoints`"
+            "service `postgres` must declare at least one of `producer`, `manager`, `provider`, `start`, `stop`, `healthcheck`, `readiness`, or `endpoints`"
         );
     }
 
@@ -9512,6 +9632,87 @@ tasks:
         let contract = crate::parser::load_contract(&contract_path).unwrap();
         validate_contract_with_path(&contract, Some(&contract_path))
             .expect("workspace repo host target activation should validate");
+    }
+
+    #[test]
+    fn validates_workspace_repo_producer_owned_service() {
+        let fixture = tempfile::tempdir().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+services:
+  user-api:
+    required: true
+    producer:
+      repo: api
+      task: dev
+      listener: http
+tasks:
+  setup:
+    requires_services:
+      - user-api
+    run: echo setup
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let contract_path = fixture.path().join("web").join("ota.yaml");
+        let contract = crate::parser::load_contract(&contract_path).unwrap();
+        validate_contract_with_path(&contract, Some(&contract_path))
+            .expect("workspace repo producer-owned service should validate");
     }
 
     #[test]

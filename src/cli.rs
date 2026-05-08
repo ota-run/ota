@@ -736,6 +736,12 @@ enum AssistCommands {
         /// Optional structured readiness template to attach to the selected endpoint.
         #[arg(long, value_enum)]
         style: Option<AssistReadinessStyleArg>,
+        /// Producer task selector in `<task>` or `<task>:<listener>` form for a workspace-owned service.
+        #[arg(long, conflicts_with_all = ["manager", "manager_name", "compose_file", "compose_service", "endpoint", "address", "port", "style"])]
+        producer: Option<String>,
+        /// Workspace repo that owns the producer task.
+        #[arg(long = "producer-repo", add = ArgValueCompleter::new(complete_workspace_repo_candidates), requires = "producer")]
+        producer_repo: Option<String>,
         /// Path to a repo root, ota.yaml file, or directory containing one.
         path: Option<PathBuf>,
     },
@@ -4209,6 +4215,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     port,
                     required,
                     style,
+                    producer,
+                    producer_repo,
                     path,
                 },
         } => commands::assist_declare_service(
@@ -4225,6 +4233,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             port,
             required,
             style,
+            producer.as_deref(),
+            producer_repo.as_deref(),
             write,
             format_from_json(json),
             debug,
@@ -37241,6 +37251,90 @@ execution:
             json["changes"][0]["after"]["endpoints"]["host"]["port"],
             6379
         );
+    }
+
+    #[test]
+    fn assist_declare_service_previews_workspace_repo_producer_owned_service() {
+        let fixture = tempfile::tempdir().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo setup
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "user-api",
+            "--producer",
+            "dev:http",
+            "--producer-repo",
+            "api",
+            fixture.path().join("web").to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Producer: workspace repo `api` task `dev` listener `http`"));
+        assert!(stdout.contains("producer:"));
+        assert!(stdout.contains("repo: api"));
+        assert!(stdout.contains("task: dev"));
     }
 
     #[test]

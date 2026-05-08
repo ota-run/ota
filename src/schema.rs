@@ -1158,6 +1158,8 @@ pub struct ServiceSpec {
     #[serde(default)]
     pub stop: Option<String>,
     #[serde(default)]
+    pub producer: Option<ServiceProducerSpec>,
+    #[serde(default)]
     pub endpoints: BTreeMap<String, ServiceEndpointSpec>,
     #[serde(default)]
     pub healthcheck: Option<String>,
@@ -1226,6 +1228,32 @@ impl ServiceSpec {
     pub fn endpoint_for_context(&self, context_name: &str) -> Option<&ServiceEndpointSpec> {
         self.endpoints.get(context_name)
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceProducerSpec {
+    pub repo: String,
+    pub task: String,
+    #[serde(default)]
+    pub listener: Option<String>,
+    #[serde(default = "default_service_producer_address_view")]
+    pub address_view: TaskTargetAddressView,
+}
+
+impl Default for ServiceProducerSpec {
+    fn default() -> Self {
+        Self {
+            repo: String::new(),
+            task: String::new(),
+            listener: None,
+            address_view: default_service_producer_address_view(),
+        }
+    }
+}
+
+const fn default_service_producer_address_view() -> TaskTargetAddressView {
+    TaskTargetAddressView::Host
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
