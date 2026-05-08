@@ -195,9 +195,31 @@ download_to() {
   return 1
 }
 
+default_bin_dir() {
+  if [ -n "${OTA_BIN_DIR:-}" ]; then
+    printf "%s" "${OTA_BIN_DIR}"
+    return 0
+  fi
+
+  case "$(resolve_target || true)" in
+    *-pc-windows-msvc)
+      if [ -n "${LOCALAPPDATA:-}" ]; then
+        printf "%s" "${LOCALAPPDATA}/ota/bin"
+      else
+        printf "%s" "$HOME/.local/bin"
+      fi
+      ;;
+    *)
+      printf "%s" "$HOME/.local/bin"
+      ;;
+  esac
+}
+
 extract_zip_to() {
   archive="$1"
   dest="$2"
+  archive_escaped=$(printf "%s" "${archive}" | sed "s/'/''/g")
+  dest_escaped=$(printf "%s" "${dest}" | sed "s/'/''/g")
 
   if command -v unzip >/dev/null 2>&1; then
     unzip -oq "${archive}" -d "${dest}"
@@ -206,13 +228,13 @@ extract_zip_to() {
 
   if command -v pwsh >/dev/null 2>&1; then
     pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \
-      "Expand-Archive -Path '${archive}' -DestinationPath '${dest}' -Force" >/dev/null
+      "Expand-Archive -Path '${archive_escaped}' -DestinationPath '${dest_escaped}' -Force" >/dev/null
     return $?
   fi
 
   if command -v powershell >/dev/null 2>&1; then
     powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command \
-      "Expand-Archive -Path '${archive}' -DestinationPath '${dest}' -Force" >/dev/null
+      "Expand-Archive -Path '${archive_escaped}' -DestinationPath '${dest_escaped}' -Force" >/dev/null
     return $?
   fi
 
@@ -253,7 +275,7 @@ install_release_binary() {
 
   version="${OTA_VERSION:-latest}"
   release_base="${OTA_RELEASE_BASE:-https://github.com/ota-run/ota/releases}"
-  bin_dir="${OTA_BIN_DIR:-$HOME/.local/bin}"
+  bin_dir="$(default_bin_dir)"
   case "${target}" in
     *-pc-windows-msvc) asset="ota-${target}.zip" ;;
     *) asset="ota-${target}.tar.gz" ;;
@@ -446,6 +468,7 @@ fi
 version_output=""
 binary_path=""
 binary_name="ota"
+install_bin_dir="$(default_bin_dir)"
 case "$(resolve_target || true)" in
   *-pc-windows-msvc) binary_name="ota.exe" ;;
 esac
@@ -453,16 +476,13 @@ esac
 if command -v ota >/dev/null 2>&1; then
   binary_path="$(command -v ota)"
   version_output="$(ota --version 2>/dev/null || true)"
-elif [ -n "${OTA_BIN_DIR:-}" ] && [ -x "${OTA_BIN_DIR}/${binary_name}" ]; then
-  binary_path="${OTA_BIN_DIR}/${binary_name}"
-  version_output="$("${OTA_BIN_DIR}/${binary_name}" --version 2>/dev/null || true)"
-elif [ -x "$HOME/.local/bin/${binary_name}" ]; then
-  binary_path="$HOME/.local/bin/${binary_name}"
-  version_output="$("$HOME/.local/bin/${binary_name}" --version 2>/dev/null || true)"
+elif [ -x "${install_bin_dir}/${binary_name}" ]; then
+  binary_path="${install_bin_dir}/${binary_name}"
+  version_output="$("${install_bin_dir}/${binary_name}" --version 2>/dev/null || true)"
   if [ "${setup_path}" = "true" ]; then
-    persist_path_update "$HOME/.local/bin"
+    persist_path_update "${install_bin_dir}"
   else
-    ota_warn "warning: add $HOME/.local/bin to PATH to run 'ota' directly"
+    ota_warn "warning: add ${install_bin_dir} to PATH to run 'ota' directly"
     ota_warn "next: rerun \`$(setup_path_rerun_command)\` to persist it automatically"
   fi
 elif [ -x "$HOME/.cargo/bin/${binary_name}" ]; then
@@ -477,7 +497,7 @@ elif [ -x "$HOME/.cargo/bin/${binary_name}" ]; then
 else
   ota_error "error: install completed but \`ota\` is not on PATH yet"
   if [ "${install_mode}" = "release" ]; then
-    ota_warn "next: export PATH=\"\$HOME/.local/bin:\$PATH\""
+    ota_warn "next: export PATH=\"${install_bin_dir}:\$PATH\""
   else
     ota_warn "next: ensure cargo bin path is on PATH"
   fi
@@ -493,8 +513,8 @@ version_text="${version_output#🦦 }"
 version_text="${version_text#ota }"
 
 duplicate_paths=""
-if [ -x "$HOME/.local/bin/${binary_name}" ] && [ "$binary_path" != "$HOME/.local/bin/${binary_name}" ]; then
-  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.local/bin/${binary_name}"
+if [ -x "${install_bin_dir}/${binary_name}" ] && [ "$binary_path" != "${install_bin_dir}/${binary_name}" ]; then
+  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }${install_bin_dir}/${binary_name}"
 fi
 if [ -x "$HOME/.cargo/bin/${binary_name}" ] && [ "$binary_path" != "$HOME/.cargo/bin/${binary_name}" ]; then
   duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.cargo/bin/${binary_name}"
