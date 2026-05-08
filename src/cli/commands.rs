@@ -8620,6 +8620,7 @@ fn build_assist_bind_task_proposal(
 
     let service_ref = TaskTargetServiceRefSpec {
         member: producer_member.map(str::to_string),
+        repo: None,
         task: producer_task_name.to_string(),
         listener: Some(listener.to_string()),
         address_view,
@@ -40457,6 +40458,7 @@ tasks:
                 }),
                 service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
                     member: None,
+                    repo: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
@@ -40531,6 +40533,7 @@ tasks:
                 }),
                 service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
                     member: None,
+                    repo: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
@@ -40693,6 +40696,7 @@ tasks:
                 activation: None,
                 service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
                     member: None,
+                    repo: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
@@ -41258,6 +41262,7 @@ tasks:
                 activation: None,
                 service_ref: Some(crate::runner::TaskTargetResolutionServiceRef {
                     member: None,
+                    repo: None,
                     task: String::from("dev"),
                     listener: String::from("http"),
                     address_view: TaskTargetAddressView::Topology,
@@ -47391,10 +47396,7 @@ fn detect_managed_isolated_path_runtime_mutation(
         })
 }
 
-fn managed_isolated_paths_for_task(
-    contract: &Contract,
-    task_name: &str,
-) -> Vec<(String, String)> {
+fn managed_isolated_paths_for_task(contract: &Contract, task_name: &str) -> Vec<(String, String)> {
     let Some(task) = contract.tasks.get(task_name) else {
         return Vec::new();
     };
@@ -47461,9 +47463,7 @@ fn render_managed_isolated_path_failure_text(
                 "task `{}` failed while mutating `{}`, which is declared under `execution.contexts.{}.attachments.isolated_paths`",
                 advisory.task_name, advisory.isolated_path, advisory.context_name
             ),
-            String::from(
-                "isolated attachment paths are managed by Ota for that container context",
-            ),
+            String::from("isolated attachment paths are managed by Ota for that container context"),
         ],
         None,
     );

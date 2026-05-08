@@ -1086,7 +1086,7 @@ Task target binding semantics:
 - `url` is a fixed declared URL target
   - use it when the target is explicit and should not resolve through repo-managed service topology
   - value must be non-empty
-- `service.member`, `service.task`, `service.listener`, and optional `service.address_view` (`topology`, `host`, `internal`) declare a repo-managed service target
+- `service.member`, `service.repo`, `service.task`, `service.listener`, and optional `service.address_view` (`topology`, `host`, `internal`) declare a repo-managed service target
 - `service.member` is an optional monorepo member selector
   - use it when the producer lives in another member declared under `workspace.members`
   - value must name an existing declared monorepo member
@@ -1094,9 +1094,16 @@ Task target binding semantics:
     - `address_view: host` always works when the producer declares a fixed `project.host` endpoint and remains `activation.mode: manual` only
     - `address_view: topology` / `address_view: internal` work only when consumer and producer share one declared backend binding on the active plane
     - non-manual activation (`ensure_started`, `restart_ready`, `ensure_running`, `ensure_ready`) is shipped only for those shared-backend `topology` / `internal` member targets
+- `service.repo` is an optional workspace repo selector
+  - use it when the producer lives in another repo declared under `ota.workspace.yaml`
+  - value must name an existing declared workspace repo
+  - current shipped workspace cross-repo slice is intentionally explicit:
+    - only `address_view: host` is supported
+    - the producer listener must declare one fixed `project.host` endpoint
+    - `activation.mode: ensure_started`, `restart_ready`, `ensure_running`, and `ensure_ready` may reuse or start that producer through the owning repo contract before the consumer runs
 - `service.task` is the producing task name
   - use it when the target should follow a repo-managed service task instead of a guessed literal URL
-  - value must name an existing service task in the same contract, or in `service.member` when that selector is present
+  - value must name an existing service task in the same contract, or in `service.member` / `service.repo` when one selector is present
 - `service.listener` is the named listener exposed by the producing task runtime
   - use it when the producer exposes more than one endpoint and the consumer must target one specific listener
   - value must name an existing listener under `tasks.<producer>.runtime.listeners`

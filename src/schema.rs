@@ -1935,6 +1935,8 @@ impl TaskTargetSpec {
 pub struct TaskTargetServiceRefSpec {
     #[serde(default)]
     pub member: Option<String>,
+    #[serde(default)]
+    pub repo: Option<String>,
     pub task: String,
     #[serde(default)]
     pub listener: Option<String>,

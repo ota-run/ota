@@ -23430,10 +23430,7 @@ tasks:
             script.contains("Write-Host \"                █████"),
             "{script}"
         );
-        assert!(
-            script.contains("$asciiHeader = @("),
-            "{script}"
-        );
+        assert!(script.contains("$asciiHeader = @("), "{script}");
         assert!(
             script.contains("\"    \\\\_____  \\\\_/  |______   \""),
             "{script}"
@@ -23618,10 +23615,7 @@ tasks:
             script.contains("if use_ascii_output; then\n    cat <<'EOF' >&2"),
             "{script}"
         );
-        assert!(
-            script.contains("    \\_____  \\_/  |______"),
-            "{script}"
-        );
+        assert!(script.contains("    \\_____  \\_/  |______"), "{script}");
         assert!(
             script
                 .contains("printf '\\033[1;38;2;214;161;95m                █████\\033[0m\\n' >&2"),

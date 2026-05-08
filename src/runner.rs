@@ -66,6 +66,7 @@ use crate::schema::{
     parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
+use crate::workspace::load_contract_for_workspace_repo;
 
 #[derive(Clone)]
 pub(crate) struct StreamPhaseNotifier {
@@ -1239,6 +1240,8 @@ pub struct TaskTargetActivationEvidence {
 pub struct TaskTargetResolutionServiceRef {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
     pub task: String,
     pub listener: String,
     pub address_view: TaskTargetAddressView,
@@ -3653,9 +3656,9 @@ struct TaskRunState {
     next_generation: usize,
     started_services: BTreeSet<String>,
     ensured_target_producers:
-        BTreeMap<(Option<String>, String, String), TaskTargetActivationStatus>,
+        BTreeMap<(Option<String>, Option<String>, String, String), TaskTargetActivationStatus>,
     activation_started_producers:
-        BTreeMap<(Option<String>, String), ActivationStartedProducerCleanup>,
+        BTreeMap<(Option<String>, Option<String>, String), ActivationStartedProducerCleanup>,
     task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
@@ -6562,52 +6565,39 @@ fn ensure_target_producer_state(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let service_repo = service
+        .repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let producer_task_name = service.task.trim();
-    let producer_listener_name = resolve_service_target_listener_name(
+    let (producer_contract, producer_contract_path) = load_target_service_contract_with_path(
         contract,
         contract_path,
         task_name,
         target_name,
         service_member.as_deref(),
+        service_repo.as_deref(),
+    )?;
+    let producer_listener_name = resolve_service_target_listener_name(
+        &producer_contract,
+        task_name,
+        target_name,
+        service_member.as_deref(),
+        service_repo.as_deref(),
         producer_task_name,
         service.listener.as_deref(),
     )?;
     let producer_key = (
         service_member.clone(),
+        service_repo.clone(),
         producer_task_name.to_string(),
         producer_listener_name.clone(),
     );
     if let Some(status) = state.ensured_target_producers.get(&producer_key).copied() {
         return Ok(status);
     }
-
-    let (producer_contract, producer_contract_path) = if let Some(member) =
-        service_member.as_deref()
-    {
-        load_contract_for_member(
-            monorepo_contract_origin_for_path(contract_path)
-                .map_err(|error| RunError::TaskTargetResolutionFailed {
-                    task: task_name.to_string(),
-                    target: target_name.to_string(),
-                    details: format!("could not resolve monorepo origin for `service.member: {member}`: {error}"),
-                })?
-                .ok_or_else(|| RunError::TaskTargetResolutionFailed {
-                    task: task_name.to_string(),
-                    target: target_name.to_string(),
-                    details: format!("`service.member: {member}` requires running from a monorepo root or member contract"),
-                })?
-                .root_path
-                .as_path(),
-            member,
-        )
-        .map_err(|error| RunError::TaskTargetResolutionFailed {
-            task: task_name.to_string(),
-            target: target_name.to_string(),
-            details: format!("could not load `service.member: {member}`: {error}"),
-        })?
-    } else {
-        (contract.clone(), contract_path.to_path_buf())
-    };
     let producer_working_dir = contract_working_dir(producer_contract_path.as_path()).to_path_buf();
     let producer_backend = resolve_execution_backend_with_contract_path(
         &producer_contract,
@@ -6624,7 +6614,12 @@ fn ensure_target_producer_state(
                 Some(member) => format!(
                     "target references unknown `service.task: {producer_task_name}` in member `{member}`"
                 ),
-                None => format!("target references unknown `service.task: {producer_task_name}`"),
+                None => match service_repo.as_deref() {
+                    Some(repo) => format!(
+                        "target references unknown `service.task: {producer_task_name}` in workspace repo `{repo}`"
+                    ),
+                    None => format!("target references unknown `service.task: {producer_task_name}`"),
+                },
             },
         }
     })?;
@@ -6875,7 +6870,11 @@ fn ensure_target_producer_state(
         let _ = result_tx.send((result, producer_state));
     });
     state.activation_started_producers.insert(
-        (service_member.clone(), producer_task_name.to_string()),
+        (
+            service_member.clone(),
+            service_repo.clone(),
+            producer_task_name.to_string(),
+        ),
         ActivationStartedProducerCleanup {
             task_name: producer_task_name.to_string(),
             backend: producer_backend.clone(),
@@ -6908,13 +6907,16 @@ fn ensure_target_producer_state(
             if let Some(loader) = loader.take() {
                 loader.stop();
             }
-            state
-                .activation_started_producers
-                .remove(&(service_member.clone(), producer_task_name.to_string()));
-            let producer_label = match service_member.as_deref() {
-                Some(member) => format!("{member}:{producer_task_name}"),
-                None => producer_task_name.to_string(),
-            };
+            state.activation_started_producers.remove(&(
+                service_member.clone(),
+                service_repo.clone(),
+                producer_task_name.to_string(),
+            ));
+            let producer_label = service_target_producer_label(
+                service_member.as_deref(),
+                service_repo.as_deref(),
+                producer_task_name,
+            );
             return Err(target_activation_producer_failure(
                 task_name,
                 target_name,
@@ -6977,9 +6979,11 @@ fn ensure_target_producer_state(
                     producer_working_dir.as_path(),
                     remove_backend_on_interrupt,
                 );
-                state
-                    .activation_started_producers
-                    .remove(&(service_member.clone(), producer_task_name.to_string()));
+                state.activation_started_producers.remove(&(
+                    service_member.clone(),
+                    service_repo.clone(),
+                    producer_task_name.to_string(),
+                ));
                 return Err(RunError::TaskTargetResolutionFailed {
                     task: task_name.to_string(),
                     target: target_name.to_string(),
@@ -7007,13 +7011,16 @@ fn ensure_target_producer_state(
                 if let Some(loader) = loader.take() {
                     loader.stop();
                 }
-                state
-                    .activation_started_producers
-                    .remove(&(service_member.clone(), producer_task_name.to_string()));
-                let producer_label = match service_member.as_deref() {
-                    Some(member) => format!("{member}:{producer_task_name}"),
-                    None => producer_task_name.to_string(),
-                };
+                state.activation_started_producers.remove(&(
+                    service_member.clone(),
+                    service_repo.clone(),
+                    producer_task_name.to_string(),
+                ));
+                let producer_label = service_target_producer_label(
+                    service_member.as_deref(),
+                    service_repo.as_deref(),
+                    producer_task_name,
+                );
                 return Err(target_activation_producer_failure(
                     task_name,
                     target_name,
@@ -7033,9 +7040,11 @@ fn ensure_target_producer_state(
             let cleanup_note = match result_rx.take() {
                 Some(receiver) => match receiver.recv_timeout(Duration::from_secs(5)) {
                     Ok((_result, producer_state)) => {
-                        state
-                            .activation_started_producers
-                            .remove(&(service_member.clone(), producer_task_name.to_string()));
+                        state.activation_started_producers.remove(&(
+                            service_member.clone(),
+                            service_repo.clone(),
+                            producer_task_name.to_string(),
+                        ));
                         merge_execution_note(
                             producer_state.execution_note,
                             cleanup_activation_started_producer_and_note(
@@ -7057,15 +7066,19 @@ fn ensure_target_producer_state(
                             producer_working_dir.as_path(),
                             remove_backend_on_interrupt,
                         );
-                        state
-                            .activation_started_producers
-                            .remove(&(service_member.clone(), producer_task_name.to_string()));
+                        state.activation_started_producers.remove(&(
+                            service_member.clone(),
+                            service_repo.clone(),
+                            producer_task_name.to_string(),
+                        ));
                         note
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        state
-                            .activation_started_producers
-                            .remove(&(service_member.clone(), producer_task_name.to_string()));
+                        state.activation_started_producers.remove(&(
+                            service_member.clone(),
+                            service_repo.clone(),
+                            producer_task_name.to_string(),
+                        ));
                         None
                     }
                 },
@@ -7078,9 +7091,11 @@ fn ensure_target_producer_state(
                         producer_working_dir.as_path(),
                         remove_backend_on_interrupt,
                     );
-                    state
-                        .activation_started_producers
-                        .remove(&(service_member.clone(), producer_task_name.to_string()));
+                    state.activation_started_producers.remove(&(
+                        service_member.clone(),
+                        service_repo.clone(),
+                        producer_task_name.to_string(),
+                    ));
                     note
                 }
             };
@@ -7114,11 +7129,9 @@ fn cleanup_interrupted_activation_started_producers_and_note(
 ) -> Option<String> {
     let producer_names = std::mem::take(&mut state.activation_started_producers);
     let mut notes = Vec::new();
-    for ((member, producer_task_name), cleanup) in producer_names {
-        let producer_label = match member.as_deref() {
-            Some(member) => format!("{member}:{producer_task_name}"),
-            None => producer_task_name.clone(),
-        };
+    for ((member, repo, producer_task_name), cleanup) in producer_names {
+        let producer_label =
+            service_target_producer_label(member.as_deref(), repo.as_deref(), &producer_task_name);
         if let Some(note) = cleanup_activation_started_producer_and_note(
             cleanup.task_name.as_str(),
             &cleanup.backend,
@@ -7685,17 +7698,36 @@ fn resolve_task_target_bindings(
             .filter(|value| !value.is_empty())
             .map(str::to_string);
         let service_ref = if let Some(service) = target_spec.service.as_ref() {
-            let listener = resolve_service_target_listener_name(
+            let service_member = service
+                .member
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let service_repo = service
+                .repo
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let (service_contract, _) = load_target_service_contract_with_path(
                 contract,
                 contract_path,
                 task_name,
                 target_name,
-                service.member.as_deref(),
+                service_member,
+                service_repo,
+            )?;
+            let listener = resolve_service_target_listener_name(
+                &service_contract,
+                task_name,
+                target_name,
+                service_member,
+                service_repo,
                 service.task.as_str(),
                 service.listener.as_deref(),
             )?;
             Some(TaskTargetResolutionServiceRef {
                 member: service.member.clone(),
+                repo: service.repo.clone(),
                 task: service.task.clone(),
                 listener,
                 address_view: service.address_view,
@@ -7782,26 +7814,72 @@ fn resolve_task_target_bindings(
     Ok(resolutions)
 }
 
-fn load_monorepo_target_service_contract(
+fn load_target_service_contract_with_path(
+    contract: &Contract,
     contract_path: &Path,
-    member: &str,
-) -> Result<Contract, String> {
-    let origin = monorepo_contract_origin_for_path(contract_path)
-        .map_err(|error| format!("could not resolve monorepo origin: {error}"))?
-        .ok_or_else(|| {
-            format!(
-                "`service.member: {member}` requires running from a monorepo root or member contract"
-            )
-        })?;
-    load_contract_for_member(origin.root_path.as_path(), member)
-        .map(|(contract, _)| contract)
-        .map_err(|error| format!("could not load `service.member: {member}`: {error}"))
+    task_name: &str,
+    target_name: &str,
+    service_member: Option<&str>,
+    service_repo: Option<&str>,
+) -> Result<(Contract, PathBuf), RunError> {
+    match (service_member, service_repo) {
+        (Some(member), None) => load_contract_for_member(
+            monorepo_contract_origin_for_path(contract_path)
+                .map_err(|error| RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "could not resolve monorepo origin for `service.member: {member}`: {error}"
+                    ),
+                })?
+                .ok_or_else(|| RunError::TaskTargetResolutionFailed {
+                    task: task_name.to_string(),
+                    target: target_name.to_string(),
+                    details: format!(
+                        "`service.member: {member}` requires running from a monorepo root or member contract"
+                    ),
+                })?
+                .root_path
+                .as_path(),
+            member,
+        )
+        .map_err(|error| RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: format!("could not load `service.member: {member}`: {error}"),
+        }),
+        (None, Some(repo)) => load_contract_for_workspace_repo(contract_path, repo).map_err(
+            |details| RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details: format!("could not load `service.repo: {repo}`: {details}"),
+            },
+        ),
+        _ => Ok((contract.clone(), contract_path.to_path_buf())),
+    }
 }
 
-fn service_target_reference_label(service_member: Option<&str>, service_task_name: &str) -> String {
-    match service_member {
-        Some(member) => format!("member `{member}` task `{service_task_name}`"),
-        None => format!("service task `{service_task_name}`"),
+fn service_target_reference_label(
+    service_member: Option<&str>,
+    service_repo: Option<&str>,
+    service_task_name: &str,
+) -> String {
+    match (service_member, service_repo) {
+        (Some(member), None) => format!("member `{member}` task `{service_task_name}`"),
+        (None, Some(repo)) => format!("workspace repo `{repo}` task `{service_task_name}`"),
+        _ => format!("service task `{service_task_name}`"),
+    }
+}
+
+fn service_target_producer_label(
+    service_member: Option<&str>,
+    service_repo: Option<&str>,
+    producer_task_name: &str,
+) -> String {
+    match (service_member, service_repo) {
+        (Some(member), None) => format!("{member}:{producer_task_name}"),
+        (None, Some(repo)) => format!("{repo}:{producer_task_name}"),
+        _ => producer_task_name.to_string(),
     }
 }
 
@@ -7862,26 +7940,38 @@ fn resolve_task_target_binding_url_with_contract_path(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let service_contract = if let Some(member) = service_member {
-        load_monorepo_target_service_contract(contract_path, member).map_err(|details| {
-            RunError::TaskTargetResolutionFailed {
-                task: task_name.to_string(),
-                target: target_name.to_string(),
-                details,
-            }
-        })?
-    } else {
-        contract.clone()
-    };
+    let service_repo = service
+        .repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if service_repo.is_some() && service.address_view != TaskTargetAddressView::Host {
+        return Err(RunError::TaskTargetResolutionFailed {
+            task: task_name.to_string(),
+            target: target_name.to_string(),
+            details: String::from("`service.repo` currently supports only `address_view: host`"),
+        });
+    }
+    let (service_contract, _) = load_target_service_contract_with_path(
+        contract,
+        contract_path,
+        task_name,
+        target_name,
+        service_member,
+        service_repo,
+    )?;
     let service_task = service_contract.tasks.get(service_task_name).ok_or_else(|| {
         RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
             target: target_name.to_string(),
-            details: match service_member {
-                Some(member) => format!(
+            details: match (service_member, service_repo) {
+                (Some(member), None) => format!(
                     "target references unknown `service.task: {service_task_name}` in member `{member}`"
                 ),
-                None => format!("target references unknown `service.task: {service_task_name}`"),
+                (None, Some(repo)) => format!(
+                    "target references unknown `service.task: {service_task_name}` in workspace repo `{repo}`"
+                ),
+                _ => format!("target references unknown `service.task: {service_task_name}`"),
             },
         }
     })?;
@@ -7894,10 +7984,10 @@ fn resolve_task_target_binding_url_with_contract_path(
 
     let listener_name = resolve_service_target_listener_name(
         &service_contract,
-        contract_path,
         task_name,
         target_name,
         service_member,
+        service_repo,
         service_task_name,
         service.listener.as_deref(),
     )?;
@@ -7920,7 +8010,7 @@ fn resolve_task_target_binding_url_with_contract_path(
         target: target_name.to_string(),
         details: format!(
             "target references unknown listener `{listener_name}` on {}",
-            service_target_reference_label(service_member, service_task_name)
+            service_target_reference_label(service_member, service_repo, service_task_name)
         ),
     })?;
 
@@ -7932,7 +8022,11 @@ fn resolve_task_target_binding_url_with_contract_path(
                     target: target_name.to_string(),
                     details: format!(
                         "listener `{service_task_name}.{listener_name}` on {} has no `project.host` endpoint to resolve",
-                        service_target_reference_label(service_member, service_task_name)
+                        service_target_reference_label(
+                            service_member,
+                            service_repo,
+                            service_task_name,
+                        )
                     ),
                 }
             })?;
@@ -7942,7 +8036,11 @@ fn resolve_task_target_binding_url_with_contract_path(
                     target: target_name.to_string(),
                     details: format!(
                         "listener `{service_task_name}.{listener_name}` on {} does not declare a fixed `project.host.port.value`",
-                        service_target_reference_label(service_member, service_task_name)
+                        service_target_reference_label(
+                            service_member,
+                            service_repo,
+                            service_task_name,
+                        )
                     ),
                 }
             })?;
@@ -7965,6 +8063,7 @@ fn resolve_task_target_binding_url_with_contract_path(
             if caller_backend == Backend::Native {
                 if shared_native_binding
                     || (service_member.is_none()
+                        && service_repo.is_none()
                         && tasks_share_backend_binding(
                             contract,
                             task_name,
@@ -8010,6 +8109,7 @@ fn resolve_task_target_binding_url_with_contract_path(
             if caller_backend == Backend::Container
                 && (shared_container_binding
                     || (service_member.is_none()
+                        && service_repo.is_none()
                         && tasks_share_container_local_backend(
                             contract,
                             task_name,
@@ -8029,6 +8129,7 @@ fn resolve_task_target_binding_url_with_contract_path(
             if caller_backend == Backend::Remote
                 && (shared_remote_binding
                     || (service_member.is_none()
+                        && service_repo.is_none()
                         && tasks_share_backend_binding(
                             contract,
                             task_name,
@@ -8066,6 +8167,7 @@ fn resolve_task_target_binding_url_with_contract_path(
             if (caller_backend == Backend::Container
                 && (shared_container_binding
                     || (service_member.is_none()
+                        && service_repo.is_none()
                         && tasks_share_container_local_backend(
                             contract,
                             task_name,
@@ -8074,6 +8176,7 @@ fn resolve_task_target_binding_url_with_contract_path(
                 || (caller_backend == Backend::Native
                     && (shared_native_binding
                         || (service_member.is_none()
+                            && service_repo.is_none()
                             && tasks_share_backend_binding(
                                 contract,
                                 task_name,
@@ -8083,6 +8186,7 @@ fn resolve_task_target_binding_url_with_contract_path(
                 || (caller_backend == Backend::Remote
                     && (shared_remote_binding
                         || (service_member.is_none()
+                            && service_repo.is_none()
                             && tasks_share_backend_binding(
                                 contract,
                                 task_name,
@@ -8249,10 +8353,10 @@ fn declared_service_listener_names(task: &TaskSpec) -> BTreeSet<String> {
 
 fn resolve_service_target_listener_name(
     contract: &Contract,
-    _contract_path: &Path,
     task_name: &str,
     target_name: &str,
     service_member: Option<&str>,
+    service_repo: Option<&str>,
     service_task_name: &str,
     listener: Option<&str>,
 ) -> Result<String, RunError> {
@@ -8285,7 +8389,7 @@ fn resolve_service_target_listener_name(
                 target: target_name.to_string(),
                 details: format!(
                     "target `{target_name}` could not resolve the sole listener for {}",
-                    service_target_reference_label(service_member, service_task_name)
+                    service_target_reference_label(service_member, service_repo, service_task_name,)
                 ),
             }),
         0 => Err(RunError::TaskTargetResolutionFailed {
@@ -8293,7 +8397,7 @@ fn resolve_service_target_listener_name(
             target: target_name.to_string(),
             details: format!(
                 "target `{target_name}` references {}, but task `{service_task_name}` does not declare any service listeners",
-                service_target_reference_label(service_member, service_task_name)
+                service_target_reference_label(service_member, service_repo, service_task_name)
             ),
         }),
         _ => Err(RunError::TaskTargetResolutionFailed {
@@ -8301,7 +8405,7 @@ fn resolve_service_target_listener_name(
             target: target_name.to_string(),
             details: format!(
                 "target `{target_name}` references {}, which exposes multiple listeners; declare `service.listener` explicitly",
-                service_target_reference_label(service_member, service_task_name)
+                service_target_reference_label(service_member, service_repo, service_task_name)
             ),
         }),
     }
@@ -8481,14 +8585,20 @@ fn format_task_target_host_endpoint(
 
 fn render_target_resolution_note(resolution: &TaskTargetResolutionEvidence) -> String {
     let declared = if let Some(service_ref) = resolution.service_ref.as_ref() {
-        match service_ref.member.as_deref() {
-            Some(member) => {
+        match (
+            service_ref.member.as_deref(),
+            service_ref.repo.as_deref(),
+        ) {
+            (Some(member), None) => {
                 format!(
                     "service({member}:{}.{})",
                     service_ref.task, service_ref.listener
                 )
             }
-            None => format!("service({}.{})", service_ref.task, service_ref.listener),
+            (None, Some(repo)) => {
+                format!("service({repo}:{}.{})", service_ref.task, service_ref.listener)
+            }
+            _ => format!("service({}.{})", service_ref.task, service_ref.listener),
         }
     } else if let Some(url_ref) = resolution.url_ref.as_ref() {
         format!("url({})", url_ref.url)
@@ -16845,7 +16955,7 @@ mod tests {
 
     use tempfile::{TempDir, tempdir};
 
-    use crate::parser::{load_contract_for_member, parse_contract_str};
+    use crate::parser::{load_contract, load_contract_for_member, parse_contract_str};
     use crate::policy_pack::{ProvisioningAction, ProvisioningActionKind, ProvisioningTargetKind};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
@@ -22185,6 +22295,121 @@ tasks:
     }
 
     #[test]
+    fn workspace_repo_target_binding_resolves_declared_host_service_url() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  sandbox:
+    run: echo web
+    targets:
+      api:
+        service:
+          repo: api
+          task: dev
+          listener: http
+          address_view: host
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let contract_path = fixture.path().join("web").join("ota.yaml");
+        let contract = load_contract(&contract_path).unwrap();
+        let target_spec = contract
+            .tasks
+            .get("sandbox")
+            .and_then(|task| task.targets.get("api"))
+            .expect("target binding should be declared");
+        let task = contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+
+        let resolutions = super::resolve_task_target_bindings(
+            &contract,
+            &contract_path,
+            "sandbox",
+            task,
+            &BTreeSet::new(),
+            &mut BTreeMap::new(),
+            Backend::Native,
+            ExecutionOverrides::default(),
+        )
+        .expect("workspace repo target resolution evidence should build");
+        assert_eq!(
+            resolutions[0]
+                .service_ref
+                .as_ref()
+                .and_then(|service_ref| service_ref.repo.as_deref()),
+            Some("api")
+        );
+
+        let resolved = resolve_task_target_binding_url_with_contract_path(
+            &contract,
+            &contract_path,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            ExecutionOverrides::default(),
+        )
+        .expect("workspace repo host-view target should resolve");
+
+        assert_eq!(resolved, "http://127.0.0.1:8080");
+    }
+
+    #[test]
     fn monorepo_cross_member_internal_target_binding_resolves_shared_backend_listener() {
         let fixture = ContractFixture::new(
             r#"
@@ -22526,6 +22751,125 @@ tasks:
         server
             .join()
             .expect("cross-member ensure_ready probe server should finish");
+        assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
+    }
+
+    #[test]
+    fn ensure_ready_activation_reuses_reachable_workspace_repo_host_target() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            let _accepted = listener
+                .accept()
+                .expect("workspace repo ensure_ready probe should connect");
+        });
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+"#
+            )
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  sandbox:
+    run: echo web
+    targets:
+      api:
+        service:
+          repo: api
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let contract_path = fixture.path().join("web").join("ota.yaml");
+        let contract = load_contract(&contract_path).unwrap();
+        let task = contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let status = super::ensure_target_producer_ready(
+            &contract,
+            &contract_path,
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.path(),
+            std::env::consts::OS,
+            0,
+            &mut TaskRunState::default(),
+        )
+        .expect("workspace repo ensure_ready should accept a reachable host target");
+
+        server
+            .join()
+            .expect("workspace repo ensure_ready probe server should finish");
         assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
     }
 
@@ -23987,6 +24331,28 @@ tasks:
             outcome.task_step_target_resolutions[dependency_index][0].target,
             "api"
         );
+    }
+
+    #[test]
+    fn target_resolution_note_mentions_workspace_repo_service_identity() {
+        let resolution = super::TaskTargetResolutionEvidence {
+            target: String::from("api"),
+            override_input: None,
+            source: TaskTargetResolutionSource::TargetBinding,
+            activation: None,
+            service_ref: Some(super::TaskTargetResolutionServiceRef {
+                member: None,
+                repo: Some(String::from("billing")),
+                task: String::from("dev"),
+                listener: String::from("http"),
+                address_view: crate::schema::TaskTargetAddressView::Host,
+            }),
+            url_ref: None,
+            effective_url: String::from("http://127.0.0.1:8080"),
+        };
+
+        let note = super::render_target_resolution_note(&resolution);
+        assert!(note.contains("service(billing:dev.http)"));
     }
 
     #[test]
