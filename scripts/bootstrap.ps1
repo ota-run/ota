@@ -29,19 +29,47 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:InstalledBinaryPath = $null
+
+function Enable-OtaUnicodeOutput {
+    if ($env:OTA_ASCII -or $env:NO_COLOR) {
+        return $false
+    }
+
+    if ($env:OS -ne "Windows_NT") {
+        return $true
+    }
+
+    try {
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [Console]::OutputEncoding = $utf8
+        [Console]::InputEncoding = $utf8
+        $global:OutputEncoding = $utf8
+        return [Console]::OutputEncoding.CodePage -eq 65001
+    } catch {
+        return $false
+    }
+}
 
 function Write-OtaHeader {
-    Write-Host "                █████" -ForegroundColor DarkYellow
-    Write-Host "               ░░███" -ForegroundColor DarkYellow
-    Write-Host "       ██████  ███████    ██████" -ForegroundColor DarkYellow
-    Write-Host "      ███░░███░░░███░    ░░░░░███" -ForegroundColor DarkYellow
-    Write-Host "     ░███ ░███  ░███      ███████" -ForegroundColor DarkYellow
-    Write-Host "     ░███ ░███  ░███ ███ ███░░███" -ForegroundColor DarkYellow
-    Write-Host "     ░░██████   ░░█████ ░░████████" -ForegroundColor DarkYellow
-    Write-Host "      ░░░░░░     ░░░░░   ░░░░░░░░" -ForegroundColor DarkYellow
-    Write-Host ""
-    Write-Host "     DOCTOR FIRST, CONTRACT SECOND" -ForegroundColor DarkYellow
-    Write-Host ""
+    if (Enable-OtaUnicodeOutput) {
+        Write-Host "                █████" -ForegroundColor DarkYellow
+        Write-Host "               ░░███" -ForegroundColor DarkYellow
+        Write-Host "       ██████  ███████    ██████" -ForegroundColor DarkYellow
+        Write-Host "      ███░░███░░░███░    ░░░░░███" -ForegroundColor DarkYellow
+        Write-Host "     ░███ ░███  ░███      ███████" -ForegroundColor DarkYellow
+        Write-Host "     ░███ ░███  ░███ ███ ███░░███" -ForegroundColor DarkYellow
+        Write-Host "     ░░██████   ░░█████ ░░████████" -ForegroundColor DarkYellow
+        Write-Host "      ░░░░░░     ░░░░░   ░░░░░░░░" -ForegroundColor DarkYellow
+        Write-Host ""
+        Write-Host "     DOCTOR FIRST, CONTRACT SECOND" -ForegroundColor DarkYellow
+        Write-Host ""
+    } else {
+        Write-Host "ota" -ForegroundColor DarkYellow
+        Write-Host ""
+        Write-Host "DOCTOR FIRST, CONTRACT SECOND" -ForegroundColor DarkYellow
+        Write-Host ""
+    }
 }
 
 function Write-OtaInfo {
@@ -51,12 +79,12 @@ function Write-OtaInfo {
 
 function Write-OtaReceipt {
     param([string]$Message)
-    Write-Host "${Esc}[1;38;2;214;161;95m$Message${Esc}[0m"
+    Write-Host $Message -ForegroundColor DarkYellow
 }
 
 function Write-OtaReceiptLine {
     param([string]$Message)
-    Write-Host "${Esc}[1;38;2;214;161;95m➤${Esc}[0m ${Esc}[1;37m$Message${Esc}[0m"
+    Write-Host "- $Message" -ForegroundColor DarkYellow
 }
 
 function Write-OtaWarn {
@@ -82,6 +110,14 @@ function Normalize-VersionOutput {
     }
 
     return $text.Trim()
+}
+
+function Test-OtaWindows {
+    try {
+        return [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+    } catch {
+        return $env:OS -eq "Windows_NT"
+    }
 }
 
 function Get-OtaTarget {
@@ -278,7 +314,7 @@ while (`$parentPid -gt 0 -and `$waited -lt 1800 -and (Get-Process -Id `$parentPi
 `$attempt = 0
 while (`$attempt -lt 1800 -and (Test-Path -LiteralPath `$source)) {
     try {
-        Copy-Item -Path `$source -Destination `$destination -Force
+        Copy-Item -LiteralPath `$source -Destination `$destination -Force -ErrorAction Stop
         Remove-Item -LiteralPath `$source -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
         exit 0
@@ -308,12 +344,12 @@ function Resolve-OtaLockedReplacement
         [string]$Destination
     )
 
-    if (-not $IsWindows -or -not (Test-OtaFileInUseError $ErrorRecord))
+    if (-not (Test-OtaWindows) -or -not (Test-OtaFileInUseError $ErrorRecord))
     {
         return $null
     }
 
-    if (-not (Test-Path $Staged))
+    if (-not (Test-Path -LiteralPath $Staged))
     {
         return $null
     }
@@ -321,15 +357,16 @@ function Resolve-OtaLockedReplacement
     if (-not (Schedule-OtaReplacementAfterExit -Source $Staged -Destination $Destination -ParentPid (Get-OtaSelfUpdateParentPid)))
     {
         Write-OtaError "error: ota is running but the staged replacement could not be scheduled"
-        if (Test-Path $Staged)
+        if (Test-Path -LiteralPath $Staged)
         {
             Remove-Item -LiteralPath $Staged -Force -ErrorAction SilentlyContinue
         }
         return "failed"
     }
 
-    Write-OtaError "error: ota is still running; staged update at $Staged but replacement is not yet verified"
-    Write-OtaWarn "close running ota processes, then rerun `ota --version` to confirm the new version"
+    Write-OtaWarn "pending: ota is currently running; staged update will be applied after this command exits"
+    Write-OtaWarn "pending: staged update at $Staged"
+    Write-OtaWarn "next: open a new shell and run 'ota --version' to confirm the new version"
     return "pending"
 }
 
@@ -456,10 +493,10 @@ function Install-ReleaseBinary {
         $staged = "$destination.new"
         try
         {
-            Copy-Item -Path $binary.FullName -Destination $staged -Force
+            Copy-Item -LiteralPath $binary.FullName -Destination $staged -Force
             try
             {
-                Copy-Item -Path $staged -Destination $destination -Force
+                Copy-Item -LiteralPath $staged -Destination $destination -Force
                 Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
             }
             catch
@@ -474,6 +511,7 @@ function Install-ReleaseBinary {
 
             Ensure-OtaOnPath $binDir
             Write-OtaInfo "installed ota to $destination"
+            $script:InstalledBinaryPath = $destination
             return "installed"
         } catch {
             $replacementStatus = Resolve-OtaLockedReplacement -ErrorRecord $_ -Staged $staged -Destination $destination
@@ -481,10 +519,10 @@ function Install-ReleaseBinary {
             {
                 return $replacementStatus
             }
-            if ($IsWindows) {
+            if (Test-OtaWindows) {
                 Write-OtaError "error: could not replace ${destination}: $($_.Exception.Message)"
-                if (Test-Path $staged) {
-                Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $staged) {
+                    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
                 }
                 return "failed"
             }
@@ -541,7 +579,7 @@ else
     $releaseInstallStatus = Install-ReleaseBinary
     if ($releaseInstallStatus -eq "pending")
     {
-        exit 1
+        exit 0
     }
     if ($releaseInstallStatus -ne "installed")
     {
@@ -556,9 +594,18 @@ else
 }
 
 $binaryName = if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) { "ota.exe" } else { "ota" }
+$pathBinary = ""
 
-if (Get-Command ota -ErrorAction SilentlyContinue) {
+if ($script:InstalledBinaryPath -and (Test-Path -LiteralPath $script:InstalledBinaryPath)) {
+    $binaryPath = $script:InstalledBinaryPath
+    $pathCommand = Get-Command ota -ErrorAction SilentlyContinue
+    if ($pathCommand) {
+        $pathBinary = $pathCommand.Source
+    }
+    $versionOutput = Normalize-VersionOutput (& $binaryPath --version 2>$null | Out-String)
+} elseif (Get-Command ota -ErrorAction SilentlyContinue) {
     $binaryPath = (Get-Command ota).Source
+    $pathBinary = $binaryPath
     $versionOutput = Normalize-VersionOutput (& ota --version 2>$null | Out-String)
 } elseif ($env:OTA_BIN_DIR -and (Test-Path (Join-Path $env:OTA_BIN_DIR $binaryName))) {
     $binaryPath = Join-Path $env:OTA_BIN_DIR $binaryName
@@ -581,7 +628,7 @@ if ([string]::IsNullOrWhiteSpace($versionOutput)) {
     $versionOutput = "unknown"
 } else {
     $versionOutput = $versionOutput -replace '^ota\s+', ''
-    $versionOutput = $versionOutput -replace '^🦦\s+', ''
+    $versionOutput = $versionOutput -replace '^[^\x00-\x7F]+\s*', ''
 }
 
 $duplicatePaths = @()
@@ -592,9 +639,15 @@ if ((Test-Path (Join-Path $HOME ".cargo/bin/$binaryName")) -and $binaryPath -ne 
     $duplicatePaths += (Join-Path $HOME ".cargo/bin/$binaryName")
 }
 if ($duplicatePaths.Count -gt 0) {
-    Write-OtaWarn "warning: multiple ota binaries were found; PATH is using $binaryPath"
+    if (-not [string]::IsNullOrWhiteSpace($pathBinary) -and $pathBinary -ne $binaryPath) {
+        Write-OtaWarn "warning: multiple ota binaries were found; verified $binaryPath, but PATH is using $pathBinary"
+    } elseif ([string]::IsNullOrWhiteSpace($pathBinary) -and $script:InstalledBinaryPath) {
+        Write-OtaWarn "warning: multiple ota binaries were found; verified $binaryPath, but ota is not on PATH"
+    } else {
+        Write-OtaWarn "warning: multiple ota binaries were found; PATH is using $binaryPath"
+    }
     Write-OtaWarn "warning: remove or de-prioritize the other copy/copies: $($duplicatePaths -join ', ')"
 }
 
-Write-OtaReceipt "🦦 READY"
+Write-OtaReceipt "READY"
 Write-OtaReceiptLine $versionOutput
