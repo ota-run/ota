@@ -653,7 +653,7 @@ pub(super) fn apply_detected_starter_contract_defaults(
             agent.bootstrap = Some(starter_agent_bootstrap());
         }
     } else {
-        contract.agent = starter_agent_from_detected_report(report);
+        contract.agent = starter_agent_from_detected_candidate(contract, report);
     }
 }
 
@@ -681,17 +681,7 @@ fn starter_agent_from_detected_contract(
     contract: &DetectContract,
     root: &Path,
 ) -> Option<AgentConfig> {
-    let mut safe_tasks = Vec::new();
-    for task_name in ["setup", "test"] {
-        if contract.tasks.contains_key(task_name) {
-            safe_tasks.push(task_name.to_string());
-        }
-    }
-    for (task_name, task) in &contract.tasks {
-        if task.safe_for_agent && !safe_tasks.iter().any(|safe| safe == task_name) {
-            safe_tasks.push(task_name.clone());
-        }
-    }
+    let safe_tasks = starter_agent_safe_tasks(contract);
     if safe_tasks.is_empty() {
         return None;
     }
@@ -700,8 +690,20 @@ fn starter_agent_from_detected_contract(
     starter_agent_config_from_parts(contract, root, safe_tasks, boundary)
 }
 
-fn starter_agent_from_detected_report(report: &DetectReport) -> Option<AgentConfig> {
-    let contract = &report.contract;
+fn starter_agent_from_detected_candidate(
+    contract: &DetectContract,
+    report: &DetectReport,
+) -> Option<AgentConfig> {
+    let safe_tasks = starter_agent_safe_tasks(contract);
+    if safe_tasks.is_empty() {
+        return None;
+    }
+
+    let boundary = starter_agent_boundary_inference_for_detect_report(report);
+    starter_agent_config_from_parts(contract, &report.root, safe_tasks, boundary)
+}
+
+fn starter_agent_safe_tasks(contract: &DetectContract) -> Vec<String> {
     let mut safe_tasks = Vec::new();
     for task_name in ["setup", "test"] {
         if contract.tasks.contains_key(task_name) {
@@ -713,12 +715,7 @@ fn starter_agent_from_detected_report(report: &DetectReport) -> Option<AgentConf
             safe_tasks.push(task_name.clone());
         }
     }
-    if safe_tasks.is_empty() {
-        return None;
-    }
-
-    let boundary = starter_agent_boundary_inference_for_detect_report(report);
-    starter_agent_config_from_parts(contract, &report.root, safe_tasks, boundary)
+    safe_tasks
 }
 
 #[derive(Debug, Default)]

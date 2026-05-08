@@ -399,12 +399,19 @@ fn workspace_cache() -> &'static Mutex<HashMap<WorkspaceCacheKey, WorkspaceContr
 }
 
 fn lock_workspace_cache() -> MutexGuard<'static, HashMap<WorkspaceCacheKey, WorkspaceContract>> {
-    match workspace_cache().lock() {
+    lock_workspace_cache_map(workspace_cache())
+}
+
+fn lock_workspace_cache_map(
+    cache: &Mutex<HashMap<WorkspaceCacheKey, WorkspaceContract>>,
+) -> MutexGuard<'_, HashMap<WorkspaceCacheKey, WorkspaceContract>> {
+    match cache.lock() {
         Ok(cache) => cache,
         Err(poisoned) => {
-            let mut cache = poisoned.into_inner();
-            cache.clear();
-            cache
+            let mut cache_guard = poisoned.into_inner();
+            cache_guard.clear();
+            cache.clear_poison();
+            cache_guard
         }
     }
 }
@@ -1112,6 +1119,8 @@ fn visit_workspace_repo(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
     use tempfile::TempDir;
@@ -1433,31 +1442,19 @@ repos:
     }
 
     #[test]
-    fn load_workspace_contract_recovers_from_poisoned_cache_mutex() {
+    fn workspace_cache_lock_recovers_from_poisoned_mutex() {
+        let cache = Mutex::new(HashMap::new());
+
         let _ = std::panic::catch_unwind(|| {
-            let _cache = super::workspace_cache().lock().unwrap();
+            let _cache = cache.lock().unwrap();
             panic!("poison workspace cache");
         });
 
-        let fixture = TempDir::new().unwrap();
-        let workspace_path = fixture.path().join("ota.workspace.yaml");
-        std::fs::write(
-            &workspace_path,
-            r#"
-version: 1
-workspace:
-  name: recovered
-repos:
-  web:
-    path: apps/web
-"#,
-        )
-        .unwrap();
+        let cache_guard = super::lock_workspace_cache_map(&cache);
 
-        let contract = load_workspace_contract(&workspace_path).unwrap();
-
-        assert_eq!(contract.workspace.name, "recovered");
-        assert_eq!(super::workspace_cache_entries_for_path(&workspace_path), 0);
+        assert_eq!(cache_guard.len(), 0);
+        drop(cache_guard);
+        assert!(!cache.is_poisoned());
     }
 
     #[test]

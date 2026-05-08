@@ -48,6 +48,8 @@ const ANSI_FG_RESET: &str = "\x1b[39m";
 const UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS: u64 = 60 * 60;
 const UPDATE_CHECK_CACHE_TTL_SECS: u64 = 60 * 60;
 const UPDATE_CHECK_HTTP_TIMEOUT_SECS: &str = "2";
+const UPDATE_NOTICE_FAST_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
+const UPDATE_NOTICE_WINDOWS_CHECK_WAIT_TIMEOUT: Duration = Duration::from_millis(5000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateTrack {
@@ -134,6 +136,14 @@ fn release_target_triple() -> String {
 }
 
 fn render_up_to_date_output(version: &str) -> String {
+    if cfg!(windows) || env::var_os("NO_COLOR").is_some() {
+        return format!(
+            "ota\n\nDOCTOR FIRST, CONTRACT SECOND\n\nchecking release channel for {target}...\nyou already have the latest version installed\nUP TO DATE\n- v{}\n",
+            normalize_version(version),
+            target = release_target_triple()
+        );
+    }
+
     let up_to_date = format!("{ANSI_GOLD_ACCENT}🦦 UP TO DATE{ANSI_FG_RESET}");
     let version = format!(
         "{ANSI_GOLD_ACCENT}➤{ANSI_FG_RESET} {ANSI_BOLD_WHITE}v{}{ANSI_FG_RESET}",
@@ -303,6 +313,12 @@ fn latest_release_cache_is_fresh(cache_path: &Path, now_secs: u64) -> bool {
     }
 }
 
+fn recent_update_check_failure(failure_state_path: &Path, now_secs: u64) -> bool {
+    last_update_check_failure_at(failure_state_path).is_some_and(|last_failure| {
+        now_secs.saturating_sub(last_failure) < UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS
+    })
+}
+
 fn should_emit_failed_update_check_notice(
     now_secs: u64,
     notice_state_path: &Path,
@@ -334,12 +350,37 @@ fn should_run_update_check_synchronously(
     has_cached_latest: bool,
     cache_is_fresh: bool,
     has_local_notice: bool,
+    has_recent_failure: bool,
 ) -> bool {
-    !has_local_notice && (!has_cached_latest || !cache_is_fresh)
+    !has_recent_failure && !has_local_notice && (!has_cached_latest || !cache_is_fresh)
 }
 
 pub(crate) fn preferred_update_notice_wait_timeout() -> Duration {
-    Duration::from_millis(50)
+    preferred_update_notice_wait_timeout_for_state(
+        cfg!(windows),
+        current_unix_timestamp_secs(),
+        &latest_release_cache_path(),
+        &update_check_failure_record_path(),
+    )
+}
+
+fn preferred_update_notice_wait_timeout_for_state(
+    is_windows: bool,
+    now_secs: u64,
+    cache_path: &Path,
+    failure_state_path: &Path,
+) -> Duration {
+    if !is_windows {
+        return UPDATE_NOTICE_FAST_WAIT_TIMEOUT;
+    }
+
+    let has_cached_latest = read_latest_release_cache(cache_path).is_some();
+    let cache_is_fresh = has_cached_latest && latest_release_cache_is_fresh(cache_path, now_secs);
+    if cache_is_fresh || recent_update_check_failure(failure_state_path, now_secs) {
+        UPDATE_NOTICE_FAST_WAIT_TIMEOUT
+    } else {
+        UPDATE_NOTICE_WINDOWS_CHECK_WAIT_TIMEOUT
+    }
 }
 
 fn record_update_check_result(
@@ -374,7 +415,15 @@ fn maybe_local_update_notice(
         return Some(notice);
     }
 
-    maybe_emit_failed_update_check_notice(now_secs, notice_state_path, failure_state_path)
+    if env::var_os("OTA_SHOW_UPDATE_CHECK_FAILURES").is_some() {
+        return maybe_emit_failed_update_check_notice(
+            now_secs,
+            notice_state_path,
+            failure_state_path,
+        );
+    }
+
+    None
 }
 
 fn maybe_update_notice_with_cache_state(
@@ -475,12 +524,19 @@ where
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
     let handle = thread::spawn(move || {
-        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let unicode_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let ascii_frames = ["-", "\\", "|", "/"];
+        let frames: &[&str] = if cfg!(windows) {
+            &ascii_frames
+        } else {
+            &unicode_frames
+        };
+        let prefix = if cfg!(windows) { "ota" } else { "🦦" };
         let mut index = 0usize;
         let mut stderr = std::io::stderr();
         while !thread_stop.load(Ordering::Relaxed) {
             let frame = frames[index % frames.len()];
-            let _ = write!(stderr, "\r🦦 {frame}");
+            let _ = write!(stderr, "\r{prefix} {frame}");
             let _ = stderr.flush();
             index += 1;
             thread::sleep(std::time::Duration::from_millis(160));
@@ -704,6 +760,7 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
     );
     let has_cached_latest = read_latest_release_cache(&cache_path).is_some();
     let cache_is_fresh = has_cached_latest && latest_release_cache_is_fresh(&cache_path, now_secs);
+    let has_recent_failure = recent_update_check_failure(&failure_state_path, now_secs);
 
     if has_cached_latest {
         if !cache_is_fresh {
@@ -711,6 +768,7 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
                 has_cached_latest,
                 cache_is_fresh,
                 local_notice.is_some(),
+                has_recent_failure,
             ) {
                 let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
                 return maybe_update_notice_with_cache_state(
@@ -722,6 +780,32 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
                 );
             }
 
+            if !has_recent_failure {
+                let refresh_notice_state_path = notice_state_path.clone();
+                let refresh_failure_state_path = failure_state_path.clone();
+                let refresh_cache_path = cache_path.clone();
+                thread::spawn(move || {
+                    let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
+                    record_update_check_result(
+                        latest_result,
+                        current_unix_timestamp_secs(),
+                        &refresh_notice_state_path,
+                        &refresh_failure_state_path,
+                        &refresh_cache_path,
+                    );
+                });
+            }
+        }
+        return local_notice;
+    }
+
+    if !should_run_update_check_synchronously(
+        has_cached_latest,
+        cache_is_fresh,
+        local_notice.is_some(),
+        has_recent_failure,
+    ) {
+        if !has_recent_failure {
             let refresh_notice_state_path = notice_state_path.clone();
             let refresh_failure_state_path = failure_state_path.clone();
             let refresh_cache_path = cache_path.clone();
@@ -736,27 +820,6 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
                 );
             });
         }
-        return local_notice;
-    }
-
-    if !should_run_update_check_synchronously(
-        has_cached_latest,
-        cache_is_fresh,
-        local_notice.is_some(),
-    ) {
-        let refresh_notice_state_path = notice_state_path.clone();
-        let refresh_failure_state_path = failure_state_path.clone();
-        let refresh_cache_path = cache_path.clone();
-        thread::spawn(move || {
-            let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
-            record_update_check_result(
-                latest_result,
-                current_unix_timestamp_secs(),
-                &refresh_notice_state_path,
-                &refresh_failure_state_path,
-                &refresh_cache_path,
-            );
-        });
         return local_notice;
     }
 
@@ -799,24 +862,22 @@ fn fetch_release_json_via_powershell(url: &str) -> Option<String> {
         UPDATE_CHECK_HTTP_TIMEOUT_SECS,
         powershell_escape_single_quotes(url)
     );
-    let mut pwsh = Command::new("pwsh");
-    pwsh.args(["-NoLogo", "-NoProfile", "-Command", &script])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    match pwsh.output() {
-        Ok(output) if output.status.success() => Some(command_output_to_string(output).stdout),
-        Ok(_) => None,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            let mut powershell = Command::new("powershell");
-            powershell
-                .args(["-NoLogo", "-NoProfile", "-Command", &script])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            let output = run_command(powershell);
-            (output.exit_code == 0).then_some(output.stdout)
+    for command_name in ["powershell.exe", "powershell", "pwsh.exe", "pwsh"] {
+        let mut command = Command::new(command_name);
+        command
+            .args(["-NoLogo", "-NoProfile", "-Command", &script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        match command.output() {
+            Ok(output) if output.status.success() => {
+                return Some(command_output_to_string(output).stdout);
+            }
+            Ok(_) => return None,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(_) => return None,
         }
-        Err(_) => None,
     }
+    None
 }
 
 fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
@@ -825,7 +886,7 @@ fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
         UpdateTrack::Latest => release_list_url(),
     };
     let raw = if cfg!(windows) {
-        fetch_release_json_via_curl(&url).or_else(|| fetch_release_json_via_powershell(&url))?
+        fetch_release_json_via_powershell(&url).or_else(|| fetch_release_json_via_curl(&url))?
     } else {
         fetch_release_json_via_curl(&url)?
     };
@@ -862,14 +923,12 @@ fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::env_mutex_lock;
     use std::env;
     use std::ffi::OsString;
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use std::time::Duration;
-
-    use crate::test_support::env_mutex_lock;
     use tempfile::tempdir;
 
     use super::UpdateTrack;
@@ -904,6 +963,40 @@ mod tests {
         value
     }
 
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: OsString) -> Self {
+            let original = env::var_os(name);
+            unsafe {
+                env::set_var(name, value);
+            }
+            Self { name, original }
+        }
+
+        fn remove(name: &'static str) -> Self {
+            let original = env::var_os(name);
+            unsafe {
+                env::remove_var(name);
+            }
+            Self { name, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.original.take() {
+                    Some(value) => env::set_var(self.name, value),
+                    None => env::remove_var(self.name),
+                }
+            }
+        }
+    }
+
     #[test]
     fn normalizes_version_prefixes() {
         assert_eq!(normalize_version("v0.1.2"), "0.1.2");
@@ -934,7 +1027,9 @@ mod tests {
     }
 
     #[test]
-    fn rate_limits_failed_update_check_notice() {
+    fn failed_update_checks_are_quiet_by_default() {
+        let _guard = env_mutex_lock();
+        let _notice_guard = EnvVarGuard::remove("OTA_SHOW_UPDATE_CHECK_FAILURES");
         let temp = tempdir().unwrap();
         let state_path = temp.path().join("update-check-failure-notice-at.txt");
 
@@ -947,16 +1042,15 @@ mod tests {
             &state_path,
         );
 
-        assert_eq!(first, Some(super::render_update_check_failed_notice()));
+        assert_eq!(first, None);
         assert_eq!(second, None);
-        assert_eq!(
-            after_cooldown,
-            Some(super::render_update_check_failed_notice())
-        );
+        assert_eq!(after_cooldown, None);
     }
 
     #[test]
-    fn successful_update_check_clears_failed_notice_cooldown() {
+    fn successful_update_check_keeps_later_failures_quiet_by_default() {
+        let _guard = env_mutex_lock();
+        let _notice_guard = EnvVarGuard::remove("OTA_SHOW_UPDATE_CHECK_FAILURES");
         let temp = tempdir().unwrap();
         let state_path = temp.path().join("update-check-failure-notice-at.txt");
 
@@ -965,12 +1059,9 @@ mod tests {
             maybe_update_notice_with_state("v1.0.0", Ok(String::from("1.0.0")), 101, &state_path);
         let failed_again = maybe_update_notice_with_state("v1.0.0", Err(()), 102, &state_path);
 
-        assert_eq!(failed, Some(super::render_update_check_failed_notice()));
+        assert_eq!(failed, None);
         assert_eq!(successful, None);
-        assert_eq!(
-            failed_again,
-            Some(super::render_update_check_failed_notice())
-        );
+        assert_eq!(failed_again, None);
     }
 
     #[test]
@@ -1027,37 +1118,83 @@ mod tests {
         assert_eq!(notice, Some(super::render_update_available_notice("9.9.9")));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn preferred_wait_timeout_stays_short_without_local_state() {
+    fn powershell_release_fetch_uses_legacy_powershell_when_available() {
+        let _guard = env_mutex_lock();
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "powershell",
+            "#!/bin/sh\nprintf '{\"tag_name\":\"v9.9.9\"}'\n",
+        );
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let raw = super::fetch_release_json_via_powershell("https://example.test/releases/latest")
+            .expect("legacy powershell fallback should return release JSON");
+
+        assert_eq!(raw, "{\"tag_name\":\"v9.9.9\"}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn powershell_release_fetch_uses_pwsh_when_legacy_powershell_is_missing() {
+        let _guard = env_mutex_lock();
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "pwsh",
+            "#!/bin/sh\nprintf '{\"tag_name\":\"v8.8.8\"}'\n",
+        );
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+
+        let raw = super::fetch_release_json_via_powershell("https://example.test/releases/latest")
+            .expect("pwsh fallback should return release JSON");
+
+        assert_eq!(raw, "{\"tag_name\":\"v8.8.8\"}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn powershell_release_fetch_stops_after_found_command_failure() {
+        let _guard = env_mutex_lock();
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "powershell", "#!/bin/sh\nexit 1\n");
+        write_fake_command(
+            &bin_dir,
+            "pwsh",
+            "#!/bin/sh\nprintf '{\"tag_name\":\"v7.7.7\"}'\n",
+        );
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+
+        let raw = super::fetch_release_json_via_powershell("https://example.test/releases/latest");
+
+        assert_eq!(raw, None);
+    }
+
+    #[test]
+    fn preferred_wait_timeout_matches_platform_without_local_state() {
         let _guard = env_mutex_lock();
         let temp = tempdir().unwrap();
 
-        let original_xdg_cache_home = env::var_os("XDG_CACHE_HOME");
-        let original_localappdata = env::var_os("LOCALAPPDATA");
-        let original_appdata = env::var_os("APPDATA");
-
-        unsafe {
-            env::set_var("XDG_CACHE_HOME", temp.path());
-            env::set_var("LOCALAPPDATA", temp.path());
-            env::set_var("APPDATA", temp.path());
-        }
+        let _xdg_guard = EnvVarGuard::set("XDG_CACHE_HOME", temp.path().as_os_str().to_os_string());
+        let _localappdata_guard =
+            EnvVarGuard::set("LOCALAPPDATA", temp.path().as_os_str().to_os_string());
+        let _appdata_guard = EnvVarGuard::set("APPDATA", temp.path().as_os_str().to_os_string());
 
         let timeout = super::preferred_update_notice_wait_timeout();
 
-        match original_xdg_cache_home {
-            Some(value) => unsafe { env::set_var("XDG_CACHE_HOME", value) },
-            None => unsafe { env::remove_var("XDG_CACHE_HOME") },
+        if cfg!(windows) {
+            assert_eq!(timeout, super::UPDATE_NOTICE_WINDOWS_CHECK_WAIT_TIMEOUT);
+        } else {
+            assert_eq!(timeout, super::UPDATE_NOTICE_FAST_WAIT_TIMEOUT);
         }
-        match original_localappdata {
-            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
-            None => unsafe { env::remove_var("LOCALAPPDATA") },
-        }
-        match original_appdata {
-            Some(value) => unsafe { env::set_var("APPDATA", value) },
-            None => unsafe { env::remove_var("APPDATA") },
-        }
-
-        assert_eq!(timeout, Duration::from_millis(50));
     }
 
     #[test]
@@ -1068,36 +1205,54 @@ mod tests {
         fs::create_dir_all(&cache_dir).unwrap();
         fs::write(cache_dir.join("latest-release-tag.txt"), "v9.9.9").unwrap();
 
-        let original_xdg_cache_home = env::var_os("XDG_CACHE_HOME");
-        let original_localappdata = env::var_os("LOCALAPPDATA");
-        let original_appdata = env::var_os("APPDATA");
-
-        unsafe {
-            env::set_var("XDG_CACHE_HOME", temp.path());
-            env::set_var("LOCALAPPDATA", temp.path());
-            env::set_var("APPDATA", temp.path());
-        }
+        let _xdg_guard = EnvVarGuard::set("XDG_CACHE_HOME", temp.path().as_os_str().to_os_string());
+        let _localappdata_guard =
+            EnvVarGuard::set("LOCALAPPDATA", temp.path().as_os_str().to_os_string());
+        let _appdata_guard = EnvVarGuard::set("APPDATA", temp.path().as_os_str().to_os_string());
 
         let timeout = super::preferred_update_notice_wait_timeout();
 
-        match original_xdg_cache_home {
-            Some(value) => unsafe { env::set_var("XDG_CACHE_HOME", value) },
-            None => unsafe { env::remove_var("XDG_CACHE_HOME") },
-        }
-        match original_localappdata {
-            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
-            None => unsafe { env::remove_var("LOCALAPPDATA") },
-        }
-        match original_appdata {
-            Some(value) => unsafe { env::set_var("APPDATA", value) },
-            None => unsafe { env::remove_var("APPDATA") },
-        }
-
-        assert_eq!(timeout, Duration::from_millis(50));
+        assert_eq!(timeout, super::UPDATE_NOTICE_FAST_WAIT_TIMEOUT);
     }
 
     #[test]
-    fn cached_refresh_failure_surfaces_on_next_notice_check() {
+    fn windows_wait_timeout_is_short_after_recent_failure() {
+        let temp = tempdir().unwrap();
+        let cache_path = temp.path().join("latest-release-tag.txt");
+        let failure_state_path = temp.path().join("update-check-failure-at.txt");
+
+        assert!(super::write_timestamp(&failure_state_path, 100));
+
+        let timeout = super::preferred_update_notice_wait_timeout_for_state(
+            true,
+            100 + super::UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS - 1,
+            &cache_path,
+            &failure_state_path,
+        );
+
+        assert_eq!(timeout, super::UPDATE_NOTICE_FAST_WAIT_TIMEOUT);
+    }
+
+    #[test]
+    fn windows_wait_timeout_is_long_when_first_check_can_report_notice() {
+        let temp = tempdir().unwrap();
+        let cache_path = temp.path().join("latest-release-tag.txt");
+        let failure_state_path = temp.path().join("update-check-failure-at.txt");
+
+        let timeout = super::preferred_update_notice_wait_timeout_for_state(
+            true,
+            100,
+            &cache_path,
+            &failure_state_path,
+        );
+
+        assert_eq!(timeout, super::UPDATE_NOTICE_WINDOWS_CHECK_WAIT_TIMEOUT);
+    }
+
+    #[test]
+    fn cached_refresh_failure_stays_quiet_by_default() {
+        let _guard = env_mutex_lock();
+        let _notice_guard = EnvVarGuard::remove("OTA_SHOW_UPDATE_CHECK_FAILURES");
         let temp = tempdir().unwrap();
         let notice_state_path = temp.path().join("update-check-failure-notice-at.txt");
         let failure_state_path =
@@ -1121,7 +1276,7 @@ mod tests {
             &cache_path,
         );
 
-        assert_eq!(notice, Some(super::render_update_check_failed_notice()));
+        assert_eq!(notice, None);
     }
 
     #[test]
@@ -1134,16 +1289,19 @@ mod tests {
     #[test]
     fn stale_cache_without_local_notice_requires_synchronous_refresh() {
         assert!(super::should_run_update_check_synchronously(
-            true, false, false
+            true, false, false, false
         ));
         assert!(super::should_run_update_check_synchronously(
-            false, false, false
+            false, false, false, false
         ));
         assert!(!super::should_run_update_check_synchronously(
-            true, true, false
+            true, true, false, false
         ));
         assert!(!super::should_run_update_check_synchronously(
-            true, false, true
+            true, false, true, false
+        ));
+        assert!(!super::should_run_update_check_synchronously(
+            false, false, false, true
         ));
     }
 

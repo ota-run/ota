@@ -104,6 +104,7 @@ curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
 This path now recognizes Windows-style shells and downloads the release binary instead of falling back to cargo.
+If the existing `ota.exe` is locked by a running process, the installer stages the replacement, reports it as pending, and exits successfully.
 
 ## Verify
 

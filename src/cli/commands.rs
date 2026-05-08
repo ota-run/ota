@@ -33833,13 +33833,7 @@ fn render_up_preview_result(
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => CommandOutput {
-            stdout: render_up_preview_text(
-                text_path,
-                summary,
-                contract_identity,
-                execution,
-                plan,
-            ),
+            stdout: render_up_preview_text(text_path, summary, contract_identity, execution, plan),
             stderr: None,
             exit_code: if ready { 0 } else { 1 },
         },

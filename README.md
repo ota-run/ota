@@ -112,6 +112,8 @@ Windows Git Bash, MSYS, MinGW, or Cygwin:
 curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
+If the existing `ota.exe` is locked, the shell installer stages the replacement and reports it as pending instead of leaking a file-in-use error.
+
 Prebuilt release binaries are published for:
 
 - Linux `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`

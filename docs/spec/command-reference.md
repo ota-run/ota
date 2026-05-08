@@ -1493,7 +1493,7 @@ Current behavior:
 - `latest` resolves the newest release entry, including prereleases if present
 - `--version` overrides the channel when both are set
 - when the chosen target matches the installed binary, the command exits successfully and prints the up-to-date banner instead of reinstalling
-- on Windows, when `ota` is currently running, the downloaded binary is staged and applied after the current process exits
+- on Windows, when `ota` is currently running, the downloaded binary is staged and applied after the current process exits; a successfully scheduled replacement reports `pending` and exits successfully instead of surfacing a `Copy-Item` stack trace
 
 ## `ota policy`
 
