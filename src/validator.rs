@@ -35,6 +35,7 @@ use crate::schema::{
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
     parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
+use crate::workspace::load_contract_for_workspace_repo;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -1180,9 +1181,24 @@ fn validate_tasks(
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty());
+                    let service_repo_name = service
+                        .repo
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
                     if service.member.as_deref().is_some_and(|value| value.trim().is_empty()) {
                         errors.push(ValidationError::new(format!(
                             "task `{name}` target `{target_name}` must not declare an empty `service.member`"
+                        )));
+                    }
+                    if service.repo.as_deref().is_some_and(|value| value.trim().is_empty()) {
+                        errors.push(ValidationError::new(format!(
+                            "task `{name}` target `{target_name}` must not declare an empty `service.repo`"
+                        )));
+                    }
+                    if service_member_name.is_some() && service_repo_name.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{name}` target `{target_name}` must not declare both `service.member` and `service.repo`"
                         )));
                     }
                     if service.task.trim().is_empty() {
@@ -1196,6 +1212,7 @@ fn validate_tasks(
                             contract,
                             contract_path,
                             service_member_name,
+                            service_repo_name,
                             service_task_name,
                             name,
                             target_name,
@@ -1213,7 +1230,11 @@ fn validate_tasks(
                         if !task_declares_service_runtime(&service_task) {
                             errors.push(ValidationError::new(format!(
                                 "task `{name}` target `{target_name}` references `{}`, but task `{service_task_name}` is not a service task",
-                                service_target_label(service_member_name, service_task_name),
+                                service_target_label(
+                                    service_member_name,
+                                    service_repo_name,
+                                    service_task_name,
+                                ),
                             )));
                         } else if let Some(listener_name) = listener_name.as_deref()
                             && !task_declares_listener(&service_task, listener_name)
@@ -1221,16 +1242,30 @@ fn validate_tasks(
                             errors.push(ValidationError::new(format!(
                                 "task `{name}` target `{target_name}` references unknown listener `{}` on {}",
                                 listener_name,
-                                service_target_label(service_member_name, service_task_name),
+                                service_target_label(
+                                    service_member_name,
+                                    service_repo_name,
+                                    service_task_name,
+                                ),
                             )));
                         } else if listener_name.is_some() {
-                            if service_member_name.is_none() {
+                            if service_member_name.is_none() && service_repo_name.is_none() {
                                 validate_task_target_activation_shape(
                                     contract,
                                     name,
                                     target_name,
                                     target,
                                     service_task_name,
+                                    &service_task,
+                                    errors,
+                                );
+                            } else if service_repo_name.is_some() {
+                                validate_cross_repo_target_shape(
+                                    name,
+                                    target_name,
+                                    target,
+                                    service_task_name,
+                                    listener_name.as_deref().expect("listener should resolve"),
                                     &service_task,
                                     errors,
                                 );
@@ -1624,10 +1659,15 @@ fn resolve_declared_service_listener_name(
     }
 }
 
-fn service_target_label(service_member: Option<&str>, service_task_name: &str) -> String {
-    match service_member {
-        Some(member) => format!("member `{member}` task `{service_task_name}`"),
-        None => format!("service task `{service_task_name}`"),
+fn service_target_label(
+    service_member: Option<&str>,
+    service_repo: Option<&str>,
+    service_task_name: &str,
+) -> String {
+    match (service_member, service_repo) {
+        (Some(member), None) => format!("member `{member}` task `{service_task_name}`"),
+        (None, Some(repo)) => format!("workspace repo `{repo}` task `{service_task_name}`"),
+        _ => format!("service task `{service_task_name}`"),
     }
 }
 
@@ -1635,19 +1675,50 @@ fn resolve_target_service_validation_task(
     contract: &Contract,
     contract_path: Option<&Path>,
     service_member: Option<&str>,
+    service_repo: Option<&str>,
     service_task_name: &str,
     task_name: &str,
     target_name: &str,
     errors: &mut Vec<ValidationError>,
 ) -> Option<TaskSpec> {
-    let Some(member) = service_member else {
+    if service_member.is_none() && service_repo.is_none() {
         return contract.tasks.get(service_task_name).cloned().or_else(|| {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` target `{target_name}` references unknown `service.task: {service_task_name}`"
             )));
             None
         });
-    };
+    }
+
+    if let Some(repo) = service_repo {
+        let Some(contract_path) = contract_path else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` target `{target_name}` uses `service.repo: {repo}`, but repo targets require validating from a repo contract path"
+            )));
+            return None;
+        };
+        let producer_contract = match load_contract_for_workspace_repo(contract_path, repo) {
+            Ok((contract, _)) => contract,
+            Err(error) => {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` could not load `service.repo: {repo}`: {error}"
+                )));
+                return None;
+            }
+        };
+        return producer_contract
+            .tasks
+            .get(service_task_name)
+            .cloned()
+            .or_else(|| {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` target `{target_name}` references unknown `service.task: {service_task_name}` in workspace repo `{repo}`"
+                )));
+                None
+            });
+    }
+
+    let member = service_member.expect("member or repo producer ref should be present");
 
     let Some(contract_path) = contract_path else {
         errors.push(ValidationError::new(format!(
@@ -1791,6 +1862,46 @@ fn validate_cross_member_target_shape(
                 )));
             }
         }
+    }
+}
+
+fn validate_cross_repo_target_shape(
+    task_name: &str,
+    target_name: &str,
+    target: &TaskTargetSpec,
+    service_task_name: &str,
+    listener_name: &str,
+    service_task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(service) = target.service.as_ref() else {
+        return;
+    };
+    if service.address_view != TaskTargetAddressView::Host {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` target `{target_name}` uses `service.repo`, but only `address_view: host` is currently supported"
+        )));
+        return;
+    }
+
+    let Ok(Some(listener)) = select_target_listener_for_host_view(service_task, listener_name)
+    else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` target `{target_name}` uses workspace repo `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare one consistent `project.host` endpoint"
+        )));
+        return;
+    };
+
+    let Some(host) = listener.project.host.as_ref() else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` target `{target_name}` uses workspace repo `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare `project.host`"
+        )));
+        return;
+    };
+    if host.port.mode != TaskRuntimeHostPortMode::Fixed || host.port.value.is_none() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` target `{target_name}` uses workspace repo `address_view: host`, but producer task `{service_task_name}` listener `{listener_name}` does not declare a fixed `project.host.port.value`"
+        )));
     }
 }
 
@@ -3540,8 +3651,10 @@ fn collect_managed_isolated_path_mutation_advisories(contract: &Contract) -> Vec
         let default_backend = task_execution_backend(contract, task, Backend::Native);
         if default_backend == Backend::Container
             && task.mode_execution_branch(Backend::Container).is_none()
-            && let Some(context_name) = task_execution_context_name(contract, task, Backend::Container)
-            && let Some(context) = resolved_task_context_for_backend(contract, task, Backend::Container)
+            && let Some(context_name) =
+                task_execution_context_name(contract, task, Backend::Container)
+            && let Some(context) =
+                resolved_task_context_for_backend(contract, task, Backend::Container)
         {
             collect_task_body_managed_path_advisories(
                 task_name,
@@ -3554,8 +3667,10 @@ fn collect_managed_isolated_path_mutation_advisories(contract: &Contract) -> Vec
         }
 
         if let Some(branch) = task.mode_execution_branch(Backend::Container)
-            && let Some(context_name) = task_execution_context_name(contract, task, Backend::Container)
-            && let Some(context) = resolved_task_context_for_backend(contract, task, Backend::Container)
+            && let Some(context_name) =
+                task_execution_context_name(contract, task, Backend::Container)
+            && let Some(context) =
+                resolved_task_context_for_backend(contract, task, Backend::Container)
         {
             collect_task_body_managed_path_advisories(
                 task_name,
@@ -3584,7 +3699,8 @@ fn collect_task_body_managed_path_advisories(
     };
 
     for isolated_path in crate::execution::context_dependency_isolation_paths(context) {
-        let Some(normalized_path) = normalize_dependency_isolated_path(isolated_path.as_str()) else {
+        let Some(normalized_path) = normalize_dependency_isolated_path(isolated_path.as_str())
+        else {
             continue;
         };
         if !task_body_appears_to_mutate_managed_isolated_path(body, normalized_path.as_str()) {
@@ -9314,6 +9430,170 @@ tasks:
                 .unwrap();
         validate_contract_with_path(&contract, Some(&contract_path)).expect(
             "cross-member internal ensure_ready should validate when backend binding is shared",
+        );
+    }
+
+    #[test]
+    fn validates_workspace_repo_host_target_activation() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  sandbox:
+    run: echo web
+    targets:
+      api:
+        service:
+          repo: api
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let contract_path = fixture.path().join("web").join("ota.yaml");
+        let contract = crate::parser::load_contract(&contract_path).unwrap();
+        validate_contract_with_path(&contract, Some(&contract_path))
+            .expect("workspace repo host target activation should validate");
+    }
+
+    #[test]
+    fn rejects_workspace_repo_non_host_target() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  sandbox:
+    run: echo web
+    targets:
+      api:
+        service:
+          repo: api
+          task: dev
+          listener: http
+          address_view: internal
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let contract_path = fixture.path().join("web").join("ota.yaml");
+        let contract = crate::parser::load_contract(&contract_path).unwrap();
+        let errors = validate_contract_with_path(&contract, Some(&contract_path)).unwrap_err();
+        assert!(
+            errors
+                .errors()
+                .iter()
+                .any(|error| error.to_string().contains(
+                    "uses `service.repo`, but only `address_view: host` is currently supported"
+                ))
         );
     }
 

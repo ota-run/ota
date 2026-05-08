@@ -506,6 +506,75 @@ pub fn ordered_workspace_repo_refs(
         .collect())
 }
 
+pub fn discover_workspace_contract_path(start: &Path) -> Option<PathBuf> {
+    let mut current = if start.is_dir() {
+        start
+    } else {
+        start.parent().unwrap_or_else(|| Path::new("."))
+    };
+
+    loop {
+        let candidate = current.join(DEFAULT_WORKSPACE_FILE);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+
+        let Some(parent) = current.parent() else {
+            return None;
+        };
+        if parent == current {
+            return None;
+        }
+        current = parent;
+    }
+}
+
+pub fn load_contract_for_workspace_repo(
+    contract_path: &Path,
+    repo_name: &str,
+) -> Result<(Contract, PathBuf), String> {
+    let workspace_path = discover_workspace_contract_path(contract_path).ok_or_else(|| {
+        format!(
+            "`service.repo: {repo_name}` requires running from a workspace repo declared under `{DEFAULT_WORKSPACE_FILE}`"
+        )
+    })?;
+    let workspace = load_workspace_contract(&workspace_path).map_err(|error| {
+        format!(
+            "could not load workspace contract `{}`: {error}",
+            workspace_path.display()
+        )
+    })?;
+    let repo_refs = ordered_workspace_repo_refs(&workspace_path, &workspace)
+        .map_err(|error| error.to_string())?;
+    let normalized_contract_path = normalized_path_identity(contract_path);
+    if !repo_refs
+        .iter()
+        .any(|repo| normalized_path_identity(&repo.contract_path) == normalized_contract_path)
+    {
+        return Err(format!(
+            "`service.repo: {repo_name}` requires running from a workspace repo contract declared in `{}`",
+            workspace_path.display()
+        ));
+    }
+    let repo = repo_refs
+        .into_iter()
+        .find(|repo| repo.name == repo_name)
+        .ok_or_else(|| format!("workspace does not declare repo `{repo_name}`"))?;
+    if !repo.present {
+        return Err(format!(
+            "workspace repo `{repo_name}` contract was not found: `{}`",
+            repo.contract_path.display()
+        ));
+    }
+    let contract = load_contract(&repo.contract_path).map_err(|error| {
+        format!(
+            "workspace repo `{repo_name}` contract `{}` could not be loaded: {error}",
+            repo.contract_path.display()
+        )
+    })?;
+    Ok((contract, repo.contract_path))
+}
+
 pub fn workspace_policy_env_values(contract: &WorkspaceContract) -> BTreeMap<String, String> {
     workspace_policy_env_rules(contract)
         .map(|rules| rules.values)
@@ -1439,6 +1508,31 @@ repos:
         .unwrap();
         load_workspace_contract(&workspace_path).unwrap();
         assert_eq!(super::workspace_cache_entries_for_path(&workspace_path), 1);
+    }
+
+    #[test]
+    fn discover_workspace_contract_path_walks_past_nested_git_repo_boundary() {
+        let fixture = TempDir::new().unwrap();
+        let workspace_path = fixture.path().join("ota.workspace.yaml");
+
+        std::fs::write(
+            &workspace_path,
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  web:
+    path: ./web
+"#,
+        )
+        .unwrap();
+        let web = fixture.path().join("web");
+        std::fs::create_dir_all(web.join(".git")).unwrap();
+        std::fs::write(web.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
+
+        let discovered = super::discover_workspace_contract_path(&web.join("ota.yaml"));
+        assert_eq!(discovered.as_deref(), Some(workspace_path.as_path()));
     }
 
     #[test]
