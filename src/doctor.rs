@@ -1117,6 +1117,9 @@ impl Finding {
             s if s.starts_with("Check failed: ") => "OTA_CHECK_FAILED",
             s if s.starts_with("Check timed out: ") => "OTA_CHECK_TIMED_OUT",
             s if s.starts_with("Contract drift:") => "OTA_CONTRACT_DRIFT",
+            s if s.starts_with("Task `") && s.contains(" mutates managed isolated path `") => {
+                "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH"
+            }
             _ => "OTA_DOCTOR_FINDING_UNKNOWN",
         }
     }
@@ -1171,6 +1174,7 @@ impl Finding {
             | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => "policy",
             "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => "execution",
             "OTA_CONTRACT_DRIFT" => "contract",
+            "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "contract",
             _ => "contract",
         }
     }
@@ -1180,7 +1184,8 @@ impl Finding {
             "OTA_TASKS_MISSING"
             | "OTA_CONTRACT_DRIFT"
             | "OTA_CHECK_FAILED"
-            | "OTA_CHECK_TIMED_OUT" => "repo_contract",
+            | "OTA_CHECK_TIMED_OUT"
+            | "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "repo_contract",
             "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
                 "repo_contract"
             }
@@ -1580,6 +1585,15 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
+            "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => (
+                "a task body appears to mutate an ota-managed isolated attachment path"
+                    .to_string(),
+                "task bodies leave ota-managed isolated attachment paths to the underlying tool"
+                    .to_string(),
+                "contract".to_string(),
+                String::new(),
+                String::new(),
+            ),
             _ => (
                 self.summary.clone(),
                 self.why.clone(),
@@ -1671,7 +1685,8 @@ impl Finding {
             | "OTA_TOOL_PROBE_FAILED"
             | "OTA_TOOL_VERSION_UNPARSEABLE"
             | "OTA_CHECK_FAILED"
-            | "OTA_CHECK_TIMED_OUT" => Some(FindingProvenanceContext {
+            | "OTA_CHECK_TIMED_OUT"
+            | "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(FindingProvenanceContext {
                 provenance: "repo contract",
                 provenance_key: "repo_contract",
             }),
@@ -2172,6 +2187,15 @@ fn diagnose_contract_advisories(contract: &Contract, findings: &mut Vec<Finding>
                 ),
                 why: ContractAdvisory::LikelyUnusedAttachment(advisory.clone()).why(),
                 next: ContractAdvisory::LikelyUnusedAttachment(advisory).next(),
+            },
+            ContractAdvisory::MutatesManagedIsolatedPath(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Task `{}` mutates managed isolated path `{}`",
+                    advisory.task_name, advisory.isolated_path
+                ),
+                why: ContractAdvisory::MutatesManagedIsolatedPath(advisory.clone()).why(),
+                next: ContractAdvisory::MutatesManagedIsolatedPath(advisory).next(),
             },
         });
     }
@@ -5758,6 +5782,45 @@ tasks:
             finding.severity == FindingSeverity::Warn
                 && finding.summary == "Attachment `.m2` may be unused in context `app`"
                 && finding.why.contains("point Maven at `/workspace/.m2`")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_task_mutates_managed_isolated_path() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - .next
+tasks:
+  build:
+    run: rm -rf .next && next build
+"#,
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        super::diagnose_contract_advisories(&contract, &mut findings);
+
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary == "Task `build` mutates managed isolated path `.next`"
+                && finding
+                    .why
+                    .contains("execution.contexts.verify:ctx.attachments.isolated_paths")
+                && finding.provenance().as_deref() == Some("repo contract")
         }));
     }
 

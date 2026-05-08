@@ -3306,6 +3306,7 @@ fn backend_mode_name(backend: Backend) -> &'static str {
 pub enum ContractAdvisory {
     DependsOnBoundary(DependsOnBoundaryAdvisory),
     LikelyUnusedAttachment(AttachmentUseAdvisory),
+    MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3323,6 +3324,13 @@ pub struct AttachmentUseAdvisory {
     pub effective_path: String,
     pub tool: String,
     pub expected_env: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedIsolatedPathMutationAdvisory {
+    pub task_name: String,
+    pub context_name: String,
+    pub isolated_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3347,6 +3355,10 @@ impl ContractAdvisory {
                 advisory.tool,
                 advisory.effective_path
             ),
+            ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
+                "task `{}` mutates managed isolated path `{}`",
+                advisory.task_name, advisory.isolated_path
+            ),
         }
     }
 
@@ -3363,6 +3375,10 @@ impl ContractAdvisory {
                 advisory.tool,
                 advisory.effective_path
             ),
+            ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
+                "task `{}` appears to mutate `{}`, which is declared under `execution.contexts.{}.attachments.isolated_paths`",
+                advisory.task_name, advisory.isolated_path, advisory.context_name
+            ),
         }
     }
 
@@ -3371,7 +3387,8 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(_) => Some(String::from(
                 "only durable external side effects carry across",
             )),
-            ContractAdvisory::LikelyUnusedAttachment(_) => None,
+            ContractAdvisory::LikelyUnusedAttachment(_)
+            | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
         }
     }
 
@@ -3380,7 +3397,8 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(advisory) => Some(
                 describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", "),
             ),
-            ContractAdvisory::LikelyUnusedAttachment(_) => None,
+            ContractAdvisory::LikelyUnusedAttachment(_)
+            | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
         }
     }
 
@@ -3391,6 +3409,7 @@ impl ContractAdvisory {
                 "point {} at `{}`",
                 advisory.tool, advisory.effective_path
             )),
+            ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
         }
     }
 
@@ -3407,6 +3426,10 @@ impl ContractAdvisory {
                 advisory.context_name,
                 advisory.isolated_path
             ),
+            ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
+                "remove manual cleanup of `{}` from task `{}` and let the tool manage that isolated attachment inside context `{}`",
+                advisory.isolated_path, advisory.task_name, advisory.context_name
+            ),
         }
     }
 }
@@ -3415,6 +3438,7 @@ pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory>
     let mut advisories = Vec::new();
     advisories.extend(collect_depends_on_boundary_advisories(contract));
     advisories.extend(collect_attachment_use_advisories(contract));
+    advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories
 }
 
@@ -3506,6 +3530,103 @@ fn collect_attachment_use_advisories(contract: &Contract) -> Vec<ContractAdvisor
     }
 
     advisories
+}
+
+fn collect_managed_isolated_path_mutation_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for (task_name, task) in &contract.tasks {
+        let default_backend = task_execution_backend(contract, task, Backend::Native);
+        if default_backend == Backend::Container
+            && task.mode_execution_branch(Backend::Container).is_none()
+            && let Some(context_name) = task_execution_context_name(contract, task, Backend::Container)
+            && let Some(context) = resolved_task_context_for_backend(contract, task, Backend::Container)
+        {
+            collect_task_body_managed_path_advisories(
+                task_name,
+                task.default_execution_body(),
+                context_name,
+                context,
+                &mut seen,
+                &mut advisories,
+            );
+        }
+
+        if let Some(branch) = task.mode_execution_branch(Backend::Container)
+            && let Some(context_name) = task_execution_context_name(contract, task, Backend::Container)
+            && let Some(context) = resolved_task_context_for_backend(contract, task, Backend::Container)
+        {
+            collect_task_body_managed_path_advisories(
+                task_name,
+                branch.execution_body(),
+                context_name,
+                context,
+                &mut seen,
+                &mut advisories,
+            );
+        }
+    }
+
+    advisories
+}
+
+fn collect_task_body_managed_path_advisories(
+    task_name: &str,
+    body: Option<&str>,
+    context_name: &str,
+    context: &ExecutionContext,
+    seen: &mut BTreeSet<(String, String, String)>,
+    advisories: &mut Vec<ContractAdvisory>,
+) {
+    let Some(body) = body else {
+        return;
+    };
+
+    for isolated_path in crate::execution::context_dependency_isolation_paths(context) {
+        let Some(normalized_path) = normalize_dependency_isolated_path(isolated_path.as_str()) else {
+            continue;
+        };
+        if !task_body_appears_to_mutate_managed_isolated_path(body, normalized_path.as_str()) {
+            continue;
+        }
+
+        let advisory = ManagedIsolatedPathMutationAdvisory {
+            task_name: task_name.to_string(),
+            context_name: context_name.to_string(),
+            isolated_path: isolated_path.clone(),
+        };
+        if seen.insert((
+            advisory.task_name.clone(),
+            advisory.context_name.clone(),
+            advisory.isolated_path.clone(),
+        )) {
+            advisories.push(ContractAdvisory::MutatesManagedIsolatedPath(advisory));
+        }
+    }
+}
+
+fn task_body_appears_to_mutate_managed_isolated_path(body: &str, isolated_path: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    let path = isolated_path.to_ascii_lowercase();
+    if !lower.contains(&path) {
+        return false;
+    }
+
+    let destructive_patterns = [
+        "rm -rf",
+        "rm -fr",
+        "rm -r ",
+        "rm -d ",
+        "rimraf",
+        "rmsync(",
+        "fs.rmsync(",
+        "removesync(",
+    ];
+
+    destructive_patterns
+        .iter()
+        .any(|pattern| lower.contains(pattern))
 }
 
 fn attachment_path_expectation(path: &str) -> Option<(&'static str, &'static str, &'static str)> {
@@ -4697,6 +4818,78 @@ tasks:
                     && value.isolated_path == ".pip-cache"
                     && value.effective_path == "/workspace/.pip-cache"
                     && value.expected_env == "PIP_CACHE_DIR"
+        )));
+    }
+
+    #[test]
+    fn collects_managed_isolated_path_mutation_advisory_for_obvious_task_cleanup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - .next
+tasks:
+  build:
+    run: rm -rf .next && next build
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::MutatesManagedIsolatedPath(value)
+                if value.task_name == "build"
+                    && value.context_name == "verify:ctx"
+                    && value.isolated_path == ".next"
+        )));
+    }
+
+    #[test]
+    fn does_not_collect_managed_isolated_path_mutation_advisory_for_non_destructive_reference() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - .next
+tasks:
+  build:
+    run: echo .next && next build
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::MutatesManagedIsolatedPath(value)
+                if value.task_name == "build" && value.isolated_path == ".next"
         )));
     }
 

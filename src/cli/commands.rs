@@ -1179,6 +1179,18 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::MutatesManagedIsolatedPath(value) => format!(
+            "{} task `{}` path `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            value.isolated_path,
+            paint_key("Context:"),
+            render_validate_warning_detail(&value.context_name),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
     }
 }
 
@@ -39195,6 +39207,40 @@ tasks:
     }
 
     #[test]
+    fn collect_validate_warnings_reports_managed_isolated_path_mutation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - .next
+tasks:
+  build:
+    run: rm -rf .next && next build
+"#,
+        )
+        .unwrap();
+
+        let warnings = collect_validate_warnings(&contract);
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("task `build` mutates managed isolated path `.next`")
+                && warning.contains("execution.contexts.verify:ctx.attachments.isolated_paths")
+        }));
+    }
+
+    #[test]
     fn render_validate_success_output_includes_warning_section() {
         let advisories = vec![ContractAdvisory::DependsOnBoundary(
             crate::validator::DependsOnBoundaryAdvisory {
@@ -39227,6 +39273,33 @@ tasks:
         assert!(rendered.contains("lifecycle: none → persistent"));
         assert!(rendered.contains("Why: only durable external side effects survive this edge"));
         assert!(rendered.contains("Next:"));
+    }
+
+    #[test]
+    fn render_validate_success_output_renders_managed_isolated_path_warning() {
+        let advisories = vec![ContractAdvisory::MutatesManagedIsolatedPath(
+            crate::validator::ManagedIsolatedPathMutationAdvisory {
+                task_name: String::from("build"),
+                context_name: String::from("verify:ctx"),
+                isolated_path: String::from(".next"),
+            },
+        )];
+        let rendered = strip_ansi_codes(&render_validate_success_output(
+            Path::new("/tmp/ota.yaml"),
+            None,
+            "./ota.yaml",
+            &advisories,
+        ));
+
+        assert!(rendered.contains("Warnings"), "{rendered}");
+        assert!(rendered.contains("task `build` path `.next`"), "{rendered}");
+        assert!(rendered.contains("Context: verify:ctx"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "Why: task `build` appears to mutate `.next`, which is declared under `execution.contexts.verify:ctx.attachments.isolated_paths`"
+            ),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -43493,6 +43566,122 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_classifies_managed_isolated_path_runtime_mutation() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - .next
+tasks:
+  build:
+    run: rm -rf .next && next build
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "build",
+            "build",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "Error: , Unknown error: Device or resource busy '.next'\nnode:fs:1222",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nContext:     verify:ctx\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(
+            rendered.contains("ERROR  Task mutated managed isolated path"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "task `build` failed while mutating `.next`, which is declared under `execution.contexts.verify:ctx.attachments.isolated_paths`"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Output:"), "{rendered}");
+        assert!(
+            rendered.contains("remove manual cleanup of `.next` from task `build`"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("ERROR  Task Failed"), "{rendered}");
+    }
+
+    #[test]
+    fn run_failure_text_classifies_managed_isolated_path_runtime_mutation_without_static_match() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+      attachments:
+        isolated_paths:
+          - .next
+tasks:
+  build:
+    run: next build
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "build",
+            "build",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "Error: , Unknown error: Device or resource busy '.next'\nnode:fs:1222",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nContext:     verify:ctx\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(
+            rendered.contains("ERROR  Task mutated managed isolated path"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "task `build` failed while mutating `.next`, which is declared under `execution.contexts.verify:ctx.attachments.isolated_paths`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn execution_summary_uses_workload_endpoint_when_runtime_is_absent() {
         let mut workloads = BTreeMap::new();
         workloads.insert(
@@ -47075,6 +47264,21 @@ fn render_run_captured_failure_text(
             receipt_text,
         );
     }
+    if let Some(advisory) =
+        detect_managed_isolated_path_runtime_mutation(contract, task_name, stdout, stderr)
+    {
+        return render_managed_isolated_path_failure_text(
+            where_value,
+            task_name,
+            requested_task_name,
+            &advisory,
+            stdout,
+            stderr,
+            summary,
+            receipt_text,
+            member,
+        );
+    }
     let mut next_steps = Vec::new();
     let excerpt = run_output_excerpt(stdout, stderr, 20);
     if excerpt.is_some() {
@@ -47157,6 +47361,138 @@ fn render_task_interrupted_text(
     let summary_override = summary_with_status_override(Some(summary_block), "interrupted");
     append_summary_block(&mut out, summary_override.as_deref());
     append_post_summary_next_block(&mut out, &next_steps);
+    out
+}
+
+fn detect_managed_isolated_path_runtime_mutation(
+    contract: &Contract,
+    task_name: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Option<crate::validator::ManagedIsolatedPathMutationAdvisory> {
+    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    if !combined.contains("device or resource busy")
+        && !combined.contains("resource busy")
+        && !combined.contains("ebusy")
+    {
+        return None;
+    }
+
+    managed_isolated_paths_for_task(contract, task_name)
+        .into_iter()
+        .find_map(|(context_name, isolated_path)| {
+            combined
+                .contains(&isolated_path.to_ascii_lowercase())
+                .then_some(crate::validator::ManagedIsolatedPathMutationAdvisory {
+                    task_name: task_name.to_string(),
+                    context_name,
+                    isolated_path,
+                })
+        })
+}
+
+fn managed_isolated_paths_for_task(
+    contract: &Contract,
+    task_name: &str,
+) -> Vec<(String, String)> {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Vec::new();
+    };
+    let Some(execution) = contract.execution.as_ref() else {
+        return Vec::new();
+    };
+    let Some(context_name) = task.context_for_backend(Some(execution), Backend::Container) else {
+        return Vec::new();
+    };
+    let Some(context) = execution.contexts.get(context_name) else {
+        return Vec::new();
+    };
+    if context.backend != Backend::Container {
+        return Vec::new();
+    }
+
+    crate::execution::context_dependency_isolation_paths(context)
+        .into_iter()
+        .map(|isolated_path| (context_name.to_string(), isolated_path))
+        .collect()
+}
+
+fn render_managed_isolated_path_failure_text(
+    where_value: &str,
+    task_name: &str,
+    requested_task_name: &str,
+    advisory: &crate::validator::ManagedIsolatedPathMutationAdvisory,
+    stdout: &str,
+    stderr: &str,
+    summary_block: &str,
+    receipt_text: Option<&str>,
+    member: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Task mutated managed isolated path", "1;37")
+    );
+    if requested_task_name != task_name {
+        out.push_str(&format!(
+            "\n{} {}",
+            paint_key("Requested:"),
+            paint_code(requested_task_name)
+        ));
+    }
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Task:"),
+        paint_code(task_name)
+    ));
+    if let Some(context) = execution_context_from_summary_block(Some(summary_block)) {
+        out.push_str(&format!("\n{} {context}", paint_key("Context:")));
+    }
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    append_error_detail_section(
+        &mut out,
+        "Why:",
+        &[
+            format!(
+                "task `{}` failed while mutating `{}`, which is declared under `execution.contexts.{}.attachments.isolated_paths`",
+                advisory.task_name, advisory.isolated_path, advisory.context_name
+            ),
+            String::from(
+                "isolated attachment paths are managed by Ota for that container context",
+            ),
+        ],
+        None,
+    );
+    if let Some(excerpt) = run_output_excerpt(stdout, stderr, 20) {
+        append_output_excerpt_section(&mut out, &excerpt);
+    }
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push_str(receipt_text);
+    }
+    append_summary_block(&mut out, Some(summary_block));
+    append_post_summary_next_block(
+        &mut out,
+        &[
+            format!(
+                "remove manual cleanup of `{}` from task `{}`",
+                advisory.isolated_path, advisory.task_name
+            ),
+            format!(
+                "let the tool manage `{}` inside the isolated attachment for context `{}`",
+                advisory.isolated_path, advisory.context_name
+            ),
+            format!(
+                "rerun `{}` after the task stops mutating the managed isolated path",
+                repo_run_stream_command(requested_task_name, member)
+            ),
+        ],
+    );
     out
 }
 
