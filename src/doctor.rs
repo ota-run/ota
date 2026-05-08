@@ -21,9 +21,11 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::path::Component;
 use std::process::Command;
 use std::sync::{
     Arc,
@@ -52,13 +54,16 @@ use crate::provisioning::{
 };
 use crate::runner::{
     DeclaredEnvSourceStatus, LoadedDeclaredEnvSource, ResolvedExecutionBackend, RunError,
-    load_declared_env_sources, resolve_context_execution_backend,
-    resolve_declared_env_source_value, run_backend_command_captured,
+    host_runtime_readiness_observed, load_declared_env_sources,
+    resolve_context_execution_backend, resolve_declared_env_source_value,
+    run_backend_command_captured, task_runtime_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
-    RequirementSurface, RuntimeRequirement, ServiceReadinessSpec, ServiceSpec, ToolRequirement,
+    RequirementSurface, RuntimeRequirement, ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec,
+    ToolRequirement,
 };
+use crate::workspace::load_contract_for_workspace_repo_ref;
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, collect_contract_advisories};
 
@@ -1024,6 +1029,7 @@ impl Finding {
                 "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
             }
             s if s.starts_with("Service readiness failed: ") => "OTA_SERVICE_READINESS_FAILED",
+            s if s.starts_with("Service producer is not ready: ") => "OTA_SERVICE_CHECK_FAILED",
             s if s.starts_with("Service healthcheck failed: ") => "OTA_SERVICE_CHECK_FAILED",
             s if s.starts_with("Service healthcheck timed out: ") => "OTA_SERVICE_CHECK_TIMED_OUT",
             s if s.starts_with("Required service cannot be verified: ") => {
@@ -1907,6 +1913,7 @@ pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -
     if let Some(service) = contract.services.get(name)
         && let Some(finding) = service_finding(
             contract,
+            contract_path,
             name,
             service,
             working_dir,
@@ -2672,7 +2679,7 @@ fn diagnose_services(
 
     for (name, service) in &contract.services {
         if let Some(finding) =
-            service_finding(contract, name, service, working_dir, mode, lifecycle)
+            service_finding(contract, contract_path, name, service, working_dir, mode, lifecycle)
         {
             findings.push(finding);
         }
@@ -2681,6 +2688,7 @@ fn diagnose_services(
 
 fn service_finding(
     contract: &Contract,
+    contract_path: &Path,
     name: &str,
     service: &ServiceSpec,
     working_dir: &Path,
@@ -2688,6 +2696,9 @@ fn service_finding(
     lifecycle: Option<Lifecycle>,
 ) -> Option<Finding> {
     let rerun_doctor = rerun_doctor_command(mode, lifecycle);
+    if let Some(producer) = service.producer.as_ref() {
+        return producer_owned_service_finding(name, service, producer, contract_path, mode, lifecycle);
+    }
     if let Some(readiness) = &service.readiness {
         let from_context = readiness.from_context().unwrap_or_default();
         return match run_service_readiness(contract, name, service, working_dir, readiness) {
@@ -2805,6 +2816,217 @@ fn service_finding(
     }
 
     None
+}
+
+fn producer_owned_service_finding(
+    name: &str,
+    service: &ServiceSpec,
+    producer: &ServiceProducerSpec,
+    contract_path: &Path,
+    mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
+) -> Option<Finding> {
+    let rerun_doctor = rerun_doctor_command(mode, lifecycle);
+    let (producer_contract, producer_contract_path) =
+        match load_contract_for_workspace_repo_ref(contract_path, producer.repo.as_str(), "producer.repo") {
+            Ok(value) => value,
+            Err(error) => {
+                return Some(Finding {
+                    severity: if service.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Required service cannot be verified: {name}"),
+                    why: format!(
+                        "service `{name}` is owned by workspace repo `{}` task `{}`, but Ota could not load that producer contract: {}",
+                        producer.repo, producer.task, error
+                    ),
+                    next: format!(
+                        "repair workspace repo `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
+                        producer.repo
+                    ),
+                });
+            }
+        };
+    let producer_task = match producer_contract.tasks.get(producer.task.as_str()) {
+        Some(task) => task,
+        None => {
+            return Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Required service cannot be verified: {name}"),
+                why: format!(
+                    "service `{name}` is owned by workspace repo `{}` task `{}`, but that task is not declared",
+                    producer.repo, producer.task
+                ),
+                next: format!(
+                    "repair workspace repo `{}` task `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
+                    producer.repo, producer.task
+                ),
+            });
+        }
+    };
+    let listener_name = match resolve_producer_service_listener_name(producer_task, producer.listener.as_deref()) {
+        Ok(name) => name,
+        Err(error) => {
+            return Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Required service cannot be verified: {name}"),
+                why: format!(
+                    "service `{name}` is owned by workspace repo `{}` task `{}`, but {}",
+                    producer.repo, producer.task, error
+                ),
+                next: format!(
+                    "repair workspace repo `{}` task `{}` or refine `services.{name}.producer.listener`, then rerun `{rerun_doctor}`",
+                    producer.repo, producer.task
+                ),
+            });
+        }
+    };
+    let backend = match crate::runner::resolve_execution_backend_with_contract_path(
+        &producer_contract,
+        producer.task.as_str(),
+        crate::runner::ExecutionOverrides::default(),
+        Some(producer_contract_path.as_path()),
+    ) {
+        Ok(backend) => match backend {
+            ResolvedExecutionBackend::Native { .. } => Backend::Native,
+            ResolvedExecutionBackend::Container { .. } => Backend::Container,
+            ResolvedExecutionBackend::Remote { .. } => Backend::Remote,
+            ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
+        },
+        Err(error) => {
+            return Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Required service cannot be verified: {name}"),
+                why: format!(
+                    "service `{name}` is owned by workspace repo `{}` task `{}`, but Ota could not resolve that producer runtime: {}",
+                    producer.repo, producer.task, error
+                ),
+                next: format!(
+                    "repair workspace repo `{}` task `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
+                    producer.repo, producer.task
+                ),
+            });
+        }
+    };
+    let probe = match task_runtime_host_readiness_probe_for_backend(
+        producer_task,
+        backend,
+        listener_name.as_str(),
+    ) {
+        Ok(probe) => probe,
+        Err(error) => {
+            return Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Required service cannot be verified: {name}"),
+                why: format!(
+                    "service `{name}` is owned by workspace repo `{}` task `{}`, but {}",
+                    producer.repo, producer.task, error
+                ),
+                next: format!(
+                    "repair workspace repo `{}` task `{}` listener `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
+                    producer.repo, producer.task, listener_name
+                ),
+            });
+        }
+    };
+    if host_runtime_readiness_observed(&probe, None) {
+        return None;
+    }
+
+    Some(Finding {
+        severity: if service.required {
+            FindingSeverity::Error
+        } else {
+            FindingSeverity::Warn
+        },
+        summary: format!("Service producer is not ready: {name}"),
+        why: format!(
+            "service `{name}` is owned by workspace repo `{}` task `{}` listener `{}` and its projected host endpoint `{}:{}` is not ready",
+            producer.repo, producer.task, probe.listener, probe.address, probe.port
+        ),
+        next: format!(
+            "run `ota workspace up` to prepare the workspace end to end, or run `ota run {} {}` for workspace repo `{}` before rerunning `{rerun_doctor}`",
+            producer.task,
+            doctor_shell_quote(
+                &producer_contract_path
+                    .parent()
+                    .unwrap_or(producer_contract_path.as_path())
+                    .components()
+                    .filter(|component| !matches!(component, Component::CurDir))
+                    .fold(PathBuf::new(), |mut path, component| {
+                        path.push(component.as_os_str());
+                        path
+                    })
+                    .display()
+                    .to_string()
+            ),
+            producer.repo
+        ),
+    })
+}
+
+fn resolve_producer_service_listener_name(
+    task: &crate::schema::TaskSpec,
+    explicit_listener: Option<&str>,
+) -> Result<String, String> {
+    if let Some(listener) = explicit_listener.map(str::trim) {
+        if listener.is_empty() {
+            return Err(String::from("producer field `listener` must not be empty"));
+        }
+        return Ok(listener.to_string());
+    }
+    let listeners = task_declared_service_listener_names(task);
+    match listeners.len() {
+        1 => Ok(listeners
+            .into_iter()
+            .next()
+            .expect("one listener should exist")),
+        0 => Err(String::from("that task does not declare any service listeners")),
+        _ => Err(String::from(
+            "that task declares multiple listeners, so `services.<name>.producer.listener` must be explicit",
+        )),
+    }
+}
+
+fn task_declared_service_listener_names(task: &crate::schema::TaskSpec) -> BTreeSet<String> {
+    let mut listeners = BTreeSet::new();
+    if let Some(runtime) = task
+        .runtime
+        .as_ref()
+        .filter(|runtime| runtime.kind == crate::schema::TaskRuntimeKind::Service)
+    {
+        listeners.extend(runtime.listeners.keys().cloned());
+    }
+    if let Some(execution) = task.execution.as_ref() {
+        for (_, branch) in execution.modes.iter() {
+            if let Some(runtime) = branch
+                .runtime
+                .as_ref()
+                .filter(|runtime| runtime.kind == crate::schema::TaskRuntimeKind::Service)
+            {
+                listeners.extend(runtime.listeners.keys().cloned());
+            }
+        }
+    }
+    listeners
 }
 
 fn service_readiness_failure_why(
@@ -8369,6 +8591,103 @@ tasks:
             report.findings[0].next,
             "refine the managed service with `ota assist declare-service --name postgres --style tcp` or `--style http`, then rerun `ota doctor`"
         );
+    }
+
+    #[test]
+    fn producer_owned_service_surfaces_workspace_owner_when_unreachable() {
+        let reserved_listener =
+            TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let reserved_port = reserved_listener.local_addr().unwrap().port();
+        drop(reserved_listener);
+        let fixture = tempfile::tempdir().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: __PORT__
+"#
+            .replace("__PORT__", reserved_port.to_string().as_str())
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        let contract_path = fixture.path().join("web").join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: web
+services:
+  user-api:
+    required: true
+    producer:
+      repo: api
+      task: dev
+      listener: http
+tasks:
+  setup:
+    requires_services:
+      - user-api
+    run: echo setup
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        let contract = crate::parser::load_contract(&contract_path).unwrap();
+
+        let report = diagnose_contract(&contract, &contract_path);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Service producer is not ready: user-api")
+            .expect("expected producer-owned service finding");
+
+        assert!(finding.why.contains("workspace repo `api` task `dev` listener `http`"));
+        assert!(finding.next.contains("ota workspace up"));
+        assert!(finding.next.contains("ota run dev"));
+        assert!(finding.next.contains(
+            &format!("ota run dev '{}'", fixture.path().join("api").display())
+        ));
     }
 
     #[test]

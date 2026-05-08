@@ -2390,6 +2390,8 @@ pub struct ServiceSummary {
     pub name: String,
     pub required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub producer: Option<ServiceProducerSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub manager: Option<ServiceManagerSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
@@ -2413,6 +2415,10 @@ impl ServiceSummary {
         Self {
             name: name.to_string(),
             required: service.required,
+            producer: service
+                .producer
+                .as_ref()
+                .map(ServiceProducerSummary::from_spec),
             manager: service
                 .manager
                 .as_ref()
@@ -2434,6 +2440,31 @@ impl ServiceSummary {
                 .collect(),
             depends_on: service.depends_on.clone(),
             timeout: service.timeout,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceProducerSummary {
+    pub repo: String,
+    pub task: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    pub address_view: String,
+}
+
+impl ServiceProducerSummary {
+    pub fn from_spec(producer: &crate::schema::ServiceProducerSpec) -> Self {
+        Self {
+            repo: producer.repo.clone(),
+            task: producer.task.clone(),
+            listener: producer.listener.clone(),
+            address_view: match producer.address_view {
+                crate::schema::TaskTargetAddressView::Topology => "topology",
+                crate::schema::TaskTargetAddressView::Host => "host",
+                crate::schema::TaskTargetAddressView::Internal => "internal",
+            }
+            .to_string(),
         }
     }
 }

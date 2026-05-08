@@ -29,6 +29,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::path::Component;
 use std::process::{Child, Command, Stdio};
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -66,7 +67,7 @@ use crate::schema::{
     parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
-use crate::workspace::load_contract_for_workspace_repo;
+use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
 #[derive(Clone)]
 pub(crate) struct StreamPhaseNotifier {
@@ -4502,6 +4503,31 @@ fn ensure_task_required_services(
             .get(service_name.as_str())
             .expect("validated required service should exist");
 
+        if let Some(producer) = service.producer.as_ref() {
+            match ensure_producer_owned_required_service_ready(
+                contract,
+                contract_path,
+                task_name,
+                service_name.as_str(),
+                producer,
+                mode.clone(),
+                working_dir,
+                state,
+            ) {
+                Ok(()) => continue,
+                Err((why, next)) => {
+                    append_required_service_failure(
+                        &mut state.stderr,
+                        task_name,
+                        service_name.as_str(),
+                        why.as_str(),
+                        Some(next.as_str()),
+                    );
+                    return Ok(Some(1));
+                }
+            }
+        }
+
         if state.started_services.insert(service_name.clone()) {
             if let Some(start) = service.start_command(service_name.as_str()) {
                 match run_host_shell_command(start.as_str(), working_dir, mode.clone()) {
@@ -4551,6 +4577,152 @@ fn ensure_task_required_services(
     }
 
     Ok(None)
+}
+
+fn service_producer_target_spec(
+    producer: &crate::schema::ServiceProducerSpec,
+    activation_mode: TaskTargetActivationMode,
+) -> TaskTargetSpec {
+    TaskTargetSpec {
+        service: Some(crate::schema::TaskTargetServiceRefSpec {
+            member: None,
+            repo: Some(producer.repo.clone()),
+            task: producer.task.clone(),
+            listener: producer.listener.clone(),
+            address_view: producer.address_view,
+        }),
+        url: None,
+        override_input: None,
+        activation: crate::schema::TaskTargetActivationSpec {
+            mode: activation_mode,
+        },
+    }
+}
+
+fn producer_owned_service_label(
+    service_name: &str,
+    producer: &crate::schema::ServiceProducerSpec,
+) -> String {
+    match producer.listener.as_deref() {
+        Some(listener) if !listener.trim().is_empty() => format!(
+            "service `{service_name}` is owned by workspace repo `{}` task `{}` listener `{}`",
+            producer.repo, producer.task, listener
+        ),
+        _ => format!(
+            "service `{service_name}` is owned by workspace repo `{}` task `{}`",
+            producer.repo, producer.task
+        ),
+    }
+}
+
+fn producer_owned_service_next(
+    producer: &crate::schema::ServiceProducerSpec,
+    task_name: &str,
+    producer_contract_path: Option<&Path>,
+) -> String {
+    let producer_run_command = match producer_contract_path {
+        Some(contract_path) => {
+            let repo_path = if contract_path
+                .file_name()
+                .is_some_and(|name| name == "ota.yaml")
+            {
+                contract_path.parent().unwrap_or(contract_path)
+            } else {
+                contract_path
+            };
+            let normalized_repo_path = repo_path
+                .components()
+                .filter(|component| !matches!(component, Component::CurDir))
+                .fold(PathBuf::new(), |mut path, component| {
+                    path.push(component.as_os_str());
+                    path
+                });
+            format!(
+                "ota run {} {}",
+                producer.task,
+                shell_quote(
+                    &normalized_repo_path
+                        .display()
+                        .to_string()
+                )
+            )
+        }
+        None => format!("ota run {}", producer.task),
+    };
+    format!(
+        "run `ota workspace up` to prepare the workspace end to end, or run `{}` for workspace repo `{}` before rerunning task `{task_name}`",
+        producer_run_command, producer.repo
+    )
+}
+
+fn ensure_producer_owned_required_service_ready(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    service_name: &str,
+    producer: &crate::schema::ServiceProducerSpec,
+    mode: TaskExecutionMode,
+    working_dir: &Path,
+    state: &mut TaskRunState,
+) -> Result<(), (String, String)> {
+    let producer_contract_path = load_contract_for_workspace_repo_ref(
+        contract_path,
+        producer.repo.as_str(),
+        "producer.repo",
+    )
+    .ok()
+    .map(|(_, path)| path);
+    let target_spec = service_producer_target_spec(producer, TaskTargetActivationMode::EnsureReady);
+    let caller_backend = match resolve_execution_backend_with_contract_path(
+        contract,
+        task_name,
+        ExecutionOverrides::default(),
+        Some(contract_path),
+    ) {
+        Ok(backend) => resolved_execution_backend_kind(&backend),
+        Err(error) => {
+            return Err((
+                format!(
+                    "{} and Ota could not resolve consumer task `{task_name}` before activation: {}",
+                    producer_owned_service_label(service_name, producer),
+                    error
+                ),
+                producer_owned_service_next(producer, task_name, producer_contract_path.as_deref()),
+            ));
+        }
+    };
+    match ensure_target_producer_state(
+        contract,
+        contract_path,
+        task_name,
+        service_name,
+        &target_spec,
+        caller_backend,
+        None,
+        mode,
+        working_dir,
+        current_os(),
+        0,
+        state,
+    ) {
+        Ok(_) => Ok(()),
+        Err(RunError::TaskTargetResolutionFailed { details, .. }) => Err((
+            format!(
+                "{} and Ota could not make it ready: {}",
+                producer_owned_service_label(service_name, producer),
+                details
+            ),
+            producer_owned_service_next(producer, task_name, producer_contract_path.as_deref()),
+        )),
+        Err(error) => Err((
+            format!(
+                "{} and Ota could not make it ready: {}",
+                producer_owned_service_label(service_name, producer),
+                error
+            ),
+            producer_owned_service_next(producer, task_name, producer_contract_path.as_deref()),
+        )),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -12623,6 +12795,74 @@ fn runtime_readiness_target(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HostRuntimeReadinessProbe {
+    pub listener: String,
+    pub protocol: TaskRuntimeProtocol,
+    pub address: String,
+    pub port: u16,
+    pub readiness: Option<TaskRuntimeReadinessSpec>,
+}
+
+pub(crate) fn task_runtime_host_readiness_probe_for_backend(
+    task: &TaskSpec,
+    backend: Backend,
+    listener_name: &str,
+) -> Result<HostRuntimeReadinessProbe, String> {
+    let runtime = task
+        .service_runtime_for_backend(backend)
+        .ok_or_else(|| {
+            format!(
+                "task does not resolve to a service runtime for backend `{}`",
+                match backend {
+                    Backend::Native => "native",
+                    Backend::Container => "container",
+                    Backend::Remote => "remote",
+                }
+            )
+        })?;
+    let probe_listener_name = runtime
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.listener.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(listener_name);
+    let listener = runtime.listeners.get(probe_listener_name).ok_or_else(|| {
+        format!("service runtime does not declare listener `{probe_listener_name}`")
+    })?;
+    let host = listener.project.host.as_ref().ok_or_else(|| {
+        format!("listener `{probe_listener_name}` does not declare `project.host`")
+    })?;
+    let port = host.port.value.ok_or_else(|| {
+        format!("listener `{probe_listener_name}` does not declare a fixed `project.host.port.value`")
+    })?;
+    Ok(HostRuntimeReadinessProbe {
+        listener: probe_listener_name.to_string(),
+        protocol: listener.protocol,
+        address: host.address.clone(),
+        port,
+        readiness: runtime.readiness.clone(),
+    })
+}
+
+pub(crate) fn host_runtime_readiness_observed(
+    probe: &HostRuntimeReadinessProbe,
+    timeout: Option<Duration>,
+) -> bool {
+    match probe.readiness.as_ref().map(|readiness| readiness.kind) {
+        Some(TaskRuntimeReadinessKind::Http) => http_readiness_endpoint_reachable(
+            probe.address.as_str(),
+            probe.port,
+            &readiness_http_request(probe.readiness.as_ref()),
+            timeout,
+        ),
+        Some(TaskRuntimeReadinessKind::Tcp) | None => {
+            target_probe_endpoint_reachable_with_timeout(probe.address.as_str(), probe.port, timeout)
+        }
+    }
+}
+
 fn readiness_target_observed(target: &RuntimeReadinessTarget) -> bool {
     readiness_target_observed_with_timeout(target, None)
 }
@@ -16974,6 +17214,7 @@ mod tests {
         ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
         persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
         plan_task_execution, preflight_container_host_publications,
+        producer_owned_service_next,
         prepare_container_runtime_projection, preparing_loader_label,
         ready_runtime_public_endpoint_line, resolve_execution_backend,
         resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
@@ -16988,6 +17229,7 @@ mod tests {
         TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec,
         TaskRuntimePortMode, TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
         TaskRuntimeReadinessHttpMethod, TaskRuntimeSpec, TaskTargetActivationMode,
+        TaskTargetAddressView,
         parse_memory_size_bytes,
     };
 
@@ -24868,6 +25110,118 @@ tasks:
 
         assert_eq!(outcome.exit_code, 1);
         assert!(!fixture.dir.path().join("run.log").exists());
+    }
+
+    #[test]
+    fn run_task_requires_services_reuses_workspace_repo_producer_service_when_ready() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().expect("listener addr").port();
+        let server = thread::spawn(move || {
+            let _accepted = listener.accept().expect("producer probe should connect");
+        });
+        let fixture = tempdir().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-workspace
+repos:
+  api:
+    path: ./api
+  web:
+    path: ./web
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: api
+tasks:
+  dev:
+    run: echo api
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: http
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+"#
+            )
+            .trim_start(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        let contract_path = fixture.path().join("web").join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: web
+services:
+  user-api:
+    producer:
+      repo: api
+      task: dev
+      listener: http
+tasks:
+  build:
+    requires_services:
+      - user-api
+    script: echo task > run.log
+"#
+            .trim_start(),
+        )
+        .unwrap();
+        let contract = crate::parser::load_contract(&contract_path).unwrap();
+
+        let outcome = run_task_captured(&contract, &contract_path, "build").unwrap();
+
+        server.join().expect("producer probe server should finish");
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.path().join("web").join("run.log")).unwrap().trim(),
+            "task"
+        );
+    }
+
+    #[test]
+    fn producer_owned_service_next_targets_repo_path() {
+        let next = producer_owned_service_next(
+            &crate::schema::ServiceProducerSpec {
+                repo: String::from("api"),
+                task: String::from("dev"),
+                listener: Some(String::from("http")),
+                address_view: TaskTargetAddressView::Host,
+            },
+            "build",
+            Some(Path::new("/tmp/workspace/api/ota.yaml")),
+        );
+
+        assert!(next.contains("ota workspace up"), "{next}");
+        assert!(next.contains("ota run dev '/tmp/workspace/api'"), "{next}");
+        assert!(next.contains("workspace repo `api`"), "{next}");
     }
 
     #[test]

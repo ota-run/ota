@@ -144,8 +144,8 @@ use crate::validator::{
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceContract, WorkspaceExecutionSummary, WorkspaceRepoRef,
     WorkspaceValidationErrors, diagnose_workspace_contract_with_jobs, diagnose_workspace_repo,
-    load_workspace_contract, ordered_workspace_repo_refs, parse_workspace_contract_str,
-    validate_workspace_contract,
+    load_contract_for_workspace_repo_ref, load_workspace_contract, ordered_workspace_repo_refs,
+    parse_workspace_contract_str, validate_workspace_contract,
 };
 
 mod execution_summary;
@@ -3286,13 +3286,16 @@ impl AssistReadinessProposal {
 
 struct AssistServiceProposal {
     subject_name: String,
-    manager: AssistServiceManagerArg,
+    manager: Option<AssistServiceManagerArg>,
     manager_name: Option<String>,
     compose_file: Option<String>,
     compose_service: Option<String>,
-    endpoint: String,
-    address: String,
-    port: u16,
+    endpoint: Option<String>,
+    address: Option<String>,
+    port: Option<u16>,
+    producer_task: Option<String>,
+    producer_repo: Option<String>,
+    producer_listener: Option<String>,
     required: bool,
     style: Option<AssistReadinessStyleArg>,
     assumptions: Vec<String>,
@@ -3311,14 +3314,19 @@ impl AssistServiceProposal {
 
     fn inputs_json(&self) -> BTreeMap<&'static str, String> {
         let mut inputs = BTreeMap::new();
-        inputs.insert(
-            "manager",
-            assist_service_manager_name(self.manager).to_string(),
-        );
-        inputs.insert("endpoint", self.endpoint.clone());
-        inputs.insert("address", self.address.clone());
-        inputs.insert("port", self.port.to_string());
         inputs.insert("required", self.required.to_string());
+        if let Some(manager) = self.manager {
+            inputs.insert("manager", assist_service_manager_name(manager).to_string());
+        }
+        if let Some(endpoint) = &self.endpoint {
+            inputs.insert("endpoint", endpoint.clone());
+        }
+        if let Some(address) = &self.address {
+            inputs.insert("address", address.clone());
+        }
+        if let Some(port) = self.port {
+            inputs.insert("port", port.to_string());
+        }
         if let Some(style) = self.style {
             inputs.insert("style", assist_readiness_style_name(style).to_string());
         }
@@ -3330,6 +3338,16 @@ impl AssistServiceProposal {
         }
         if let Some(service) = &self.compose_service {
             inputs.insert("compose_service", service.clone());
+        }
+        if let Some(producer) = &self.producer_task {
+            let selector = match self.producer_listener.as_deref() {
+                Some(listener) => format!("{producer}:{listener}"),
+                None => producer.clone(),
+            };
+            inputs.insert("producer", selector);
+        }
+        if let Some(repo) = &self.producer_repo {
+            inputs.insert("producer_repo", repo.clone());
         }
         inputs
     }
@@ -3349,18 +3367,26 @@ impl AssistServiceProposal {
             command.push_str(&format!(" --member {member}"));
         }
         command.push_str(&format!(" --name {}", self.subject_name));
-        command.push_str(&format!(
-            " --manager {}",
-            assist_service_manager_name(self.manager)
-        ));
-        command.push_str(&format!(" --endpoint {}", self.endpoint));
-        command.push_str(&format!(" --address {}", self.address));
-        command.push_str(&format!(" --port {}", self.port));
+        if let Some(manager) = self.manager {
+            command.push_str(&format!(
+                " --manager {}",
+                assist_service_manager_name(manager)
+            ));
+        }
+        if let Some(endpoint) = &self.endpoint {
+            command.push_str(&format!(" --endpoint {}", endpoint));
+        }
+        if let Some(address) = &self.address {
+            command.push_str(&format!(" --address {}", address));
+        }
+        if let Some(port) = self.port {
+            command.push_str(&format!(" --port {}", port));
+        }
         if self.required {
             command.push_str(" --required true");
         }
         if let Some(name) = &self.manager_name {
-            if !(self.manager == AssistServiceManagerArg::Compose && name == "local") {
+            if !(self.manager == Some(AssistServiceManagerArg::Compose) && name == "local") {
                 command.push_str(&format!(" --manager-name {}", shell_quote(name)));
             }
         }
@@ -3372,6 +3398,16 @@ impl AssistServiceProposal {
         }
         if let Some(style) = self.style {
             command.push_str(&format!(" --style {}", assist_readiness_style_name(style)));
+        }
+        if let Some(producer) = &self.producer_task {
+            let selector = match self.producer_listener.as_deref() {
+                Some(listener) => format!("{producer}:{listener}"),
+                None => producer.clone(),
+            };
+            command.push_str(&format!(" --producer {}", shell_quote(&selector)));
+        }
+        if let Some(repo) = &self.producer_repo {
+            command.push_str(&format!(" --producer-repo {}", repo));
         }
         command.push_str(" --write");
         let command = command_for_repo_from_contract_path(&command, contract_path);
@@ -4034,18 +4070,39 @@ fn render_assist_service_text(
         paint_key("Subject:"),
         paint_named_drift_label("Service", &proposal.subject_name)
     ));
-    output.push_str(&format!(
-        "\n{} {} {}",
-        info_bullet(),
-        paint_key("Manager:"),
-        assist_service_manager_name(proposal.manager)
-    ));
-    output.push_str(&format!(
-        "\n{} {} {}",
-        info_bullet(),
-        paint_key("Endpoint:"),
-        proposal.endpoint
-    ));
+    if let Some(repo) = proposal.producer_repo.as_deref() {
+        let producer_label = match (
+            proposal.producer_task.as_deref(),
+            proposal.producer_listener.as_deref(),
+        ) {
+            (Some(task), Some(listener)) => format!("workspace repo `{repo}` task `{task}` listener `{listener}`"),
+            (Some(task), None) => format!("workspace repo `{repo}` task `{task}`"),
+            _ => format!("workspace repo `{repo}`"),
+        };
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Producer:"),
+            producer_label
+        ));
+    } else {
+        if let Some(manager) = proposal.manager {
+            output.push_str(&format!(
+                "\n{} {} {}",
+                info_bullet(),
+                paint_key("Manager:"),
+                assist_service_manager_name(manager)
+            ));
+        }
+        if let Some(endpoint) = proposal.endpoint.as_deref() {
+            output.push_str(&format!(
+                "\n{} {} {}",
+                info_bullet(),
+                paint_key("Endpoint:"),
+                endpoint
+            ));
+        }
+    }
     if let Some(style) = proposal.style {
         output.push_str(&format!(
             "\n{} {} {}",
@@ -4578,6 +4635,8 @@ pub fn assist_declare_service(
     port: Option<u16>,
     required: Option<bool>,
     style: Option<AssistReadinessStyleArg>,
+    producer: Option<&str>,
+    producer_repo: Option<&str>,
     write: bool,
     format: OutputFormat,
     debug: bool,
@@ -4635,6 +4694,12 @@ pub fn assist_declare_service(
             "DEBUG style={}",
             assist_readiness_style_name(style)
         ));
+    }
+    if let Some(producer) = producer {
+        debug_lines.push(format!("DEBUG producer={producer}"));
+    }
+    if let Some(producer_repo) = producer_repo {
+        debug_lines.push(format!("DEBUG producer_repo={producer_repo}"));
     }
     if write {
         debug_lines.push(String::from("DEBUG mode=write"));
@@ -4732,6 +4797,7 @@ pub fn assist_declare_service(
 
                 let proposal = match build_assist_service_proposal(
                     &target.contract,
+                    &target.contract_path,
                     name,
                     manager,
                     manager_name,
@@ -4742,6 +4808,8 @@ pub fn assist_declare_service(
                     port,
                     required,
                     style,
+                    producer,
+                    producer_repo,
                 ) {
                     Ok(proposal) => proposal,
                     Err((why, next)) => {
@@ -8938,6 +9006,7 @@ fn build_assist_setup_proposal(
 
 fn build_assist_service_proposal(
     contract: &Contract,
+    contract_path: &Path,
     name: &str,
     manager: Option<AssistServiceManagerArg>,
     manager_name: Option<&str>,
@@ -8948,7 +9017,19 @@ fn build_assist_service_proposal(
     port: Option<u16>,
     required: Option<bool>,
     style: Option<AssistReadinessStyleArg>,
+    producer: Option<&str>,
+    producer_repo: Option<&str>,
 ) -> Result<AssistServiceProposal, (String, String)> {
+    if let Some(producer) = producer {
+        return build_assist_workspace_service_producer_proposal(
+            contract,
+            contract_path,
+            name,
+            producer,
+            producer_repo,
+            required,
+        );
+    }
     let existing = contract.services.get(name).cloned();
     let before_value = existing
         .as_ref()
@@ -9058,6 +9139,7 @@ fn build_assist_service_proposal(
 
     let mut after = existing.clone().unwrap_or_default();
     after.required = required.unwrap_or(after.required);
+    after.producer = None;
     after.manager = Some(crate::schema::ServiceManagerSpec {
         kind: match manager_kind {
             AssistServiceManagerArg::Compose => crate::schema::ServiceManagerKind::Compose,
@@ -9114,15 +9196,147 @@ fn build_assist_service_proposal(
 
     Ok(AssistServiceProposal {
         subject_name: String::from(name),
-        manager: manager_kind,
+        manager: Some(manager_kind),
         manager_name: manager_name_value,
         compose_file: compose_file_value,
         compose_service: compose_service_value,
-        endpoint: endpoint_name,
-        address,
-        port,
+        endpoint: Some(endpoint_name),
+        address: Some(address),
+        port: Some(port),
+        producer_task: None,
+        producer_repo: None,
+        producer_listener: None,
         required: after.required,
         style,
+        assumptions,
+        change_path: format!("services.{name}"),
+        yaml_path: vec![String::from("services"), String::from(name)],
+        before_value,
+        after_value,
+    })
+}
+
+fn build_assist_workspace_service_producer_proposal(
+    contract: &Contract,
+    contract_path: &Path,
+    name: &str,
+    producer: &str,
+    producer_repo: Option<&str>,
+    required: Option<bool>,
+) -> Result<AssistServiceProposal, (String, String)> {
+    let repo = producer_repo.ok_or_else(|| {
+        (
+            format!("service `{name}` needs `--producer-repo <name>` when `--producer` is used"),
+            String::from("rerun with one explicit workspace producer repo"),
+        )
+    })?;
+    let existing = contract.services.get(name).cloned();
+    let before_value = existing
+        .as_ref()
+        .map(serde_yaml::to_value)
+        .transpose()
+        .map_err(|error| {
+            (
+                format!("failed to capture existing service for preview: {error}"),
+                String::from("rerun the assist command after repairing the contract"),
+            )
+        })?
+        .unwrap_or(YamlValue::Null);
+    let (producer_task_name, explicit_listener) = parse_assist_bind_target_selector(producer);
+    let (producer_contract, _) = load_contract_for_workspace_repo_ref(
+        contract_path,
+        repo,
+        "producer.repo",
+    )
+    .map_err(|error| {
+        (
+            format!("could not load workspace repo `{repo}`: {error}"),
+            String::from("repair the workspace contract or repo path, then rerun the assist command"),
+        )
+    })?;
+    let producer_task = producer_contract
+        .tasks
+        .get(producer_task_name.as_str())
+        .ok_or_else(|| {
+            (
+                format!(
+                    "producer task `{}` is not declared under workspace repo `{repo}`",
+                    producer_task_name
+                ),
+                String::from("run `ota tasks` from the producer repo to inspect producer task names"),
+            )
+        })?;
+    let listener = resolve_assist_bind_task_listener(
+        producer_task,
+        None,
+        None,
+        producer_task_name.as_str(),
+        explicit_listener.as_deref(),
+    )?;
+
+    let mut after = existing.clone().unwrap_or_default();
+    after.required = required.unwrap_or(after.required);
+    after.producer = Some(crate::schema::ServiceProducerSpec {
+        repo: repo.to_string(),
+        task: producer_task_name.clone(),
+        listener: Some(listener.clone()),
+        address_view: TaskTargetAddressView::Host,
+    });
+    after.manager = None;
+    after.provider = None;
+    after.start = None;
+    after.stop = None;
+    after.endpoints.clear();
+    after.healthcheck = None;
+    after.readiness = None;
+    after.timeout = None;
+
+    let after_value = serde_yaml::to_value(&after).map_err(|error| {
+        (
+            format!("failed to build service proposal: {error}"),
+            String::from("rerun the assist command after repairing the contract"),
+        )
+    })?;
+
+    if before_value == after_value {
+        return Err((
+            format!("service `{name}` already matches the requested producer ownership"),
+            String::from("change one explicit producer input, or skip the assist command"),
+        ));
+    }
+
+    let mut assumptions = Vec::new();
+    if existing.is_some() {
+        assumptions.push(format!(
+            "service `{name}` already exists and will be refined in place"
+        ));
+    } else {
+        assumptions.push(format!("service `{name}` will be created under `services`"));
+    }
+    assumptions.push(format!(
+        "workspace repo `{repo}` task `{producer_task_name}` listener `{listener}` is the canonical producer"
+    ));
+    assumptions.push(String::from(
+        "ota will resolve this producer through `address_view: host` for workspace-owned readiness",
+    ));
+    assumptions.push(String::from(
+        "local service manager, endpoint, and readiness fields will be removed in favor of producer-owned truth",
+    ));
+
+    Ok(AssistServiceProposal {
+        subject_name: String::from(name),
+        manager: None,
+        manager_name: None,
+        compose_file: None,
+        compose_service: None,
+        endpoint: None,
+        address: None,
+        port: None,
+        producer_task: Some(producer_task_name),
+        producer_repo: Some(repo.to_string()),
+        producer_listener: Some(listener),
+        required: after.required,
+        style: None,
         assumptions,
         change_path: format!("services.{name}"),
         yaml_path: vec![String::from("services"), String::from(name)],
@@ -11341,12 +11555,6 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
     }
 
     for service in services {
-        let manager = service
-            .manager
-            .as_ref()
-            .map(|manager| manager.kind.as_str())
-            .or(service.provider.as_deref())
-            .unwrap_or("-");
         output.push_str(&format!(
             "\n\n{} {} [{}]",
             list_bullet(),
@@ -11358,7 +11566,32 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
             }
         ));
 
-        output.push_str(&format!("\n  {} {manager}", paint_key("manager:")));
+        if let Some(producer) = service.producer.as_ref() {
+            let producer_label = match producer.listener.as_deref() {
+                Some(listener) => format!(
+                    "workspace repo {} task {} listener {} ({})",
+                    producer.repo, producer.task, listener, producer.address_view
+                ),
+                None => format!(
+                    "workspace repo {} task {} ({})",
+                    producer.repo, producer.task, producer.address_view
+                ),
+            };
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("producer:"),
+                producer_label
+            ));
+        }
+        if service.producer.is_none() {
+            let manager = service
+                .manager
+                .as_ref()
+                .map(|manager| manager.kind.as_str())
+                .or(service.provider.as_deref())
+                .unwrap_or("-");
+            output.push_str(&format!("\n  {} {manager}", paint_key("manager:")));
+        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("depends on:"),
@@ -34322,8 +34555,8 @@ mod tests {
     use crate::output::{
         ContractIdentity, DetectComparison, DetectComparisonRemoval, EnvSourceStatus,
         ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs, ExecutionReceiptSummary,
-        ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary, ServiceReadinessSummary,
-        ServiceSummary, TaskSummary,
+        ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
+        ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary, TaskSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -35577,6 +35810,7 @@ tasks:
         let services = vec![ServiceSummary {
             name: String::from("postgres"),
             required: true,
+            producer: None,
             manager: Some(ServiceManagerSummary {
                 kind: String::from("compose"),
                 name: None,
@@ -35633,6 +35867,34 @@ tasks:
             "{text}"
         );
         assert!(text.contains("managed by: ota doctor, ota up"), "{text}");
+    }
+
+    #[test]
+    fn services_text_surfaces_workspace_repo_producer_ownership() {
+        let services = vec![ServiceSummary {
+            name: String::from("user-api"),
+            required: true,
+            producer: Some(ServiceProducerSummary {
+                repo: String::from("api"),
+                task: String::from("dev"),
+                listener: Some(String::from("http")),
+                address_view: String::from("host"),
+            }),
+            manager: None,
+            provider: None,
+            start: None,
+            stop: None,
+            healthcheck: None,
+            readiness: None,
+            endpoints: BTreeMap::new(),
+            depends_on: Vec::new(),
+            timeout: None,
+        }];
+
+        let text = strip_ansi_codes(&super::render_services_output_text("./ota.yaml", &services));
+
+        assert!(text.contains("producer: workspace repo api task dev listener http (host)"));
+        assert!(!text.contains("manager: -"), "{text}");
     }
 
     #[test]
@@ -37491,6 +37753,52 @@ tasks:
 
         assert!(preview.plan.actions.contains(&String::from(
             "verify service `api` readiness before `setup`"
+        )));
+    }
+
+    #[test]
+    fn up_preview_mentions_workspace_repo_producer_service_phase() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+services:
+  user-api:
+    required: true
+    producer:
+      repo: api
+      task: dev
+      listener: http
+tasks:
+  setup:
+    requires_services:
+      - user-api
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert!(preview.plan.actions.contains(&String::from(
+            "start workspace repo `api` task `dev` for service `user-api` before `setup`"
+        )));
+        assert!(preview.plan.actions.contains(&String::from(
+            "verify service `user-api` readiness before `setup`"
         )));
     }
 
@@ -55645,7 +55953,16 @@ fn append_up_preview_service_phase_actions(
             .get(service_name.as_str())
             .expect("validated service should exist");
 
-        if service.start_command(service_name.as_str()).is_some() {
+        if let Some(producer) = service.producer.as_ref() {
+            let action = format!(
+                "start workspace repo `{}` task `{}` for service `{service_name}`",
+                producer.repo, producer.task
+            );
+            match phase_suffix {
+                Some(phase_suffix) => actions.push(format!("{action} {phase_suffix}")),
+                None => actions.push(action),
+            }
+        } else if service.start_command(service_name.as_str()).is_some() {
             match phase_suffix {
                 Some(phase_suffix) => {
                     actions.push(format!("start service `{service_name}` {phase_suffix}"))
@@ -55660,7 +55977,8 @@ fn append_up_preview_service_phase_actions(
             .services
             .get(service_name.as_str())
             .expect("validated service should exist");
-        if service.healthcheck.is_some()
+        if service.producer.is_some()
+            || service.healthcheck.is_some()
             || service.readiness.is_some()
             || !service.endpoints.is_empty()
         {

@@ -529,13 +529,14 @@ pub fn discover_workspace_contract_path(start: &Path) -> Option<PathBuf> {
     }
 }
 
-pub fn load_contract_for_workspace_repo(
+pub fn load_contract_for_workspace_repo_ref(
     contract_path: &Path,
     repo_name: &str,
+    field_label: &str,
 ) -> Result<(Contract, PathBuf), String> {
     let workspace_path = discover_workspace_contract_path(contract_path).ok_or_else(|| {
         format!(
-            "`service.repo: {repo_name}` requires running from a workspace repo declared under `{DEFAULT_WORKSPACE_FILE}`"
+            "`{field_label}: {repo_name}` requires running from a workspace repo declared under `{DEFAULT_WORKSPACE_FILE}`"
         )
     })?;
     let workspace = load_workspace_contract(&workspace_path).map_err(|error| {
@@ -552,7 +553,7 @@ pub fn load_contract_for_workspace_repo(
         .any(|repo| normalized_path_identity(&repo.contract_path) == normalized_contract_path)
     {
         return Err(format!(
-            "`service.repo: {repo_name}` requires running from a workspace repo contract declared in `{}`",
+            "`{field_label}: {repo_name}` requires running from a workspace repo contract declared in `{}`",
             workspace_path.display()
         ));
     }
@@ -573,6 +574,13 @@ pub fn load_contract_for_workspace_repo(
         )
     })?;
     Ok((contract, repo.contract_path))
+}
+
+pub fn load_contract_for_workspace_repo(
+    contract_path: &Path,
+    repo_name: &str,
+) -> Result<(Contract, PathBuf), String> {
+    load_contract_for_workspace_repo_ref(contract_path, repo_name, "service.repo")
 }
 
 pub fn workspace_policy_env_values(contract: &WorkspaceContract) -> BTreeMap<String, String> {
