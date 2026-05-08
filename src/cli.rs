@@ -23427,7 +23427,14 @@ tasks:
             script.contains("Write-Host \"                █████"),
             "{script}"
         );
-        assert!(script.contains("Write-Host \"ota\""), "{script}");
+        assert!(
+            script.contains("$asciiHeader = @("),
+            "{script}"
+        );
+        assert!(
+            script.contains("\"    \\\\_____  \\\\_/  |______   \""),
+            "{script}"
+        );
         assert!(
             !script.contains("Write-OtaReceipt \"🦦 READY\""),
             "{script}"
@@ -23605,7 +23612,11 @@ tasks:
             "{script}"
         );
         assert!(
-            script.contains("if use_ascii_output; then\n    printf 'ota\\n' >&2"),
+            script.contains("if use_ascii_output; then\n    cat <<'EOF' >&2"),
+            "{script}"
+        );
+        assert!(
+            script.contains("    \\_____  \\_/  |______"),
             "{script}"
         );
         assert!(
