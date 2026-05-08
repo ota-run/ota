@@ -392,12 +392,15 @@ ota execution plan [PATH]
 ota execution plan --json [PATH]
 ota execution plan --mode container --ephemeral [PATH]
 ota execution plan --member api [PATH]
+ota execution plan --workflow backend [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
 - when `--member` is set, inspects the merged member contract
+- when `--workflow` is set, plans the selected workflow instead of assuming `workflows.default`
+- when the selected workflow declares `run.task`, planning resolves that canonical runtime path first; if the workflow only declares `setup.task`, planning uses that setup path as the fallback
 - reuses the same backend and lifecycle resolution path as `ota run` and `ota up`
 - when named contexts use `execution.contexts.<name>.extends`, planning resolves the merged context first and reports that concrete backend/lifecycle/image shape
 - reports the resolved backend, lifecycle, image, container-engine selection, and target strategy
@@ -409,14 +412,16 @@ Text output:
 
 - header: `EXECUTION PLAN <path>`
 - status line: `RESOLVED`
+- optional `Workflow` section when the repo declares workflows and planning targets one explicitly
 - `Resolved` section with selected backend, lifecycle, image, engine candidates, target, and target strategy
+- selected `Task` when a workflow run task, or setup-only fallback, is the concrete planning source
 - `Contract` section with the same compact contract identity used by receipts
 - `Execution` section when the contract declares execution intent
 - `Overrides` section when `--mode`, `--lifecycle`, or `--ephemeral` changed the resolved result
 
 JSON output:
 
-- success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `resolved`, and `overrides`
+- success: `ok`, `path`, `contract`, `member` when relevant, additive `workflow` and `task` when workflow planning selected a canonical path, `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
 
 ## `ota execution topology`
@@ -1438,7 +1443,8 @@ Current behavior:
 - repeated `--member` values prepare those members in the provided order
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
-- when blocking preconditions fail and the repo declares `setup`, runs `setup` early and then re-checks readiness
+- when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
+- when blocking preconditions fail and the selected workflow declares a setup task, ota runs that setup phase early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
 - explicit or effective container-backed `ota up` stays container-authoritative; if no supported container engine is available, ota stops in preconditions instead of falling back to host provisioning
 - when provisioning fails, `ota up` now surfaces a higher-level backend diagnosis for every shipped adapter while still preserving the raw backend stdout/stderr in the failure output
@@ -1446,15 +1452,16 @@ Current behavior:
 - when container/Linux provisioning uses `apt`, ota also classifies supported provisioning failures as pinned-version unavailable, package unavailable, or apt-index/source failures
 - execution-plane precondition failures, backend startup failures, and provisioning failures now point through `ota execution plan` first so the selected backend, lifecycle, image, or target path is visible before you edit execution settings or retry `ota up`
 - `--dry-run` reuses the same contract path, member targeting, backend selection, lifecycle selection, and provisioning plan resolution as `ota up`, but does not mutate repo or execution state
-- runs explicit `services.<name>.start` commands for required services before setup
+- runs explicit `services.<name>.start` commands for selected workflow services before and after setup as declared
 - starts required services, and required-service dependencies, in declared dependency order
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails
-- runs the `setup` task if one exists, using the configured execution backend when present
+- runs the selected workflow setup task if one exists, using the configured execution backend when present
+- activates the selected workflow run task when it has a declared service runtime
 - when setup binds to a named context that uses `extends`, `ota up` uses the merged context backend/lifecycle/image shape
-- can override execution mode and lifecycle for the `setup` phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
-- the current `setup` backend path supports native, container, and the shipped remote providers
-- prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
+- can override execution mode and lifecycle for the selected workflow setup/run phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
+- the current workflow-task backend path supports native, container, and the shipped remote providers
+- prints a lifecycle note on stderr when the selected workflow task uses backend-backed execution
 - reruns readiness diagnosis
 - still runs service start commands, service healthchecks, and diagnosis on the host today
 - returns `READY` or `NOT READY`
@@ -2156,6 +2163,7 @@ Current behavior:
 - parses the workspace contract
 - validates the workspace shape
 - validates each present referenced repo contract through the workspace contract
+- validates `repos.<name>.workflow` against the referenced repo contract when the workspace pins a non-default repo workflow
 - allows missing repo paths only when `repos.<name>.source` is declared
 
 Text output:
@@ -2219,7 +2227,7 @@ Current behavior:
 - validates workspace shape for deterministic repo ordering
 - lists all declared repos (or filters by `--repo` / `--status`)
 - reports acquisition state per repo (`ACQUIRED` vs `NOT ACQUIRED`)
-- reports lightweight readiness status per repo (`READY` vs `NOT READY`)
+- reports lightweight readiness status per repo (`READY` vs `NOT READY`), and when `repos.<name>.workflow` is declared the readiness lane follows that selected repo workflow instead of the repo default
 - shows execution metadata and env provenance when the repo contract declares it
 - reports contract presence per repo (`contract_present`)
 - for missing contracts in text output, embeds a repo-specific setup hint using `ota init <repo-path>`
@@ -2253,6 +2261,7 @@ Current behavior:
 
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure and keeps repo ordering deterministic
+- when `repos.<name>.workflow` is declared, plans that selected repo workflow instead of silently assuming the repo default path
 - reuses the same per-repo backend validation boundary as `ota execution plan`
 - reports one execution plan per selected workspace repo
 - supports `--repo` filtering for focused inspection
@@ -2266,7 +2275,7 @@ Text output:
 - header: `WORKSPACE EXECUTION PLAN <path>`
 - status line: `READY` or `NOT READY`
 - optional `Overrides` section when backend or lifecycle is forced
-- each repo includes required/optional status, path, contract path, acquired state, and either resolved execution details or an honest `Why` / `Next`
+- each repo includes required/optional status, path, contract path, acquired state, optional selected `Workflow` / `Task`, and either resolved execution details or an honest `Why` / `Next`
 - when a repo contract loads, the report also includes the compact `Contract` block and declared `Execution` block for that repo
 - a final `Summary` block reports resolved and unresolved repo counts
 
@@ -2277,7 +2286,7 @@ JSON output:
 - `mode: "execution-plan"`
 - `summary` with `repo_count`, `resolved_count`, `unresolved_count`, `required_unresolved_count`, `not_acquired_count`, and `missing_contract_count`
 - `repos`
-- each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `status`, optional `contract_identity`, optional `declared_execution`, optional `resolved`, optional `error`, and optional `next`
+- each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `status`, additive `workflow` and `task` when workflow planning resolves through a canonical path (including repo-default workflow selection), optional `contract_identity`, optional `declared_execution`, optional `resolved`, optional `error`, and optional `next`
 - `overrides` appears only when execution overrides are supplied
 
 Current non-goals:
@@ -2379,6 +2388,7 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure and referenced repo contracts
 - evaluates repo checks in workspace dependency order
+- when `repos.<name>.workflow` is declared, checks that selected repo workflow instead of assuming the repo default path
 - can check independent repos concurrently when `--jobs` is greater than `1`
 - preserves deterministic repo ordering in text and JSON output even when checks run concurrently
 - downgrades findings for optional repos to warnings
@@ -2426,6 +2436,7 @@ Current behavior:
 - can diagnose independent repos concurrently when `--jobs` is greater than `1`
 - preserves deterministic repo ordering in text and JSON output even when diagnosis runs concurrently
 - evaluates each referenced repo through its own `ota.yaml`
+- when `repos.<name>.workflow` is declared, diagnoses that selected repo workflow instead of assuming the repo default path
 - reports missing-but-acquirable repos as not yet acquired
 - keeps workspace logic above repo diagnosis instead of duplicating it
 - downgrades findings for optional repos to warnings
@@ -2512,6 +2523,7 @@ Current behavior:
 - validates workspace structure
 - clones missing repos declared with `repos.<name>.source` before repo-level prepare
 - runs the existing repo-level `up` flow for each referenced repo
+- when `repos.<name>.workflow` is declared, prepares that selected repo workflow instead of assuming the repo default workflow
 - can prepare independent repos concurrently when `--jobs` is greater than `1`
 - respects declared workspace repo dependency order
 - blocks downstream repos when a dependency does not become ready
@@ -2660,6 +2672,7 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure
 - reads repo readiness and local git drift for each workspace repo
+- when `repos.<name>.workflow` is declared, readiness is evaluated through that selected repo workflow
 - reports readiness and drift together so you can scan one operational summary
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never mutates repo state

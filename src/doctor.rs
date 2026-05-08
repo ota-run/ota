@@ -1803,6 +1803,7 @@ pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorRep
         DoctorScope::All,
         DoctorMode::Native,
         None,
+        None,
     )
 }
 
@@ -1811,7 +1812,7 @@ pub fn diagnose_contract_in_mode(
     contract_path: &Path,
     mode: DoctorMode,
 ) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::All, mode, None)
+    diagnose_contract_with_scope(contract, contract_path, DoctorScope::All, mode, None, None)
 }
 
 pub fn diagnose_contract_with_mode_and_lifecycle(
@@ -1820,12 +1821,29 @@ pub fn diagnose_contract_with_mode_and_lifecycle(
     mode: DoctorMode,
     lifecycle_override: Option<Lifecycle>,
 ) -> DoctorReport {
+    diagnose_contract_with_mode_and_lifecycle_for_workflow(
+        contract,
+        contract_path,
+        mode,
+        lifecycle_override,
+        None,
+    )
+}
+
+pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    lifecycle_override: Option<Lifecycle>,
+    workflow_name: Option<&str>,
+) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
         contract_path,
         DoctorScope::All,
         mode,
         lifecycle_override,
+        workflow_name,
     )
 }
 
@@ -1883,26 +1901,45 @@ pub fn diagnose_preconditions_with_mode(
         DoctorScope::Preconditions,
         mode,
         None,
+        None,
     )
 }
 
 pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
+    diagnose_checks_only_for_workflow(contract, contract_path, None)
+}
+
+pub fn diagnose_checks_only_for_workflow(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
         contract_path,
         DoctorScope::ChecksOnly,
         DoctorMode::Native,
         None,
+        workflow_name,
     )
 }
 
 pub fn diagnose_services_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
+    diagnose_services_only_for_workflow(contract, contract_path, None)
+}
+
+pub fn diagnose_services_only_for_workflow(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
         contract_path,
         DoctorScope::ServicesOnly,
         DoctorMode::Native,
         None,
+        workflow_name,
     )
 }
 
@@ -1949,6 +1986,7 @@ fn diagnose_contract_with_scope(
     scope: DoctorScope,
     mode: DoctorMode,
     lifecycle_override: Option<Lifecycle>,
+    workflow_name: Option<&str>,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
@@ -2129,12 +2167,13 @@ fn diagnose_contract_with_scope(
             contract_path,
             mode,
             selected_lifecycle,
+            workflow_name,
             &mut findings,
         );
     }
     if scope != DoctorScope::ServicesOnly {
         if mode == DoctorMode::Native {
-            diagnose_checks(contract, contract_path, scope, &mut findings);
+            diagnose_checks(contract, contract_path, scope, workflow_name, &mut findings);
         }
     }
 
@@ -2673,11 +2712,18 @@ fn diagnose_services(
     contract_path: &Path,
     mode: DoctorMode,
     lifecycle: Option<Lifecycle>,
+    workflow_name: Option<&str>,
     findings: &mut Vec<Finding>,
 ) {
     let working_dir = contract_working_dir(contract_path);
+    let selected_services = selected_workflow_service_names(contract, workflow_name);
 
     for (name, service) in &contract.services {
+        if let Some(selected) = selected_services.as_ref()
+            && !selected.contains(name.as_str())
+        {
+            continue;
+        }
         if let Some(finding) =
             service_finding(contract, contract_path, name, service, working_dir, mode, lifecycle)
         {
@@ -5233,12 +5279,19 @@ fn diagnose_checks(
     contract: &Contract,
     contract_path: &Path,
     scope: DoctorScope,
+    workflow_name: Option<&str>,
     findings: &mut Vec<Finding>,
 ) {
     let working_dir = contract_working_dir(contract_path);
+    let selected_checks = selected_workflow_check_names(contract, workflow_name, scope);
 
     for check in &contract.checks {
         if scope == DoctorScope::Preconditions && check.kind != CheckKind::Precondition {
+            continue;
+        }
+        if let Some(selected) = selected_checks.as_ref()
+            && !selected.contains(check.name.as_str())
+        {
             continue;
         }
 
@@ -5248,7 +5301,7 @@ fn diagnose_checks(
                 severity: map_check_severity(check.severity),
                 summary: format!("Check failed: {}", check.name),
                 why: format!("the configured `{}` check did not succeed", check.name),
-                next: failed_check_next(contract, check),
+                next: failed_check_next(contract, workflow_name, check),
             }),
             CheckStatus::TimedOut(timeout) => findings.push(Finding {
                 severity: map_check_severity(check.severity),
@@ -5267,11 +5320,15 @@ fn diagnose_checks(
     }
 }
 
-fn failed_check_next(contract: &Contract, check: &crate::schema::CheckSpec) -> String {
+fn failed_check_next(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    check: &crate::schema::CheckSpec,
+) -> String {
     if let Some(path) = missing_file_check_path(&check.run) {
-        if contract.tasks.contains_key("setup") {
+        if let Some(setup_task) = contract.selected_setup_task_name_for(workflow_name) {
             return format!(
-                "run `ota up` or `ota run setup` to create `{path}`, then rerun `ota doctor`"
+                "run `ota up` or `ota run {setup_task}` to create `{path}`, then rerun `ota doctor`"
             );
         }
         return format!(
@@ -5299,6 +5356,49 @@ fn missing_file_check_path(command: &str) -> Option<&str> {
     }
 
     None
+}
+
+fn selected_workflow_check_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    scope: DoctorScope,
+) -> Option<BTreeSet<&'a str>> {
+    if scope == DoctorScope::Preconditions {
+        return None;
+    }
+
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.readiness.checks.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .readiness
+            .checks
+            .iter()
+            .map(|check| check.as_str())
+            .collect(),
+    )
+}
+
+fn selected_workflow_service_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+) -> Option<BTreeSet<&'a str>> {
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.services.required.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .services
+            .required
+            .iter()
+            .map(|service| service.as_str())
+            .collect(),
+    )
 }
 
 enum CheckStatus {

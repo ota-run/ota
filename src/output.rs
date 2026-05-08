@@ -76,6 +76,8 @@ pub struct DoctorSuccess<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub finding_groups: Vec<DoctorFindingGroupSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionSummary<'a>>,
@@ -124,6 +126,8 @@ pub struct CheckSuccess<'a> {
     pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub finding_groups: Vec<DoctorFindingGroupSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
     pub findings: &'a [Finding],
 }
 
@@ -524,6 +528,10 @@ pub struct ExecutionPlanSuccess<'a> {
     pub contract: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub member: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<&'a str>,
     pub contract_identity: ContractIdentity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declared_execution: Option<ExecutionSummary<'a>>,
@@ -1054,6 +1062,8 @@ pub struct WorkspaceRepoTasksReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub required: bool,
     pub acquired: bool,
     pub depends_on: Vec<String>,
@@ -1080,6 +1090,8 @@ pub struct WorkspaceRepoListReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub contract_present: bool,
     pub required: bool,
     pub acquired: bool,
@@ -1111,6 +1123,10 @@ pub struct WorkspaceRepoExecutionPlanReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
     pub required: bool,
     pub acquired: bool,
     pub status: String,
@@ -1152,6 +1168,8 @@ pub struct WorkspaceRepoUpReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub required: bool,
     pub ok: bool,
     pub status: String,
@@ -1264,6 +1282,8 @@ pub struct WorkspaceRepoStatusReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub required: bool,
     pub acquired: bool,
     pub ready: bool,
@@ -2062,6 +2082,8 @@ pub struct TasksSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<MemberTasksSuccess<'a>>,
@@ -2071,6 +2093,8 @@ pub struct TasksSuccess<'a> {
 #[derive(Debug, Serialize)]
 pub struct MemberTasksSuccess<'a> {
     pub member: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     pub tasks: Vec<TaskSummary<'a>>,
@@ -2131,6 +2155,48 @@ pub struct AgentSummary<'a> {
     pub bootstrap: Option<AgentBootstrapSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowSummary<'a> {
+    pub name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub required_services: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub readiness_checks: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exposes: Vec<String>,
+}
+
+impl<'a> WorkflowSummary<'a> {
+    pub fn from_contract(contract: &'a Contract) -> Option<Self> {
+        Self::from_contract_selected(contract, None)
+    }
+
+    pub fn from_contract_selected(
+        contract: &'a Contract,
+        workflow_name: Option<&str>,
+    ) -> Option<Self> {
+        let (name, workflow) = contract.selected_workflow(workflow_name)?;
+        Some(Self {
+            name,
+            intent: workflow.intent.as_deref(),
+            description: workflow.description.as_deref(),
+            setup_task: workflow.setup.as_ref().map(|phase| phase.task.as_str()),
+            run_task: workflow.run.as_ref().map(|phase| phase.task.as_str()),
+            required_services: workflow.services.required.clone(),
+            readiness_checks: workflow.readiness.checks.clone(),
+            exposes: workflow.exposes.clone(),
+        })
+    }
 }
 
 impl<'a> AgentSummary<'a> {

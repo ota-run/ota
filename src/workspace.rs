@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::doctor::{
     AdapterBootstrapDiagnostics, DoctorReport, Finding, FindingSeverity, ProvisioningDiagnostics,
-    diagnose_contract,
+    DoctorMode, diagnose_contract_with_mode_and_lifecycle_for_workflow,
 };
 use crate::execution::{format_backend, format_lifecycle};
 use crate::output::DoctorVerdict;
@@ -83,6 +83,8 @@ pub struct WorkspaceRepoSpec {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     #[serde(default)]
     pub required: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -107,6 +109,7 @@ pub struct WorkspaceRepoRef {
     pub name: String,
     pub path: PathBuf,
     pub contract_path: PathBuf,
+    pub workflow: Option<String>,
     pub required: bool,
     pub depends_on: Vec<String>,
     pub present: bool,
@@ -284,6 +287,8 @@ pub struct WorkspaceRepoDoctorReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub required: bool,
     pub ok: bool,
     pub agent_verdict: DoctorVerdict,
@@ -457,6 +462,16 @@ pub fn validate_workspace_contract(
                             validation_error
                         )));
                     }
+                }
+                if let Some(workflow_name) = repo.workflow.as_deref()
+                    && repo_contract.workflow(workflow_name).is_none()
+                {
+                    errors.push(WorkspaceValidationError::new(format!(
+                        "workspace repo `{}` workflow `{}` is not declared in contract `{}`",
+                        repo.name,
+                        workflow_name,
+                        repo.contract_path.display()
+                    )));
                 }
             }
             Err(LoadContractError::Read { .. }) => {
@@ -708,6 +723,7 @@ pub fn validate_workspace_shape(
             name: name.clone(),
             path: repo_root,
             contract_path,
+            workflow: repo.workflow.as_ref().map(|workflow| workflow.trim().to_string()),
             required: repo.required,
             depends_on: repo.depends_on.clone(),
             present,
@@ -862,6 +878,7 @@ pub(crate) fn diagnose_workspace_repo(
             name: repo.name,
             path: repo.path.display().to_string(),
             contract_path: repo.contract_path.display().to_string(),
+            workflow: repo.workflow,
             required: repo.required,
             ok: !repo.required,
             agent_verdict: DoctorVerdict::NotReady,
@@ -890,7 +907,13 @@ pub(crate) fn diagnose_workspace_repo(
                 extensions = contract.extensions.clone();
                 agent_verdict = agent_verdict_from_agent(contract.agent.as_ref());
                 let report = adjust_repo_findings(
-                    diagnose_contract(&contract, &repo.contract_path),
+                    diagnose_contract_with_mode_and_lifecycle_for_workflow(
+                        &contract,
+                        &repo.contract_path,
+                        DoctorMode::Native,
+                        None,
+                        repo.workflow.as_deref(),
+                    ),
                     repo.required,
                 );
                 provisioning = report.provisioning;
@@ -958,6 +981,7 @@ pub(crate) fn diagnose_workspace_repo(
         name: repo.name,
         path: repo.path.display().to_string(),
         contract_path: repo.contract_path.display().to_string(),
+        workflow: repo.workflow,
         required: repo.required,
         ok,
         agent_verdict,
@@ -1645,6 +1669,56 @@ repos:
         assert_eq!(
             errors.errors()[0].to_string(),
             "workspace repo `web` depends on unknown repo `api`"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_workspace_repo_workflow() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    workflow: backend
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .unwrap_err();
+
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            format!(
+                "workspace repo `web` workflow `backend` is not declared in contract `{}`",
+                fixture.path().join("apps").join("web").join("ota.yaml").display()
+            )
         );
     }
 

@@ -290,6 +290,11 @@ Failure:
 
 ## `ota execution plan --json`
 
+When the repo declares `workflows`, `ota execution plan --json` may include additive top-level
+`workflow` and `task` fields. `workflow` mirrors the selected canonical operational path, and
+`task` names the concrete workflow run task that drove execution planning, or the workflow setup
+task when the workflow does not declare a run phase.
+
 Success:
 
 ```json
@@ -297,6 +302,16 @@ Success:
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
   "contract": "/abs/path/to/ota.yaml",
+  "workflow": {
+    "name": "app",
+    "intent": "local_development",
+    "setup_task": "setup",
+    "run_task": "dev",
+    "required_services": ["postgres"],
+    "readiness_checks": ["app-health"],
+    "exposes": ["http://127.0.0.1:5678"]
+  },
+  "task": "dev",
   "contract_identity": {
     "version": 1,
     "project": {
@@ -982,7 +997,9 @@ Failure:
 ## `ota workspace execution plan --json`
 
 Workspace execution planning stays read-only, but reports one resolved or unresolved execution
-decision per selected repo.
+decision per selected repo. Repo items may include additive `workflow` and `task` whenever
+workflow-aware planning selected a canonical repo path, whether that came from
+`repos.<name>.workflow` or the repo contract's own default workflow.
 
 ```json
 {
@@ -1009,6 +1026,8 @@ decision per selected repo.
       "required": true,
       "acquired": true,
       "status": "RESOLVED",
+      "workflow": "backend",
+      "task": "dev",
       "contract_identity": {
         "version": 1,
         "project": {
@@ -1068,6 +1087,15 @@ Success:
 {
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
+  "workflow": {
+    "name": "app",
+    "intent": "local_development",
+    "setup_task": "setup",
+    "run_task": "dev",
+    "required_services": ["postgres"],
+    "readiness_checks": ["app-health"],
+    "exposes": ["http://127.0.0.1:5678"]
+  },
   "agent": {
     "entrypoint": "setup",
     "safe_tasks": ["setup", "test"],
@@ -1116,6 +1144,13 @@ Root monorepo summary output can also include grouped member results:
   "members": [
     {
       "member": "api",
+      "workflow": {
+        "name": "app",
+        "run_task": "test",
+        "required_services": [],
+        "readiness_checks": [],
+        "exposes": []
+      },
       "tasks": [
         {
           "name": "test",
@@ -1140,6 +1175,9 @@ Root monorepo summary output can also include grouped member results:
 }
 ```
 
+When the repo declares `workflows`, `ota tasks --json` includes an additive top-level `workflow`
+object for the default workflow, and member summaries may include the same additive field.
+
 ## `ota doctor --json`
 
 ```json
@@ -1150,6 +1188,15 @@ Root monorepo summary output can also include grouped member results:
     "error_count": 0,
     "warn_count": 1,
     "info_count": 0
+  },
+  "workflow": {
+    "name": "app",
+    "intent": "local_development",
+    "setup_task": "setup",
+    "run_task": "dev",
+    "required_services": ["postgres"],
+    "readiness_checks": ["app-health"],
+    "exposes": ["http://127.0.0.1:5678"]
   },
   "agent": {
     "entrypoint": "setup",
@@ -1320,6 +1367,10 @@ JSON output and can be selected by `execution.backends.remote.provider` for cust
 execution. Backend providers receive a structured request on stdin and in
 `OTA_BACKEND_PROVIDER_REQUEST_JSON`, then return a structured JSON response on stdout.
 
+When the repo declares `workflows`, `ota doctor --json` includes an additive top-level `workflow`
+object for the default workflow so editors and automation can reason about the canonical repo path
+without inferring it from task names.
+
 ## `ota policy review --json`
 
 `ota policy review --json` is the policy-authority view over a repo contract. It is read-only and
@@ -1456,6 +1507,7 @@ include `primary_blocker` with the highest-priority blocker details and the repo
       "name": "web",
       "path": "/abs/path/to/apps/web",
       "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "workflow": "app",
       "required": true,
       "ok": false,
       "execution": {
@@ -1781,6 +1833,8 @@ doctor output. When policy declares adapter bootstrap sources, the per-repo item
 include the same `adapter_bootstrap` diagnostics bundle. Both bundles carry the read-only plan
 and backend intake request together, so workspace consumers can inspect the same future
 provisioning signals without mutating anything.
+When the workspace contract pins `repos.<name>.workflow`, each repo item may also include that
+selected workflow name as additive `workflow`.
 
 ## `ota workspace tasks --json`
 
@@ -1800,6 +1854,7 @@ provisioning signals without mutating anything.
       "name": "api",
       "path": "/abs/path/to/services/api",
       "contract_path": "/abs/path/to/services/api/ota.yaml",
+      "workflow": "app",
       "required": true,
       "acquired": true,
       "depends_on": ["db"],
@@ -1822,7 +1877,8 @@ provisioning signals without mutating anything.
 
 Non-acquired repos keep `acquired: false` and `tasks: []`. Each task report can also carry
 `requires_services`, `after_success`, `after_failure`, and `after_always` so automation can see
-the same service and post-outcome task graph that `ota run` executes.
+the same service and post-outcome task graph that `ota run` executes. When the workspace contract
+pins `repos.<name>.workflow`, each repo item may also include additive `workflow`.
 
 ## `ota workspace list --json`
 
@@ -1835,6 +1891,7 @@ the same service and post-outcome task graph that `ota run` executes.
       "name": "api",
       "path": "/abs/path/to/services/api",
       "contract_path": "/abs/path/to/services/api/ota.yaml",
+      "workflow": "app",
       "contract_present": true,
       "required": true,
       "acquired": true,
@@ -1864,6 +1921,9 @@ the same service and post-outcome task graph that `ota run` executes.
   ]
 }
 ```
+
+When the workspace contract pins `repos.<name>.workflow`, each repo item may also include that
+selected workflow name as additive `workflow`.
 
 ## `ota workspace run --json`
 
@@ -1934,6 +1994,7 @@ the same service and post-outcome task graph that `ota run` executes.
       "name": "web",
       "path": "/abs/path/to/apps/web",
       "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "workflow": "app",
       "required": true,
       "ok": true,
       "status": "READY",
@@ -2250,12 +2311,20 @@ Each catalog entry keeps the operator guidance machine-readable:
 ## `ota check --json`
 
 `ota check --json` uses the same finding shape as `ota doctor --json`, including additive
-`finding_groups` when present, but does not include the optional `agent` summary:
+`finding_groups` when present, and may also include the same additive top-level `workflow`
+summary for the default workflow:
 
 ```json
 {
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
+  "workflow": {
+    "name": "app",
+    "run_task": "dev",
+    "required_services": ["postgres"],
+    "readiness_checks": ["app-health"],
+    "exposes": []
+  },
   "findings": [
     {
       "severity": "error",
@@ -2281,7 +2350,7 @@ Root monorepo summary output can also include grouped member findings under `mem
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
   "status": "READY",
-  "phase": "post-setup diagnosis",
+  "phase": "post-up diagnosis",
   "findings": [],
   "receipt": {
     "ok": true,
@@ -2957,7 +3026,7 @@ local git drift together, includes per-repo `ready`, `readiness_status`, `drift_
 `drift_kind`, `target_source`, `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty`
 fields, and adds `"mode": "status"`. Additive top-level `next` and `next_steps` are present when
 ota can name the safest doctor, acquisition, or refresh follow-up lane directly, and per-repo
-items can also carry additive `next` and `next_steps`. `target_source` is `declared_ref` when
+items can also carry additive `next`, `next_steps`, and `workflow`. `target_source` is `declared_ref` when
 the comparison target came from `repos.<name>.source.ref` and `upstream_branch` when ota fell
 back to the repo's configured upstream branch. `summary` now also breaks the previously collapsed
 `missing` and `unresolved` buckets into additive `missing_repo_count`, `missing_contract_count`,
@@ -2966,7 +3035,8 @@ back to the repo's configured upstream branch. `summary` now also breaks the pre
 `ota workspace execution plan --json` uses a read-only execution roll-up. It reports one
 resolved or unresolved execution decision per selected repo, includes per-repo
 `contract_identity`, `declared_execution`, `resolved`, `error`, and `next` fields when present,
-and adds `"mode": "execution-plan"`.
+adds additive per-repo `workflow` and `task` when workflow planning is selected, and adds
+`"mode": "execution-plan"`.
 
 `ota workspace receipt --json` uses the same scan as `status`, but packages the result as a
 receipt artifact. It records the same readiness and drift detail, adds `"mode": "receipt"`, and
