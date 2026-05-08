@@ -26,3 +26,6 @@ target
 
 # Ota local runtime state
 .ota/state/
+
+# Ota local runtime artifacts
+.ota/receipts/
