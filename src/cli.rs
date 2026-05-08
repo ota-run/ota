@@ -155,21 +155,6 @@ enum Commands {
         #[command(subcommand)]
         command: AssistCommands,
     },
-    #[command(display_order = 10)]
-    /// Export a read-only local Studio snapshot for the current repo.
-    Studio {
-        /// Open the generated snapshot in the default browser after export.
-        #[arg(long, action = ArgAction::SetTrue)]
-        open: bool,
-        /// Serve the generated Studio snapshot locally and enable reviewed write actions.
-        #[arg(long, action = ArgAction::SetTrue)]
-        serve: bool,
-        /// Inspect one merged monorepo member contract declared by the root contract.
-        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
-        member: Option<String>,
-        /// Path to a repo root, ota.yaml file, or directory containing one.
-        path: Option<PathBuf>,
-    },
     #[command(
         display_order = 4,
         after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run version:bump patch"
@@ -4389,19 +4374,6 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
-        Commands::Studio {
-            open,
-            serve,
-            member,
-            path,
-        } => commands::studio(
-            path.as_deref(),
-            file.as_deref(),
-            open,
-            serve,
-            member.as_deref(),
-            debug,
-        ),
         Commands::Run {
             task,
             backend,
@@ -5156,9 +5128,6 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
         }
-        Commands::Studio { .. } => {
-            "run `ota doctor` to refresh readiness or rerun `ota studio` after contract changes"
-        }
         Commands::Run { .. } => {
             if stderr_reports_missing_repo_contract(&stderr) {
                 "run this command from a repo directory that contains `ota.yaml`, or run `ota init` to create a starter contract"
@@ -5378,7 +5347,6 @@ fn command_requests_json(command: &Commands) -> bool {
             command: None,
             ..
         } => *json,
-        Commands::Studio { .. } => false,
         Commands::Execution {
             command: ExecutionCommands::Plan { json, .. },
         } => *json,
@@ -5452,7 +5420,6 @@ fn command_where_label(command: &Commands) -> &'static str {
             ExecutionCommands::Plan { .. } => "ota execution plan",
             ExecutionCommands::Topology { .. } => "ota execution topology",
         },
-        Commands::Studio { .. } => "ota studio",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
         Commands::Annotations { .. } => "ota annotations",
@@ -10306,347 +10273,6 @@ tasks:
             )
         );
         assert!(stdout.contains("api (api.http, activation=restart_ready, view=topology)"));
-    }
-
-    #[test]
-    fn studio_writes_read_only_snapshot_for_valid_contract() {
-        let fixture = ContractFixture::new(
-            r#"
-version: 1
-project:
-  name: studio-demo
-tasks:
-  test:
-    run: printf ok
-"#,
-        );
-
-        let output = run_with(["ota", "studio", fixture.path()]);
-
-        assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("STUDIO "));
-        assert!(stdout.contains("read-only snapshot"));
-        assert!(stdout.contains("ota studio --open"));
-        let snapshot_path = fixture
-            .dir
-            .path()
-            .join(".ota")
-            .join("state")
-            .join("studio")
-            .join("index.html");
-        assert!(snapshot_path.is_file());
-        let html = fs::read_to_string(snapshot_path).unwrap();
-        assert!(html.contains("Ota Studio"));
-        assert!(html.contains("studio-demo"));
-        assert!(html.contains("ota-studio-data"));
-        assert!(html.contains("Contract review"));
-        assert!(html.contains("Activity"));
-        assert!(html.contains("Action needed"));
-        assert!(html.contains("no activity yet"));
-        assert!(html.contains("no immediate action"));
-    }
-
-    #[test]
-    fn studio_writes_snapshot_for_contractless_repo() {
-        let fixture = ContractFixture::new_dir();
-        fixture.write(
-            "package.json",
-            r#"
-{
-  "name": "contractless-studio",
-  "scripts": {
-    "test": "node -e \"console.log('ok')\""
-  }
-}
-"#,
-        );
-
-        let output = run_with(["ota", "studio", fixture.path()]);
-
-        assert_eq!(output.exit_code, 0);
-        let snapshot_path = fixture
-            .dir
-            .path()
-            .join(".ota")
-            .join("state")
-            .join("studio")
-            .join("index.html");
-        assert!(snapshot_path.is_file());
-        let html = fs::read_to_string(snapshot_path).unwrap();
-        assert!(html.contains("No ota.yaml detected yet"));
-        assert!(html.contains("contractless-studio"));
-        assert!(html.contains("Review starter draft"));
-        assert!(html.contains("starter review"));
-        assert!(html.contains("no activity yet"));
-        assert!(html.contains("Action needed"));
-        assert!(html.contains("Onboarding"));
-        assert!(html.contains("ota init --dry-run"));
-    }
-
-    #[test]
-    fn studio_contractless_activity_uses_archived_provenance_labels() {
-        let fixture = ContractFixture::new_dir();
-        fixture.write(
-            "package.json",
-            r#"
-{
-  "name": "contractless-studio",
-  "scripts": {
-    "test": "node -e \"console.log('ok')\""
-  }
-}
-"#,
-        );
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260502-080000-123Z.json",
-            &serde_json::to_string_pretty(&json!({
-                "ok": true,
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 0,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1,
-                },
-                "receipt": {
-                    "scope": "repo",
-                    "contract": "/tmp/archived/ota.yaml",
-                    "status": "READY",
-                    "backend": "native",
-                    "steps": [{
-                        "order": 1,
-                        "label": "test",
-                        "status": "READY",
-                        "exit_code": 0,
-                    }]
-                }
-            }))
-            .unwrap(),
-        );
-
-        let output = run_with(["ota", "studio", fixture.path()]);
-
-        assert_eq!(output.exit_code, 0);
-        let snapshot_path = fixture
-            .dir
-            .path()
-            .join(".ota")
-            .join("state")
-            .join("studio")
-            .join("index.html");
-        let html = fs::read_to_string(snapshot_path).unwrap();
-        assert!(html.contains("Archived receipt"));
-    }
-
-    #[test]
-    fn studio_snapshot_renders_service_and_task_drill_in_sections() {
-        let fixture = ContractFixture::new(
-            r#"
-version: 1
-project:
-  name: studio-topology
-services:
-  postgres:
-    required: true
-    manager:
-      kind: compose
-      name: local
-      file: compose.yaml
-      service: postgres
-    endpoints:
-      app:
-        address: postgres
-        port: 5432
-    readiness:
-      from: app
-      run: pg_isready -h postgres -p 5432
-tasks:
-  api:
-    run: printf api
-    runtime:
-      kind: service
-      listeners:
-        http:
-          protocol: http
-          bind:
-            address: 127.0.0.1
-            port:
-              mode: fixed
-              value: 8080
-          project:
-            host:
-              address: 127.0.0.1
-              primary: true
-              port:
-                mode: fixed
-                value: 8080
-              path: /
-  web:
-    run: printf web
-    targets:
-      api:
-        service:
-          task: api
-          listener: http
-          address_view: host
-"#,
-        );
-
-        let output = run_with(["ota", "studio", fixture.path()]);
-
-        assert_eq!(output.exit_code, 0);
-        let snapshot_path = fixture
-            .dir
-            .path()
-            .join(".ota")
-            .join("state")
-            .join("studio")
-            .join("index.html");
-        let html = fs::read_to_string(snapshot_path).unwrap();
-        assert!(html.contains("Services"));
-        assert!(html.contains("Targets"));
-        assert!(html.contains("Listeners"));
-        assert!(html.contains("Contract Review"));
-        assert!(html.contains("Current contract"));
-        assert!(html.contains("Inferred draft"));
-        assert!(html.contains("draft differs"));
-        assert!(html.contains("recent failure"));
-        assert!(html.contains("Action needed"));
-        assert!(html.contains("Reviewed merge result"));
-        assert!(html.contains("Reviewed rewrite result"));
-        assert!(html.contains("Copy merge apply"));
-        assert!(html.contains("Why"));
-        assert!(html.contains("explain-group"));
-        assert!(html.contains("Activation"));
-        assert!(html.contains("postgres"));
-        assert!(html.contains("pg_isready -h postgres -p 5432"));
-        assert!(html.contains("Resolution"));
-        assert!(html.contains("serves:"));
-        assert!(html.contains("targets:"));
-        assert!(html.contains("backend:"));
-        assert!(html.contains("This target follows the producer's published host-facing address."));
-        assert!(html.contains("This listener projects the primary host-facing endpoint"));
-    }
-
-    #[test]
-    fn studio_snapshot_renders_recent_activity_from_archived_receipts() {
-        let fixture = ContractFixture::new(
-            r#"
-version: 1
-project:
-  name: studio-activity
-tasks:
-  build:
-    run: printf build
-"#,
-        );
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260502-111213-123Z.json",
-            &serde_json::to_string_pretty(&json!({
-                "ok": false,
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1,
-                },
-                "receipt": {
-                    "scope": "repo",
-                    "contract": fixture.dir.path().join("ota.yaml").display().to_string(),
-                    "status": "TASK FAILED",
-                    "backend": "native",
-                    "failed_task": "build",
-                    "logs": {
-                        "dir": ".ota/state/logs/20260502-build",
-                        "stdout": ".ota/state/logs/20260502-build/stdout.log",
-                        "stderr": ".ota/state/logs/20260502-build/stderr.log",
-                    },
-                    "steps": [{
-                        "order": 1,
-                        "label": "build",
-                        "status": "FAILED",
-                        "exit_code": 1,
-                    }],
-                    "next": "rerun `ota run build --stream`",
-                },
-                "findings": [{
-                    "severity": "error",
-                    "summary": "build failed",
-                    "why": "the archived build receipt recorded a failure",
-                    "next": "rerun `ota run build --stream`"
-                }]
-            }))
-            .unwrap(),
-        );
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260501-101010-123Z.json",
-            &serde_json::to_string_pretty(&json!({
-                "ok": true,
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 0,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1,
-                },
-                "receipt": {
-                    "scope": "repo",
-                    "contract": fixture.dir.path().join("legacy.yaml").display().to_string(),
-                    "status": "READY",
-                    "backend": "native",
-                    "steps": [{
-                        "order": 1,
-                        "label": "legacy-build",
-                        "status": "READY",
-                        "exit_code": 0,
-                    }]
-                }
-            }))
-            .unwrap(),
-        );
-
-        let output = run_with(["ota", "studio", fixture.path()]);
-
-        assert_eq!(output.exit_code, 0);
-        let snapshot_path = fixture
-            .dir
-            .path()
-            .join(".ota")
-            .join("state")
-            .join("studio")
-            .join("index.html");
-        let html = fs::read_to_string(snapshot_path).unwrap();
-        assert!(html.contains("Recent Activity"));
-        assert!(html.contains("Activity focus"));
-        assert!(html.contains("Latest failure"));
-        assert!(html.contains("Latest ready"));
-        assert!(html.contains("Failure summary"));
-        assert!(html.contains("Most recent failure"));
-        assert!(html.contains("Recovery"));
-        assert!(html.contains("Ready summary"));
-        assert!(html.contains("Most recent ready run"));
-        assert!(html.contains("data-activity-filter=\"failures\""));
-        assert!(html.contains("TASK FAILED"));
-        assert!(html.contains("build"));
-        assert!(html.contains("Execution timeline"));
-        assert!(html.contains("timeline-strip"));
-        assert!(html.contains("Readiness"));
-        assert!(html.contains("Provenance"));
-        assert!(html.contains("Archived age"));
-        assert!(html.contains("Most recent current-contract receipt"));
-        assert!(html.contains("Most recent older-contract receipt"));
-        assert!(html.contains("Current contract receipt"));
-        assert!(html.contains("Older contract receipt"));
-        assert!(html.contains("Receipt details"));
-        assert!(html.contains("Archived findings"));
-        assert!(html.contains("Durable log paths"));
-        assert!(html.contains("Copy stdout path"));
-        assert!(html.contains("Copy stderr path"));
-        assert!(html.contains("build failed"));
-        assert!(html.contains(".ota/state/logs/20260502-build"));
-        assert!(html.contains("rerun `ota run build --stream`"));
     }
 
     #[test]
@@ -18401,6 +18027,8 @@ runtimes:
 
     #[test]
     fn doctor_json_rewrites_selected_lifecycle_in_finding_next_steps() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -24535,6 +24163,7 @@ agent:
 
     #[test]
     fn doctor_without_contract_shows_no_signal_section_and_compare_first_lane() {
+        let _env_guard = env_mutex_lock();
         let _guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let _cwd = CurrentDirGuard::enter(fixture.path());
@@ -24943,6 +24572,8 @@ tasks:
 
     #[test]
     fn up_runs_setup_and_reports_ready() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -25243,6 +24874,8 @@ policies:
 
     #[test]
     fn up_runs_required_service_start_before_setup() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -27411,16 +27044,29 @@ project:
 
     #[test]
     fn detect_json_reports_next_when_high_confidence_fields_are_insufficient() {
+        let _env_guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
 
         let output = run_with(["ota", "detect", "--json", "--write", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["ok"], true);
-        assert_eq!(json["written"], true);
-        assert!(json.get("next").is_none() || json["next"].is_null());
+        assert_eq!(output.exit_code, 1);
+        let payload = output
+            .stderr
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or(&output.stdout);
+        let json: Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap_or_else(|_| fixture.file_path().parent().unwrap().to_path_buf())
+            .display()
+            .to_string();
+        assert_eq!(
+            json["next"],
+            Value::String(format!("ota detect --dry-run {repo_path}"))
+        );
     }
 
     #[test]
@@ -29904,6 +29550,7 @@ policies:
     #[test]
     fn doctor_container_mode_reports_winget_version_unavailable() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -30369,6 +30016,7 @@ policies:
     #[test]
     fn doctor_container_mode_skips_host_bound_readiness_checks() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -30849,6 +30497,7 @@ tasks:
     #[test]
     fn doctor_uses_asdf_tool_remediation_when_repo_signals_tool_versions() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1

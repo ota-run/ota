@@ -19,7 +19,6 @@ Commands:
   diff         Compare two Ota contracts semantically
   env          Inspect resolved environment requirements from an Ota contract
   execution    Inspect the resolved execution context without running anything
-  studio       Export a read-only local Studio snapshot for the current repo
   check        Run configured checks from an Ota contract
   receipt      Capture a read-only repo receipt for audit and automation
   annotations  Render Ota JSON findings as CI annotations or log lines

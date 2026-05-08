@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- removed the shipped `ota studio` CLI surface so the supported product stays aligned with the current doctor/init/detect/up/run adoption path instead of carrying an unadvertised local Studio export mode
 - fixed Windows release installs again so Git Bash/MSYS/MINGW and PowerShell now both use the published Windows `.zip` release path instead of a nonexistent `.tar.gz`, verify `ota.exe` correctly in shell-installer post-install checks, and make explicit release-mode installs/self-updates fail honestly instead of silently falling back to Cargo git builds when the prebuilt asset download fails
 - tightened `ota detect --write` to fail fast when project name/contract confidence is insufficient, so weak detections no longer produce an auto-written starter contract; this also applies detector-inferred agent boundaries (`agent.writable_paths`, `agent.protected_paths`, and provenance) before writing and keeps blocked JSON/text next steps explicit for the targeted repo path
 - fixed the Windows bootstrap/self-update replacement path again so locked `ota.exe` updates no longer leak raw PowerShell `Copy-Item` file-in-use failures; the bootstrap script now routes wrapped locked-file errors through the deferred replacement scheduler consistently and reports the update as pending until verification
