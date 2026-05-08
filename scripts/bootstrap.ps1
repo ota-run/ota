@@ -386,7 +386,7 @@ function Install-FromGit {
 function Install-ReleaseBinary {
     $target = Get-OtaTarget
     if (-not $target) {
-        Write-OtaWarn "warning: no published prebuilt ota release is configured for this OS/arch; trying cargo fallback"
+        Write-OtaWarn "warning: no published prebuilt ota release is configured for this OS/arch"
         return $false
     }
 
@@ -404,7 +404,7 @@ function Install-ReleaseBinary {
     try {
         Write-OtaInfo "installing ota $version for $target..."
         if (-not (Download-OtaFile "$downloadPrefix/$asset" $archive)) {
-            Write-OtaWarn "warning: prebuilt ota release asset is not published for $target at $version ($asset); trying cargo fallback"
+            Write-OtaWarn "warning: could not download prebuilt ota release asset for $target at $version ($asset)"
             return $false
         }
 
@@ -545,8 +545,13 @@ else
     }
     if ($releaseInstallStatus -ne "installed")
     {
-    Write-OtaWarn "warning: falling back to git install via cargo"
-    Install-FromGit
+        if ($installMode -eq "release" -and $installModeForced)
+        {
+            Write-OtaError "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
+            exit 1
+        }
+        Write-OtaWarn "warning: falling back to git install via cargo"
+        Install-FromGit
     }
 }
 

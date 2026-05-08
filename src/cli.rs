@@ -23763,6 +23763,22 @@ tasks:
     }
 
     #[test]
+    fn install_sh_uses_ota_exe_for_windows_post_install_checks() {
+        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+
+        assert!(script.contains("binary_name=\"ota.exe\""), "{script}");
+        assert!(script.contains("${OTA_BIN_DIR}/${binary_name}"), "{script}");
+        assert!(
+            script.contains("$HOME/.local/bin/${binary_name}"),
+            "{script}"
+        );
+        assert!(
+            script.contains("$HOME/.cargo/bin/${binary_name}"),
+            "{script}"
+        );
+    }
+
+    #[test]
     fn release_install_scripts_refuse_cargo_fallback_in_explicit_release_mode() {
         let shell_script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
         let powershell_script =
@@ -23778,6 +23794,14 @@ tasks:
             powershell_script.contains(
                 "error: prebuilt release install failed; refusing cargo fallback in explicit release mode"
             ),
+            "{powershell_script}"
+        );
+        assert!(
+            !shell_script.contains("trying cargo fallback"),
+            "{shell_script}"
+        );
+        assert!(
+            !powershell_script.contains("trying cargo fallback"),
             "{powershell_script}"
         );
     }
