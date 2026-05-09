@@ -2057,6 +2057,34 @@ impl TaskSpec {
             .and_then(|execution| execution.default_mode)
     }
 
+    pub fn workflow_backend(&self, execution: Option<&Execution>) -> Backend {
+        if let Some(default_mode) = self.mode_default_backend() {
+            return default_mode;
+        }
+
+        if let Some(context_name) = self.context.as_deref()
+            && let Some(context) = execution.and_then(|execution| execution.contexts.get(context_name))
+        {
+            return context.backend;
+        }
+
+        if let Some((_, context)) = execution.and_then(Execution::default_context) {
+            return context.backend;
+        }
+
+        if let Some(preferred) = execution.and_then(|execution| execution.preferred) {
+            return preferred;
+        }
+
+        for backend in [Backend::Native, Backend::Container, Backend::Remote] {
+            if self.mode_execution_branch(backend).is_some() {
+                return backend;
+            }
+        }
+
+        Backend::Native
+    }
+
     pub fn mode_execution_branch(&self, backend: Backend) -> Option<&TaskModeBranchSpec> {
         self.execution
             .as_ref()

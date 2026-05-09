@@ -5068,7 +5068,7 @@ fn workflow_surface_attachment_error(
     task: &TaskSpec,
     surface: &str,
 ) -> Option<String> {
-    let mut backends = vec![task_execution_backend(contract, task, Backend::Native)];
+    let mut backends = vec![task.workflow_backend(contract.execution.as_ref())];
     for backend in [Backend::Native, Backend::Container, Backend::Remote] {
         if task.mode_execution_branch(backend).is_some() && !backends.contains(&backend) {
             backends.push(backend);
@@ -6291,6 +6291,63 @@ workflows:
 
         validate_contract(&contract)
             .expect("default-mode native attachment should satisfy workflow surfaces");
+    }
+
+    #[test]
+    fn accepts_workflow_surface_attached_on_default_container_mode_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          runtime:
+            kind: service
+            surfaces:
+              backend:
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 5678
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("default-mode container attachment should satisfy workflow surfaces");
     }
 
     #[test]

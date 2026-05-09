@@ -2359,7 +2359,7 @@ fn workflow_surface_host_url(
     surface_name: &str,
 ) -> Option<String> {
     let task = contract.tasks.get(task_name)?;
-    let backend = workflow_surface_backend(contract, task);
+    let backend = task.workflow_backend(contract.execution.as_ref());
     let runtime = task.service_runtime_for_backend(backend)?;
     if !runtime.surfaces.contains_name(surface_name) {
         return None;
@@ -2377,62 +2377,6 @@ fn workflow_surface_host_url(
         }
         crate::schema::TaskRuntimeProtocol::Tcp => Some(format!("tcp://{}:{}", host.address, port)),
     }
-}
-
-fn workflow_surface_backend(contract: &Contract, task: &TaskSpec) -> Backend {
-    if let Some(context_name) = workflow_surface_context_name(contract, task, Backend::Native)
-        && let Some(context) = contract
-            .execution
-            .as_ref()
-            .and_then(|execution| execution.contexts.get(context_name))
-    {
-        return context.backend;
-    }
-    if task.mode_execution_branch(Backend::Native).is_some() {
-        return Backend::Native;
-    }
-    if let Some(default_mode) = task.mode_default_backend() {
-        return default_mode;
-    }
-
-    contract
-        .execution
-        .as_ref()
-        .and_then(|execution| execution.preferred)
-        .unwrap_or(Backend::Native)
-}
-
-fn workflow_surface_context_name<'a>(
-    contract: &'a Contract,
-    task: &'a TaskSpec,
-    backend_hint: Backend,
-) -> Option<&'a str> {
-    let execution = contract.execution.as_ref()?;
-    if let Some(branch) = task.mode_execution_branch(backend_hint) {
-        return branch
-            .context
-            .as_deref()
-            .or_else(|| {
-                task.context.as_deref().filter(|context_name| {
-                    execution
-                        .contexts
-                        .get(*context_name)
-                        .is_some_and(|context| context.backend == backend_hint)
-                })
-            })
-            .or_else(|| {
-                execution.default_context.as_deref().filter(|context_name| {
-                    execution
-                        .contexts
-                        .get(*context_name)
-                        .is_some_and(|context| context.backend == backend_hint)
-                })
-            });
-    }
-
-    task.context
-        .as_deref()
-        .or_else(|| execution.default_context.as_deref())
 }
 
 impl<'a> AgentSummary<'a> {
