@@ -2175,6 +2175,35 @@ pub struct TasksFailure<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkflowsSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberWorkflowsSuccess<'a>>,
+    pub workflows: Vec<ListedWorkflowSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemberWorkflowsSuccess<'a> {
+    pub member: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<&'a str>,
+    pub workflows: Vec<ListedWorkflowSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowsFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ServicesSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
@@ -2246,18 +2275,22 @@ pub struct WorkflowSummary<'a> {
     pub expose_surfaces: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ListedWorkflowSummary<'a> {
+    #[serde(flatten)]
+    pub workflow: WorkflowSummary<'a>,
+    pub default: bool,
+}
+
 impl<'a> WorkflowSummary<'a> {
     pub fn from_contract(contract: &'a Contract) -> Option<Self> {
         Self::from_contract_selected(contract, None)
     }
 
-    pub fn from_contract_selected(
-        contract: &'a Contract,
-        workflow_name: Option<&str>,
-    ) -> Option<Self> {
-        let (name, workflow) = contract.selected_workflow(workflow_name)?;
+    pub fn from_contract_named(contract: &'a Contract, workflow_name: &'a str) -> Option<Self> {
+        let workflow = contract.workflow(workflow_name)?;
         Some(Self {
-            name,
+            name: workflow_name,
             intent: workflow.intent.as_deref(),
             description: workflow.description.as_deref(),
             setup_task: workflow.setup.as_ref().map(|phase| phase.task.as_str()),
@@ -2271,9 +2304,11 @@ impl<'a> WorkflowSummary<'a> {
                 .iter()
                 .filter_map(|expose| match expose {
                     crate::schema::WorkflowExposeSpec::Url(url) => Some(url.clone()),
-                    crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => contract
-                        .surface(surface)
-                        .map(crate::schema::SurfaceSpec::host_url),
+                    crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => {
+                        workflow.run.as_ref().and_then(|run| {
+                            workflow_surface_host_url(contract, run.task.as_str(), surface)
+                        })
+                    }
                 })
                 .collect(),
             expose_surfaces: workflow
@@ -2283,6 +2318,121 @@ impl<'a> WorkflowSummary<'a> {
                 .collect(),
         })
     }
+
+    pub fn from_contract_selected(
+        contract: &'a Contract,
+        workflow_name: Option<&str>,
+    ) -> Option<Self> {
+        let (name, _) = contract.selected_workflow(workflow_name)?;
+        Self::from_contract_named(contract, name)
+    }
+
+    pub fn list_from_contract(contract: &'a Contract) -> Vec<ListedWorkflowSummary<'a>> {
+        let default_name = contract
+            .workflows
+            .as_ref()
+            .map(|workflows| workflows.default.as_str());
+        contract
+            .workflows
+            .as_ref()
+            .map(|workflows| {
+                workflows
+                    .items
+                    .keys()
+                    .filter_map(|name| {
+                        Self::from_contract_named(contract, name.as_str()).map(|workflow| {
+                            ListedWorkflowSummary {
+                                default: default_name == Some(name.as_str()),
+                                workflow,
+                            }
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+fn workflow_surface_host_url(
+    contract: &Contract,
+    task_name: &str,
+    surface_name: &str,
+) -> Option<String> {
+    let task = contract.tasks.get(task_name)?;
+    let backend = workflow_surface_backend(contract, task);
+    let runtime = task.service_runtime_for_backend(backend)?;
+    if !runtime.surfaces.contains_name(surface_name) {
+        return None;
+    }
+    let listener = runtime.listeners.get(surface_name)?;
+    let host = listener.project.host.as_ref()?;
+    let port = host.port.value?;
+    let path = host.path.as_deref().unwrap_or("");
+    match listener.protocol {
+        crate::schema::TaskRuntimeProtocol::Http => {
+            Some(format!("http://{}:{}{}", host.address, port, path))
+        }
+        crate::schema::TaskRuntimeProtocol::Https => {
+            Some(format!("https://{}:{}{}", host.address, port, path))
+        }
+        crate::schema::TaskRuntimeProtocol::Tcp => Some(format!("tcp://{}:{}", host.address, port)),
+    }
+}
+
+fn workflow_surface_backend(contract: &Contract, task: &TaskSpec) -> Backend {
+    if let Some(context_name) = workflow_surface_context_name(contract, task, Backend::Native)
+        && let Some(context) = contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get(context_name))
+    {
+        return context.backend;
+    }
+    if task.mode_execution_branch(Backend::Native).is_some() {
+        return Backend::Native;
+    }
+    if let Some(default_mode) = task.mode_default_backend() {
+        return default_mode;
+    }
+
+    contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.preferred)
+        .unwrap_or(Backend::Native)
+}
+
+fn workflow_surface_context_name<'a>(
+    contract: &'a Contract,
+    task: &'a TaskSpec,
+    backend_hint: Backend,
+) -> Option<&'a str> {
+    let execution = contract.execution.as_ref()?;
+    if let Some(branch) = task.mode_execution_branch(backend_hint) {
+        return branch
+            .context
+            .as_deref()
+            .or_else(|| {
+                task.context.as_deref().filter(|context_name| {
+                    execution
+                        .contexts
+                        .get(*context_name)
+                        .is_some_and(|context| context.backend == backend_hint)
+                })
+            })
+            .or_else(|| {
+                execution.default_context.as_deref().filter(|context_name| {
+                    execution
+                        .contexts
+                        .get(*context_name)
+                        .is_some_and(|context| context.backend == backend_hint)
+                })
+            });
+    }
+
+    task.context
+        .as_deref()
+        .or_else(|| execution.default_context.as_deref())
 }
 
 impl<'a> AgentSummary<'a> {

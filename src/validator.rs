@@ -1529,21 +1529,21 @@ fn validate_runtime_surface_attachments(
     runtime: &TaskRuntimeSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    let mut seen = BTreeSet::new();
-    for surface_name in &runtime.surfaces {
-        if !seen.insert(surface_name.as_str()) {
-            errors.push(ValidationError::new(format!(
-                "`{field_path}.surfaces` must not declare duplicate surface `{surface_name}`"
-            )));
-            continue;
-        }
+    for surface_name in runtime.surfaces.duplicate_names() {
+        errors.push(ValidationError::new(format!(
+            "`{field_path}.surfaces` must not declare duplicate surface `{surface_name}`"
+        )));
+    }
 
+    for (surface_name, attachment) in runtime.surfaces.iter() {
         if !contract.surfaces.contains_key(surface_name.as_str()) {
             errors.push(ValidationError::new(format!(
                 "`{field_path}.surfaces` references unknown surface `{surface_name}`"
             )));
             continue;
         }
+
+        let surface = &contract.surfaces[surface_name];
 
         if runtime.listeners.contains_key(surface_name.as_str())
             && !runtime
@@ -1552,6 +1552,17 @@ fn validate_runtime_surface_attachments(
         {
             errors.push(ValidationError::new(format!(
                 "`{field_path}.surfaces` attaches surface `{surface_name}`, but `{field_path}.listeners.{surface_name}` is already declared"
+            )));
+        }
+
+        if let Some(bind) = attachment.bind.as_ref()
+            && let Some(port) = bind.port.as_ref()
+            && (port.mode != crate::schema::TaskRuntimePortMode::Fixed
+                || port.value != Some(surface.port))
+        {
+            errors.push(ValidationError::new(format!(
+                "`{field_path}.surfaces.{surface_name}.bind.port` must preserve declared surface port {} with `mode: fixed`",
+                surface.port
             )));
         }
     }
@@ -5071,7 +5082,7 @@ fn workflow_surface_attachment_error(
                 format_backend(backend)
             ));
         };
-        if !runtime.surfaces.iter().any(|declared| declared == surface) {
+        if !runtime.surfaces.contains_name(surface) {
             return Some(format!(
                 "does not attach that surface for backend `{}`",
                 format_backend(backend)

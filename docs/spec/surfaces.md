@@ -72,6 +72,8 @@ Surfaces let the contract define that endpoint once and attach it where it is ac
 
 Tasks attach declared surfaces through `tasks.<name>.runtime.surfaces`.
 
+Use the list form when the task can publish the surface with defaults:
+
 ```yaml
 surfaces:
   backend:
@@ -108,17 +110,59 @@ tasks:
         - backend
 ```
 
-Current behavior:
+Use the object form when the runtime needs explicit publication:
+
+```yaml
+surfaces:
+  site:
+    kind: http
+    port: 3000
+    path: /
+    readiness:
+      kind: http
+      path: /
+
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      surfaces:
+        site:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+              primary: true
+```
+
+Attachment behavior:
 
 - each attached surface normalizes into the existing runtime listener model internally
 - surface name becomes the normalized listener name
-- the normalized listener uses conservative loopback defaults:
+- list form uses conservative defaults:
   - bind address `127.0.0.1`
   - fixed bind port `surface.port`
   - host projection `127.0.0.1:<surface.port>`
   - HTTP host projection path from `surface.path` or `/`
+- object form is an attachment override:
+  - it may shape `bind`
+  - it may shape `project`
+  - it may select `project.host.primary`
+  - it must not override surface `kind`, readiness, or endpoint identity
 - if one runtime attaches exactly one surface, has no inline `runtime.readiness`, and that surface
   declares readiness, ota derives the equivalent runtime readiness automatically
+- if a runtime attaches multiple surfaces, has no inline `runtime.readiness`, and exactly one
+  attached surface is marked `project.host.primary: true`, ota derives runtime readiness from that
+  primary surface
 
 ## Workflow readiness and exposes
 
@@ -169,7 +213,7 @@ Do not use surfaces when:
 
 - the listener belongs to only one task and the loopback defaults are fine
 - the endpoint is external or third-party
-- the runtime needs task-specific bind or projection behavior
+- you need listener behavior beyond publication shaping
 
 ## Surfaces vs shorthand vs full listeners
 
@@ -179,8 +223,11 @@ Do not use surfaces when:
 - surfaces:
   - best for one reusable endpoint meaning shared by tasks and workflows
   - example: `surfaces.backend`
+- attachment override:
+  - best when a reusable surface needs task-specific bind, projection, or primary selection
+  - example: `runtime.surfaces.backend`
 - full listeners:
-  - best for custom bind addresses, projected host ports, primary selection, or non-default paths
+  - best for advanced topology beyond the surface attachment model
   - example: `protocol` + `bind` + `project.host`
 
 ## Design rule

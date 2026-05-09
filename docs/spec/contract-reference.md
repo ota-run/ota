@@ -1132,15 +1132,26 @@ Surface attachment rules:
 
 - use top-level `surfaces` when one endpoint meaning should stay shared across tasks and workflows;
   see [surfaces.md](surfaces.md)
-- `runtime.surfaces` attaches named top-level surfaces to this service task runtime
+- `runtime.surfaces` supports two attachment forms:
+  - list form like `runtime.surfaces: [backend]` for default publication
+  - object form like `runtime.surfaces.backend` for attachment overrides
+- `runtime.surfaces.<name>` attachment overrides are publication-only:
+  - `bind`
+  - `project`
+  - `project.host.primary`
 - each attached surface normalizes into the same runtime listener model used by explicit
   `runtime.listeners`
 - attached surface names become normalized listener names
 - a runtime must not attach an unknown surface
-- a runtime must not declare `runtime.listeners.<name>` and also attach `runtime.surfaces: [<name>]`
+- a runtime must not declare `runtime.listeners.<name>` and also attach `runtime.surfaces.<name>`
   for the same name
+- `runtime.surfaces.<name>.bind.port` must preserve the declared top-level surface port with
+  `mode: fixed`
 - if a runtime attaches exactly one surface, has no inline `runtime.readiness`, and that surface
   declares readiness, ota derives the equivalent runtime readiness automatically
+- if a runtime attaches multiple surfaces, has no inline `runtime.readiness`, and exactly one
+  attached surface is marked `project.host.primary: true`, ota derives runtime readiness from that
+  primary surface
 
 `runtime` mode semantics:
 
