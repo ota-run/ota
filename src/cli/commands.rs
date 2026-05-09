@@ -56,8 +56,7 @@ use crate::doctor::{
     diagnose_contract_with_mode_and_lifecycle_for_workflow, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
     diagnose_services_only_for_workflow, finding_targets_container_image,
-    finding_targets_remote_backend,
-    provisioning_installability_finding,
+    finding_targets_remote_backend, provisioning_installability_finding,
 };
 use crate::execution::{
     container_engine_candidates, container_engine_candidates_from_backend,
@@ -76,24 +75,25 @@ use crate::output::{
     ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource,
     ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
     ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
-    ExecutionTopologyListenerSummary, ExecutionTopologyReadinessSummary,
-    ExecutionTopologyRuntimeSummary, ExecutionTopologySharedBackendEnvironmentSummary,
-    ExecutionTopologySharedBackendSummary, ExecutionTopologySuccess,
-    ExecutionTopologyTargetServiceSummary, ExecutionTopologyTargetSummary,
-    ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary,
-    InitFailure, InitPackAdvisory, InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo,
-    InitPackOption, InitPackSeeds, InitSelectedPackOptions, InitSuccess, MemberServicesSuccess,
-    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
-    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
-    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceReadinessSummary,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkflowSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
-    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
-    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    ExecutionTopologyListenerSummary, ExecutionTopologyProbeObserverSummary,
+    ExecutionTopologyProbeSummary, ExecutionTopologyProbeTargetSummary,
+    ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
+    ExecutionTopologySharedBackendEnvironmentSummary, ExecutionTopologySharedBackendSummary,
+    ExecutionTopologySuccess, ExecutionTopologyTargetServiceSummary,
+    ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
+    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
+    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffComparison,
+    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
+    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
+    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
+    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
+    TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
+    ValidateFailure, ValidateSuccess, ValidateSummary, WorkflowSummary, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
     WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
@@ -1357,10 +1357,8 @@ pub fn execution_plan(
                         );
                     }
                 };
-                let selected_task = selected_execution_plan_task_name(
-                    &target.contract,
-                    workflow_name,
-                );
+                let selected_task =
+                    selected_execution_plan_task_name(&target.contract, workflow_name);
                 match resolve_execution_plan(
                     &target.contract,
                     &target.contract_path,
@@ -1554,6 +1552,8 @@ pub fn execution_topology(
                 let shared_backends = build_execution_topology_shared_backend_summaries(
                     target.contract.execution.as_ref(),
                 );
+                let readiness_probes =
+                    build_execution_topology_readiness_probe_summaries(&target.contract);
                 let services = target
                     .contract
                     .services
@@ -1580,6 +1580,7 @@ pub fn execution_topology(
                         &contract_identity,
                         declared_execution.as_ref(),
                         &shared_backends,
+                        &readiness_probes,
                         &services,
                         &tasks,
                     )),
@@ -1592,6 +1593,7 @@ pub fn execution_topology(
                             contract_identity,
                             declared_execution,
                             shared_backends,
+                            readiness_probes,
                             services,
                             tasks,
                         }))
@@ -1725,6 +1727,131 @@ fn build_execution_topology_shared_backend_summaries(
         .unwrap_or_default()
 }
 
+fn build_execution_topology_readiness_probe_summaries(
+    contract: &Contract,
+) -> BTreeMap<String, ExecutionTopologyProbeSummary> {
+    contract
+        .readiness
+        .probes
+        .iter()
+        .map(|(name, probe)| {
+            (
+                name.clone(),
+                ExecutionTopologyProbeSummary {
+                    kind: match probe.kind {
+                        crate::schema::ReadinessProbeKind::Http => "http",
+                        crate::schema::ReadinessProbeKind::Tcp => "tcp",
+                    }
+                    .to_string(),
+                    url: probe.url.clone(),
+                    target: probe.target.as_ref().map(|target| {
+                        let observer_task = target
+                            .observer
+                            .as_ref()
+                            .and_then(|observer| observer.task.as_deref())
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty());
+                        let observer_kind = target
+                            .observer
+                            .as_ref()
+                            .map(|observer| observer.kind)
+                            .unwrap_or(crate::schema::ReadinessProbeObserverKind::CommandHost);
+                        let observer_backend = observer_task.map(|task_name| {
+                            crate::runner::effective_task_execution(
+                                contract,
+                                task_name,
+                                ExecutionOverrides::default(),
+                            )
+                            .backend
+                        });
+                        let observer = match target.kind {
+                            crate::schema::ReadinessProbeTargetKind::Task => {
+                                Some(ExecutionTopologyProbeObserverSummary {
+                                    kind: match observer_kind {
+                                        crate::schema::ReadinessProbeObserverKind::CommandHost => {
+                                            "command_host"
+                                        }
+                                        crate::schema::ReadinessProbeObserverKind::Task => "task",
+                                    }
+                                    .to_string(),
+                                    task: observer_task.map(str::to_string),
+                                    backend: observer_backend.map(|backend| {
+                                        match backend {
+                                            Backend::Native => "native",
+                                            Backend::Container => "container",
+                                            Backend::Remote => "remote",
+                                        }
+                                        .to_string()
+                                    }),
+                                })
+                            }
+                            crate::schema::ReadinessProbeTargetKind::Service => None,
+                        };
+                        ExecutionTopologyProbeTargetSummary {
+                            kind: match target.kind {
+                                crate::schema::ReadinessProbeTargetKind::Task => "task",
+                                crate::schema::ReadinessProbeTargetKind::Service => "service",
+                            }
+                            .to_string(),
+                            name: target.name.clone(),
+                            listener: target.listener.clone(),
+                            address_view: match target.kind {
+                                crate::schema::ReadinessProbeTargetKind::Task => Some(
+                                    match target.address_view {
+                                        crate::schema::TaskTargetAddressView::Topology => {
+                                            "topology"
+                                        }
+                                        crate::schema::TaskTargetAddressView::Host => "host",
+                                        crate::schema::TaskTargetAddressView::Internal => {
+                                            "internal"
+                                        }
+                                    }
+                                    .to_string(),
+                                ),
+                                crate::schema::ReadinessProbeTargetKind::Service => None,
+                            },
+                            observer,
+                            resolution_plane: match target.kind {
+                                crate::schema::ReadinessProbeTargetKind::Task => Some(
+                                    observer_task
+                                        .map(|task_name| format!("task:{task_name}"))
+                                        .unwrap_or_else(|| String::from("command_host")),
+                                ),
+                                crate::schema::ReadinessProbeTargetKind::Service => None,
+                            },
+                            endpoint: target.endpoint.clone(),
+                        }
+                    }),
+                    method: probe.method.map(|method| method.as_str().to_string()),
+                    path: probe.path.clone(),
+                    headers: probe.headers.clone(),
+                    success: probe
+                        .success
+                        .as_ref()
+                        .map(
+                            |success| crate::output::ExecutionTopologyReadinessSuccessSummary {
+                                status: success.status.clone(),
+                            },
+                        )
+                        .or_else(|| {
+                            probe.expect_status.map(|status| {
+                                crate::output::ExecutionTopologyReadinessSuccessSummary {
+                                    status: vec![status],
+                                }
+                            })
+                        }),
+                    body: probe.body.as_ref().map(|body| {
+                        crate::output::ExecutionTopologyReadinessBodySummary {
+                            contains: body.contains.clone(),
+                        }
+                    }),
+                    timeout_ms: probe.timeout,
+                },
+            )
+        })
+        .collect()
+}
+
 fn build_execution_topology_task_summary<'a>(
     name: &'a str,
     task: &'a TaskSpec,
@@ -1736,7 +1863,7 @@ fn build_execution_topology_task_summary<'a>(
         runtime: task
             .runtime
             .as_ref()
-            .map(build_execution_topology_runtime_summary),
+            .map(|runtime| build_execution_topology_runtime_summary(runtime, contract)),
         targets: task
             .targets
             .iter()
@@ -1770,6 +1897,7 @@ fn build_execution_topology_task_summary<'a>(
 
 fn build_execution_topology_runtime_summary(
     runtime: &crate::schema::TaskRuntimeSpec,
+    contract: &Contract,
 ) -> ExecutionTopologyRuntimeSummary {
     ExecutionTopologyRuntimeSummary {
         kind: match runtime.kind {
@@ -1784,7 +1912,11 @@ fn build_execution_topology_runtime_summary(
                 kind: readiness
                     .probe
                     .as_deref()
-                    .map(|_| "http")
+                    .and_then(|probe_name| contract.probe(probe_name))
+                    .map(|probe| match probe.kind {
+                        crate::schema::ReadinessProbeKind::Http => "http",
+                        crate::schema::ReadinessProbeKind::Tcp => "tcp",
+                    })
                     .or_else(|| readiness.kind.map(|kind| kind.as_str()))
                     .unwrap_or("unknown")
                     .to_string(),
@@ -1854,6 +1986,7 @@ fn render_execution_topology_text(
     contract_identity: &ContractIdentity,
     declared_execution: Option<&ExecutionSummary<'_>>,
     shared_backends: &[ExecutionTopologySharedBackendSummary],
+    readiness_probes: &BTreeMap<String, ExecutionTopologyProbeSummary>,
     services: &[ServiceSummary],
     tasks: &[ExecutionTopologyTaskSummary<'_>],
 ) -> String {
@@ -1903,6 +2036,14 @@ fn render_execution_topology_text(
             &paint(&shared_backends.len().to_string(), "1;38;2;255;255;255"),
         )
     ));
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Readiness Probes:", "1;38;2;102;217;255"),
+            &paint(&readiness_probes.len().to_string(), "1;38;2;255;255;255"),
+        )
+    ));
 
     if let Some(execution) = declared_execution {
         output.push_str("\n\n");
@@ -1911,6 +2052,9 @@ fn render_execution_topology_text(
 
     output.push_str(&render_execution_topology_shared_backends_text(
         shared_backends,
+    ));
+    output.push_str(&render_execution_topology_readiness_probes_text(
+        readiness_probes,
     ));
     output.push_str(&render_execution_topology_services_text(services));
     output.push_str(&render_execution_topology_tasks_text(tasks));
@@ -1981,6 +2125,99 @@ fn render_execution_topology_shared_backends_text(
                     details.join(", ")
                 }
             ));
+        }
+    }
+
+    output
+}
+
+fn render_execution_topology_readiness_probes_text(
+    readiness_probes: &BTreeMap<String, ExecutionTopologyProbeSummary>,
+) -> String {
+    let mut output = String::from("\n\n");
+    output.push_str(&paint_section_title("Readiness Probes"));
+    if readiness_probes.is_empty() {
+        output.push_str(&format!("\n{}", detail_list_item("none")));
+        return output;
+    }
+
+    for (probe_name, probe) in readiness_probes {
+        output.push_str(&format!("\n\n{} {}", list_bullet(), paint(probe_name, "1")));
+        output.push_str(&format!("\n  {} {}", paint_key("Kind:"), probe.kind));
+        let source = if let Some(url) = probe.url.as_deref() {
+            format!("literal URL {url}")
+        } else if let Some(target) = probe.target.as_ref() {
+            match target.kind.as_str() {
+                "task" => format!(
+                    "task {}.{} ({}, {})",
+                    target.name,
+                    target.listener.as_deref().unwrap_or("-"),
+                    target.address_view.as_deref().unwrap_or("host"),
+                    target.resolution_plane.as_deref().unwrap_or("command_host")
+                ),
+                "service" => format!(
+                    "service {}.{}",
+                    target.name,
+                    target.endpoint.as_deref().unwrap_or("<auto>")
+                ),
+                _ => target.kind.clone(),
+            }
+        } else {
+            String::from("-")
+        };
+        output.push_str(&format!("\n  {} {}", paint_key("Source:"), source));
+        if let Some(method) = probe.method.as_deref() {
+            output.push_str(&format!("\n  {} {}", paint_key("Method:"), method));
+        }
+        if let Some(observer) = probe
+            .target
+            .as_ref()
+            .and_then(|target| target.observer.as_ref())
+        {
+            let observer_value = match observer.kind.as_str() {
+                "task" => format!(
+                    "{} ({})",
+                    observer.task.as_deref().unwrap_or("-"),
+                    observer.backend.as_deref().unwrap_or("-")
+                ),
+                _ => observer.kind.clone(),
+            };
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Observer:"),
+                observer_value
+            ));
+        }
+        if let Some(path) = probe.path.as_deref() {
+            output.push_str(&format!("\n  {} {}", paint_key("Path:"), path));
+        }
+        if let Some(success) = probe.success.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Success Status:"),
+                success
+                    .status
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if let Some(body) = probe.body.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Body Contains:"),
+                body.contains
+            ));
+        }
+        if !probe.headers.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Headers:")));
+            for (header, value) in &probe.headers {
+                output.push_str(&format!("\n    {} {}={}", detail_arrow(), header, value));
+            }
+        }
+        if let Some(timeout_ms) = probe.timeout_ms {
+            output.push_str(&format!("\n  {} {}ms", paint_key("Timeout:"), timeout_ms));
         }
     }
 
@@ -4125,7 +4362,9 @@ fn render_assist_service_text(
             proposal.producer_task.as_deref(),
             proposal.producer_listener.as_deref(),
         ) {
-            (Some(task), Some(listener)) => format!("workspace repo `{repo}` task `{task}` listener `{listener}`"),
+            (Some(task), Some(listener)) => {
+                format!("workspace repo `{repo}` task `{task}` listener `{listener}`")
+            }
             (Some(task), None) => format!("workspace repo `{repo}` task `{task}`"),
             _ => format!("workspace repo `{repo}`"),
         };
@@ -9293,17 +9532,17 @@ fn build_assist_workspace_service_producer_proposal(
         })?
         .unwrap_or(YamlValue::Null);
     let (producer_task_name, explicit_listener) = parse_assist_bind_target_selector(producer);
-    let (producer_contract, _) = load_contract_for_workspace_repo_ref(
-        contract_path,
-        repo,
-        "producer.repo",
-    )
-    .map_err(|error| {
-        (
-            format!("could not load workspace repo `{repo}`: {error}"),
-            String::from("repair the workspace contract or repo path, then rerun the assist command"),
-        )
-    })?;
+    let (producer_contract, _) =
+        load_contract_for_workspace_repo_ref(contract_path, repo, "producer.repo").map_err(
+            |error| {
+                (
+                    format!("could not load workspace repo `{repo}`: {error}"),
+                    String::from(
+                        "repair the workspace contract or repo path, then rerun the assist command",
+                    ),
+                )
+            },
+        )?;
     let producer_task = producer_contract
         .tasks
         .get(producer_task_name.as_str())
@@ -9313,7 +9552,9 @@ fn build_assist_workspace_service_producer_proposal(
                     "producer task `{}` is not declared under workspace repo `{repo}`",
                     producer_task_name
                 ),
-                String::from("run `ota tasks` from the producer repo to inspect producer task names"),
+                String::from(
+                    "run `ota tasks` from the producer repo to inspect producer task names",
+                ),
             )
         })?;
     let listener = resolve_assist_bind_task_listener(
@@ -14216,12 +14457,12 @@ pub fn doctor(
                                 };
                             let mut member_report =
                                 diagnose_contract_with_mode_and_lifecycle_for_workflow(
-                                &member_target.contract,
-                                &member_target.contract_path,
-                                mode,
-                                doctor_lifecycle,
-                                workflow_name,
-                            );
+                                    &member_target.contract,
+                                    &member_target.contract_path,
+                                    mode,
+                                    doctor_lifecycle,
+                                    workflow_name,
+                                );
                             append_contract_drift_findings(
                                 &member_target.contract,
                                 &member_target.contract_path,
@@ -16903,13 +17144,13 @@ pub fn check(
                         },
                         OutputFormat::Json => CommandOutput {
                             stdout: to_json_value(json!({
-                            "ok": overall_ok,
-                            "path": path_display,
-                            "summary": check_summary,
-                            "workflow": workflow_summary,
-                            "findings": report.findings,
-                            "members": member_results,
-                        })),
+                                "ok": overall_ok,
+                                "path": path_display,
+                                "summary": check_summary,
+                                "workflow": workflow_summary,
+                                "findings": report.findings,
+                                "members": member_results,
+                            })),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
                         },
@@ -32875,10 +33116,7 @@ fn render_execution_plan_text(
         selected_execution_plan_context_summary(declared_execution, selected_context);
 
     if let Some(workflow) = workflow {
-        stdout.push_str(&format!(
-            "\n\n{}",
-            render_workflow_summary_text(workflow)
-        ));
+        stdout.push_str(&format!("\n\n{}", render_workflow_summary_text(workflow)));
     }
 
     stdout.push_str(&format!(
@@ -35062,9 +35300,8 @@ mod tests {
     use crate::output::{
         ContractIdentity, DetectComparison, DetectComparisonRemoval, EnvSourceStatus,
         ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs, ExecutionReceiptSummary,
-        ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
-        ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary, TaskSummary,
-        WorkflowSummary,
+        ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary, ServiceProducerSummary,
+        ServiceReadinessSummary, ServiceSummary, TaskSummary, WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -35542,7 +35779,116 @@ tasks:
         assert!(rendered.contains("Setup: `ota run setup`"), "{rendered}");
         assert!(rendered.contains("Run: `ota run dev`"), "{rendered}");
         assert!(rendered.contains("Services: postgres"), "{rendered}");
-        assert!(rendered.contains("Readiness Probes: app-ready"), "{rendered}");
+        assert!(
+            rendered.contains("Readiness Probes: app-ready"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_execution_topology_text_surfaces_readiness_probes() {
+        let mut readiness_probes = BTreeMap::new();
+        readiness_probes.insert(
+            String::from("app-ready"),
+            crate::output::ExecutionTopologyProbeSummary {
+                kind: String::from("http"),
+                url: None,
+                target: Some(crate::output::ExecutionTopologyProbeTargetSummary {
+                    kind: String::from("task"),
+                    name: String::from("dev"),
+                    listener: Some(String::from("http")),
+                    address_view: Some(String::from("host")),
+                    observer: None,
+                    resolution_plane: Some(String::from("command_host")),
+                    endpoint: None,
+                }),
+                method: Some(String::from("GET")),
+                path: Some(String::from("/health")),
+                headers: BTreeMap::new(),
+                success: Some(crate::output::ExecutionTopologyReadinessSuccessSummary {
+                    status: vec![200],
+                }),
+                body: None,
+                timeout_ms: Some(10_000),
+            },
+        );
+
+        let rendered = strip_ansi_codes(&super::render_execution_topology_text(
+            ".",
+            &ContractIdentity {
+                version: 1,
+                project: crate::output::ContractIdentityProject {
+                    name: String::from("topology-demo"),
+                    project_type: Some(String::from("application")),
+                },
+                metadata: crate::output::ContractIdentityMetadata::default(),
+                execution: crate::output::ContractIdentityExecution::default(),
+                counts: crate::output::ContractIdentityCounts {
+                    runtimes: 0,
+                    tools: 0,
+                    env: 0,
+                    services: 0,
+                    checks: 0,
+                    tasks: 0,
+                    repos: None,
+                    policies: None,
+                },
+            },
+            None,
+            &[],
+            &readiness_probes,
+            &[],
+            &[],
+        ));
+
+        assert!(rendered.contains("Readiness Probes"), "{rendered}");
+        assert!(rendered.contains("app-ready"), "{rendered}");
+        assert!(
+            rendered.contains("Source: task dev.http (host, command_host)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Path: /health"), "{rendered}");
+        assert!(rendered.contains("Success Status: 200"), "{rendered}");
+        assert!(rendered.contains("Timeout: 10000ms"), "{rendered}");
+    }
+
+    #[test]
+    fn execution_topology_probe_json_surfaces_task_probe_resolution_plane() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: topology-demo
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      target:
+        kind: task
+        name: api
+        listener: http
+        address_view: host
+      path: /health
+      timeout: 10000
+tasks:
+  api:
+    run: pnpm dev
+"#,
+        )
+        .unwrap();
+
+        let readiness_probes = super::build_execution_topology_readiness_probe_summaries(&contract);
+        let body = serde_json::to_value(
+            readiness_probes
+                .get("app-ready")
+                .expect("app-ready probe summary should exist"),
+        )
+        .unwrap();
+
+        assert_eq!(body["target"]["address_view"], "host");
+        assert_eq!(body["target"]["observer"]["kind"], "command_host");
+        assert_eq!(body["target"]["resolution_plane"], "command_host");
     }
 
     #[test]
@@ -38783,7 +39129,10 @@ workflows:
         assert_eq!(resolved.backend, "container");
         assert_eq!(resolved.backend_source, "workflow task");
         assert_eq!(resolved.lifecycle.as_deref(), Some("ephemeral"));
-        assert_eq!(resolved.lifecycle_source.as_deref(), Some("context lifecycle"));
+        assert_eq!(
+            resolved.lifecycle_source.as_deref(),
+            Some("context lifecycle")
+        );
         assert_eq!(resolved.image.as_deref(), Some("ghcr.io/ota/dev:latest"));
     }
 
@@ -38878,7 +39227,9 @@ agent:
             ExecutionOverrides::default(),
             None,
         )
-        .expect("execution plan should keep repo-level execution defaults when workflows are absent");
+        .expect(
+            "execution plan should keep repo-level execution defaults when workflows are absent",
+        );
 
         assert_eq!(resolved.backend, "native");
         assert_eq!(resolved.backend_source, "default context");
@@ -39311,7 +39662,9 @@ workflows:
         assert_eq!(report.status, "READY");
         assert_eq!(report.workflow.as_deref(), Some("backend"));
         assert_eq!(
-            fs::read_to_string(repo_path.join("selected.log")).unwrap().trim(),
+            fs::read_to_string(repo_path.join("selected.log"))
+                .unwrap()
+                .trim(),
             "backend"
         );
     }
@@ -39436,7 +39789,10 @@ workflows:
         assert_eq!(report.workflow.as_deref(), Some("backend"));
         assert_eq!(report.task.as_deref(), Some("dev"));
         assert_eq!(
-            report.resolved.as_ref().and_then(|resolved| resolved.image.as_deref()),
+            report
+                .resolved
+                .as_ref()
+                .and_then(|resolved| resolved.image.as_deref()),
             Some("ghcr.io/ota/dev:latest")
         );
     }
@@ -39502,7 +39858,10 @@ workflows:
         assert_eq!(report.workflow.as_deref(), Some("backend"));
         assert_eq!(report.task.as_deref(), Some("dev"));
         assert_eq!(
-            report.resolved.as_ref().and_then(|resolved| resolved.image.as_deref()),
+            report
+                .resolved
+                .as_ref()
+                .and_then(|resolved| resolved.image.as_deref()),
             Some("ghcr.io/ota/dev:latest")
         );
     }
@@ -57605,7 +57964,10 @@ fn run_up_task(
     }
 }
 
-fn contract_without_task_requires_services(contract: &Contract, task_name: &str) -> Option<Contract> {
+fn contract_without_task_requires_services(
+    contract: &Contract,
+    task_name: &str,
+) -> Option<Contract> {
     let task = contract.tasks.get(task_name)?;
     if task.requires_services.is_empty() {
         return None;
@@ -57874,15 +58236,14 @@ fn execute_repo_up(
         if dry_run {
             let preview =
                 build_up_preview(contract, resolved_path, overrides, workflow_name, &report);
-            let receipt =
-                preview_receipt(
-                    contract,
-                    resolved_path,
-                    overrides,
-                    workflow_name,
-                    "BLOCKED",
-                    &[blocker],
-                );
+            let receipt = preview_receipt(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                "BLOCKED",
+                &[blocker],
+            );
             return Ok(RepoUpResult {
                 ok: false,
                 status: "BLOCKED",
@@ -57966,47 +58327,47 @@ fn execute_repo_up(
 
     let provisioning_target =
         match resolve_provisioning_execution_target(contract, overrides, workflow_name) {
-        Ok(target) => target,
-        Err(finding) => {
-            prepend_finding_if_missing(&mut preflight.findings, finding);
-            preflight.ok = false;
-            return Ok(RepoUpResult {
-                ok: false,
-                status: "NOT READY",
-                phase: "preconditions",
-                preview: None,
-                receipt: repo_execution_receipt(
-                    resolved_path,
-                    contract,
-                    doctor_report_execution_context(
-                        contract,
+            Ok(target) => target,
+            Err(finding) => {
+                prepend_finding_if_missing(&mut preflight.findings, finding);
+                preflight.ok = false;
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "NOT READY",
+                    phase: "preconditions",
+                    preview: None,
+                    receipt: repo_execution_receipt(
                         resolved_path,
-                        doctor_mode,
-                        overrides.lifecycle,
-                        &preflight,
+                        contract,
+                        doctor_report_execution_context(
+                            contract,
+                            resolved_path,
+                            doctor_mode,
+                            overrides.lifecycle,
+                            &preflight,
+                        ),
+                        "NOT READY",
+                        "preconditions",
+                        None,
+                        None,
+                        &preflight.findings,
+                        None,
+                        preflight
+                            .findings
+                            .first()
+                            .map(|finding| finding.next.clone()),
                     ),
-                    "NOT READY",
-                    "preconditions",
-                    None,
-                    None,
-                    &preflight.findings,
-                    None,
-                    preflight
-                        .findings
-                        .first()
-                        .map(|finding| finding.next.clone()),
-                ),
-                report: preflight,
-                service: None,
-                service_command: None,
-                task: None,
-                task_command: None,
-                exit_code: None,
-                stdout,
-                stderr,
-            });
-        }
-    };
+                    report: preflight,
+                    service: None,
+                    service_command: None,
+                    task: None,
+                    task_command: None,
+                    exit_code: None,
+                    stdout,
+                    stderr,
+                });
+            }
+        };
 
     let provisioning_actions =
         selected_up_provisioning_actions(contract, overrides, workflow_name, &preflight);
@@ -58444,7 +58805,10 @@ fn execute_repo_up(
     }
 
     if let Some(setup_task_name) = setup_task {
-        let setup_task_command = contract.tasks.get(setup_task_name).and_then(task_command_preview);
+        let setup_task_command = contract
+            .tasks
+            .get(setup_task_name)
+            .and_then(task_command_preview);
         let setup_contract = contract_without_task_requires_services(contract, setup_task_name);
         let setup_contract_ref = setup_contract.as_ref().unwrap_or(contract);
         match run_up_task(
@@ -58562,8 +58926,18 @@ fn execute_repo_up(
     }
 
     if let Some(run_task_name) = activation_task {
-        let run_task_command = contract.tasks.get(run_task_name).and_then(task_command_preview);
-        match run_up_task(contract, resolved_path, run_task_name, overrides, policy_env, mode) {
+        let run_task_command = contract
+            .tasks
+            .get(run_task_name)
+            .and_then(task_command_preview);
+        match run_up_task(
+            contract,
+            resolved_path,
+            run_task_name,
+            overrides,
+            policy_env,
+            mode,
+        ) {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -58615,7 +58989,8 @@ fn execute_repo_up(
         }
     }
 
-    let service_report = diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
+    let service_report =
+        diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
     if !service_report.ok {
         return Ok(RepoUpResult {
             ok: false,
@@ -60394,16 +60769,13 @@ fn run_workspace_repo_execution_plan(
             let effective_workflow = contract
                 .selected_workflow(repo.workflow.as_deref())
                 .map(|(name, _)| name.to_string());
-            let selected_task = selected_execution_plan_task_name(
-                &contract,
-                repo.workflow.as_deref(),
-            )
-            .map(str::to_string);
-            let report_workflow = repo.workflow.clone().or_else(|| {
-                selected_task
-                    .as_ref()
-                    .and(effective_workflow.clone())
-            });
+            let selected_task =
+                selected_execution_plan_task_name(&contract, repo.workflow.as_deref())
+                    .map(str::to_string);
+            let report_workflow = repo
+                .workflow
+                .clone()
+                .or_else(|| selected_task.as_ref().and(effective_workflow.clone()));
 
             match resolve_execution_plan(
                 &contract,

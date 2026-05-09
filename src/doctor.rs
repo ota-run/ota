@@ -24,8 +24,9 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Component;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
     Arc,
@@ -53,11 +54,13 @@ use crate::provisioning::{
     render_provisioning_action_command,
 };
 use crate::runner::{
-    DeclaredEnvSourceStatus, HttpReadinessRequest, HttpReadinessStatus,
-    LoadedDeclaredEnvSource, ResolvedExecutionBackend, RunError, host_runtime_readiness_observed,
-    http_readiness_endpoint_status, load_declared_env_sources, resolve_context_execution_backend,
-    resolve_named_http_readiness_probe,
-    resolve_declared_env_source_value, run_backend_command_captured,
+    DeclaredEnvSourceStatus, HttpReadinessRequest, HttpReadinessStatus, LoadedDeclaredEnvSource,
+    ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedNamedReadinessProbeContract,
+    RunError, combine_readiness_probe_paths, host_runtime_readiness_observed,
+    http_readiness_endpoint_status, load_declared_env_sources, parse_http_probe_url,
+    resolve_context_execution_backend, resolve_declared_env_source_value,
+    resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
+    resolve_task_target_binding_url_with_contract_path, run_backend_command_captured,
     task_runtime_host_readiness_probe_for_backend,
 };
 use crate::schema::{
@@ -65,9 +68,9 @@ use crate::schema::{
     ReadinessProbeSpec, RequirementSurface, RuntimeRequirement, ServiceProducerSpec,
     ServiceReadinessSpec, ServiceSpec, ToolRequirement,
 };
-use crate::workspace::load_contract_for_workspace_repo_ref;
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, collect_contract_advisories};
+use crate::workspace::load_contract_for_workspace_repo_ref;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -2726,9 +2729,15 @@ fn diagnose_services(
         {
             continue;
         }
-        if let Some(finding) =
-            service_finding(contract, contract_path, name, service, working_dir, mode, lifecycle)
-        {
+        if let Some(finding) = service_finding(
+            contract,
+            contract_path,
+            name,
+            service,
+            working_dir,
+            mode,
+            lifecycle,
+        ) {
             findings.push(finding);
         }
     }
@@ -2745,7 +2754,14 @@ fn service_finding(
 ) -> Option<Finding> {
     let rerun_doctor = rerun_doctor_command(mode, lifecycle);
     if let Some(producer) = service.producer.as_ref() {
-        return producer_owned_service_finding(name, service, producer, contract_path, mode, lifecycle);
+        return producer_owned_service_finding(
+            name,
+            service,
+            producer,
+            contract_path,
+            mode,
+            lifecycle,
+        );
     }
     if let Some(readiness) = &service.readiness {
         let from_context = readiness.from_context().unwrap_or_default();
@@ -2875,28 +2891,31 @@ fn producer_owned_service_finding(
     lifecycle: Option<Lifecycle>,
 ) -> Option<Finding> {
     let rerun_doctor = rerun_doctor_command(mode, lifecycle);
-    let (producer_contract, producer_contract_path) =
-        match load_contract_for_workspace_repo_ref(contract_path, producer.repo.as_str(), "producer.repo") {
-            Ok(value) => value,
-            Err(error) => {
-                return Some(Finding {
-                    severity: if service.required {
-                        FindingSeverity::Error
-                    } else {
-                        FindingSeverity::Warn
-                    },
-                    summary: format!("Required service cannot be verified: {name}"),
-                    why: format!(
-                        "service `{name}` is owned by workspace repo `{}` task `{}`, but Ota could not load that producer contract: {}",
-                        producer.repo, producer.task, error
-                    ),
-                    next: format!(
-                        "repair workspace repo `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
-                        producer.repo
-                    ),
-                });
-            }
-        };
+    let (producer_contract, producer_contract_path) = match load_contract_for_workspace_repo_ref(
+        contract_path,
+        producer.repo.as_str(),
+        "producer.repo",
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            return Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Required service cannot be verified: {name}"),
+                why: format!(
+                    "service `{name}` is owned by workspace repo `{}` task `{}`, but Ota could not load that producer contract: {}",
+                    producer.repo, producer.task, error
+                ),
+                next: format!(
+                    "repair workspace repo `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
+                    producer.repo
+                ),
+            });
+        }
+    };
     let producer_task = match producer_contract.tasks.get(producer.task.as_str()) {
         Some(task) => task,
         None => {
@@ -2918,7 +2937,10 @@ fn producer_owned_service_finding(
             });
         }
     };
-    let listener_name = match resolve_producer_service_listener_name(producer_task, producer.listener.as_deref()) {
+    let listener_name = match resolve_producer_service_listener_name(
+        producer_task,
+        producer.listener.as_deref(),
+    ) {
         Ok(name) => name,
         Err(error) => {
             return Some(Finding {
@@ -3048,7 +3070,9 @@ fn resolve_producer_service_listener_name(
             .into_iter()
             .next()
             .expect("one listener should exist")),
-        0 => Err(String::from("that task does not declare any service listeners")),
+        0 => Err(String::from(
+            "that task does not declare any service listeners",
+        )),
         _ => Err(String::from(
             "that task declares multiple listeners, so `services.<name>.producer.listener` must be explicit",
         )),
@@ -3137,7 +3161,7 @@ fn run_service_readiness(
         .map(str::trim)
         .filter(|name| !name.is_empty())
     {
-        let Ok(resolved) = resolve_named_http_readiness_probe(contract, probe_name) else {
+        let Ok(resolved) = resolve_named_readiness_probe_contract(contract, probe_name) else {
             return Ok(CheckStatus::Failed);
         };
         let Some(from_context) = readiness.from_context() else {
@@ -3147,11 +3171,14 @@ fn run_service_readiness(
         let Some(endpoint) = service.endpoint_for_context(from_context) else {
             return Ok(CheckStatus::Failed);
         };
-        let command = service_http_readiness_probe_command_from_request(
-            endpoint,
-            &resolved.request,
-            resolved.timeout,
-        );
+        let command = match resolved {
+            ResolvedNamedReadinessProbeContract::Http {
+                request, timeout, ..
+            } => service_http_readiness_probe_command_from_request(endpoint, &request, timeout),
+            ResolvedNamedReadinessProbeContract::Tcp { timeout, .. } => {
+                service_tcp_readiness_probe_command_from_timeout(endpoint, timeout)
+            }
+        };
         let timing = service_readiness_timing_policy(readiness);
         if !timing.start_period.is_zero() {
             thread::sleep(timing.start_period);
@@ -3290,10 +3317,7 @@ fn service_http_readiness_probe_command(
             .filter(|success| !success.status.is_empty())
             .map(|success| success.status.clone())
             .unwrap_or_else(|| (200u16..400u16).collect()),
-        body_contains: readiness
-            .body
-            .as_ref()
-            .map(|body| body.contains.clone()),
+        body_contains: readiness.body.as_ref().map(|body| body.contains.clone()),
     };
     let timeout = readiness
         .timeout
@@ -3314,9 +3338,7 @@ fn service_http_readiness_probe_command_from_request(
         request.path
     );
     let status_csv = if request.success_statuses.is_empty() {
-        String::from(
-            "200,201,202,203,204,205,206,207,208,226,300,301,302,303,304,305,306,307,308",
-        )
+        String::from("200,201,202,203,204,205,206,207,208,226,300,301,302,303,304,305,306,307,308")
     } else {
         request
             .success_statuses
@@ -3341,15 +3363,17 @@ fn service_http_readiness_probe_command_from_request(
         "url={url}; method={method}; statuses={statuses}; contains={contains}; headers_json={headers_json}; timeout={timeout}; \
 if command -v curl >/dev/null 2>&1; then \
   body_file=$(mktemp 2>/dev/null || printf '/tmp/ota-service-readiness-body-$$'); \
-  code=$(curl -sS --connect-timeout \"$timeout\" --max-time \"$timeout\" -X \"$method\" {headers} -o \"$body_file\" -w '%{{http_code}}' \"$url\") || {{ rm -f \"$body_file\"; exit 1; }}; \
+  code=$(curl -sS --connect-timeout \"$timeout\" --max-time \"$timeout\" -X \"$method\" {headers} -o \"$body_file\" -w '%{{http_code}}' \"$url\"); curl_status=$?; \
+  if [ $curl_status -eq 28 ]; then rm -f \"$body_file\"; exit 124; fi; \
+  [ $curl_status -eq 0 ] || {{ rm -f \"$body_file\"; exit 1; }}; \
   matched=1; OLDIFS=\"$IFS\"; IFS=,; for expected in $statuses; do if [ \"$code\" = \"$expected\" ]; then matched=0; break; fi; done; IFS=\"$OLDIFS\"; \
   [ $matched -eq 0 ] || {{ rm -f \"$body_file\"; exit 1; }}; \
   if [ -n \"$contains\" ]; then grep -Fq -- \"$contains\" \"$body_file\" || {{ rm -f \"$body_file\"; exit 1; }}; fi; \
   rm -f \"$body_file\"; exit 0; \
 fi; \
 if command -v python3 >/dev/null 2>&1; then \
-  python3 - \"$url\" \"$method\" \"$statuses\" \"$contains\" \"$headers_json\" \"$timeout\" <<'PY' && exit 0 || exit 1\n\
-import json, sys, urllib.error, urllib.request\n\
+  python3 - \"$url\" \"$method\" \"$statuses\" \"$contains\" \"$headers_json\" \"$timeout\" <<'PY'\n\
+import json, socket, sys, urllib.error, urllib.request\n\
 class NoRedirect(urllib.request.HTTPRedirectHandler):\n\
     def redirect_request(self, req, fp, code, msg, headers, newurl):\n\
         return None\n\
@@ -3366,6 +3390,13 @@ try:\n\
 except urllib.error.HTTPError as error:\n\
     status = error.code\n\
     body = error.read().decode(errors='ignore')\n\
+except urllib.error.URLError as error:\n\
+    reason = getattr(error, 'reason', None)\n\
+    if isinstance(reason, (TimeoutError, socket.timeout)) or str(reason).lower() == 'timed out':\n\
+        sys.exit(124)\n\
+    sys.exit(1)\n\
+except (TimeoutError, socket.timeout):\n\
+    sys.exit(124)\n\
 except Exception:\n\
     sys.exit(1)\n\
 if status not in statuses:\n\
@@ -3373,6 +3404,7 @@ if status not in statuses:\n\
 if contains and contains not in body:\n\
     sys.exit(1)\n\
 PY\n\
+  probe_status=$?; [ $probe_status -eq 0 ] && exit 0; [ $probe_status -eq 124 ] && exit 124; exit 1\n\
 fi; \
 exit 1",
         url = doctor_shell_quote(&url),
@@ -3398,7 +3430,7 @@ fn service_tcp_readiness_probe_command(
     format!(
         "host={host}; port={port}; timeout={timeout}; \
 if command -v python3 >/dev/null 2>&1; then \
-  python3 - \"$host\" \"$port\" \"$timeout\" <<'PY' && exit 0 || exit 1\n\
+  python3 - \"$host\" \"$port\" \"$timeout\" <<'PY'\n\
 import socket, sys\n\
 host, port_raw, timeout_raw = sys.argv[1:4]\n\
 port = int(port_raw)\n\
@@ -3407,6 +3439,8 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n\
 sock.settimeout(timeout)\n\
 try:\n\
     sock.connect((host, port))\n\
+except socket.timeout:\n\
+    sys.exit(124)\n\
 except Exception:\n\
     sys.exit(1)\n\
 finally:\n\
@@ -3415,6 +3449,47 @@ finally:\n\
     except Exception:\n\
         pass\n\
 PY\n\
+  probe_status=$?; [ $probe_status -eq 0 ] && exit 0; [ $probe_status -eq 124 ] && exit 124; exit 1\n\
+fi; \
+if command -v nc >/dev/null 2>&1; then nc -z -w \"$timeout\" \"$host\" \"$port\" >/dev/null 2>&1 && exit 0 || exit 1; fi; \
+if command -v bash >/dev/null 2>&1; then bash -lc \"exec 3<>/dev/tcp/$host/$port\" >/dev/null 2>&1 && exit 0 || exit 1; fi; \
+exit 1",
+        host = doctor_shell_quote(endpoint.address.trim()),
+        port = doctor_shell_quote(&endpoint.port.to_string()),
+        timeout = doctor_shell_quote(&timeout_seconds.to_string()),
+    )
+}
+
+fn service_tcp_readiness_probe_command_from_timeout(
+    endpoint: &crate::schema::ServiceEndpointSpec,
+    timeout: Option<Duration>,
+) -> String {
+    let timeout_seconds = timeout
+        .map(|duration| duration.as_secs_f64().max(0.001))
+        .unwrap_or(2.0);
+    format!(
+        "host={host}; port={port}; timeout={timeout}; \
+if command -v python3 >/dev/null 2>&1; then \
+  python3 - \"$host\" \"$port\" \"$timeout\" <<'PY'\n\
+import socket, sys\n\
+host, port_raw, timeout_raw = sys.argv[1:4]\n\
+port = int(port_raw)\n\
+timeout = float(timeout_raw)\n\
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n\
+sock.settimeout(timeout)\n\
+try:\n\
+    sock.connect((host, port))\n\
+except socket.timeout:\n\
+    sys.exit(124)\n\
+except Exception:\n\
+    sys.exit(1)\n\
+finally:\n\
+    try:\n\
+        sock.close()\n\
+    except Exception:\n\
+        pass\n\
+PY\n\
+  probe_status=$?; [ $probe_status -eq 0 ] && exit 0; [ $probe_status -eq 124 ] && exit 124; exit 1\n\
 fi; \
 if command -v nc >/dev/null 2>&1; then nc -z -w \"$timeout\" \"$host\" \"$port\" >/dev/null 2>&1 && exit 0 || exit 1; fi; \
 if command -v bash >/dev/null 2>&1; then bash -lc \"exec 3<>/dev/tcp/$host/$port\" >/dev/null 2>&1 && exit 0 || exit 1; fi; \
@@ -5367,18 +5442,18 @@ fn diagnose_checks(
             probes_executed_via_checks.insert(probe_name.to_string());
         }
 
-        match run_declared_check(contract, check, working_dir) {
+        match run_declared_check(contract, contract_path, check, working_dir) {
             CheckStatus::Passed => continue,
             CheckStatus::Failed => findings.push(Finding {
                 severity: map_check_severity(check.severity),
                 summary: failed_check_summary(check),
-                why: failed_check_why(check),
+                why: failed_check_why(contract, check),
                 next: failed_check_next(contract, workflow_name, check),
             }),
             CheckStatus::TimedOut(timeout) => findings.push(Finding {
                 severity: map_check_severity(check.severity),
                 summary: timed_out_check_summary(check),
-                why: timed_out_check_why(check, timeout),
+                why: timed_out_check_why(contract, check, timeout),
                 next: timed_out_check_next(contract, check),
             }),
         }
@@ -5395,13 +5470,14 @@ fn diagnose_checks(
             let probe = contract
                 .probe(probe_name)
                 .expect("checked probe existence above");
-            match run_named_probe(contract, probe_name, None) {
+            match run_named_probe(contract, contract_path, probe_name, None) {
                 CheckStatus::Passed => continue,
                 CheckStatus::Failed => findings.push(Finding {
                     severity: FindingSeverity::Error,
                     summary: format!("Probe failed: {probe_name}"),
                     why: format!(
-                        "the configured workflow readiness probe `{probe_name}` did not succeed"
+                        "the configured workflow readiness probe `{probe_name}` ({}) did not succeed",
+                        probe_source_description(contract, probe_name)
                     ),
                     next: failed_probe_next(probe_name, probe),
                 }),
@@ -5409,7 +5485,8 @@ fn diagnose_checks(
                     severity: FindingSeverity::Error,
                     summary: format!("Probe timed out: {probe_name}"),
                     why: format!(
-                        "the configured workflow readiness probe `{probe_name}` did not finish within {}ms",
+                        "the configured workflow readiness probe `{probe_name}` ({}) did not finish within {}ms",
+                        probe_source_description(contract, probe_name),
                         timeout
                     ),
                     next: timed_out_probe_next(probe_name, probe),
@@ -5543,38 +5620,76 @@ enum CheckStatus {
     TimedOut(u64),
 }
 
-fn run_declared_check(contract: &Contract, check: &crate::schema::CheckSpec, working_dir: &Path) -> CheckStatus {
+fn run_declared_check(
+    contract: &Contract,
+    contract_path: &Path,
+    check: &crate::schema::CheckSpec,
+    working_dir: &Path,
+) -> CheckStatus {
     if let Some(command) = check.run.as_deref() {
         return run_check(command, working_dir, check.timeout);
     }
     if let Some(probe_name) = check.probe.as_deref()
         && contract.probe(probe_name).is_some()
     {
-        return run_named_probe(contract, probe_name, check.timeout);
+        return run_named_probe(contract, contract_path, probe_name, check.timeout);
     }
     CheckStatus::Failed
 }
 
 fn run_named_probe(
     contract: &Contract,
+    contract_path: &Path,
     probe_name: &str,
     timeout_override_ms: Option<u64>,
 ) -> CheckStatus {
-    let Ok(resolved) = resolve_named_http_readiness_probe(contract, probe_name) else {
+    let Some(probe) = contract.probe(probe_name) else {
         return CheckStatus::Failed;
     };
-    let timeout_ms = timeout_override_ms.or(
-        resolved
-            .timeout
-            .map(|duration| duration.as_millis() as u64),
-    );
+    if probe_uses_task_observer(probe) {
+        return run_observer_task_named_probe(
+            contract,
+            contract_path,
+            probe_name,
+            probe,
+            timeout_override_ms,
+        );
+    }
+    let Ok(resolved) = resolve_named_readiness_probe(contract, probe_name) else {
+        return CheckStatus::Failed;
+    };
+    let timeout_ms = timeout_override_ms.or(match &resolved {
+        ResolvedNamedReadinessProbe::Http { timeout, .. }
+        | ResolvedNamedReadinessProbe::Tcp { timeout, .. } => {
+            timeout.map(|duration| duration.as_millis() as u64)
+        }
+    });
     let spinner = CheckSpinner::start();
-    let status = match http_readiness_endpoint_status(
-        resolved.address.as_str(),
-        resolved.port,
-        &resolved.request,
-        timeout_ms.map(Duration::from_millis).or(resolved.timeout),
-    ) {
+    let status = match resolved {
+        ResolvedNamedReadinessProbe::Http {
+            address,
+            port,
+            request,
+            timeout,
+            ..
+        } => http_readiness_endpoint_status(
+            address.as_str(),
+            port,
+            &request,
+            timeout_override_ms.map(Duration::from_millis).or(timeout),
+        ),
+        ResolvedNamedReadinessProbe::Tcp {
+            address,
+            port,
+            timeout,
+            ..
+        } => tcp_readiness_endpoint_status(
+            address.as_str(),
+            port,
+            timeout_override_ms.map(Duration::from_millis).or(timeout),
+        ),
+    };
+    let status = match status {
         HttpReadinessStatus::Passed => CheckStatus::Passed,
         HttpReadinessStatus::Failed => CheckStatus::Failed,
         HttpReadinessStatus::TimedOut => CheckStatus::TimedOut(
@@ -5585,6 +5700,226 @@ fn run_named_probe(
     status
 }
 
+fn probe_uses_task_observer(probe: &crate::schema::ReadinessProbeSpec) -> bool {
+    probe
+        .target
+        .as_ref()
+        .filter(|target| target.kind == crate::schema::ReadinessProbeTargetKind::Task)
+        .and_then(|target| target.observer.as_ref())
+        .is_some_and(|observer| observer.kind == crate::schema::ReadinessProbeObserverKind::Task)
+}
+
+fn run_observer_task_named_probe(
+    contract: &Contract,
+    contract_path: &Path,
+    probe_name: &str,
+    probe: &crate::schema::ReadinessProbeSpec,
+    timeout_override_ms: Option<u64>,
+) -> CheckStatus {
+    let Some(target) = probe.target.as_ref() else {
+        return CheckStatus::Failed;
+    };
+    let Some(observer) = target.observer.as_ref() else {
+        return CheckStatus::Failed;
+    };
+    let Some(observer_task_name) = observer
+        .task
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return CheckStatus::Failed;
+    };
+
+    let observer_backend = match crate::runner::resolve_execution_backend_with_contract_path(
+        contract,
+        observer_task_name,
+        crate::runner::ExecutionOverrides::default(),
+        Some(contract_path),
+    ) {
+        Ok(backend) => backend,
+        Err(_) => return CheckStatus::Failed,
+    };
+    let caller_backend = crate::runner::effective_task_execution(
+        contract,
+        observer_task_name,
+        crate::runner::ExecutionOverrides::default(),
+    )
+    .backend;
+    let resolved = match resolve_observer_task_probe_command(
+        contract,
+        contract_path,
+        probe_name,
+        probe,
+        observer_task_name,
+        caller_backend,
+        timeout_override_ms,
+    ) {
+        Ok(resolved) => resolved,
+        Err(_) => return CheckStatus::Failed,
+    };
+    let spinner = CheckSpinner::start();
+    let output = run_backend_command_captured(
+        &format!("probe:{probe_name}"),
+        resolved.command.as_str(),
+        contract_working_dir(contract_path),
+        &observer_backend,
+    );
+    spinner.stop();
+    match output {
+        Ok(result) if result.exit_code == 0 => CheckStatus::Passed,
+        Ok(result) if result.exit_code == 124 => resolved
+            .timeout_ms
+            .map(CheckStatus::TimedOut)
+            .unwrap_or(CheckStatus::Failed),
+        Ok(_) => CheckStatus::Failed,
+        Err(_) => CheckStatus::Failed,
+    }
+}
+
+struct ObserverTaskProbeCommand {
+    command: String,
+    timeout_ms: Option<u64>,
+}
+
+fn resolve_observer_task_probe_command(
+    contract: &Contract,
+    contract_path: &Path,
+    probe_name: &str,
+    probe: &crate::schema::ReadinessProbeSpec,
+    observer_task_name: &str,
+    caller_backend: Backend,
+    timeout_override_ms: Option<u64>,
+) -> Result<ObserverTaskProbeCommand, String> {
+    let target = probe
+        .target
+        .as_ref()
+        .ok_or_else(|| format!("readiness probe `{probe_name}` does not declare a target"))?;
+    let listener_name = target
+        .listener
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| {
+            format!("readiness probe `{probe_name}` task target must declare `target.listener`")
+        })?;
+    let synthetic_target = crate::schema::TaskTargetSpec {
+        service: Some(crate::schema::TaskTargetServiceRefSpec {
+            member: None,
+            repo: None,
+            task: target.name.clone(),
+            listener: Some(listener_name.to_string()),
+            address_view: target.address_view,
+        }),
+        url: None,
+        override_input: None,
+        activation: crate::schema::TaskTargetActivationSpec::default(),
+    };
+    let resolved_target = resolve_task_target_binding_url_with_contract_path(
+        contract,
+        contract_path,
+        observer_task_name,
+        probe_name,
+        &synthetic_target,
+        caller_backend,
+        crate::runner::ExecutionOverrides::default(),
+    )
+    .map_err(|error| error.to_string())?;
+    let timeout_duration = timeout_override_ms
+        .map(Duration::from_millis)
+        .or(probe.timeout.map(Duration::from_millis));
+    let timeout_ms = timeout_override_ms.or(probe.timeout);
+
+    let command = match probe.kind {
+        crate::schema::ReadinessProbeKind::Http => {
+            let (address, port, base_path) = parse_http_probe_url(resolved_target.as_str())
+                .ok_or_else(|| {
+                    format!(
+                        "readiness probe `{probe_name}` could not resolve one HTTP target URL from observer task `{observer_task_name}`"
+                    )
+                })?;
+            let path =
+                combine_readiness_probe_paths(Some(base_path.as_str()), probe.path.as_deref());
+            let endpoint = crate::schema::ServiceEndpointSpec { address, port };
+            let request = HttpReadinessRequest {
+                method: probe
+                    .method
+                    .unwrap_or(crate::schema::TaskRuntimeReadinessHttpMethod::Get),
+                path,
+                headers: probe.headers.clone(),
+                success_statuses: probe
+                    .success
+                    .as_ref()
+                    .map(|success| success.status.clone())
+                    .or_else(|| probe.expect_status.map(|status| vec![status]))
+                    .unwrap_or_else(|| vec![200]),
+                body_contains: probe.body.as_ref().map(|body| body.contains.clone()),
+            };
+            service_http_readiness_probe_command_from_request(&endpoint, &request, timeout_duration)
+        }
+        crate::schema::ReadinessProbeKind::Tcp => {
+            let (address, port) = parse_observer_probe_tcp_target(
+                probe_name,
+                observer_task_name,
+                resolved_target.as_str(),
+            )?;
+            let endpoint = crate::schema::ServiceEndpointSpec { address, port };
+            service_tcp_readiness_probe_command_from_timeout(&endpoint, timeout_duration)
+        }
+    };
+
+    Ok(ObserverTaskProbeCommand {
+        command,
+        timeout_ms,
+    })
+}
+
+fn parse_observer_probe_tcp_target(
+    probe_name: &str,
+    observer_task_name: &str,
+    resolved_target: &str,
+) -> Result<(String, u16), String> {
+    let (address, port_text) = resolved_target.rsplit_once(':').ok_or_else(|| {
+        format!(
+            "readiness probe `{probe_name}` could not resolve one TCP target from observer task `{observer_task_name}`"
+        )
+    })?;
+    let port = port_text.parse::<u16>().map_err(|_| {
+        format!(
+            "readiness probe `{probe_name}` resolved one invalid TCP target from observer task `{observer_task_name}`"
+        )
+    })?;
+    Ok((address.trim().to_string(), port))
+}
+
+fn tcp_readiness_endpoint_status(
+    address: &str,
+    port: u16,
+    timeout: Option<Duration>,
+) -> HttpReadinessStatus {
+    let addr = format!("{}:{}", address.trim(), port);
+    let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
+    let Ok(addrs) = addr.to_socket_addrs() else {
+        return HttpReadinessStatus::Failed;
+    };
+    let mut timed_out = false;
+    for socket in addrs {
+        match TcpStream::connect_timeout(&socket, connect_timeout) {
+            Ok(stream) => {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+                return HttpReadinessStatus::Passed;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => timed_out = true,
+            Err(_) => {}
+        }
+    }
+    if timed_out {
+        HttpReadinessStatus::TimedOut
+    } else {
+        HttpReadinessStatus::Failed
+    }
+}
+
 fn failed_check_summary(check: &crate::schema::CheckSpec) -> String {
     if check.probe.is_some() {
         format!("Probe check failed: {}", check.name)
@@ -5593,9 +5928,13 @@ fn failed_check_summary(check: &crate::schema::CheckSpec) -> String {
     }
 }
 
-fn failed_check_why(check: &crate::schema::CheckSpec) -> String {
+fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> String {
     if let Some(probe_name) = check.probe.as_deref() {
-        format!("the configured `{}` probe-backed check did not succeed", probe_name)
+        format!(
+            "the configured `{}` probe-backed check ({}) did not succeed",
+            probe_name,
+            probe_source_description(contract, probe_name)
+        )
     } else {
         format!("the configured `{}` check did not succeed", check.name)
     }
@@ -5609,17 +5948,50 @@ fn timed_out_check_summary(check: &crate::schema::CheckSpec) -> String {
     }
 }
 
-fn timed_out_check_why(check: &crate::schema::CheckSpec, timeout: u64) -> String {
+fn timed_out_check_why(
+    contract: &Contract,
+    check: &crate::schema::CheckSpec,
+    timeout: u64,
+) -> String {
     if let Some(probe_name) = check.probe.as_deref() {
         format!(
-            "the configured `{}` probe-backed check did not finish within {}ms",
-            probe_name, timeout
+            "the configured `{}` probe-backed check ({}) did not finish within {}ms",
+            probe_name,
+            probe_source_description(contract, probe_name),
+            timeout
         )
     } else {
         format!(
             "the configured `{}` check did not finish within {}ms",
             check.name, timeout
         )
+    }
+}
+
+fn probe_source_description(contract: &Contract, probe_name: &str) -> String {
+    if let Some(probe) = contract.probe(probe_name)
+        && let Some(target) = probe.target.as_ref()
+        && target.kind == crate::schema::ReadinessProbeTargetKind::Task
+        && let Some(observer) = target.observer.as_ref()
+        && observer.kind == crate::schema::ReadinessProbeObserverKind::Task
+        && let Some(observer_task) = observer.task.as_deref()
+    {
+        return format!(
+            "task listener `{}.{}` (`address_view: {}`, observer: {})",
+            target.name,
+            target.listener.as_deref().unwrap_or("-"),
+            match target.address_view {
+                crate::schema::TaskTargetAddressView::Topology => "topology",
+                crate::schema::TaskTargetAddressView::Host => "host",
+                crate::schema::TaskTargetAddressView::Internal => "internal",
+            },
+            observer_task.trim()
+        );
+    }
+    match resolve_named_readiness_probe(contract, probe_name) {
+        Ok(ResolvedNamedReadinessProbe::Http { source, .. })
+        | Ok(ResolvedNamedReadinessProbe::Tcp { source, .. }) => source.description(),
+        Err(_) => format!("probe `{probe_name}`"),
     }
 }
 
@@ -5638,16 +6010,42 @@ fn timed_out_check_next(contract: &Contract, check: &crate::schema::CheckSpec) -
 
 fn failed_probe_next(probe_name: &str, probe: &ReadinessProbeSpec) -> String {
     format!(
-        "probe `{probe_name}` at `{}` and fix the reported issue, then rerun `ota doctor`",
-        probe.url
+        "inspect probe `{probe_name}` ({}) and fix the reported issue, then rerun `ota doctor`",
+        readiness_probe_summary(probe)
     )
 }
 
 fn timed_out_probe_next(probe_name: &str, probe: &ReadinessProbeSpec) -> String {
     format!(
-        "make probe `{probe_name}` at `{}` respond within the configured timeout, or raise that timeout, then rerun `ota doctor`",
-        probe.url
+        "make probe `{probe_name}` ({}) respond within the configured timeout, or raise that timeout, then rerun `ota doctor`",
+        readiness_probe_summary(probe)
     )
+}
+
+fn readiness_probe_summary(probe: &ReadinessProbeSpec) -> String {
+    if let Some(url) = probe.url.as_deref() {
+        return format!("literal URL `{url}`");
+    }
+    let Some(target) = probe.target.as_ref() else {
+        return String::from("undeclared target");
+    };
+    match target.kind {
+        crate::schema::ReadinessProbeTargetKind::Task => format!(
+            "task listener `{}.{}` (`address_view: {}`)",
+            target.name,
+            target.listener.as_deref().unwrap_or("<missing>"),
+            match target.address_view {
+                crate::schema::TaskTargetAddressView::Topology => "topology",
+                crate::schema::TaskTargetAddressView::Host => "host",
+                crate::schema::TaskTargetAddressView::Internal => "internal",
+            }
+        ),
+        crate::schema::ReadinessProbeTargetKind::Service => format!(
+            "service endpoint `{}.{}`",
+            target.name,
+            target.endpoint.as_deref().unwrap_or("<auto>")
+        ),
+    }
 }
 
 fn run_check(command: &str, working_dir: &Path, timeout_ms: Option<u64>) -> CheckStatus {
@@ -6152,6 +6550,7 @@ fn shell_single_quote(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::env;
     use std::fs;
     use std::io::{Read, Write};
@@ -6159,17 +6558,19 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
     use std::thread;
+    use std::time::Duration;
 
     use crate::parser::parse_contract_str;
     use crate::schema::ServiceSpec;
+    use crate::runner::HttpReadinessRequest;
     #[cfg(windows)]
     use crate::test_support::cwd_mutex_lock;
     use crate::test_support::env_mutex_lock;
     use tempfile::TempDir;
 
     use super::{
-        DoctorMode, FindingSeverity, compose_service_healthcheck_command, diagnose_checks_only,
-        diagnose_contract, diagnose_contract_in_mode, diagnose_preconditions,
+        CheckStatus, DoctorMode, FindingSeverity, compose_service_healthcheck_command,
+        diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_preconditions,
         diagnose_preconditions_with_mode, tool_executable_name, version_matches,
     };
 
@@ -8265,7 +8666,10 @@ checks:
         let report = diagnose_checks_only(&contract, synthetic_contract_path());
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
-        assert_eq!(report.findings[0].summary, "Probe check failed: backend-ready");
+        assert_eq!(
+            report.findings[0].summary,
+            "Probe check failed: backend-ready"
+        );
         assert!(
             report.findings[0]
                 .why
@@ -8338,6 +8742,354 @@ workflows:
     readiness:
       probes:
         - backend-ready
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn probe_backed_check_can_reuse_task_target_probe() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+        address_view: host
+      path: /healthz/readiness
+      timeout: 1000
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: backend-ready
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: {port}
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, synthetic_contract_path());
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn probe_backed_check_can_reuse_observer_task_topology_probe() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+        address_view: topology
+        observer:
+          kind: task
+          task: sandbox
+      path: /healthz/readiness
+      timeout: 1000
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: backend-ready
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, synthetic_contract_path());
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn service_http_probe_command_keeps_python_timeout_classification_reachable() {
+        let endpoint = crate::schema::ServiceEndpointSpec {
+            address: String::from("127.0.0.1"),
+            port: 8080,
+        };
+        let request = HttpReadinessRequest {
+            method: crate::schema::TaskRuntimeReadinessHttpMethod::Get,
+            path: String::from("/healthz"),
+            headers: BTreeMap::new(),
+            success_statuses: vec![200],
+            body_contains: None,
+        };
+
+        let command = super::service_http_readiness_probe_command_from_request(
+            &endpoint,
+            &request,
+            Some(Duration::from_secs(1)),
+        );
+
+        assert!(!command.contains("<<'PY' && exit 0 || exit 1"));
+        assert!(command.contains(
+            "probe_status=$?; [ $probe_status -eq 0 ] && exit 0; [ $probe_status -eq 124 ] && exit 124; exit 1"
+        ));
+    }
+
+    #[test]
+    fn service_tcp_probe_command_keeps_python_timeout_classification_reachable() {
+        let endpoint = crate::schema::ServiceEndpointSpec {
+            address: String::from("127.0.0.1"),
+            port: 5432,
+        };
+
+        let command =
+            super::service_tcp_readiness_probe_command_from_timeout(&endpoint, Some(Duration::from_secs(1)));
+
+        assert!(!command.contains("<<'PY' && exit 0 || exit 1"));
+        assert!(command.contains(
+            "probe_status=$?; [ $probe_status -eq 0 ] && exit 0; [ $probe_status -eq 124 ] && exit 124; exit 1"
+        ));
+    }
+
+    #[test]
+    fn observer_task_probe_timeout_is_reported_deterministically() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().expect("probe should connect");
+            thread::sleep(Duration::from_millis(250));
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+        address_view: topology
+        observer:
+          kind: task
+          task: sandbox
+      path: /healthz/readiness
+      timeout: 100
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+  sandbox:
+    run: echo sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let status =
+            super::run_named_probe(&contract, synthetic_contract_path(), "backend-ready", None);
+        server.join().expect("probe server should finish");
+
+        assert!(matches!(status, CheckStatus::TimedOut(100)));
+    }
+
+    #[test]
+    fn workflow_readiness_can_reference_task_target_probe() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+        address_view: host
+      path: /healthz/readiness
+      timeout: 1000
+workflows:
+  default: backend
+  backend:
+    readiness:
+      probes:
+        - backend-ready
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: {port}
 "#
             )
             .as_str(),
@@ -9216,8 +9968,7 @@ tasks:
 
     #[test]
     fn producer_owned_service_surfaces_workspace_owner_when_unreachable() {
-        let reserved_listener =
-            TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let reserved_listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let reserved_port = reserved_listener.local_addr().unwrap().port();
         drop(reserved_listener);
         let fixture = tempfile::tempdir().unwrap();
@@ -9303,12 +10054,17 @@ tasks:
             .find(|finding| finding.summary == "Service producer is not ready: user-api")
             .expect("expected producer-owned service finding");
 
-        assert!(finding.why.contains("workspace repo `api` task `dev` listener `http`"));
+        assert!(
+            finding
+                .why
+                .contains("workspace repo `api` task `dev` listener `http`")
+        );
         assert!(finding.next.contains("ota workspace up"));
         assert!(finding.next.contains("ota run dev"));
-        assert!(finding.next.contains(
-            &format!("ota run dev '{}'", fixture.path().join("api").display())
-        ));
+        assert!(finding.next.contains(&format!(
+            "ota run dev '{}'",
+            fixture.path().join("api").display()
+        )));
     }
 
     #[test]

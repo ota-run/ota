@@ -1272,7 +1272,20 @@ pub struct ContractReadinessConfig {
 #[serde(deny_unknown_fields)]
 pub struct ReadinessProbeSpec {
     pub kind: ReadinessProbeKind,
-    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ReadinessProbeTargetSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<TaskRuntimeReadinessHttpMethod>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub success: Option<TaskRuntimeReadinessHttpSuccessSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<TaskRuntimeReadinessHttpBodySpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expect_status: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1283,6 +1296,50 @@ pub struct ReadinessProbeSpec {
 #[serde(rename_all = "lowercase")]
 pub enum ReadinessProbeKind {
     Http,
+    Tcp,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReadinessProbeTargetSpec {
+    pub kind: ReadinessProbeTargetKind,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    #[serde(default = "default_readiness_probe_target_address_view")]
+    pub address_view: TaskTargetAddressView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observer: Option<ReadinessProbeObserverSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
+const fn default_readiness_probe_target_address_view() -> TaskTargetAddressView {
+    TaskTargetAddressView::Host
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadinessProbeTargetKind {
+    Task,
+    Service,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReadinessProbeObserverSpec {
+    #[serde(default)]
+    pub kind: ReadinessProbeObserverKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessProbeObserverKind {
+    #[default]
+    CommandHost,
+    Task,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -1768,15 +1825,14 @@ impl TaskSpec {
         self.runtime
             .as_ref()
             .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
-            || self
-                .execution
-                .as_ref()
-                .is_some_and(|execution| execution.modes.iter().any(|(_, branch)| {
+            || self.execution.as_ref().is_some_and(|execution| {
+                execution.modes.iter().any(|(_, branch)| {
                     branch
                         .runtime
                         .as_ref()
                         .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
-                }))
+                })
+            })
     }
 }
 
@@ -2492,9 +2548,6 @@ agent:
         )
         .unwrap();
 
-        assert_eq!(
-            contract.selected_run_task_name_for(None),
-            Some("agent-dev")
-        );
+        assert_eq!(contract.selected_run_task_name_for(None), Some("agent-dev"));
     }
 }

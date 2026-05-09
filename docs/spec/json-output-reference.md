@@ -367,10 +367,18 @@ contract or topology viewer can render without starting tasks or services.
 
 Notes:
 
+- top-level `readiness_probes` is present when the contract declares reusable readiness probes; it
+  exposes the canonical literal-URL or topology-derived source plus the declared HTTP/TCP request
+  contract for each probe
+- task-target probe entries also expose `target.observer` and `target.resolution_plane`; the
+  default command-host slice reports `command_host`, while observer-backed task probes report the
+  named task plane they resolve through
 - `tasks[*].runtime.readiness.probe` is present when one task runtime reuses a named
-  `readiness.probes.<name>` declaration instead of declaring inline HTTP/TCP readiness transport
+  `readiness.probes.<name>` declaration instead of declaring inline HTTP/TCP readiness transport;
+  the named probe itself may be literal-URL-backed or target-backed
 - `services[*].readiness.probe` is present when one managed service reuses a named
-  `readiness.probes.<name>` declaration instead of declaring inline structured readiness transport
+  `readiness.probes.<name>` declaration instead of declaring inline structured readiness transport;
+  the named probe itself may be literal-URL-backed or target-backed
 
 Success:
 
@@ -399,6 +407,27 @@ Success:
       "fulfillment": "run"
     }
   ],
+  "readiness_probes": {
+    "app-ready": {
+      "kind": "http",
+      "target": {
+        "kind": "task",
+        "name": "api",
+        "listener": "http",
+        "address_view": "host",
+        "observer": {
+          "kind": "command_host"
+        },
+        "resolution_plane": "command_host"
+      },
+      "method": "GET",
+      "path": "/health",
+      "success": {
+        "status": [200]
+      },
+      "timeout_ms": 10000
+    }
+  },
   "services": [],
   "tasks": [
     {
