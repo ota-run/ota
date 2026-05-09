@@ -87,6 +87,10 @@ env:
       allowed:
         - local
         - ci
+surfaces:
+  backend:
+    kind: http
+    port: 5678
 tasks:
   setup:
     run: pnpm install
@@ -908,6 +912,62 @@ Resolution and provenance:
 - execution receipts should explain which layer supplied the value that won
 - `doctor` and `detect` should expose provenance instead of flattening the result into a bare string
 
+## `surfaces`
+
+Optional.
+
+For the operator guide to what surfaces are, when to add them, and how they relate to listener
+shorthand and full listeners, see [surfaces.md](surfaces.md).
+
+```yaml
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+    path: /
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 10000
+  editor:
+    kind: http
+    port: 8080
+    path: /
+    readiness:
+      kind: http
+      path: /
+      timeout: 10000
+```
+
+Fields:
+
+- `<name>.kind`: required `http` or `tcp`
+- `<name>.port`: required fixed port number
+- `<name>.path`: optional HTTP path; defaults to `/` for HTTP surfaces
+- `<name>.readiness`: optional reusable readiness contract for that surface
+- `<name>.readiness.kind`: required when readiness is declared; `http` or `tcp`
+- `<name>.readiness.path`: optional for HTTP readiness when the surface path is already sufficient;
+  otherwise required
+- `<name>.readiness.method`: optional HTTP method; defaults to `GET`
+- `<name>.readiness.headers`: optional HTTP request headers
+- `<name>.readiness.success.status`: optional accepted HTTP status list
+- `<name>.readiness.body.contains`: optional required response substring
+- `<name>.readiness.interval`: optional polling interval
+- `<name>.readiness.timeout`: optional per-attempt timeout
+- `<name>.readiness.retries`: optional consecutive failure budget
+- `<name>.readiness.start_period`: optional delay before the first probe
+
+Current behavior:
+
+- surfaces are reusable endpoint truth, not standalone operational URLs
+- a surface becomes operational only when a service task runtime attaches it through
+  `tasks.<name>.runtime.surfaces`
+- attached surfaces normalize into the existing runtime listener model with conservative loopback
+  defaults
+- workflows may reference attached surfaces for readiness and exposes without repeating host URLs
+- `ota execution topology` reports both top-level declared surfaces and the normalized listener
+  shape on attached runtimes
+
 ## `tasks`
 
 Optional.
@@ -1036,6 +1096,7 @@ Fields:
 
 - `kind`: currently `service`
 - `backend_binding`: optional shared backend binding name declared under `execution.shared_backends`
+- `surfaces`: optional list of reusable top-level runtime surfaces declared under `surfaces`
 - `listeners`: named listener map
 - `listeners.<name>.http: <port>`: shorthand for the common local HTTP listener shape
 - `listeners.<name>.tcp: <port>`: shorthand for the common local TCP listener shape
@@ -1066,6 +1127,20 @@ Listener shorthand rules:
 - shorthand cannot be mixed with `protocol`, `bind`, or `project`
 - shorthand supports exactly one of `http` or `tcp`
 - use the verbose form when bind address, host address, host-port mode, primary projection, or path must be customized
+
+Surface attachment rules:
+
+- use top-level `surfaces` when one endpoint meaning should stay shared across tasks and workflows;
+  see [surfaces.md](surfaces.md)
+- `runtime.surfaces` attaches named top-level surfaces to this service task runtime
+- each attached surface normalizes into the same runtime listener model used by explicit
+  `runtime.listeners`
+- attached surface names become normalized listener names
+- a runtime must not attach an unknown surface
+- a runtime must not declare `runtime.listeners.<name>` and also attach `runtime.surfaces: [<name>]`
+  for the same name
+- if a runtime attaches exactly one surface, has no inline `runtime.readiness`, and that surface
+  declares readiness, ota derives the equivalent runtime readiness automatically
 
 `runtime` mode semantics:
 
@@ -1653,8 +1728,8 @@ Current behavior:
 
 Optional.
 
-For the operator guide to what workflows are, when to add them, and how they relate to tasks and
-agent hints, see [workflows.md](workflows.md).
+For the operator guide to what workflows are, when to add them, and how they relate to tasks,
+surfaces, and agent hints, see [workflows.md](workflows.md).
 
 ```yaml
 readiness:
@@ -1681,7 +1756,10 @@ workflows:
     readiness:
       probes:
         - app-ready
+      surfaces:
+        - backend
     exposes:
+      - surface: backend
       - http://127.0.0.1:5678
 ```
 
@@ -1695,7 +1773,10 @@ Fields:
 - `<name>.services.required`: optional services that belong to that workflow
 - `<name>.readiness.checks`: optional readiness checks that belong to that workflow
 - `<name>.readiness.probes`: optional reusable readiness probes that belong to that workflow
+- `<name>.readiness.surfaces`: optional attached runtime surfaces that belong to that workflow's selected run task
 - `<name>.exposes`: optional human-readable endpoints or URLs the workflow is expected to surface
+  - literal string form keeps a fixed URL
+  - object form `{ surface: <name> }` resolves through the selected workflow run task
 
 Current behavior:
 
@@ -1704,6 +1785,10 @@ Current behavior:
   workflow readiness checks, or workflow services
 - `check` follows the same selected workflow readiness boundary when a workflow declares explicit
   readiness probes or checks, and otherwise falls back to the repo-wide `checks` surface
+- `doctor` and `check` may also validate `workflows.<name>.readiness.surfaces` through the selected
+  workflow run task without hardcoding host URLs into the workflow
+- workflow `exposes` may point at attached surfaces instead of repeating host URLs that the
+  contract already owns under `surfaces`
 - use `checks[].probe` when a named check should reuse a named readiness probe outside that
   workflow-scoped path or when the repo does not declare workflows
 - `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics

@@ -60,7 +60,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
-- use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything
+- use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything, including reusable readiness probes, reusable runtime surfaces, normalized listeners, and attached surface names
 - use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
 - use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
 - use `ota assist bind-task --json` when you want a deterministic target-binding proposal or apply result without scraping review text
@@ -91,7 +91,7 @@ human text output:
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
-- `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `services`, and `tasks`
+- `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `surfaces`, `services`, and `tasks`
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
 - `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist bind-task --json`: use `mode`, `subject.task`, `subject.target`, `inputs`, `changes`, `validation`, and `next`
@@ -370,6 +370,8 @@ Notes:
 - top-level `readiness_probes` is present when the contract declares reusable readiness probes; it
   exposes the canonical literal-URL or topology-derived source plus the declared HTTP/TCP request
   contract for each probe
+- top-level `surfaces` is present when the contract declares reusable runtime surfaces; it exposes
+  the declared kind, port, optional path, and optional readiness contract for each reusable surface
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the
   default command-host slice reports `command_host`, while observer-backed task probes report the
   named task plane they resolve through
@@ -413,7 +415,7 @@ Success:
       "target": {
         "kind": "task",
         "name": "api",
-        "listener": "http",
+        "listener": "backend",
         "address_view": "host",
         "observer": {
           "kind": "command_host"
@@ -428,6 +430,17 @@ Success:
       "timeout_ms": 10000
     }
   },
+  "surfaces": {
+    "backend": {
+      "kind": "http",
+      "port": 3000,
+      "path": "/",
+      "readiness": {
+        "kind": "http",
+        "path": "/health"
+      }
+    }
+  },
   "services": [],
   "tasks": [
     {
@@ -437,11 +450,12 @@ Success:
         "backend_binding": "workbench",
         "readiness": {
           "kind": "http",
-          "listener": "http",
+          "listener": "backend",
           "path": "/health"
         },
+        "attached_surfaces": ["backend"],
         "listeners": {
-          "http": {
+          "backend": {
             "protocol": "http",
             "bind_address": "0.0.0.0",
             "bind_port_mode": "fixed",
@@ -2354,7 +2368,8 @@ Each catalog entry keeps the operator guidance machine-readable:
 
 `ota check --json` uses the same finding shape as `ota doctor --json`, including additive
 `finding_groups` when present, and may also include the same additive top-level `workflow`
-summary for the default workflow, including workflow `readiness_probes` when declared:
+summary for the default workflow, including workflow `readiness_probes`,
+`readiness_surfaces`, and `expose_surfaces` when declared:
 
 ```json
 {
@@ -2366,6 +2381,7 @@ summary for the default workflow, including workflow `readiness_probes` when dec
     "required_services": ["postgres"],
     "readiness_checks": ["app-health"],
     "readiness_probes": ["app-ready"],
+    "readiness_surfaces": ["backend"],
     "exposes": []
   },
   "findings": [

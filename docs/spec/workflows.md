@@ -31,6 +31,7 @@ The short version:
 - `tasks` are execution primitives
 - `checks` are named readiness assertions
 - `readiness.probes` are reusable transport-level readiness definitions
+- `surfaces` are reusable runtime endpoint definitions
 - `services` are dependencies
 - `workflows` are the repo's intended operational paths
 
@@ -63,6 +64,7 @@ A workflow is a named path built from existing contract primitives:
 - an optional run task
 - optional required services
 - optional readiness checks
+- optional readiness surfaces
 - optional exposed endpoints
 
 Example:
@@ -92,8 +94,10 @@ workflows:
     readiness:
       probes:
         - app-ready
+      surfaces:
+        - backend
     exposes:
-      - http://127.0.0.1:5678
+      - surface: backend
 ```
 
 This does not replace `tasks`, `checks`, or `services`.
@@ -186,7 +190,68 @@ Good boundary:
 - `tasks.setup` installs dependencies
 - `tasks.dev` starts the app
 - `checks.app-health` probes the app
+- `surfaces.backend` defines the reusable app endpoint
 - `workflows.app` says those belong to the same operational path
+
+## How workflows relate to surfaces
+
+Use surfaces when the same endpoint meaning should stay shared across tasks and workflows.
+
+Example:
+
+```yaml
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+    path: /
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 10000
+
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+```
+
+That means:
+
+- the surface owns reusable endpoint meaning
+- task attachment makes the endpoint operational
+- workflow readiness selects which attached surfaces prove that workflow path
+- workflow exposes can resolve attached surface URLs without repeating literals
+
+For the full operator guide to runtime surfaces, see [surfaces.md](surfaces.md).
 
 ## How workflows relate to agents
 
@@ -226,6 +291,7 @@ Prefer names that describe the operational path, not the implementation detail.
 ## Readiness reuse
 
 Workflows can now reference reusable `readiness.probes` directly.
+They can also reference reusable attached `surfaces` directly.
 
 Use that when:
 
@@ -258,6 +324,9 @@ Success-rule authoring is flexible:
 
 Use `checks[].probe` when the same underlying probe should also participate in the explicit
 `ota check` surface with a named severity.
+
+Use `readiness.surfaces` when the workflow should prove one runtime surface already owned by the
+repo topology instead of restating a probe target or literal URL.
 
 ## Design rule
 

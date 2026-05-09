@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added first-class top-level `surfaces` as reusable runtime endpoint definitions: repo contracts can now declare one `surfaces.<name>` block for shared HTTP/TCP endpoint truth, attach those surfaces to service-task runtimes through `tasks.<name>.runtime.surfaces`, reference them from workflow readiness and workflow exposes, and inspect both declared surfaces and normalized attached listener shape through `ota execution topology`; listener shorthand and full listeners remain fully supported, surface attachment is validated strictly, and normalized runtime behavior stays on the existing listener/readiness model
 - added listener shorthand as authoring sugar for common local listeners: `listeners.<name>.http:
   <port>` and `listeners.<name>.tcp: <port>` now normalize into the existing verbose listener
   model with conservative `127.0.0.1` bind/host defaults, topology JSON still reports the normal

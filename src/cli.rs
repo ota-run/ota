@@ -33658,6 +33658,7 @@ repos:
 
     #[test]
     fn workspace_status_text_surfaces_status_and_drift_as_first_detail_lines() {
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
 
         let output = run_with(["ota", "workspace", "status", fixture.path()]);

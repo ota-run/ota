@@ -132,6 +132,8 @@ pub struct Contract {
     #[serde(default)]
     pub readiness: ContractReadinessConfig,
     #[serde(default)]
+    pub surfaces: BTreeMap<String, SurfaceSpec>,
+    #[serde(default)]
     pub services: BTreeMap<String, ServiceSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflows: Option<WorkflowCatalog>,
@@ -152,6 +154,10 @@ pub struct Contract {
 impl Contract {
     pub fn probe(&self, name: &str) -> Option<&ReadinessProbeSpec> {
         self.readiness.probes.get(name)
+    }
+
+    pub fn surface(&self, name: &str) -> Option<&SurfaceSpec> {
+        self.surfaces.get(name)
     }
 
     pub fn workflow(&self, name: &str) -> Option<&WorkflowSpec> {
@@ -247,7 +253,7 @@ pub struct WorkflowSpec {
     #[serde(default)]
     pub readiness: WorkflowReadinessSpec,
     #[serde(default)]
-    pub exposes: Vec<String>,
+    pub exposes: Vec<WorkflowExposeSpec>,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -270,6 +276,31 @@ pub struct WorkflowReadinessSpec {
     pub checks: Vec<String>,
     #[serde(default)]
     pub probes: Vec<String>,
+    #[serde(default)]
+    pub surfaces: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum WorkflowExposeSpec {
+    Url(String),
+    SurfaceRef { surface: String },
+}
+
+impl WorkflowExposeSpec {
+    pub fn surface_name(&self) -> Option<&str> {
+        match self {
+            Self::Url(_) => None,
+            Self::SurfaceRef { surface } => Some(surface.as_str()),
+        }
+    }
+
+    pub fn display_text(&self) -> String {
+        match self {
+            Self::Url(url) => url.clone(),
+            Self::SurfaceRef { surface } => format!("surface:{surface}"),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1269,6 +1300,139 @@ pub struct ContractReadinessConfig {
     pub probes: BTreeMap<String, ReadinessProbeSpec>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceSpec {
+    pub kind: SurfaceKind,
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<SurfaceReadinessSpec>,
+}
+
+impl SurfaceSpec {
+    pub fn effective_path(&self) -> Option<String> {
+        match self.kind {
+            SurfaceKind::Http => Some(self.path.clone().unwrap_or_else(|| String::from("/"))),
+            SurfaceKind::Tcp => None,
+        }
+    }
+
+    pub fn normalized_listener(&self) -> TaskRuntimeListenerSpec {
+        TaskRuntimeListenerSpec {
+            protocol: self.kind.as_runtime_protocol(),
+            bind: TaskRuntimeBindSpec {
+                address: String::from("127.0.0.1"),
+                port: TaskRuntimePortSpec {
+                    mode: TaskRuntimePortMode::Fixed,
+                    value: Some(self.port),
+                },
+            },
+            project: TaskRuntimeProjectionSpec {
+                host: Some(TaskRuntimeHostProjectionSpec {
+                    address: String::from("127.0.0.1"),
+                    port: TaskRuntimeHostPortSpec {
+                        mode: TaskRuntimeHostPortMode::Fixed,
+                        value: Some(self.port),
+                    },
+                    primary: false,
+                    path: self.effective_path(),
+                }),
+            },
+        }
+    }
+
+    pub fn derived_runtime_readiness(
+        &self,
+        listener_name: &str,
+    ) -> Option<TaskRuntimeReadinessSpec> {
+        let readiness = self.readiness.as_ref()?;
+        Some(TaskRuntimeReadinessSpec {
+            probe: None,
+            kind: Some(readiness.kind),
+            listener: Some(listener_name.to_string()),
+            method: readiness.method,
+            path: readiness.path.clone().or_else(|| match readiness.kind {
+                TaskRuntimeReadinessKind::Http => self.effective_path(),
+                TaskRuntimeReadinessKind::Tcp => None,
+            }),
+            headers: readiness.headers.clone(),
+            success: readiness.success.clone(),
+            body: readiness.body.clone(),
+            interval: readiness.interval.clone(),
+            timeout: readiness.timeout.clone(),
+            retries: readiness.retries,
+            start_period: readiness.start_period.clone(),
+        })
+    }
+
+    pub fn host_url(&self) -> String {
+        match self.kind {
+            SurfaceKind::Http => format!(
+                "http://127.0.0.1:{}{}",
+                self.port,
+                self.effective_path().unwrap_or_else(|| String::from("/"))
+            ),
+            SurfaceKind::Tcp => format!("tcp://127.0.0.1:{}", self.port),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SurfaceKind {
+    Http,
+    Tcp,
+}
+
+impl SurfaceKind {
+    pub const fn as_runtime_protocol(self) -> TaskRuntimeProtocol {
+        match self {
+            Self::Http => TaskRuntimeProtocol::Http,
+            Self::Tcp => TaskRuntimeProtocol::Tcp,
+        }
+    }
+
+    pub const fn as_readiness_kind(self) -> TaskRuntimeReadinessKind {
+        match self {
+            Self::Http => TaskRuntimeReadinessKind::Http,
+            Self::Tcp => TaskRuntimeReadinessKind::Tcp,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Tcp => "tcp",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceReadinessSpec {
+    pub kind: TaskRuntimeReadinessKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<TaskRuntimeReadinessHttpMethod>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub success: Option<TaskRuntimeReadinessHttpSuccessSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<TaskRuntimeReadinessHttpBodySpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_period: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ReadinessProbeSpec {
@@ -1835,6 +1999,33 @@ impl TaskSpec {
                 })
             })
     }
+
+    pub fn declared_surface_names(&self) -> BTreeSet<String> {
+        let mut surfaces = BTreeSet::new();
+        if let Some(runtime) = self
+            .runtime
+            .as_ref()
+            .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+        {
+            surfaces.extend(runtime.surfaces.iter().cloned());
+        }
+        if let Some(execution) = self.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                if let Some(runtime) = branch
+                    .runtime
+                    .as_ref()
+                    .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+                {
+                    surfaces.extend(runtime.surfaces.iter().cloned());
+                }
+            }
+        }
+        surfaces
+    }
+
+    pub fn declares_surface(&self, name: &str) -> bool {
+        self.declared_surface_names().contains(name)
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -1933,7 +2124,11 @@ pub struct TaskRuntimeSpec {
     #[serde(default)]
     pub readiness: Option<TaskRuntimeReadinessSpec>,
     #[serde(default)]
+    pub surfaces: Vec<String>,
+    #[serde(default)]
     pub listeners: BTreeMap<String, TaskRuntimeListenerSpec>,
+    #[serde(skip, default)]
+    pub normalized_surface_listeners: BTreeSet<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -2594,6 +2789,7 @@ mod tests {
     use std::path::Path;
 
     use crate::parser::parse_contract_str;
+    use crate::validator::validate_contract;
 
     use super::{Backend, TaskRuntimeProtocol};
 
@@ -2978,6 +3174,145 @@ tasks:
             error
                 .to_string()
                 .contains("listener shorthand port must be between 1 and 65535")
+        );
+    }
+
+    #[test]
+    fn attached_surface_normalizes_to_runtime_listener_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+    path: /
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+        let listener = &contract.tasks["dev"]
+            .runtime
+            .as_ref()
+            .expect("runtime should exist")
+            .listeners["backend"];
+
+        assert_eq!(listener.protocol, TaskRuntimeProtocol::Http);
+        assert_eq!(listener.bind.address, "127.0.0.1");
+        assert_eq!(listener.bind.port.value, Some(5678));
+        assert_eq!(
+            listener
+                .project
+                .host
+                .as_ref()
+                .expect("host projection should exist")
+                .path
+                .as_deref(),
+            Some("/")
+        );
+    }
+
+    #[test]
+    fn attached_surface_unknown_reference_fails_validation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+"#,
+        )
+        .expect("unknown surface attachment should still parse structurally");
+        let error = validate_contract(&contract).expect_err("unknown surface attachment should fail validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("`tasks.dev.runtime.surfaces` references unknown surface `backend`")
+        );
+    }
+
+    #[test]
+    fn attached_surface_duplicate_name_fails_validation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+        - backend
+"#,
+        )
+        .expect("duplicate surface attachment should still parse structurally");
+        let error =
+            validate_contract(&contract).expect_err("duplicate surface attachment should fail validation");
+
+        assert!(
+            error.to_string().contains(
+                "`tasks.dev.runtime.surfaces` must not declare duplicate surface `backend`"
+            )
+        );
+    }
+
+    #[test]
+    fn attached_surface_listener_name_collision_fails_validation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+      listeners:
+        backend:
+          http: 5678
+"#,
+        )
+        .expect("surface/listener collision should still parse structurally");
+        let error =
+            validate_contract(&contract).expect_err("surface/listener collision should fail validation");
+
+        assert!(
+            error.to_string().contains(
+                "`tasks.dev.runtime.surfaces` attaches surface `backend`, but `tasks.dev.runtime.listeners.backend` is already declared"
+            )
         );
     }
 }

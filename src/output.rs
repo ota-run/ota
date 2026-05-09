@@ -566,6 +566,8 @@ pub struct ExecutionTopologySuccess<'a> {
     pub shared_backends: Vec<ExecutionTopologySharedBackendSummary>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub readiness_probes: BTreeMap<String, ExecutionTopologyProbeSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub surfaces: BTreeMap<String, ExecutionTopologySurfaceSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<ServiceSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -627,8 +629,20 @@ pub struct ExecutionTopologyRuntimeSummary {
     pub backend_binding: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readiness: Option<ExecutionTopologyReadinessSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attached_surfaces: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub listeners: BTreeMap<String, ExecutionTopologyListenerSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceSummary {
+    pub kind: String,
+    pub port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<ExecutionTopologyReadinessSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2225,7 +2239,11 @@ pub struct WorkflowSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub readiness_probes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub readiness_surfaces: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exposes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub expose_surfaces: Vec<String>,
 }
 
 impl<'a> WorkflowSummary<'a> {
@@ -2247,7 +2265,22 @@ impl<'a> WorkflowSummary<'a> {
             required_services: workflow.services.required.clone(),
             readiness_checks: workflow.readiness.checks.clone(),
             readiness_probes: workflow.readiness.probes.clone(),
-            exposes: workflow.exposes.clone(),
+            readiness_surfaces: workflow.readiness.surfaces.clone(),
+            exposes: workflow
+                .exposes
+                .iter()
+                .filter_map(|expose| match expose {
+                    crate::schema::WorkflowExposeSpec::Url(url) => Some(url.clone()),
+                    crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => contract
+                        .surface(surface)
+                        .map(crate::schema::SurfaceSpec::host_url),
+                })
+                .collect(),
+            expose_surfaces: workflow
+                .exposes
+                .iter()
+                .filter_map(|expose| expose.surface_name().map(String::from))
+                .collect(),
         })
     }
 }

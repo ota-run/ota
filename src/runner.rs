@@ -13064,6 +13064,92 @@ pub(crate) fn task_runtime_host_readiness_probe_for_backend(
     })
 }
 
+pub(crate) fn task_surface_host_readiness_probe_for_backend(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: Backend,
+    surface_name: &str,
+) -> Result<HostRuntimeReadinessProbe, String> {
+    let runtime = task.service_runtime_for_backend(backend).ok_or_else(|| {
+        format!(
+            "task does not resolve to a service runtime for backend `{}`",
+            match backend {
+                Backend::Native => "native",
+                Backend::Container => "container",
+                Backend::Remote => "remote",
+            }
+        )
+    })?;
+    if !runtime
+        .surfaces
+        .iter()
+        .any(|surface| surface == surface_name)
+    {
+        return Err(format!(
+            "service runtime does not attach surface `{surface_name}`"
+        ));
+    }
+    let listener = runtime
+        .listeners
+        .get(surface_name)
+        .ok_or_else(|| format!("service runtime does not declare listener `{surface_name}`"))?;
+    let host = listener
+        .project
+        .host
+        .as_ref()
+        .ok_or_else(|| format!("listener `{surface_name}` does not declare `project.host`"))?;
+    let port = host.port.value.ok_or_else(|| {
+        format!("listener `{surface_name}` does not declare a fixed `project.host.port.value`")
+    })?;
+    let surface = contract
+        .surface(surface_name)
+        .ok_or_else(|| format!("surface `{surface_name}` is not declared"))?;
+    let (request, default_timeout) = match surface.readiness.as_ref() {
+        Some(readiness) => match readiness.kind {
+            TaskRuntimeReadinessKind::Http => (
+                Some(HttpReadinessRequest {
+                    method: readiness
+                        .method
+                        .unwrap_or(TaskRuntimeReadinessHttpMethod::Get),
+                    path: readiness
+                        .path
+                        .clone()
+                        .or_else(|| surface.effective_path())
+                        .unwrap_or_else(|| String::from("/")),
+                    headers: readiness.headers.clone(),
+                    success_statuses: readiness
+                        .success
+                        .as_ref()
+                        .map(|success| success.status.clone())
+                        .unwrap_or_else(|| vec![200]),
+                    body_contains: readiness.body.as_ref().map(|body| body.contains.clone()),
+                }),
+                readiness
+                    .timeout
+                    .as_deref()
+                    .and_then(parse_readiness_duration_spec),
+            ),
+            TaskRuntimeReadinessKind::Tcp => (
+                None,
+                readiness
+                    .timeout
+                    .as_deref()
+                    .and_then(parse_readiness_duration_spec),
+            ),
+        },
+        None => (None, None),
+    };
+
+    Ok(HostRuntimeReadinessProbe {
+        listener: surface_name.to_string(),
+        protocol: listener.protocol,
+        address: host.address.clone(),
+        port,
+        request,
+        default_timeout,
+    })
+}
+
 pub(crate) fn host_runtime_readiness_observed(
     probe: &HostRuntimeReadinessProbe,
     timeout: Option<Duration>,
@@ -26318,6 +26404,8 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -37211,6 +37299,8 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -37283,6 +37373,8 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -37345,6 +37437,8 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -37422,6 +37516,8 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -37479,6 +37575,8 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
                 TaskRuntimeListenerSpec {
@@ -37517,6 +37615,8 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([
                 (
                     String::from("http"),
