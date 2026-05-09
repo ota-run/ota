@@ -5068,26 +5068,18 @@ fn workflow_surface_attachment_error(
     task: &TaskSpec,
     surface: &str,
 ) -> Option<String> {
-    let mut backends = vec![task.workflow_backend(contract.execution.as_ref())];
-    for backend in [Backend::Native, Backend::Container, Backend::Remote] {
-        if task.mode_execution_branch(backend).is_some() && !backends.contains(&backend) {
-            backends.push(backend);
-        }
-    }
-
-    for backend in backends {
-        let Some(runtime) = task.service_runtime_for_backend(backend) else {
-            return Some(format!(
-                "does not resolve to a service runtime for backend `{}`",
-                format_backend(backend)
-            ));
-        };
-        if !runtime.surfaces.contains_name(surface) {
-            return Some(format!(
-                "does not attach that surface for backend `{}`",
-                format_backend(backend)
-            ));
-        }
+    let backend = task.workflow_backend(contract.execution.as_ref());
+    let Some(runtime) = task.service_runtime_for_backend(backend) else {
+        return Some(format!(
+            "does not resolve to a service runtime for backend `{}`",
+            format_backend(backend)
+        ));
+    };
+    if !runtime.surfaces.contains_name(surface) {
+        return Some(format!(
+            "does not attach that surface for backend `{}`",
+            format_backend(backend)
+        ));
     }
 
     None
@@ -6348,6 +6340,69 @@ workflows:
 
         validate_contract(&contract)
             .expect("default-mode container attachment should satisfy workflow surfaces");
+    }
+
+    #[test]
+    fn accepts_workflow_surface_when_only_effective_mode_branch_attaches_it() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      default_mode: container
+      modes:
+        native:
+          runtime:
+            kind: service
+            listeners:
+              diagnostics:
+                http: 9000
+        container:
+          context: app
+          runtime:
+            kind: service
+            surfaces:
+              backend:
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 5678
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("workflow surfaces should validate against the effective runtime branch only");
     }
 
     #[test]
