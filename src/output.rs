@@ -2286,14 +2286,26 @@ pub struct ListedWorkflowSummary<'a> {
 
 impl<'a> WorkflowSummary<'a> {
     pub fn from_contract(contract: &'a Contract) -> Option<Self> {
-        Self::from_contract_selected(contract, None)
+        Self::from_contract_selected_inner(contract, None, None)
+    }
+
+    pub fn from_contract_with_path(contract: &'a Contract, contract_path: &Path) -> Option<Self> {
+        Self::from_contract_selected_with_path(contract, contract_path, None)
     }
 
     pub fn from_contract_named(contract: &'a Contract, workflow_name: &'a str) -> Option<Self> {
-        Self::from_contract_named_with_path(contract, None, workflow_name)
+        Self::from_contract_named_inner(contract, None, workflow_name)
     }
 
     pub fn from_contract_named_with_path(
+        contract: &'a Contract,
+        contract_path: &Path,
+        workflow_name: &'a str,
+    ) -> Option<Self> {
+        Self::from_contract_named_inner(contract, Some(contract_path), workflow_name)
+    }
+
+    fn from_contract_named_inner(
         contract: &'a Contract,
         contract_path: Option<&Path>,
         workflow_name: &'a str,
@@ -2338,23 +2350,38 @@ impl<'a> WorkflowSummary<'a> {
         contract: &'a Contract,
         workflow_name: Option<&str>,
     ) -> Option<Self> {
-        Self::from_contract_selected_with_path(contract, None, workflow_name)
+        Self::from_contract_selected_inner(contract, None, workflow_name)
     }
 
     pub fn from_contract_selected_with_path(
+        contract: &'a Contract,
+        contract_path: &Path,
+        workflow_name: Option<&str>,
+    ) -> Option<Self> {
+        Self::from_contract_selected_inner(contract, Some(contract_path), workflow_name)
+    }
+
+    fn from_contract_selected_inner(
         contract: &'a Contract,
         contract_path: Option<&Path>,
         workflow_name: Option<&str>,
     ) -> Option<Self> {
         let (name, _) = contract.selected_workflow(workflow_name)?;
-        Self::from_contract_named_with_path(contract, contract_path, name)
+        Self::from_contract_named_inner(contract, contract_path, name)
     }
 
     pub fn list_from_contract(contract: &'a Contract) -> Vec<ListedWorkflowSummary<'a>> {
-        Self::list_from_contract_with_path(contract, None)
+        Self::list_from_contract_inner(contract, None)
     }
 
     pub fn list_from_contract_with_path(
+        contract: &'a Contract,
+        contract_path: &Path,
+    ) -> Vec<ListedWorkflowSummary<'a>> {
+        Self::list_from_contract_inner(contract, Some(contract_path))
+    }
+
+    fn list_from_contract_inner(
         contract: &'a Contract,
         contract_path: Option<&Path>,
     ) -> Vec<ListedWorkflowSummary<'a>> {
@@ -2370,17 +2397,12 @@ impl<'a> WorkflowSummary<'a> {
                     .items
                     .keys()
                     .filter_map(|name| {
-                        Self::from_contract_named_with_path(
-                            contract,
-                            contract_path,
-                            name.as_str(),
-                        )
-                        .map(|workflow| {
-                            ListedWorkflowSummary {
+                        Self::from_contract_named_inner(contract, contract_path, name.as_str()).map(
+                            |workflow| ListedWorkflowSummary {
                                 default: default_name == Some(name.as_str()),
                                 workflow,
-                            }
-                        })
+                            },
+                        )
                     })
                     .collect()
             })

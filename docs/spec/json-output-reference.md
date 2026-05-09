@@ -1232,6 +1232,78 @@ Root monorepo summary output can also include grouped member results:
 When the repo declares `workflows`, `ota tasks --json` includes an additive top-level `workflow`
 object for the default workflow, and member summaries may include the same additive field.
 
+## `ota workflows --json`
+
+Workflow inventory stays read-only. It reports declared repo workflows without falling back to the
+full task inventory.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "default": "app",
+  "workflows": [
+    {
+      "name": "app",
+      "intent": "local_development",
+      "description": "Canonical local app path",
+      "setup_task": "setup",
+      "run_task": "dev",
+      "required_services": ["postgres"],
+      "readiness_checks": [],
+      "readiness_probes": [],
+      "readiness_surfaces": ["backend"],
+      "exposes": ["http://127.0.0.1:5678/"],
+      "expose_surfaces": ["backend"],
+      "default": true
+    },
+    {
+      "name": "backend",
+      "run_task": "backend",
+      "required_services": [],
+      "readiness_checks": [],
+      "readiness_probes": [],
+      "readiness_surfaces": ["backend"],
+      "exposes": ["http://127.0.0.1:5678/"],
+      "expose_surfaces": ["backend"],
+      "default": false
+    }
+  ]
+}
+```
+
+Notes:
+
+- root success includes `ok`, `path`, optional `default`, and `workflows`
+- each workflow entry includes additive fields only when declared or resolved:
+  - `intent`
+  - `description`
+  - `setup_task`
+  - `run_task`
+  - `required_services`
+  - `readiness_checks`
+  - `readiness_probes`
+  - `readiness_surfaces`
+  - `exposes`
+  - `expose_surfaces`
+  - `default`
+- `exposes` contains resolved URL strings; `expose_surfaces` preserves the named surface refs that
+  produced them
+- when the target is a monorepo root and members are requested, success may include additive
+  top-level `members`, each with `member`, optional `default`, and `workflows`
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "error": "contract path does not exist: /abs/path/to/ota.yaml"
+}
+```
+
 ## `ota doctor --json`
 
 ```json
@@ -2444,7 +2516,7 @@ Root monorepo summary output can also include grouped member findings under `mem
     "steps": [
       {
         "order": 1,
-        "label": "post-setup diagnosis",
+        "label": "post-up diagnosis",
         "status": "READY"
       }
     ],
@@ -3056,7 +3128,7 @@ Failure example:
       "required": true,
       "ok": true,
       "status": "READY",
-      "phase": "post-setup diagnosis",
+      "phase": "post-up diagnosis",
       "findings": []
     }
   ]

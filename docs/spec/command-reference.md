@@ -481,6 +481,8 @@ Current behavior:
 - when `--member` is set, inspects the merged member contract
 - stays read-only
 - reports the contract identity, declared execution surface, shared backends, reusable readiness probes, reusable runtime surfaces, services, normalized runtime listeners, and task target bindings exactly as the repo declares them
+- when runtimes attach reusable `surfaces`, shows both the declared top-level surfaces and the
+  normalized listener truth that those attachments produced
 - task-target readiness probes surface their current reachability plane explicitly; top-level probes report whether they resolve from the invoking command host or from one named observer task plane
 - does not resolve effective readiness state or start anything; this is topology inspection, not execution planning
 
@@ -1516,7 +1518,7 @@ Current behavior:
 - reruns readiness diagnosis
 - still runs service start commands, service healthchecks, and diagnosis on the host today
 - returns `READY` or `NOT READY`
-- reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`
+- reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-up diagnosis`
 - reports `provisioning` when early setup ran but the repo is still not ready
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails

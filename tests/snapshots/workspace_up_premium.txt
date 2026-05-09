@@ -5,7 +5,7 @@
 ✦ web [required] (READY)
 Path: ./apps/web
 Contract: <TMP>/apps/web/ota.yaml
-Phase: post-setup diagnosis
+Phase: post-up diagnosis
 
 
 🦦 WORKSPACE UP SUMMARY
@@ -17,4 +17,4 @@ Contract:    ./ota.workspace.yaml
 Mode:        native
 Task:        web
 Workspace:   premium-workspace
-Note:        running on the host environment; post-setup diagnosis
+Note:        running on the host environment; post-up diagnosis

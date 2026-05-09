@@ -15,11 +15,12 @@ Commands:
   detect       Infer a starting contract from repo state
   validate     Validate an Ota contract
   tasks        List validated tasks from an Ota contract
-  services     List declared services from an Ota contract
+  workflows    List declared workflows from an Ota contract
   diff         Compare two Ota contracts semantically
-  env          Inspect resolved environment requirements from an Ota contract
   execution    Inspect the resolved execution context without running anything
+  services     List declared services from an Ota contract
   check        Run configured checks from an Ota contract
+  env          Inspect resolved environment requirements from an Ota contract
   receipt      Capture a read-only repo receipt for audit and automation
   annotations  Render Ota JSON findings as CI annotations or log lines
   agents       Generate or sync AGENTS.md from an Ota contract
@@ -51,6 +52,7 @@ Start here:
   preview repo preparation     ota up --dry-run
   prepare the repo             ota up
   inspect runnable tasks       ota tasks --use
+  inspect declared workflows   ota workflows
   run a declared task          ota run ci
 
 More:

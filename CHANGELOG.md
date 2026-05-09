@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- consolidated the modern workflow/surface authoring story across examples and docs: the
+  `examples/full-contract/ota.yaml` contract now demonstrates listener shorthand for one host-only
+  service, reusable top-level `surfaces`, attachment overrides for container publication, and
+  workflow `readiness.surfaces` / `{ surface: ... }` exposes in one canonical example, while the
+  execution-topology docs now explain the declared-surface plus normalized-listener split directly
+  and the JSON output reference now documents `ota workflows --json`
 - added `ota workflows` as a read-only workflow inventory command: repo contracts can now list
   declared workflows directly, inspect the default workflow and each workflow's setup/run tasks,
   readiness surfaces, probes, checks, and resolved exposes without falling back to the full task
