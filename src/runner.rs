@@ -28879,6 +28879,71 @@ tasks:
     }
 
     #[test]
+    fn host_runtime_readiness_works_with_listener_http_shorthand() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener
+                .accept()
+                .expect("http readiness probe should connect");
+            let mut buffer = [0u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .expect("http readiness probe should write response");
+        });
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: backend
+        path: /healthz/readiness
+      listeners:
+        backend:
+          http: {port}
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("dev")
+            .expect("dev task should exist");
+        let probe = super::task_runtime_host_readiness_probe_for_backend(
+            &fixture.contract,
+            task,
+            Backend::Native,
+            "backend",
+        )
+        .expect("shorthand runtime readiness should resolve");
+
+        assert_eq!(probe.address, "127.0.0.1");
+        assert_eq!(probe.port, port);
+        assert!(
+            super::host_runtime_readiness_observed(&probe, None),
+            "listener shorthand should behave like the verbose listener form"
+        );
+
+        server
+            .join()
+            .expect("http readiness probe server should finish");
+    }
+
+    #[test]
     fn host_runtime_readiness_probe_can_select_non_primary_listener() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let editor_port = listener

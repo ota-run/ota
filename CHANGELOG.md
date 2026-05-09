@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added listener shorthand as authoring sugar for common local listeners: `listeners.<name>.http:
+  <port>` and `listeners.<name>.tcp: <port>` now normalize into the existing verbose listener
+  model with conservative `127.0.0.1` bind/host defaults, topology JSON still reports the normal
+  expanded listener shape, and mixed shorthand/verbose forms are rejected clearly at parse time
 - added first-class reusable readiness probes under `readiness.probes`: checks can now reference
   `probe` instead of duplicating shell commands, workflows can now declare `readiness.probes`, and
   repo readiness no longer has to restate HTTP readiness as inline helper commands just to keep

@@ -960,6 +960,21 @@ tasks:
               port:
                 mode: auto
               path: /
+
+# Common local listener shorthand:
+#
+# listeners:
+#   http:
+#     http: 3000
+#
+# This is authoring sugar only. Ota normalizes it to the full listener form with:
+# - bind address `127.0.0.1`
+# - fixed bind port `3000`
+# - projected host `127.0.0.1:3000`
+# - projected host path `/` for HTTP
+#
+# Use the full `protocol` / `bind` / `project` form whenever bind address, host address,
+# host-port mode, primary projection, or path needs to be customized.
   package:
     depends_on:
       - build
@@ -1022,6 +1037,8 @@ Fields:
 - `kind`: currently `service`
 - `backend_binding`: optional shared backend binding name declared under `execution.shared_backends`
 - `listeners`: named listener map
+- `listeners.<name>.http: <port>`: shorthand for the common local HTTP listener shape
+- `listeners.<name>.tcp: <port>`: shorthand for the common local TCP listener shape
 - `listeners.<name>.protocol`: `http`, `https`, or `tcp`
 - `listeners.<name>.bind.address`: bind address inside the task execution context
 - `listeners.<name>.bind.port.mode`: `fixed` or `discover`
@@ -1031,6 +1048,24 @@ Fields:
 - `listeners.<name>.project.host.port.value`: required when host port `mode: fixed`
 - `listeners.<name>.project.host.primary`: optional boolean; mark exactly one projected listener as primary when multiple listeners are projected
 - `listeners.<name>.project.host.path`: optional URL path for `http` and `https`
+
+Listener shorthand rules:
+
+- shorthand is authoring sugar only; ota normalizes it into the full listener model internally
+- `http: <port>` expands to:
+  - `protocol: http`
+  - `bind.address: 127.0.0.1`
+  - fixed bind port `<port>`
+  - fixed host projection `127.0.0.1:<port>`
+  - host projection path `/`
+- `tcp: <port>` expands to:
+  - `protocol: tcp`
+  - `bind.address: 127.0.0.1`
+  - fixed bind port `<port>`
+  - fixed host projection `127.0.0.1:<port>`
+- shorthand cannot be mixed with `protocol`, `bind`, or `project`
+- shorthand supports exactly one of `http` or `tcp`
+- use the verbose form when bind address, host address, host-port mode, primary projection, or path must be customized
 
 `runtime` mode semantics:
 

@@ -35892,6 +35892,54 @@ tasks:
     }
 
     #[test]
+    fn execution_topology_json_normalizes_listener_shorthand() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: topology-demo
+tasks:
+  api:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          http: 3000
+"#,
+        )
+        .unwrap();
+
+        let task = super::build_execution_topology_task_summary(
+            "api",
+            contract.tasks.get("api").expect("api task should exist"),
+            super::current_os(),
+            &contract,
+        );
+        let body = serde_json::to_value(task.runtime.expect("runtime summary should exist"))
+            .expect("runtime summary should serialize");
+
+        assert_eq!(body["listeners"]["backend"]["protocol"], "http");
+        assert_eq!(body["listeners"]["backend"]["bind_address"], "127.0.0.1");
+        assert_eq!(body["listeners"]["backend"]["bind_port_mode"], "fixed");
+        assert_eq!(body["listeners"]["backend"]["bind_port_value"], 3000);
+        assert_eq!(
+            body["listeners"]["backend"]["host_projection"]["address"],
+            "127.0.0.1"
+        );
+        assert_eq!(
+            body["listeners"]["backend"]["host_projection"]["port_mode"],
+            "fixed"
+        );
+        assert_eq!(
+            body["listeners"]["backend"]["host_projection"]["port_value"],
+            3000
+        );
+        assert_eq!(body["listeners"]["backend"]["host_projection"]["path"], "/");
+    }
+
+    #[test]
     fn windows_uninstall_pending_message_is_explicitly_unverified() {
         let path = Path::new(r"C:\Users\someone\AppData\Local\ota\bin\ota.exe");
         let message = render_windows_uninstall_pending(path);
