@@ -1781,11 +1781,14 @@ fn build_execution_topology_runtime_summary(
             .readiness
             .as_ref()
             .map(|readiness| ExecutionTopologyReadinessSummary {
-                kind: match readiness.kind {
-                    crate::schema::TaskRuntimeReadinessKind::Http => "http",
-                    crate::schema::TaskRuntimeReadinessKind::Tcp => "tcp",
-                }
-                .to_string(),
+                kind: readiness
+                    .probe
+                    .as_deref()
+                    .map(|_| "http")
+                    .or_else(|| readiness.kind.map(|kind| kind.as_str()))
+                    .unwrap_or("unknown")
+                    .to_string(),
+                probe: readiness.probe.clone(),
                 listener: readiness.listener.clone(),
                 method: readiness.method.map(|method| method.as_str().to_string()),
                 path: readiness.path.clone(),
@@ -2073,7 +2076,12 @@ fn render_execution_topology_tasks_text(tasks: &[ExecutionTopologyTaskSummary<'_
                 runtime.backend_binding.as_deref().unwrap_or("-")
             ));
             if let Some(readiness) = runtime.readiness.as_ref() {
-                let mut readiness_detail = readiness.kind.clone();
+                let mut readiness_detail = readiness
+                    .probe
+                    .as_deref()
+                    .map(|probe| format!("probe:{probe}"))
+                    .or_else(|| Some(readiness.kind.clone()))
+                    .unwrap_or_else(|| String::from("unknown"));
                 if let Some(listener) = readiness.listener.as_deref() {
                     readiness_detail.push_str(&format!(" via {listener}"));
                 }
@@ -9470,6 +9478,7 @@ fn build_assist_service_readiness(
         AssistReadinessStyleArg::SpringHttp => crate::schema::ServiceReadinessSpec {
             from: Some(endpoint.to_string()),
             run: None,
+            probe: None,
             kind: Some(TaskRuntimeReadinessKind::Http),
             method: Some(TaskRuntimeReadinessHttpMethod::Get),
             path: Some(String::from("/actuator/health")),
@@ -9486,6 +9495,7 @@ fn build_assist_service_readiness(
         AssistReadinessStyleArg::Http => crate::schema::ServiceReadinessSpec {
             from: Some(endpoint.to_string()),
             run: None,
+            probe: None,
             kind: Some(TaskRuntimeReadinessKind::Http),
             method: Some(TaskRuntimeReadinessHttpMethod::Get),
             path: Some(String::from("/health")),
@@ -9500,6 +9510,7 @@ fn build_assist_service_readiness(
         AssistReadinessStyleArg::Tcp => crate::schema::ServiceReadinessSpec {
             from: Some(endpoint.to_string()),
             run: None,
+            probe: None,
             kind: Some(TaskRuntimeReadinessKind::Tcp),
             method: None,
             path: None,
@@ -9547,7 +9558,8 @@ fn build_assist_readiness_proposal(
             let style = resolve_assist_style_for_task(contract, &name, &listener, requested_style)?;
             let after = match style {
                 AssistReadinessStyleArg::SpringHttp => TaskRuntimeReadinessSpec {
-                    kind: TaskRuntimeReadinessKind::Http,
+                    probe: None,
+                    kind: Some(TaskRuntimeReadinessKind::Http),
                     listener: Some(listener.clone()),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
                     path: Some(String::from("/actuator/health")),
@@ -9565,7 +9577,8 @@ fn build_assist_readiness_proposal(
                     start_period: Some(String::from("10s")),
                 },
                 AssistReadinessStyleArg::Http => TaskRuntimeReadinessSpec {
-                    kind: TaskRuntimeReadinessKind::Http,
+                    probe: None,
+                    kind: Some(TaskRuntimeReadinessKind::Http),
                     listener: Some(listener.clone()),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
                     path: Some(String::from("/health")),
@@ -9578,7 +9591,8 @@ fn build_assist_readiness_proposal(
                     start_period: Some(String::from("10s")),
                 },
                 AssistReadinessStyleArg::Tcp => TaskRuntimeReadinessSpec {
-                    kind: TaskRuntimeReadinessKind::Tcp,
+                    probe: None,
+                    kind: Some(TaskRuntimeReadinessKind::Tcp),
                     listener: Some(listener.clone()),
                     method: None,
                     path: None,
@@ -9637,6 +9651,7 @@ fn build_assist_readiness_proposal(
                 AssistReadinessStyleArg::SpringHttp => ServiceReadinessSpec {
                     from: Some(from.clone()),
                     run: None,
+                    probe: None,
                     kind: Some(TaskRuntimeReadinessKind::Http),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
                     path: Some(String::from("/actuator/health")),
@@ -9656,6 +9671,7 @@ fn build_assist_readiness_proposal(
                 AssistReadinessStyleArg::Http => ServiceReadinessSpec {
                     from: Some(from.clone()),
                     run: None,
+                    probe: None,
                     kind: Some(TaskRuntimeReadinessKind::Http),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
                     path: Some(String::from("/health")),
@@ -9670,6 +9686,7 @@ fn build_assist_readiness_proposal(
                 AssistReadinessStyleArg::Tcp => ServiceReadinessSpec {
                     from: Some(from.clone()),
                     run: None,
+                    probe: None,
                     kind: Some(TaskRuntimeReadinessKind::Tcp),
                     method: None,
                     path: None,
@@ -11777,6 +11794,20 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
 }
 
 fn format_service_readiness_summary(readiness: &ServiceReadinessSummary) -> String {
+    if let Some(probe) = readiness.probe.as_deref() {
+        let mut detail = format!("probe {probe}");
+        if let Some(interval) = readiness.interval.as_deref() {
+            detail.push_str(&format!(" interval={interval}"));
+        }
+        if let Some(retries) = readiness.retries {
+            detail.push_str(&format!(" retries={retries}"));
+        }
+        if let Some(start_period) = readiness.start_period.as_deref() {
+            detail.push_str(&format!(" start_period={start_period}"));
+        }
+        return detail;
+    }
+
     let from = readiness.from.as_deref().unwrap_or("?");
     if let Some(run) = readiness.run.as_deref() {
         return format!("from {from} -> {run}");
@@ -29125,7 +29156,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
     output.push_str(&format!(
         "\n {}  {} {}",
         summary_bullet(),
-        paint_key("Default:"),
+        paint_key("Name:"),
         paint(workflow.name, "1;37")
     ));
     if let Some(intent) = workflow.intent
@@ -29182,6 +29213,16 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
             String::from("-")
         } else {
             workflow.readiness_checks.join(",")
+        }
+    ));
+    output.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Readiness Probes:"),
+        if workflow.readiness_probes.is_empty() {
+            String::from("-")
+        } else {
+            workflow.readiness_probes.join(",")
         }
     ));
     if !workflow.exposes.is_empty() {
@@ -35467,6 +35508,7 @@ tasks:
             run_task: Some("dev"),
             required_services: vec![String::from("postgres")],
             readiness_checks: vec![String::from("app-health")],
+            readiness_probes: vec![String::from("app-ready")],
             exposes: vec![String::from("http://127.0.0.1:5678")],
         };
         let task = TaskSummary {
@@ -35496,10 +35538,11 @@ tasks:
         let rendered = strip_ansi_codes(&render_tasks_text(".", Some(&workflow), None, &[task]));
 
         assert!(rendered.contains("Workflow"), "{rendered}");
-        assert!(rendered.contains("Default: app"), "{rendered}");
+        assert!(rendered.contains("Name: app"), "{rendered}");
         assert!(rendered.contains("Setup: `ota run setup`"), "{rendered}");
         assert!(rendered.contains("Run: `ota run dev`"), "{rendered}");
         assert!(rendered.contains("Services: postgres"), "{rendered}");
+        assert!(rendered.contains("Readiness Probes: app-ready"), "{rendered}");
     }
 
     #[test]
@@ -36338,6 +36381,7 @@ tasks:
             readiness: Some(ServiceReadinessSummary {
                 from: Some(String::from("host")),
                 run: Some(String::from("postgres://localhost:5432")),
+                probe: None,
                 kind: None,
                 method: None,
                 path: None,
@@ -41094,6 +41138,7 @@ execution:
             run_task: Some("dev"),
             required_services: Vec::new(),
             readiness_checks: Vec::new(),
+            readiness_probes: Vec::new(),
             exposes: Vec::new(),
         };
         let writable_paths = vec![String::from("src")];

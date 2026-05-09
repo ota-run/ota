@@ -50,7 +50,8 @@ In practice, most useful contracts also define tasks, runtimes, or checks.
 - `services`: supporting services such as databases, queues, or local infra.
 - `checks`: explicit preconditions and health checks that should pass.
 - `tasks`: named commands humans and agents can run deterministically.
-- `workflows`: canonical operational paths built from setup/run tasks, required services, and readiness checks.
+- `readiness`: reusable named readiness probes for workflow and check reuse.
+- `workflows`: canonical operational paths built from setup/run tasks, required services, and readiness gates.
 - `execution`: where tasks run, such as native, container, or remote backends.
 - `agent`: AI-agent task hints and writable-path boundaries.
 - `exports`: downstream generation preferences and export metadata.
@@ -554,8 +555,9 @@ Current behavior:
 - producer-owned services must not also declare local manager truth such as `manager`, `provider`, `start`, `stop`, `healthcheck`, `endpoints`, `readiness`, or `timeout`
 - `tasks.<name>.requires_services` remains the consumer-side dependency truth; producer ownership lives on `services.<name>`, not inside each consumer task
 - service declarations may use legacy `provider/start/stop/healthcheck` fields or new context-aware `manager/endpoints/readiness` fields
-- `services.<name>.readiness` now supports two valid forms:
+- `services.<name>.readiness` now supports three valid forms:
   - legacy command form: `from` + `run`
+  - reusable probe form: `from` + `probe` (+ optional polling controls such as `interval`, `retries`, and `start_period`)
   - structured probe form: `from` + `kind` (+ `path` for HTTP, with optional request/response/timing controls)
 - unknown `depends_on` references are invalid
 - service dependency cycles are invalid
@@ -566,10 +568,11 @@ Current behavior:
 - for `manager.kind: compose`, `ota doctor` derives `start/stop/healthcheck` commands from compose metadata
 - for `manager.kind: host`, `ota doctor` runs healthchecks in the resolved host command context
 - `services.<name>.readiness.from` with a named endpoint projection validates readiness from that execution context
+- `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same HTTP request/timeout truth as checks and workflows while `from` still selects the service endpoint projection
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
-- structured top-level service readiness uses the same default wait model as task runtime readiness: when `retries` is omitted, ota keeps waiting until readiness passes or the surrounding run is interrupted; declaring `retries` makes the failure budget explicit and bounded
+- reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, ota keeps waiting until readiness passes or the surrounding run is interrupted; declaring `retries` makes the failure budget explicit and bounded
 - `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
@@ -1198,6 +1201,12 @@ Task target binding semantics:
 
 Current `runtime.readiness` support for service tasks:
 
+- `probe: <name>`
+  - references one top-level `readiness.probes.<name>` declaration
+  - reuses that probe's HTTP request and timeout contract while the selected listener still determines the runtime endpoint
+  - may optionally declare `listener` when the readiness target should bind to one non-default runtime listener explicitly
+  - may still declare `interval`, `retries`, and `start_period` to control polling semantics for this runtime
+  - must not also declare inline `kind`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
 - `kind: http`
   - requires `listener`
   - requires `path`
@@ -1519,14 +1528,61 @@ Current execution model:
 - tasks marked `internal: true` (commonly `setup`) remain normal graph nodes for `depends_on` and hooks, still run when referenced directly, and are hidden from default `ota tasks` output unless `--all` is requested
 - hook failures affect the final task result for the parent task
 - richer non-shell executors are intentionally out of V1 scope
-- future direction is tracked in the product spec
+- reusable probes are now shipped through top-level `readiness.probes`, `checks[].probe`, `workflows.<name>.readiness.probes`, and runtime/service readiness `probe` references
 - use task names to describe intent: `setup`, `dev`, `dev_clean`, `test`, `lint`
+
+## `readiness`
+
+Optional.
+
+Use this section when one readiness target should be declared once and reused across workflow
+readiness and explicit named checks.
+
+```yaml
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      expect_status: 200
+      timeout: 10000
+```
+
+Fields:
+
+- `probes.<name>.kind`: currently `http`
+- `probes.<name>.url`: required absolute `http://` URL
+- `probes.<name>.expect_status`: optional expected HTTP status; defaults to `200` when omitted
+- `probes.<name>.timeout`: required integer timeout in milliseconds
+
+Current behavior:
+
+- top-level probes are canonical reusable readiness definitions
+- `checks[].probe` can reference a named probe instead of repeating a shell command
+- `workflows.<name>.readiness.probes` can reference probes directly when the workflow should be
+  ready as soon as those probes pass
+- the first shipped probe kind is intentionally narrow and deterministic: plain `http://` only
+- unsupported schemes such as `https://` are rejected during validation instead of silently
+  downgraded
+- probe execution is direct inside ota; it does not depend on `curl`, `node`, or other repo-local
+  tools
 
 ## `workflows`
 
 Optional.
 
+For the operator guide to what workflows are, when to add them, and how they relate to tasks and
+agent hints, see [workflows.md](workflows.md).
+
 ```yaml
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      expect_status: 200
+      timeout: 10000
+
 workflows:
   default: app
   app:
@@ -1540,8 +1596,8 @@ workflows:
       required:
         - postgres
     readiness:
-      checks:
-        - app-health
+      probes:
+        - app-ready
     exposes:
       - http://127.0.0.1:5678
 ```
@@ -1555,12 +1611,18 @@ Fields:
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
 - `<name>.services.required`: optional services that belong to that workflow
 - `<name>.readiness.checks`: optional readiness checks that belong to that workflow
+- `<name>.readiness.probes`: optional reusable readiness probes that belong to that workflow
 - `<name>.exposes`: optional human-readable endpoints or URLs the workflow is expected to surface
 
 Current behavior:
 
 - workflows do not replace `tasks`, `services`, or `checks`; they compose those primitives into one canonical operational path
-- `doctor` and `check` diagnose the default workflow by default when it declares `readiness.checks` or `services.required`
+- `doctor` diagnoses the default workflow by default when it declares workflow readiness probes,
+  workflow readiness checks, or workflow services
+- `check` follows the same selected workflow readiness boundary when a workflow declares explicit
+  readiness probes or checks, and otherwise falls back to the repo-wide `checks` surface
+- use `checks[].probe` when a named check should reuse a named readiness probe outside that
+  workflow-scoped path or when the repo does not declare workflows
 - `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness
@@ -1578,6 +1640,10 @@ checks:
     severity: error
     run: node --version
     timeout: 10
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: backend-ready
 ```
 
 Fields:
@@ -1585,14 +1651,21 @@ Fields:
 - `name`: required, non-empty string
 - `kind`: `precondition` or `health`
 - `severity`: `error`, `warn`, or `info`
-- `run`: required, non-empty string
+- `run`: optional shell command when the check is command-backed
+- `probe`: optional probe reference when the check is probe-backed
 - `timeout`: optional integer in milliseconds
 
 Current behavior:
 
 - `up` uses preconditions before setup
 - `doctor` runs configured checks and reports findings by severity
+- checks must declare exactly one of `run` or `probe`
+- `checks[].probe` must reference a named `readiness.probes.<name>` declaration
+- probe-backed checks use the check timeout when one is declared, otherwise they inherit the probe
+  timeout
 - when `timeout` is set, `doctor` fails the check if it does not finish within the configured millisecond budget
+- human output identifies probe-backed failures as probes instead of pretending a shell command was
+  run
 
 ## `agent`
 

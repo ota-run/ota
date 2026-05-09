@@ -293,7 +293,8 @@ Failure:
 When the repo declares `workflows`, `ota execution plan --json` may include additive top-level
 `workflow` and `task` fields. `workflow` mirrors the selected canonical operational path, and
 `task` names the concrete workflow run task that drove execution planning, or the workflow setup
-task when the workflow does not declare a run phase.
+task when the workflow does not declare a run phase. The workflow object may also include additive
+`readiness_probes` when the selected workflow references reusable named probes.
 
 Success:
 
@@ -309,6 +310,7 @@ Success:
     "run_task": "dev",
     "required_services": ["postgres"],
     "readiness_checks": ["app-health"],
+    "readiness_probes": ["app-ready"],
     "exposes": ["http://127.0.0.1:5678"]
   },
   "task": "dev",
@@ -362,6 +364,13 @@ Failure:
 
 Execution topology inspection stays read-only. It reports the declared execution surface that a
 contract or topology viewer can render without starting tasks or services.
+
+Notes:
+
+- `tasks[*].runtime.readiness.probe` is present when one task runtime reuses a named
+  `readiness.probes.<name>` declaration instead of declaring inline HTTP/TCP readiness transport
+- `services[*].readiness.probe` is present when one managed service reuses a named
+  `readiness.probes.<name>` declaration instead of declaring inline structured readiness transport
 
 Success:
 
@@ -1094,6 +1103,7 @@ Success:
     "run_task": "dev",
     "required_services": ["postgres"],
     "readiness_checks": ["app-health"],
+    "readiness_probes": ["app-ready"],
     "exposes": ["http://127.0.0.1:5678"]
   },
   "agent": {
@@ -1149,6 +1159,7 @@ Root monorepo summary output can also include grouped member results:
         "run_task": "test",
         "required_services": [],
         "readiness_checks": [],
+        "readiness_probes": [],
         "exposes": []
       },
       "tasks": [
@@ -1196,6 +1207,7 @@ object for the default workflow, and member summaries may include the same addit
     "run_task": "dev",
     "required_services": ["postgres"],
     "readiness_checks": ["app-health"],
+    "readiness_probes": ["app-ready"],
     "exposes": ["http://127.0.0.1:5678"]
   },
   "agent": {
@@ -1369,7 +1381,8 @@ execution. Backend providers receive a structured request on stdin and in
 
 When the repo declares `workflows`, `ota doctor --json` includes an additive top-level `workflow`
 object for the default workflow so editors and automation can reason about the canonical repo path
-without inferring it from task names.
+without inferring it from task names. That workflow summary may also include additive
+`readiness_probes` when the workflow references reusable named probes.
 
 ## `ota policy review --json`
 
@@ -2312,7 +2325,7 @@ Each catalog entry keeps the operator guidance machine-readable:
 
 `ota check --json` uses the same finding shape as `ota doctor --json`, including additive
 `finding_groups` when present, and may also include the same additive top-level `workflow`
-summary for the default workflow:
+summary for the default workflow, including workflow `readiness_probes` when declared:
 
 ```json
 {
@@ -2323,6 +2336,7 @@ summary for the default workflow:
     "run_task": "dev",
     "required_services": ["postgres"],
     "readiness_checks": ["app-health"],
+    "readiness_probes": ["app-ready"],
     "exposes": []
   },
   "findings": [

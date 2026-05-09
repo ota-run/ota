@@ -129,6 +129,8 @@ pub struct Contract {
     #[serde(default)]
     pub env: EnvConfig,
     #[serde(default)]
+    pub readiness: ContractReadinessConfig,
+    #[serde(default)]
     pub services: BTreeMap<String, ServiceSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflows: Option<WorkflowCatalog>,
@@ -147,6 +149,10 @@ pub struct Contract {
 }
 
 impl Contract {
+    pub fn probe(&self, name: &str) -> Option<&ReadinessProbeSpec> {
+        self.readiness.probes.get(name)
+    }
+
     pub fn workflow(&self, name: &str) -> Option<&WorkflowSpec> {
         self.workflows
             .as_ref()
@@ -261,6 +267,8 @@ pub struct WorkflowServicesSpec {
 pub struct WorkflowReadinessSpec {
     #[serde(default)]
     pub checks: Vec<String>,
+    #[serde(default)]
+    pub probes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1253,6 +1261,30 @@ pub struct EnvRequirement {
     pub append: Vec<String>,
 }
 
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ContractReadinessConfig {
+    #[serde(default)]
+    pub probes: BTreeMap<String, ReadinessProbeSpec>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReadinessProbeSpec {
+    pub kind: ReadinessProbeKind,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadinessProbeKind {
+    Http,
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceSpec {
@@ -1379,6 +1411,8 @@ pub struct ServiceReadinessSpec {
     pub from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<TaskRuntimeReadinessKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1854,7 +1888,10 @@ pub enum TaskRuntimeKind {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRuntimeReadinessSpec {
-    pub kind: TaskRuntimeReadinessKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<TaskRuntimeReadinessKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listener: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2226,7 +2263,10 @@ pub struct CheckSpec {
     pub name: String,
     pub kind: CheckKind,
     pub severity: CheckSeverity,
-    pub run: String,
+    #[serde(default)]
+    pub run: Option<String>,
+    #[serde(default)]
+    pub probe: Option<String>,
     #[serde(default)]
     pub timeout: Option<u64>,
 }

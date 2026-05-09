@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- added first-class reusable readiness probes under `readiness.probes`: checks can now reference
+  `probe` instead of duplicating shell commands, workflows can now declare `readiness.probes`, and
+  repo readiness no longer has to restate HTTP readiness as inline helper commands just to keep
+  `doctor`, `check`, and workflow-scoped diagnosis aligned; task runtime readiness and
+  `services.<name>.readiness` can now also reuse those same named HTTP probes instead of
+  duplicating transport fields inline
+- fixed named runtime probe endpoint selection so `tasks.<name>.runtime.readiness.probe` may now
+  keep `readiness.listener` as an explicit non-default listener selector, and ota validates that
+  selected listener as the real HTTP service surface instead of rejecting the field or silently
+  collapsing back to the primary listener
+- added a dedicated workflows concept page so the docs now explain what repo workflows are, when to add them, why they exist beyond tasks, and how they relate to `ota up`, `ota doctor`, and `agent.default_task`
+- clarified workflow summary text so repo command output now labels the surfaced workflow neutrally as `Name` instead of incorrectly calling an explicitly selected `--workflow <name>` path the repo `Default`
 - fixed workflow-scoped readiness semantics so `ota up --workflow <name>` and workspace `repos.<name>.workflow` now keep the final service and post-up diagnosis scoped to the selected workflow instead of falling back to repo-wide blockers, and workflow run selection no longer substitutes `agent.default_task` / `agent.entrypoint` when a workflow omits `run.task`
 - taught workspace orchestration about per-repo workflow selection: `ota.workspace.yaml` can now declare `repos.<name>.workflow`, workspace validation now rejects unknown repo workflow names against the referenced repo contract, workspace `check` / `doctor` / `up` / `status` now target that selected workflow instead of silently assuming the repo default path, workspace `list` now reports readiness against the pinned workflow when present, and workspace JSON surfaces now expose the selected workflow name per repo
 - extended execution planning to the same canonical workflow model: `ota execution plan` now supports `--workflow <name>` and resolves through the selected workflow's setup or run task instead of guessing from repo-wide execution defaults, while `ota workspace execution plan` now honors `repos.<name>.workflow` and exposes additive per-repo `workflow` / `task` in text and JSON output

@@ -633,6 +633,8 @@ pub struct ExecutionTopologyRuntimeSummary {
 pub struct ExecutionTopologyReadinessSummary {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub listener: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
@@ -2173,6 +2175,8 @@ pub struct WorkflowSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub readiness_checks: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub readiness_probes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exposes: Vec<String>,
 }
 
@@ -2194,6 +2198,7 @@ impl<'a> WorkflowSummary<'a> {
             run_task: workflow.run.as_ref().map(|phase| phase.task.as_str()),
             required_services: workflow.services.required.clone(),
             readiness_checks: workflow.readiness.checks.clone(),
+            readiness_probes: workflow.readiness.probes.clone(),
             exposes: workflow.exposes.clone(),
         })
     }
@@ -2542,6 +2547,8 @@ pub struct ServiceReadinessSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
@@ -2568,6 +2575,7 @@ impl ServiceReadinessSummary {
         Self {
             from: readiness.from.clone(),
             run: readiness.run.clone(),
+            probe: readiness.probe.clone(),
             kind: readiness.kind.map(|kind| kind.as_str().to_string()),
             method: readiness.method.map(|method| method.as_str().to_string()),
             path: readiness.path.clone(),

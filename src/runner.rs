@@ -3718,12 +3718,27 @@ enum RuntimeReadinessTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HttpReadinessRequest {
-    method: TaskRuntimeReadinessHttpMethod,
-    path: String,
-    headers: BTreeMap<String, String>,
-    success_statuses: Vec<u16>,
-    body_contains: Option<String>,
+pub(crate) struct HttpReadinessRequest {
+    pub method: TaskRuntimeReadinessHttpMethod,
+    pub path: String,
+    pub headers: BTreeMap<String, String>,
+    pub success_statuses: Vec<u16>,
+    pub body_contains: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedNamedHttpReadinessProbe {
+    pub address: String,
+    pub port: u16,
+    pub request: HttpReadinessRequest,
+    pub timeout: Option<Duration>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HttpReadinessStatus {
+    Passed,
+    Failed,
+    TimedOut,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4359,6 +4374,7 @@ fn execute_task_with_hooks(
         );
     }
     let command_output = execute_task_command(
+        Some(contract),
         task_name,
         runtime,
         command.as_str(),
@@ -4871,6 +4887,7 @@ fn hook_generation_for_task(
 }
 
 fn execute_task_command(
+    contract: Option<&Contract>,
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
     command: &str,
@@ -4910,6 +4927,7 @@ fn execute_task_command(
             publications,
             dependency_isolation_paths,
         } => execute_container_task_command(
+            contract,
             task_name,
             runtime,
             context_name.as_deref(),
@@ -4985,6 +5003,7 @@ pub(crate) fn run_backend_command_captured(
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
     execute_task_command(
+        None,
         task_name,
         None,
         command,
@@ -6862,7 +6881,8 @@ fn ensure_target_producer_state(
         )),
         _ => None,
     };
-    let readiness_timing = readiness_timing_policy(producer_runtime_spec.readiness.as_ref());
+    let readiness_timing =
+        readiness_timing_policy(Some(contract), producer_runtime_spec.readiness.as_ref());
 
     let producer_initially_observed =
         readiness_target_observed_with_timeout(&readiness_target, readiness_timing.timeout);
@@ -7567,7 +7587,7 @@ fn declared_target_probe_target(
                 return Ok(
                     match readiness
                         .filter(|_| use_runtime_readiness)
-                        .map(|probe| probe.kind)
+                        .and_then(|probe| probe.kind)
                     {
                         Some(TaskRuntimeReadinessKind::Http) => {
                             RuntimeReadinessTarget::RemoteHttp {
@@ -7650,7 +7670,7 @@ fn declared_target_probe_target(
                 return Ok(
                     match readiness
                         .filter(|_| use_runtime_readiness)
-                        .map(|probe| probe.kind)
+                        .and_then(|probe| probe.kind)
                     {
                         Some(TaskRuntimeReadinessKind::Http) => {
                             RuntimeReadinessTarget::RemoteHttp {
@@ -7677,9 +7697,46 @@ fn declared_target_probe_target(
             )
         }
     };
+    if use_runtime_readiness
+        && let Some(probe_name) = readiness
+            .and_then(|readiness| readiness.probe.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+    {
+        let resolved = resolve_named_http_readiness_probe(contract, probe_name).map_err(|details| {
+            RunError::TaskTargetResolutionFailed {
+                task: task_name.to_string(),
+                target: target_name.to_string(),
+                details,
+            }
+        })?;
+        return Ok(if caller_backend == Backend::Remote && shared_remote_binding {
+            RuntimeReadinessTarget::RemoteHttp {
+                probe: remote_readiness_probe_target(producer_backend, working_dir).ok_or_else(|| {
+                    RunError::TaskTargetResolutionFailed {
+                        task: task_name.to_string(),
+                        target: target_name.to_string(),
+                        details: format!(
+                            "target activation `{}` currently supports built-in remote providers only; `{producer_task_name}` does not resolve to one",
+                            activation_mode.as_str()
+                        ),
+                    }
+                })?,
+                address,
+                port,
+                request: resolved.request,
+            }
+        } else {
+            RuntimeReadinessTarget::Http {
+                address,
+                port,
+                request: resolved.request,
+            }
+        });
+    }
     match readiness
         .filter(|_| use_runtime_readiness)
-        .map(|probe| probe.kind)
+        .and_then(|probe| probe.kind)
     {
         Some(TaskRuntimeReadinessKind::Http) => Ok(RuntimeReadinessTarget::Http {
             address,
@@ -7728,7 +7785,7 @@ fn target_probe_endpoint_reachable(address: &str, port: u16) -> bool {
     target_probe_endpoint_reachable_with_timeout(address, port, None)
 }
 
-fn target_probe_endpoint_reachable_with_timeout(
+pub(crate) fn target_probe_endpoint_reachable_with_timeout(
     address: &str,
     port: u16,
     timeout: Option<Duration>,
@@ -12435,6 +12492,7 @@ fn parse_socket_port(value: &str) -> Option<u16> {
 }
 
 fn execute_container_task_command(
+    contract: Option<&Contract>,
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
@@ -12568,6 +12626,7 @@ fn execute_container_task_command(
                 }
 
                 let mut output = execute_ephemeral_container_task_command(
+                    contract,
                     task_name,
                     runtime,
                     context_name,
@@ -12692,6 +12751,7 @@ fn execute_container_task_command(
                 host_port_override,
             )?;
             execute_persistent_container_task_command(
+                contract,
                 task_name,
                 runtime,
                 context_name,
@@ -12771,6 +12831,7 @@ fn resolved_runtime_listener_probe_endpoint(
 }
 
 fn runtime_readiness_target(
+    contract: Option<&Contract>,
     runtime_spec: &TaskRuntimeSpec,
     runtime: &ResolvedTaskRuntime,
 ) -> Option<RuntimeReadinessTarget> {
@@ -12781,8 +12842,20 @@ fn runtime_readiness_target(
         }
         None => resolved_runtime_probe_endpoint(runtime)?,
     };
+    if let Some(probe_name) = readiness
+        .and_then(|readiness| readiness.probe.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let resolved = resolve_named_http_readiness_probe(contract?, probe_name).ok()?;
+        return Some(RuntimeReadinessTarget::Http {
+            address: endpoint.host.address,
+            port: endpoint.host.port,
+            request: resolved.request,
+        });
+    }
 
-    match readiness.map(|readiness| readiness.kind) {
+    match readiness.and_then(|readiness| readiness.kind) {
         Some(TaskRuntimeReadinessKind::Http) => Some(RuntimeReadinessTarget::Http {
             address: endpoint.host.address,
             port: endpoint.host.port,
@@ -12801,10 +12874,12 @@ pub(crate) struct HostRuntimeReadinessProbe {
     pub protocol: TaskRuntimeProtocol,
     pub address: String,
     pub port: u16,
-    pub readiness: Option<TaskRuntimeReadinessSpec>,
+    pub request: Option<HttpReadinessRequest>,
+    pub default_timeout: Option<Duration>,
 }
 
 pub(crate) fn task_runtime_host_readiness_probe_for_backend(
+    contract: &Contract,
     task: &TaskSpec,
     backend: Backend,
     listener_name: &str,
@@ -12821,6 +12896,39 @@ pub(crate) fn task_runtime_host_readiness_probe_for_backend(
                 }
             )
         })?;
+    if let Some(probe_name) = runtime
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.probe.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let resolved = resolve_named_http_readiness_probe(contract, probe_name)?;
+        let probe_listener_name = runtime
+            .readiness
+            .as_ref()
+            .and_then(|readiness| readiness.listener.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(listener_name);
+        let listener = runtime.listeners.get(probe_listener_name).ok_or_else(|| {
+            format!("service runtime does not declare listener `{probe_listener_name}`")
+        })?;
+        let host = listener.project.host.as_ref().ok_or_else(|| {
+            format!("listener `{probe_listener_name}` does not declare `project.host`")
+        })?;
+        let port = host.port.value.ok_or_else(|| {
+            format!("listener `{probe_listener_name}` does not declare a fixed `project.host.port.value`")
+        })?;
+        return Ok(HostRuntimeReadinessProbe {
+            listener: probe_listener_name.to_string(),
+            protocol: listener.protocol,
+            address: host.address.clone(),
+            port,
+            request: Some(resolved.request),
+            default_timeout: resolved.timeout,
+        });
+    }
     let probe_listener_name = runtime
         .readiness
         .as_ref()
@@ -12842,7 +12950,17 @@ pub(crate) fn task_runtime_host_readiness_probe_for_backend(
         protocol: listener.protocol,
         address: host.address.clone(),
         port,
-        readiness: runtime.readiness.clone(),
+        request: runtime
+            .readiness
+            .as_ref()
+            .and_then(|readiness| readiness.kind)
+            .is_some_and(|kind| kind == TaskRuntimeReadinessKind::Http)
+            .then(|| readiness_http_request(runtime.readiness.as_ref())),
+        default_timeout: runtime
+            .readiness
+            .as_ref()
+            .and_then(|readiness| readiness.timeout.as_deref())
+            .and_then(parse_readiness_duration_spec),
     })
 }
 
@@ -12850,14 +12968,14 @@ pub(crate) fn host_runtime_readiness_observed(
     probe: &HostRuntimeReadinessProbe,
     timeout: Option<Duration>,
 ) -> bool {
-    match probe.readiness.as_ref().map(|readiness| readiness.kind) {
-        Some(TaskRuntimeReadinessKind::Http) => http_readiness_endpoint_reachable(
+    match probe.request.as_ref() {
+        Some(request) => http_readiness_endpoint_reachable(
             probe.address.as_str(),
             probe.port,
-            &readiness_http_request(probe.readiness.as_ref()),
-            timeout,
+            request,
+            timeout.or(probe.default_timeout),
         ),
-        Some(TaskRuntimeReadinessKind::Tcp) | None => {
+        None => {
             target_probe_endpoint_reachable_with_timeout(probe.address.as_str(), probe.port, timeout)
         }
     }
@@ -12910,7 +13028,56 @@ fn readiness_http_request(readiness: Option<&TaskRuntimeReadinessSpec>) -> HttpR
     }
 }
 
-fn readiness_timing_policy(readiness: Option<&TaskRuntimeReadinessSpec>) -> ReadinessTimingPolicy {
+pub(crate) fn resolve_named_http_readiness_probe(
+    contract: &Contract,
+    probe_name: &str,
+) -> Result<ResolvedNamedHttpReadinessProbe, String> {
+    let probe = contract
+        .probe(probe_name)
+        .ok_or_else(|| format!("unknown readiness probe `{probe_name}`"))?;
+    match probe.kind {
+        crate::schema::ReadinessProbeKind::Http => {
+            let (address, port, path) = parse_http_probe_url(probe.url.as_str())
+                .ok_or_else(|| format!("readiness probe `{probe_name}` does not declare a valid absolute `http://` URL"))?;
+            Ok(ResolvedNamedHttpReadinessProbe {
+                address,
+                port,
+                request: HttpReadinessRequest {
+                    method: TaskRuntimeReadinessHttpMethod::Get,
+                    path,
+                    headers: BTreeMap::new(),
+                    success_statuses: vec![probe.expect_status.unwrap_or(200)],
+                    body_contains: None,
+                },
+                timeout: probe.timeout.map(Duration::from_millis),
+            })
+        }
+    }
+}
+
+fn parse_http_probe_url(url: &str) -> Option<(String, u16, String)> {
+    let remainder = url.strip_prefix("http://")?;
+    let (host_port, path) = match remainder.split_once('/') {
+        Some((host_port, path)) => (host_port, format!("/{path}")),
+        None => (remainder, String::from("/")),
+    };
+    let (address, port) = match host_port.split_once(':') {
+        Some((address, port_text)) => {
+            let port = port_text.parse::<u16>().ok()?;
+            (address.to_string(), port)
+        }
+        None => (host_port.to_string(), 80),
+    };
+    if address.trim().is_empty() {
+        return None;
+    }
+    Some((address, port, path))
+}
+
+fn readiness_timing_policy(
+    contract: Option<&Contract>,
+    readiness: Option<&TaskRuntimeReadinessSpec>,
+) -> ReadinessTimingPolicy {
     ReadinessTimingPolicy {
         start_period: readiness
             .and_then(|probe| probe.start_period.as_deref())
@@ -12921,71 +13088,137 @@ fn readiness_timing_policy(readiness: Option<&TaskRuntimeReadinessSpec>) -> Read
             .and_then(parse_readiness_duration_spec)
             .unwrap_or(Duration::from_millis(200)),
         timeout: readiness
-            .and_then(|probe| probe.timeout.as_deref())
-            .and_then(parse_readiness_duration_spec),
+            .and_then(|probe| {
+                probe
+                    .probe
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .and_then(|name| {
+                        contract.and_then(|contract| {
+                            resolve_named_http_readiness_probe(contract, name).ok()
+                        })
+                    })
+                    .and_then(|resolved| resolved.timeout)
+                    .or_else(|| {
+                        probe.timeout.as_deref().and_then(parse_readiness_duration_spec)
+                    })
+            }),
         retries: readiness.and_then(|probe| probe.retries),
     }
 }
 
-fn http_readiness_endpoint_reachable(
+pub(crate) fn http_readiness_endpoint_reachable(
     address: &str,
     port: u16,
     request: &HttpReadinessRequest,
     timeout: Option<Duration>,
 ) -> bool {
+    matches!(
+        http_readiness_endpoint_status(address, port, request, timeout),
+        HttpReadinessStatus::Passed
+    )
+}
+
+pub(crate) fn http_readiness_endpoint_status(
+    address: &str,
+    port: u16,
+    request: &HttpReadinessRequest,
+    timeout: Option<Duration>,
+) -> HttpReadinessStatus {
     let addr = format!("{}:{}", address.trim(), port);
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
     let io_timeout = timeout.unwrap_or(Duration::from_millis(500));
-    addr.to_socket_addrs()
-        .map(|addrs| {
-            addrs.into_iter().any(|socket| {
-                let Ok(mut stream) = TcpStream::connect_timeout(&socket, connect_timeout) else {
-                    return false;
-                };
-                let _ = stream.set_read_timeout(Some(io_timeout));
-                let _ = stream.set_write_timeout(Some(io_timeout));
-                let host_header = if address.contains(':') && !address.starts_with('[') {
-                    format!("[{}]", address.trim())
+    let Ok(addrs) = addr.to_socket_addrs() else {
+        return HttpReadinessStatus::Failed;
+    };
+    let mut timed_out = false;
+    for socket in addrs {
+        match http_readiness_socket_status(address, socket, request, connect_timeout, io_timeout) {
+            HttpReadinessStatus::Passed => return HttpReadinessStatus::Passed,
+            HttpReadinessStatus::TimedOut => timed_out = true,
+            HttpReadinessStatus::Failed => {}
+        }
+    }
+    if timed_out {
+        HttpReadinessStatus::TimedOut
+    } else {
+        HttpReadinessStatus::Failed
+    }
+}
+
+fn http_readiness_socket_status(
+    address: &str,
+    socket: std::net::SocketAddr,
+    request: &HttpReadinessRequest,
+    connect_timeout: Duration,
+    io_timeout: Duration,
+) -> HttpReadinessStatus {
+    let Ok(mut stream) = TcpStream::connect_timeout(&socket, connect_timeout) else {
+        return HttpReadinessStatus::Failed;
+    };
+    let _ = stream.set_read_timeout(Some(io_timeout));
+    let _ = stream.set_write_timeout(Some(io_timeout));
+    let host_header = if address.contains(':') && !address.starts_with('[') {
+        format!("[{}]", address.trim())
+    } else {
+        address.trim().to_string()
+    };
+    let mut request_text = format!(
+        "{} {} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n",
+        request.method.as_str(),
+        request.path,
+    );
+    for (name, value) in &request.headers {
+        request_text.push_str(name);
+        request_text.push_str(": ");
+        request_text.push_str(value);
+        request_text.push_str("\r\n");
+    }
+    request_text.push_str("\r\n");
+    if let Err(error) = stream.write_all(request_text.as_bytes()) {
+        return if http_probe_io_timed_out(&error) {
+            HttpReadinessStatus::TimedOut
+        } else {
+            HttpReadinessStatus::Failed
+        };
+    }
+    let mut response_bytes = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(bytes_read) => {
+                let remaining = 32768usize.saturating_sub(response_bytes.len());
+                if remaining == 0 {
+                    break;
+                }
+                response_bytes.extend_from_slice(&chunk[..bytes_read.min(remaining)]);
+                if response_bytes.len() >= 32768 {
+                    break;
+                }
+            }
+            Err(error) => {
+                return if http_probe_io_timed_out(&error) {
+                    HttpReadinessStatus::TimedOut
                 } else {
-                    address.trim().to_string()
+                    HttpReadinessStatus::Failed
                 };
-                let mut request_text = format!(
-                    "{} {} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n",
-                    request.method.as_str(),
-                    request.path,
-                );
-                for (name, value) in &request.headers {
-                    request_text.push_str(name);
-                    request_text.push_str(": ");
-                    request_text.push_str(value);
-                    request_text.push_str("\r\n");
-                }
-                request_text.push_str("\r\n");
-                if stream.write_all(request_text.as_bytes()).is_err() {
-                    return false;
-                }
-                let mut response_bytes = Vec::with_capacity(1024);
-                let mut chunk = [0u8; 1024];
-                loop {
-                    match stream.read(&mut chunk) {
-                        Ok(0) => break,
-                        Ok(bytes_read) => {
-                            let remaining = 32768usize.saturating_sub(response_bytes.len());
-                            if remaining == 0 {
-                                break;
-                            }
-                            response_bytes.extend_from_slice(&chunk[..bytes_read.min(remaining)]);
-                            if response_bytes.len() >= 32768 {
-                                break;
-                            }
-                        }
-                        Err(_) => return false,
-                    }
-                }
-                response_matches_http_readiness(&response_bytes, request)
-            })
-        })
-        .unwrap_or(false)
+            }
+        }
+    }
+    if response_matches_http_readiness(&response_bytes, request) {
+        HttpReadinessStatus::Passed
+    } else {
+        HttpReadinessStatus::Failed
+    }
+}
+
+fn http_probe_io_timed_out(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    )
 }
 
 fn response_matches_http_readiness(response_bytes: &[u8], request: &HttpReadinessRequest) -> bool {
@@ -13184,6 +13417,7 @@ exit 1",
 }
 
 fn start_runtime_readiness_probe(
+    contract: Option<&Contract>,
     runtime_spec: Option<&TaskRuntimeSpec>,
     runtime: Option<&ResolvedTaskRuntime>,
     announce_ready_endpoint: bool,
@@ -13195,8 +13429,8 @@ fn start_runtime_readiness_probe(
     if !resolved_runtime_has_public_endpoint(runtime) {
         return None;
     }
-    let readiness_target = runtime_readiness_target(runtime_spec, runtime)?;
-    let timing = readiness_timing_policy(runtime_spec.readiness.as_ref());
+    let readiness_target = runtime_readiness_target(contract, runtime_spec, runtime)?;
+    let timing = readiness_timing_policy(contract, runtime_spec.readiness.as_ref());
     let ready_line = announce_ready_endpoint
         .then(|| ready_runtime_public_endpoint_line(runtime))
         .flatten();
@@ -13479,6 +13713,7 @@ fn state_i32_value(
 }
 
 fn execute_ephemeral_container_task_command(
+    contract: Option<&Contract>,
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
@@ -13609,6 +13844,7 @@ fn execute_ephemeral_container_task_command(
                 live_log.as_ref(),
                 |notifier| {
                     readiness_probe = start_runtime_readiness_probe(
+                        contract,
                         runtime,
                         prepared_runtime.as_ref(),
                         true,
@@ -13696,6 +13932,7 @@ fn execute_ephemeral_container_task_command(
                     source,
                 })?;
             let readiness_probe = start_runtime_readiness_probe(
+                contract,
                 runtime,
                 prepared_runtime.as_ref(),
                 false,
@@ -14042,6 +14279,7 @@ fn create_idle_ephemeral_container(
 }
 
 fn execute_persistent_container_task_command(
+    contract: Option<&Contract>,
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     context_name: Option<&str>,
@@ -14163,6 +14401,7 @@ fn execute_persistent_container_task_command(
         Err(error) => return Err(error),
     };
     let readiness_probe = start_runtime_readiness_probe(
+        contract,
         runtime,
         resolved_runtime.as_ref(),
         matches!(mode, TaskExecutionMode::Stream { .. }),
@@ -14256,6 +14495,7 @@ fn execute_persistent_container_task_command(
             env_overrides,
         )?;
         let readiness_probe = start_runtime_readiness_probe(
+            contract,
             runtime,
             resolved_runtime.as_ref(),
             matches!(mode, TaskExecutionMode::Stream { .. }),
@@ -20999,6 +21239,104 @@ tasks:
         assert!(error.to_string().contains("before becoming ready"));
     }
 
+    #[test]
+    fn ensure_ready_activation_named_probe_reuses_listener_endpoint() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener
+                .accept()
+                .expect("http readiness probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .expect("http readiness probe should write response");
+        });
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:65535/health
+      expect_status: 200
+      timeout: 1000
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        probe: app-ready
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+  sandbox:
+    targets:
+      api:
+        service:
+          task: dev
+          listener: http
+          address_view: host
+        activation:
+          mode: ensure_ready
+    script: |
+      printf '%s' "$OTA_TARGET_API" > target.txt
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("sandbox")
+            .expect("sandbox task should exist");
+        let target_spec = task
+            .targets
+            .get("api")
+            .expect("target binding should be declared");
+        let status = super::ensure_target_producer_ready(
+            &fixture.contract,
+            fixture.file_path(),
+            "sandbox",
+            "api",
+            target_spec,
+            Backend::Native,
+            None,
+            TaskExecutionMode::Capture,
+            fixture.dir.path(),
+            std::env::consts::OS,
+            0,
+            &mut TaskRunState::default(),
+        )
+        .expect("ensure_ready should reuse the producer listener endpoint for named probes");
+
+        server
+            .join()
+            .expect("http readiness probe server should finish");
+        assert_eq!(status, TaskTargetActivationStatus::ReusedReady);
+    }
+
     #[cfg(unix)]
     #[test]
     fn ensure_ready_activation_honors_readiness_retry_budget() {
@@ -25532,6 +25870,7 @@ tasks:
 
         let interrupt_epoch = super::current_run_interrupt_epoch();
         let probe = super::start_runtime_readiness_probe(
+            None,
             Some(&runtime_spec),
             Some(&runtime),
             false,
@@ -27959,6 +28298,190 @@ exec "$(dirname "$0")/docker-real" "$@"
             b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
             &request,
         ));
+    }
+
+    #[test]
+    fn host_runtime_readiness_can_reuse_named_probe() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener
+                .accept()
+                .expect("http readiness probe should connect");
+            let mut buffer = [0u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                )
+                .expect("http readiness probe should write response");
+        });
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:65535/healthz/readiness
+      expect_status: 200
+      timeout: 1000
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        probe: app-ready
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("dev")
+            .expect("dev task should exist");
+        let probe = super::task_runtime_host_readiness_probe_for_backend(
+            &fixture.contract,
+            task,
+            Backend::Native,
+            "backend",
+        )
+        .expect("probe-backed runtime readiness should resolve");
+
+        assert_eq!(probe.address, "127.0.0.1");
+        assert_eq!(probe.port, port);
+        assert!(
+            super::host_runtime_readiness_observed(&probe, None),
+            "named runtime probe should use the declared HTTP readiness target"
+        );
+
+        server
+            .join()
+            .expect("http readiness probe server should finish");
+    }
+
+    #[test]
+    fn host_runtime_readiness_probe_can_select_non_primary_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let editor_port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener
+                .accept()
+                .expect("http readiness probe should connect");
+            let mut buffer = [0u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                )
+                .expect("http readiness probe should write response");
+        });
+        let fixture = ContractFixture::new(
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    editor-ready:
+      kind: http
+      url: http://127.0.0.1:65535/
+      expect_status: 200
+      timeout: 1000
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        probe: editor-ready
+        listener: editor
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 5678
+              path: /
+        editor:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {editor_port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {editor_port}
+              path: /
+"#
+            )
+            .as_str(),
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("dev")
+            .expect("dev task should exist");
+        let probe = super::task_runtime_host_readiness_probe_for_backend(
+            &fixture.contract,
+            task,
+            Backend::Native,
+            "backend",
+        )
+        .expect("probe-backed runtime readiness should resolve");
+
+        assert_eq!(probe.listener, "editor");
+        assert_eq!(probe.port, editor_port);
+        assert!(
+            super::host_runtime_readiness_observed(&probe, None),
+            "probe-backed runtime readiness should honor readiness.listener when selecting the endpoint"
+        );
+
+        server
+            .join()
+            .expect("http readiness probe server should finish");
     }
 
     #[test]
