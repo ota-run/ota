@@ -110,3 +110,9 @@
 - Pattern: Repo-run parser and validator changes can look correct on a root contract while still regressing monorepo member runs or turning existing contracts into silent breaking changes.
 - Correction: When `ota run` syntax depends on the effective contract shape, test root and `--member` resolution paths, and pair any new validation rejection with migration guidance in the error, docs, and changelog.
 - Rule: CLI and validation changes are not complete until member-scoped runs and contract-migration surfaces are covered alongside the main happy path.
+
+## 2026-05-08
+
+- Pattern: User-visible Ota feature work can drift if `ota` code/spec changes land without the matching `ota-site` public docs update.
+- Correction: Carry `ota-site` alongside every user-visible contract, command, or behavior change in `ota`, updating the relevant public docs/changelog in the same workstream.
+- Rule: When a feature changes the shipped Ota surface, update `ota-site` in the same task by default; do not wait to be asked.

@@ -434,7 +434,7 @@ Current behavior:
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`, both detector-led starters plus starter packs can seed short task `description` fields so users can see and refine that authoring pattern immediately, detector-led starters can also carry existing repo-root dotenv sources such as `.env.local` and `.env` into `env.sources`, explicit `--pack` mode can emit an advisory note when strong repo signals disagree without auto-switching packs while still staying on the conventional starter boundary, the Node/Python starter packs expose explicit knobs for package-manager and test-runner selection, and the built-in pack catalog now spans `node`, `python`, `go`, `rust`, `dotnet`, `php-composer`, `java-maven`, and `java-gradle`
 - `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the ota-owned section is explicit, including the `ota run ...` command form for each listed task
 - `ota check` runs configured checks without runtime, tool, env, or task execution
-- `ota up` validates, runs blocking preconditions, runs `setup` early when preconditions fail and the repo declares it, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
+- `ota up` validates, targets the default workflow when one is declared, runs its setup phase early when preconditions fail, starts the selected workflow service graph in dependency order, activates the workflow run task when it has a service runtime, and re-checks readiness
 - `ota detect` (default) infers a candidate contract and prints provenance/confidence without writing
 - `ota completion --setup` auto-installs shell completion for the current shell, `ota completion --remove` removes the managed hook and zsh support file, `ota completion check` verifies the managed hook, current binary path, and any managed zsh completion file, `ota completion zsh` now prints both the `_ota` completion file and the `.zshrc` loader for self-contained manual setup, and `ota completion <shell> --script` prints the raw generated registration script; once sourced, `ota <TAB>` completes commands first and keeps global `--flags` after them in zsh, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set and now includes task descriptions when the contract declares them, `ota run <task> <TAB>` completes shared task input flags plus constrained values, `ota env --task <TAB>` completes task names, `ota extensions --run/--publish <TAB>` completes declared extension names, `ota receipt --baseline <TAB>` completes `latest`, `promoted`, and archived receipt files from the active repo, `--member <TAB>` completes monorepo member names, and workspace completion suggests workspace-wide task names only when one shared invocation can satisfy the available repos, shared workspace task inputs, and declared repo names
 - `ota detect --write` writes a contract conservatively from `high` confidence fields only
@@ -445,16 +445,16 @@ Current behavior:
 - `ota workspace tasks` lists workspace repo tasks in dependency order without executing them, including declared post-outcome hook relationships when repo contracts define them
 - `ota workspace run <task>` executes one task across workspace repos in dependency order with deterministic reporting
 - `ota workspace explain` turns workspace readiness findings into ordered remediation steps
-- `ota workspace check` runs configured checks across workspace repos with deterministic reporting
-- `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet
-- `ota workspace up` can acquire missing repos from git sources and then orchestrates repo-level `up` across the workspace contract without inventing a second bootstrap model
+- `ota workspace check` runs configured checks across workspace repos with deterministic reporting and honors `repos.<name>.workflow` when the workspace contract pins a non-default repo workflow
+- `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet, and uses `repos.<name>.workflow` when the workspace declares a canonical repo path
+- `ota workspace up` can acquire missing repos from git sources and then orchestrates repo-level `up` across the workspace contract without inventing a second bootstrap model, including per-repo workflow selection from `repos.<name>.workflow`
 - `ota workspace refresh` re-syncs repos that already exist locally without cloning missing ones
 - `ota workspace refresh --dry-run` previews the refresh commands without changing repo state
 - `ota workspace refresh --force` hard-resets refreshed repos to the declared source or `--ref` override
 - `ota workspace refresh --prune` drops stale remote-tracking refs during refresh
 - `ota workspace refresh --ref <branch|tag|sha>` overrides the source ref used for refresh
 - `ota workspace diff` compares local workspace repo state against the declared source without mutating anything
-- `ota workspace status` combines readiness and drift into one read-only workspace summary
+- `ota workspace status` combines readiness and drift into one read-only workspace summary and evaluates readiness through the workspace-selected repo workflow when one is declared
 - `ota workspace receipt` captures the same workspace state as a read-only receipt artifact for CI and archiving
 - editor and CI consumers should prefer `--json` surfaces such as `ota doctor --json`, `ota workspace doctor --json`, `ota workspace list --json`, and `ota up --json` instead of scraping text output
 
@@ -740,6 +740,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Command reference](docs/spec/command-reference.md)
 - [GitHub Action workflow](docs/spec/github-action-workflow.md)
 - [Contract reference](docs/spec/contract-reference.md)
+- [Workflow model](docs/spec/workflows.md)
 - [Workspace reference](docs/spec/workspace-reference.md)
 - [Shell semantics](docs/spec/shell-semantics.md)
 - [Service behavior](docs/spec/service-behavior.md)

@@ -28,6 +28,8 @@ This example is a full contract surface for ota.
 
 - use `ota validate` to verify the contract before relying on it
 - use `ota doctor` to inspect readiness and surface the primary blocker
+- use `ota workflows` to inspect the declared repo paths before picking one
+- use `ota up --workflow app` for the canonical container-backed app path
 - use `ota run test` to exercise the main verification path
 - keep edits inside the declared writable paths: `src`, `docs`
 - avoid casual edits to `ota.yaml`

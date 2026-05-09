@@ -72,7 +72,7 @@ That means `0` is reserved for the overall command succeeding and the repo reach
 - `128+n` when a service or setup child process terminated from signal `n`
 - `1` when preconditions fail
 - `1` when required-service readiness fails in the `services` phase
-- `1` when post-setup diagnosis is still not ready
+- `1` when post-up diagnosis is still not ready
 - `1` on load or validation failure
 
 ## `ota detect`

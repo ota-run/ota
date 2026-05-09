@@ -50,6 +50,8 @@ In practice, most useful contracts also define tasks, runtimes, or checks.
 - `services`: supporting services such as databases, queues, or local infra.
 - `checks`: explicit preconditions and health checks that should pass.
 - `tasks`: named commands humans and agents can run deterministically.
+- `readiness`: reusable named readiness probes for workflow and check reuse.
+- `workflows`: canonical operational paths built from setup/run tasks, required services, and readiness gates.
 - `execution`: where tasks run, such as native, container, or remote backends.
 - `agent`: AI-agent task hints and writable-path boundaries.
 - `exports`: downstream generation preferences and export metadata.
@@ -85,9 +87,19 @@ env:
       allowed:
         - local
         - ci
+surfaces:
+  backend:
+    kind: http
+    port: 5678
 tasks:
   setup:
     run: pnpm install
+workflows:
+  default: app
+  app:
+    intent: local_development
+    setup:
+      task: setup
 checks:
   - name: node-installed
     kind: precondition
@@ -547,8 +559,9 @@ Current behavior:
 - producer-owned services must not also declare local manager truth such as `manager`, `provider`, `start`, `stop`, `healthcheck`, `endpoints`, `readiness`, or `timeout`
 - `tasks.<name>.requires_services` remains the consumer-side dependency truth; producer ownership lives on `services.<name>`, not inside each consumer task
 - service declarations may use legacy `provider/start/stop/healthcheck` fields or new context-aware `manager/endpoints/readiness` fields
-- `services.<name>.readiness` now supports two valid forms:
+- `services.<name>.readiness` now supports three valid forms:
   - legacy command form: `from` + `run`
+  - reusable probe form: `from` + `probe` (+ optional polling controls such as `interval`, `retries`, and `start_period`)
   - structured probe form: `from` + `kind` (+ `path` for HTTP, with optional request/response/timing controls)
 - unknown `depends_on` references are invalid
 - service dependency cycles are invalid
@@ -559,10 +572,11 @@ Current behavior:
 - for `manager.kind: compose`, `ota doctor` derives `start/stop/healthcheck` commands from compose metadata
 - for `manager.kind: host`, `ota doctor` runs healthchecks in the resolved host command context
 - `services.<name>.readiness.from` with a named endpoint projection validates readiness from that execution context
+- `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same transport and timeout truth as checks and workflows while `from` still selects the service endpoint projection
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
-- structured top-level service readiness uses the same default wait model as task runtime readiness: when `retries` is omitted, ota keeps waiting until readiness passes or the surrounding run is interrupted; declaring `retries` makes the failure budget explicit and bounded
+- reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, ota keeps waiting until readiness passes or the surrounding run is interrupted; declaring `retries` makes the failure budget explicit and bounded
 - `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
@@ -898,6 +912,75 @@ Resolution and provenance:
 - execution receipts should explain which layer supplied the value that won
 - `doctor` and `detect` should expose provenance instead of flattening the result into a bare string
 
+## `surfaces`
+
+Optional.
+
+For the operator guide to what surfaces are, when to add them, and how they relate to listener
+shorthand and full listeners, see [surfaces.md](surfaces.md).
+
+```yaml
+surfaces:
+  backend:
+    kind: http
+    label: Backend API
+    purpose: Primary application API for local development
+    visibility: internal
+    port: 5678
+    path: /
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 10000
+  frontend:
+    kind: http
+    label: Editor UI
+    purpose: Browser-facing editor surface
+    visibility: public
+    port: 8080
+    path: /
+    readiness:
+      kind: http
+      path: /
+      timeout: 10000
+```
+
+Fields:
+
+- `<name>.kind`: required `http`, `https`, or `tcp`
+- `<name>.port`: required fixed port number
+- `<name>.label`: optional short operator-facing label for command and topology rendering
+- `<name>.purpose`: optional short purpose string for operators and docs
+- `<name>.visibility`: optional `public` or `internal` metadata for output and UX grouping
+- `<name>.path`: optional HTTP/HTTPS path; defaults to `/` for HTTP/HTTPS surfaces
+- `<name>.readiness`: optional reusable readiness contract for that surface
+- `<name>.readiness.kind`: required when readiness is declared; `http` or `tcp`
+- `<name>.readiness.path`: optional for HTTP readiness when the surface path is already sufficient;
+  otherwise required
+- `<name>.readiness.method`: optional HTTP method; defaults to `GET`
+- `<name>.readiness.headers`: optional HTTP request headers
+- `<name>.readiness.success.status`: optional accepted HTTP status list
+- `<name>.readiness.body.contains`: optional required response substring
+- `<name>.readiness.interval`: optional polling interval
+- `<name>.readiness.timeout`: optional per-attempt timeout
+- `<name>.readiness.retries`: optional consecutive failure budget
+- `<name>.readiness.start_period`: optional delay before the first probe
+
+Current behavior:
+
+- surfaces are reusable endpoint truth, not standalone operational URLs
+- a surface becomes operational only when a service task runtime attaches it through
+  `tasks.<name>.runtime.surfaces`
+- attached surfaces normalize into the existing runtime listener model with conservative loopback
+  defaults
+- `kind: https` reuses the existing HTTPS listener protocol and HTTP readiness semantics without
+  inventing separate certificate or trust-management contract fields
+- workflows may reference attached surfaces for readiness and exposes without repeating host URLs
+- `ota execution topology` reports both top-level declared surfaces and the normalized listener
+  shape on attached runtimes
+- `ota execution topology` also reports additive `surface_attachments` on task runtimes so machine
+  consumers can see whether one attached surface used defaults or explicit bind/project overrides
+
 ## `tasks`
 
 Optional.
@@ -950,6 +1033,21 @@ tasks:
               port:
                 mode: auto
               path: /
+
+# Common local listener shorthand:
+#
+# listeners:
+#   http:
+#     http: 3000
+#
+# This is authoring sugar only. Ota normalizes it to the full listener form with:
+# - bind address `127.0.0.1`
+# - fixed bind port `3000`
+# - projected host `127.0.0.1:3000`
+# - projected host path `/` for HTTP
+#
+# Use the full `protocol` / `bind` / `project` form whenever bind address, host address,
+# host-port mode, primary projection, or path needs to be customized.
   package:
     depends_on:
       - build
@@ -1011,7 +1109,10 @@ Fields:
 
 - `kind`: currently `service`
 - `backend_binding`: optional shared backend binding name declared under `execution.shared_backends`
+- `surfaces`: optional list of reusable top-level runtime surfaces declared under `surfaces`
 - `listeners`: named listener map
+- `listeners.<name>.http: <port>`: shorthand for the common local HTTP listener shape
+- `listeners.<name>.tcp: <port>`: shorthand for the common local TCP listener shape
 - `listeners.<name>.protocol`: `http`, `https`, or `tcp`
 - `listeners.<name>.bind.address`: bind address inside the task execution context
 - `listeners.<name>.bind.port.mode`: `fixed` or `discover`
@@ -1021,6 +1122,51 @@ Fields:
 - `listeners.<name>.project.host.port.value`: required when host port `mode: fixed`
 - `listeners.<name>.project.host.primary`: optional boolean; mark exactly one projected listener as primary when multiple listeners are projected
 - `listeners.<name>.project.host.path`: optional URL path for `http` and `https`
+
+Listener shorthand rules:
+
+- shorthand is authoring sugar only; ota normalizes it into the full listener model internally
+- `http: <port>` expands to:
+  - `protocol: http`
+  - `bind.address: 127.0.0.1`
+  - fixed bind port `<port>`
+  - fixed host projection `127.0.0.1:<port>`
+  - host projection path `/`
+- `tcp: <port>` expands to:
+  - `protocol: tcp`
+  - `bind.address: 127.0.0.1`
+  - fixed bind port `<port>`
+  - fixed host projection `127.0.0.1:<port>`
+- shorthand cannot be mixed with `protocol`, `bind`, or `project`
+- shorthand supports exactly one of `http` or `tcp`
+- use the verbose form when bind address, host address, host-port mode, primary projection, or path must be customized
+
+Surface attachment rules:
+
+- use top-level `surfaces` when one endpoint meaning should stay shared across tasks and workflows;
+  see [surfaces.md](surfaces.md)
+- `runtime.surfaces` supports two attachment forms:
+  - list form like `runtime.surfaces: [backend]` for default publication
+  - object form like `runtime.surfaces.backend` for attachment overrides
+- `runtime.surfaces.<name>` attachment overrides are publication-only:
+  - `bind`
+  - `project`
+  - `project.host.primary`
+- each attached surface normalizes into the same runtime listener model used by explicit
+  `runtime.listeners`
+- topology JSON now also exposes additive `runtime.surface_attachments.<name>` intent alongside the
+  normalized listener truth
+- attached surface names become normalized listener names
+- a runtime must not attach an unknown surface
+- a runtime must not declare `runtime.listeners.<name>` and also attach `runtime.surfaces.<name>`
+  for the same name
+- `runtime.surfaces.<name>.bind.port` must preserve the declared top-level surface port with
+  `mode: fixed`
+- if a runtime attaches exactly one surface, has no inline `runtime.readiness`, and that surface
+  declares readiness, ota derives the equivalent runtime readiness automatically
+- if a runtime attaches multiple surfaces, has no inline `runtime.readiness`, and exactly one
+  attached surface is marked `project.host.primary: true`, ota derives runtime readiness from that
+  primary surface
 
 `runtime` mode semantics:
 
@@ -1075,10 +1221,12 @@ Task input semantics:
 - if every declared input has a default, the task can be run with no input flags
 - task input names may overlap ota command flags such as `mode` or `jobs`; when they do, put ota command flags before the task and task inputs after the task
 - `requires_services` resolves declared services before the task body and keeps lifecycle ownership with `services.<name>.manager`
-- `setup.requires_services` is also the pre-setup service phase for `ota up`: ota starts and verifies those services before running `setup`, then starts the remaining required services after `setup`
+- the selected workflow setup task's `requires_services` entries become the pre-setup service phase for `ota up`
+- `setup.requires_services` remains the compatibility fallback when the default workflow setup task is `setup`
+- `workflows.<default>.services.required` defines the canonical post-setup service plane for `ota up`; repo-level `services.<name>.required` remains the fallback when no workflow services are declared
 - `runtime.listeners` keep workload ingress with the task instead of overloading `services`
 - `ota run` records the resolved runtime endpoint in receipts and JSON output when ota can authoritatively resolve it
-- `ota up` only reports workload endpoints for runtime-bearing tasks it actually executes during preparation today; it does not yet discover arbitrary app tasks like `dev`
+- `ota up` reports workload endpoints for runtime-bearing tasks it actually executes while bringing the selected workflow to readiness
 - container runtime listeners export these env values before process start when host projection resolves:
 - `OTA_PUBLIC_URL`
 - `OTA_PUBLIC_HOST`
@@ -1189,6 +1337,12 @@ Task target binding semantics:
 
 Current `runtime.readiness` support for service tasks:
 
+- `probe: <name>`
+  - references one top-level `readiness.probes.<name>` declaration
+  - reuses that probe's transport and timeout contract while the selected listener still determines the runtime endpoint
+  - may optionally declare `listener` when the readiness target should bind to one non-default runtime listener explicitly
+  - may still declare `interval`, `retries`, and `start_period` to control polling semantics for this runtime
+  - must not also declare inline `kind`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
 - `kind: http`
   - requires `listener`
   - requires `path`
@@ -1510,8 +1664,164 @@ Current execution model:
 - tasks marked `internal: true` (commonly `setup`) remain normal graph nodes for `depends_on` and hooks, still run when referenced directly, and are hidden from default `ota tasks` output unless `--all` is requested
 - hook failures affect the final task result for the parent task
 - richer non-shell executors are intentionally out of V1 scope
-- future direction is tracked in the product spec
+- reusable probes are now shipped through top-level `readiness.probes`, `checks[].probe`, `workflows.<name>.readiness.probes`, and runtime/service readiness `probe` references
 - use task names to describe intent: `setup`, `dev`, `dev_clean`, `test`, `lint`
+
+## `readiness`
+
+Optional.
+
+Use this section when one readiness target should be declared once and reused across workflow
+readiness and explicit named checks.
+
+```yaml
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: backend
+        listener: backend
+        address_view: host
+      method: GET
+      path: /healthz/readiness
+      headers:
+        x-ota-probe: workflow
+      success:
+        status: [200]
+      timeout: 10000
+```
+
+Fields:
+
+- `probes.<name>.kind`: `http` or `tcp`
+- `probes.<name>.url`: optional absolute `http://` URL for literal URL probes
+- `probes.<name>.target`: optional topology-derived target
+  - `target.kind`: `task` or `service`
+  - `target.name`: required task or service name
+  - `target.listener`: required for task targets
+  - `target.address_view`: optional for task targets; defaults to `host`
+  - `target.observer`: optional for task targets
+    - `observer.kind`: `command_host` (default) or `task`
+    - `observer.task`: required when `observer.kind: task`
+  - `target.endpoint`: optional for service targets; required when the service declares more than
+    one endpoint
+  - `target.observer` is not valid for service targets
+- `probes.<name>.method`: optional HTTP method (`GET` by default, `HEAD` supported)
+- `probes.<name>.path`: required for target-based `kind: http` probes
+- `probes.<name>.headers`: optional HTTP headers for `kind: http`
+- `probes.<name>.success.status`: optional accepted HTTP status list for `kind: http`
+- `probes.<name>.body.contains`: optional HTTP body substring match for `kind: http`
+- `probes.<name>.expect_status`: optional shorthand for one accepted HTTP status when
+  `success.status` is omitted
+- `probes.<name>.timeout`: required integer timeout in milliseconds
+
+Current behavior:
+
+- top-level probes are canonical reusable readiness definitions
+- literal `url` probes stay first-class for external or intentionally non-topological endpoints
+- target-based probes can resolve from declared task listeners or service endpoints instead of
+  copying host/port values into one URL string
+- `checks[].probe` can reference a named probe instead of repeating a shell command
+- `workflows.<name>.readiness.probes` can reference probes directly when the workflow should be
+  ready as soon as those probes pass
+- `tasks.<name>.runtime.readiness.probe` and `services.<name>.readiness.probe` still reuse the
+  named probe transport and timeout contract while keeping their own runtime/service endpoint
+  selection semantics
+- `kind: http` supports literal `url` probes and topology-derived `target` probes
+- `kind: tcp` currently supports topology-derived `target` probes
+- reusable `kind: http` probes now use the same request-shaping surface Ota already ships for
+  runtime and service readiness: `method`, `headers`, `success.status`, and `body.contains`
+- for plain `200`, authors may omit both `expect_status` and `success.status`
+- both `expect_status` and `success.status` are fully supported for non-default success rules:
+  - use `expect_status` when one shorthand status is clearer
+  - use `success.status` when you want multiple accepted statuses
+- task-target probes without `target.observer` still resolve from ota's invoking command plane, so
+  `target.address_view: host` remains the correct default when one published host endpoint is the
+  truth you want to reuse directly
+- task-target probes may now declare `target.observer.kind: task` plus `target.observer.task` when
+  `topology`, `internal`, or one caller-relative `host` view should be resolved exactly as that
+  observer task sees it from its effective backend plane
+- observer-backed task probes reuse the same target-binding semantics ota already ships for task
+  targets instead of inventing a probe-only topology model
+- unsupported schemes such as `https://` are rejected during validation instead of silently
+  downgraded
+- probe execution is direct inside ota; it does not depend on `curl`, `node`, or other repo-local
+  tools
+
+## `workflows`
+
+Optional.
+
+For the operator guide to what workflows are, when to add them, and how they relate to tasks,
+surfaces, and agent hints, see [workflows.md](workflows.md).
+
+```yaml
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      success:
+        status: [200]
+      timeout: 10000
+
+workflows:
+  default: app
+  app:
+    intent: local_development
+    description: Canonical local app workflow
+    setup:
+      task: setup
+    run:
+      task: dev
+    services:
+      required:
+        - postgres
+    readiness:
+      probes:
+        - app-ready
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+      - http://127.0.0.1:5678
+```
+
+Fields:
+
+- `default`: required when `workflows` is declared; names the canonical repo workflow
+- `<name>.intent`: optional workflow classification such as `local_development`
+- `<name>.description`: optional operator-facing summary
+- `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
+- `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
+- `<name>.services.required`: optional services that belong to that workflow
+- `<name>.readiness.checks`: optional readiness checks that belong to that workflow
+- `<name>.readiness.probes`: optional reusable readiness probes that belong to that workflow
+- `<name>.readiness.surfaces`: optional attached runtime surfaces that belong to that workflow's selected run task
+- `<name>.exposes`: optional human-readable endpoints or URLs the workflow is expected to surface
+  - literal string form keeps a fixed URL
+  - object form `{ surface: <name> }` resolves through the selected workflow run task
+
+Current behavior:
+
+- workflows do not replace `tasks`, `services`, or `checks`; they compose those primitives into one canonical operational path
+- `doctor` diagnoses the default workflow by default when it declares workflow readiness probes,
+  workflow readiness checks, or workflow services
+- `check` follows the same selected workflow readiness boundary when a workflow declares explicit
+  readiness probes or checks, and otherwise falls back to the repo-wide `checks` surface
+- `doctor` and `check` may also validate `workflows.<name>.readiness.surfaces` through the selected
+  workflow run task without hardcoding host URLs into the workflow
+- workflow `exposes` may point at attached surfaces instead of repeating host URLs that the
+  contract already owns under `surfaces`
+- use `checks[].probe` when a named check should reuse a named readiness probe outside that
+  workflow-scoped path or when the repo does not declare workflows
+- `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
+- if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
+- if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness
+- `tasks.setup` remains the compatibility fallback when no workflow setup task is declared
+- `agent.default_task` and `agent.entrypoint` remain agent-facing hints, but the default workflow is now the canonical repo operational path
 
 ## `checks`
 
@@ -1524,6 +1834,10 @@ checks:
     severity: error
     run: node --version
     timeout: 10
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: backend-ready
 ```
 
 Fields:
@@ -1531,14 +1845,21 @@ Fields:
 - `name`: required, non-empty string
 - `kind`: `precondition` or `health`
 - `severity`: `error`, `warn`, or `info`
-- `run`: required, non-empty string
+- `run`: optional shell command when the check is command-backed
+- `probe`: optional probe reference when the check is probe-backed
 - `timeout`: optional integer in milliseconds
 
 Current behavior:
 
 - `up` uses preconditions before setup
 - `doctor` runs configured checks and reports findings by severity
+- checks must declare exactly one of `run` or `probe`
+- `checks[].probe` must reference a named `readiness.probes.<name>` declaration
+- probe-backed checks use the check timeout when one is declared, otherwise they inherit the probe
+  timeout
 - when `timeout` is set, `doctor` fails the check if it does not finish within the configured millisecond budget
+- human output identifies probe-backed failures as probes instead of pretending a shell command was
+  run
 
 ## `agent`
 

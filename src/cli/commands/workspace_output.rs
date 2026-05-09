@@ -296,6 +296,7 @@ mod tests {
                 name: String::from("api"),
                 path: String::from("api"),
                 contract_path: String::from("api/ota.yaml"),
+                workflow: None,
                 required: true,
                 ok: false,
                 status: String::from("PROVISION FAILED"),
@@ -422,6 +423,7 @@ mod tests {
                 name: String::from("api"),
                 path: String::from("api"),
                 contract_path: String::from("api/ota.yaml"),
+                workflow: None,
                 required: true,
                 ok: false,
                 status: String::from("PROVISION FAILED"),
@@ -565,6 +567,7 @@ mod tests {
                 name: String::from("api"),
                 path: String::from("api"),
                 contract_path: String::from("api/ota.yaml"),
+                workflow: None,
                 required: true,
                 acquired: true,
                 drift_kind: String::from("local_dirty"),
@@ -707,6 +710,7 @@ mod tests {
                     name: String::from("missing-contract"),
                     path: String::from("missing-contract"),
                     contract_path: String::from("missing-contract/ota.yaml"),
+                    workflow: None,
                     required: true,
                     acquired: true,
                     ready: false,
@@ -730,6 +734,7 @@ mod tests {
                     name: String::from("no-target"),
                     path: String::from("no-target"),
                     contract_path: String::from("no-target/ota.yaml"),
+                    workflow: None,
                     required: true,
                     acquired: true,
                     ready: false,
@@ -1176,6 +1181,20 @@ pub(crate) fn render_workspace_execution_plan(
                     paint_key("Acquired:"),
                     if repo.acquired { "yes" } else { "no" }
                 ));
+                if let Some(workflow) = repo.workflow.as_deref() {
+                    stdout.push_str(&format!(
+                        "\n{} {}",
+                        paint_key("Workflow:"),
+                        paint_backticked_code(workflow)
+                    ));
+                }
+                if let Some(task) = repo.task.as_deref() {
+                    stdout.push_str(&format!(
+                        "\n{} {}",
+                        paint_key("Task:"),
+                        paint_backticked_code(task)
+                    ));
+                }
 
                 if let Some(resolved) = repo.resolved.as_ref() {
                     stdout.push_str(&format!(

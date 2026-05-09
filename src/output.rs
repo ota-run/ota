@@ -23,15 +23,17 @@
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::{
-    BackendFulfillmentEvidence, ExecutionOverrides, ResolvedTaskRuntime,
+    BackendFulfillmentEvidence, ExecutionOverrides, ResolvedExecutionBackend, ResolvedTaskRuntime,
     SharedLocalBackendEvidence, TaskTargetResolutionEvidence, blocking_declared_env_source_label,
     effective_task_execution, env_resolution_source_label, load_declared_env_sources,
     load_policy_env_overlay, resolve_declared_env_source_value,
+    resolve_execution_backend_with_contract_path,
 };
 use crate::schema::{
     AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
@@ -75,6 +77,8 @@ pub struct DoctorSuccess<'a> {
     pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub finding_groups: Vec<DoctorFindingGroupSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,6 +128,8 @@ pub struct CheckSuccess<'a> {
     pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub finding_groups: Vec<DoctorFindingGroupSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
     pub findings: &'a [Finding],
 }
 
@@ -524,6 +530,10 @@ pub struct ExecutionPlanSuccess<'a> {
     pub contract: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub member: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<&'a str>,
     pub contract_identity: ContractIdentity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declared_execution: Option<ExecutionSummary<'a>>,
@@ -556,6 +566,10 @@ pub struct ExecutionTopologySuccess<'a> {
     pub declared_execution: Option<ExecutionSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub shared_backends: Vec<ExecutionTopologySharedBackendSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub readiness_probes: BTreeMap<String, ExecutionTopologyProbeSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub surfaces: BTreeMap<String, ExecutionTopologySurfaceSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<ServiceSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -617,13 +631,120 @@ pub struct ExecutionTopologyRuntimeSummary {
     pub backend_binding: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readiness: Option<ExecutionTopologyReadinessSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attached_surfaces: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub surface_attachments: BTreeMap<String, ExecutionTopologySurfaceAttachmentSummary>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub listeners: BTreeMap<String, ExecutionTopologyListenerSummary>,
 }
 
 #[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceSummary {
+    pub kind: String,
+    pub port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<ExecutionTopologyReadinessSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceAttachmentSummary {
+    pub uses_defaults: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind: Option<ExecutionTopologySurfaceBindOverrideSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<ExecutionTopologySurfaceProjectionOverrideSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceBindOverrideSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_value: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceProjectionOverrideSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<ExecutionTopologySurfaceHostProjectionOverrideSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceHostProjectionOverrideSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_value: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyProbeSummary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<ExecutionTopologyProbeTargetSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success: Option<ExecutionTopologyReadinessSuccessSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<ExecutionTopologyReadinessBodySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyProbeTargetSummary {
+    pub kind: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address_view: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer: Option<ExecutionTopologyProbeObserverSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_plane: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyProbeObserverSummary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ExecutionTopologyReadinessSummary {
     pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub listener: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1054,6 +1175,8 @@ pub struct WorkspaceRepoTasksReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub required: bool,
     pub acquired: bool,
     pub depends_on: Vec<String>,
@@ -1080,6 +1203,8 @@ pub struct WorkspaceRepoListReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub contract_present: bool,
     pub required: bool,
     pub acquired: bool,
@@ -1111,6 +1236,10 @@ pub struct WorkspaceRepoExecutionPlanReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
     pub required: bool,
     pub acquired: bool,
     pub status: String,
@@ -1152,6 +1281,8 @@ pub struct WorkspaceRepoUpReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub required: bool,
     pub ok: bool,
     pub status: String,
@@ -1264,6 +1395,8 @@ pub struct WorkspaceRepoStatusReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     pub required: bool,
     pub acquired: bool,
     pub ready: bool,
@@ -2062,6 +2195,8 @@ pub struct TasksSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub members: Vec<MemberTasksSuccess<'a>>,
@@ -2072,12 +2207,43 @@ pub struct TasksSuccess<'a> {
 pub struct MemberTasksSuccess<'a> {
     pub member: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     pub tasks: Vec<TaskSummary<'a>>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct TasksFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowsSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberWorkflowsSuccess<'a>>,
+    pub workflows: Vec<ListedWorkflowSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemberWorkflowsSuccess<'a> {
+    pub member: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<&'a str>,
+    pub workflows: Vec<ListedWorkflowSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowsFailure<'a> {
     pub ok: bool,
     pub path: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2131,6 +2297,232 @@ pub struct AgentSummary<'a> {
     pub bootstrap: Option<AgentBootstrapSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkflowSummary<'a> {
+    pub name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub required_services: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub readiness_checks: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub readiness_probes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub readiness_surfaces: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exposes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub expose_surfaces: Vec<String>,
+    #[serde(skip)]
+    pub expose_entries: Vec<WorkflowExposeEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowExposeEntry {
+    pub url: String,
+    pub surface: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListedWorkflowSummary<'a> {
+    #[serde(flatten)]
+    pub workflow: WorkflowSummary<'a>,
+    pub default: bool,
+}
+
+impl<'a> WorkflowSummary<'a> {
+    pub fn from_contract(contract: &'a Contract) -> Option<Self> {
+        Self::from_contract_selected_inner(contract, None, None)
+    }
+
+    pub fn from_contract_with_path(contract: &'a Contract, contract_path: &Path) -> Option<Self> {
+        Self::from_contract_selected_with_path(contract, contract_path, None)
+    }
+
+    pub fn from_contract_named(contract: &'a Contract, workflow_name: &'a str) -> Option<Self> {
+        Self::from_contract_named_inner(contract, None, workflow_name)
+    }
+
+    pub fn from_contract_named_with_path(
+        contract: &'a Contract,
+        contract_path: &Path,
+        workflow_name: &'a str,
+    ) -> Option<Self> {
+        Self::from_contract_named_inner(contract, Some(contract_path), workflow_name)
+    }
+
+    fn from_contract_named_inner(
+        contract: &'a Contract,
+        contract_path: Option<&Path>,
+        workflow_name: &'a str,
+    ) -> Option<Self> {
+        let workflow = contract.workflow(workflow_name)?;
+        let mut exposes = Vec::new();
+        let mut expose_surfaces = Vec::new();
+        let mut expose_entries = Vec::new();
+        for expose in &workflow.exposes {
+            match expose {
+                crate::schema::WorkflowExposeSpec::Url(url) => {
+                    exposes.push(url.clone());
+                    expose_entries.push(WorkflowExposeEntry {
+                        url: url.clone(),
+                        surface: None,
+                    });
+                }
+                crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => {
+                    expose_surfaces.push(surface.clone());
+                    if let Some(url) = workflow.run.as_ref().and_then(|run| {
+                        workflow_surface_host_url(contract, contract_path, run.task.as_str(), surface)
+                    }) {
+                        exposes.push(url.clone());
+                        expose_entries.push(WorkflowExposeEntry {
+                            url,
+                            surface: Some(surface.clone()),
+                        });
+                    }
+                }
+            }
+        }
+        Some(Self {
+            name: workflow_name,
+            intent: workflow.intent.as_deref(),
+            description: workflow.description.as_deref(),
+            setup_task: workflow.setup.as_ref().map(|phase| phase.task.as_str()),
+            run_task: workflow.run.as_ref().map(|phase| phase.task.as_str()),
+            required_services: workflow.services.required.clone(),
+            readiness_checks: workflow.readiness.checks.clone(),
+            readiness_probes: workflow.readiness.probes.clone(),
+            readiness_surfaces: workflow.readiness.surfaces.clone(),
+            exposes,
+            expose_surfaces,
+            expose_entries,
+        })
+    }
+
+    pub fn from_contract_selected(
+        contract: &'a Contract,
+        workflow_name: Option<&str>,
+    ) -> Option<Self> {
+        Self::from_contract_selected_inner(contract, None, workflow_name)
+    }
+
+    pub fn from_contract_selected_with_path(
+        contract: &'a Contract,
+        contract_path: &Path,
+        workflow_name: Option<&str>,
+    ) -> Option<Self> {
+        Self::from_contract_selected_inner(contract, Some(contract_path), workflow_name)
+    }
+
+    fn from_contract_selected_inner(
+        contract: &'a Contract,
+        contract_path: Option<&Path>,
+        workflow_name: Option<&str>,
+    ) -> Option<Self> {
+        let (name, _) = contract.selected_workflow(workflow_name)?;
+        Self::from_contract_named_inner(contract, contract_path, name)
+    }
+
+    pub fn list_from_contract(contract: &'a Contract) -> Vec<ListedWorkflowSummary<'a>> {
+        Self::list_from_contract_inner(contract, None)
+    }
+
+    pub fn list_from_contract_with_path(
+        contract: &'a Contract,
+        contract_path: &Path,
+    ) -> Vec<ListedWorkflowSummary<'a>> {
+        Self::list_from_contract_inner(contract, Some(contract_path))
+    }
+
+    fn list_from_contract_inner(
+        contract: &'a Contract,
+        contract_path: Option<&Path>,
+    ) -> Vec<ListedWorkflowSummary<'a>> {
+        let default_name = contract
+            .workflows
+            .as_ref()
+            .map(|workflows| workflows.default.as_str());
+        contract
+            .workflows
+            .as_ref()
+            .map(|workflows| {
+                workflows
+                    .items
+                    .keys()
+                    .filter_map(|name| {
+                        Self::from_contract_named_inner(contract, contract_path, name.as_str()).map(
+                            |workflow| ListedWorkflowSummary {
+                                default: default_name == Some(name.as_str()),
+                                workflow,
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+fn workflow_surface_host_url(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    task_name: &str,
+    surface_name: &str,
+) -> Option<String> {
+    let task = contract.tasks.get(task_name)?;
+    let backend = workflow_surface_backend(contract, contract_path, task_name, task)?;
+    let runtime = task.service_runtime_for_backend(backend)?;
+    if !runtime.surfaces.contains_name(surface_name) {
+        return None;
+    }
+    let listener = runtime.listeners.get(surface_name)?;
+    let host = listener.project.host.as_ref()?;
+    let port = host.port.value?;
+    let path = host.path.as_deref().unwrap_or("");
+    match listener.protocol {
+        crate::schema::TaskRuntimeProtocol::Http => {
+            Some(format!("http://{}:{}{}", host.address, port, path))
+        }
+        crate::schema::TaskRuntimeProtocol::Https => {
+            Some(format!("https://{}:{}{}", host.address, port, path))
+        }
+        crate::schema::TaskRuntimeProtocol::Tcp => Some(format!("tcp://{}:{}", host.address, port)),
+    }
+}
+
+fn workflow_surface_backend(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    task_name: &str,
+    task: &TaskSpec,
+) -> Option<Backend> {
+    if let Some(contract_path) = contract_path {
+        let backend = match resolve_execution_backend_with_contract_path(
+            contract,
+            task_name,
+            ExecutionOverrides::default(),
+            Some(contract_path),
+        )
+        .ok()?
+        {
+            ResolvedExecutionBackend::Native { .. } => Backend::Native,
+            ResolvedExecutionBackend::Container { .. } => Backend::Container,
+            ResolvedExecutionBackend::Remote { .. }
+            | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
+        };
+        return Some(backend);
+    }
+
+    Some(task.workflow_backend(contract.execution.as_ref()))
 }
 
 impl<'a> AgentSummary<'a> {
@@ -2476,6 +2868,8 @@ pub struct ServiceReadinessSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
@@ -2502,6 +2896,7 @@ impl ServiceReadinessSummary {
         Self {
             from: readiness.from.clone(),
             run: readiness.run.clone(),
+            probe: readiness.probe.clone(),
             kind: readiness.kind.map(|kind| kind.as_str().to_string()),
             method: readiness.method.map(|method| method.as_str().to_string()),
             path: readiness.path.clone(),
