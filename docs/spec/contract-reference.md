@@ -1571,6 +1571,7 @@ Fields:
     - `observer.task`: required when `observer.kind: task`
   - `target.endpoint`: optional for service targets; required when the service declares more than
     one endpoint
+  - `target.observer` is not valid for service targets
 - `probes.<name>.method`: optional HTTP method (`GET` by default, `HEAD` supported)
 - `probes.<name>.path`: required for target-based `kind: http` probes
 - `probes.<name>.headers`: optional HTTP headers for `kind: http`

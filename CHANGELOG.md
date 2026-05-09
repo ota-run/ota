@@ -53,6 +53,8 @@
   of collapsing Python fallback timeouts into generic failures; the generated Python probe branches
   now preserve that timeout classification instead of short-circuiting it through unconditional
   shell success/failure glue
+- tightened reusable probe validation so `readiness.probes.<name>.target.observer` is now rejected
+  for `target.kind: service` instead of being silently accepted and ignored
 - tightened topology-derived task-probe validation so `ota validate` now rejects task targets that
   name one host-view listener without a real `project.host`, a fixed projected host port, or
   `protocol: http` when the probe itself is `kind: http`, instead of deferring those failures to

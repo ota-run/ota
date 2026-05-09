@@ -5135,6 +5135,11 @@ fn validate_readiness_probe_target(
                     "`readiness.probes.{name}.target.address_view` is not valid for service targets"
                 )));
             }
+            if target.observer.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.observer` is not valid for service targets"
+                )));
+            }
             if let Some(service) = contract.services.get(target.name.as_str()) {
                 let endpoint_name = target
                     .endpoint
@@ -6591,6 +6596,46 @@ services:
                 .to_string()
                 .contains("`readiness.probes.postgres-ready.target.endpoint` is required when service `postgres` has multiple endpoints")
         );
+    }
+
+    #[test]
+    fn rejects_service_target_probe_with_observer() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    postgres-ready:
+      kind: tcp
+      target:
+        kind: service
+        name: postgres
+        endpoint: app
+        observer:
+          kind: task
+          task: sandbox
+      timeout: 10000
+services:
+  postgres:
+    endpoints:
+      app:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  sandbox:
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("service target probe should reject observer config");
+        assert!(error.to_string().contains(
+            "`readiness.probes.postgres-ready.target.observer` is not valid for service targets"
+        ));
     }
 
     #[test]
