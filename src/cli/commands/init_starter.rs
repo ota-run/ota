@@ -1602,7 +1602,10 @@ fn starter_agent_stack_source_extensions(contract: &DetectContract) -> Option<Ve
         extensions.extend(["bash", "sh", "zsh"]);
     }
 
-    if contract.runtimes.contains_key("powershell") || contract.tools.contains_key("pwsh") {
+    if contract.runtimes.contains_key("powershell")
+        || contract.runtimes.contains_key("pwsh")
+        || contract.tools.contains_key("pwsh")
+    {
         extensions.extend(["ps1", "psd1", "psm1"]);
     }
 

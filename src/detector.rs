@@ -2927,7 +2927,7 @@ fn detect_powershell_markers(root: &Path, builder: &mut DetectBuilder) -> Result
         Confidence::High,
     );
     builder.set_runtime(
-        "powershell".to_string(),
+        "pwsh".to_string(),
         "*".to_string(),
         "powershell-script".to_string(),
         Confidence::Medium,
@@ -4135,7 +4135,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "bash-script" => 2,
             _ => 0,
         },
-        "runtimes.powershell" => match source {
+        "runtimes.pwsh" => match source {
             "powershell-script" => 2,
             _ => 0,
         },
@@ -5533,10 +5533,8 @@ solc_version = "0.8.25"
 
         let report = detect_repo(fixture.path()).unwrap();
         assert_eq!(report.contract.tools.get("pwsh"), Some(&"*".to_string()));
-        assert_eq!(
-            report.contract.runtimes.get("powershell"),
-            Some(&"*".to_string())
-        );
+        assert_eq!(report.contract.runtimes.get("pwsh"), Some(&"*".to_string()));
+        assert!(!report.contract.runtimes.contains_key("powershell"));
         assert_eq!(
             report
                 .contract

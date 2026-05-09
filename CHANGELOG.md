@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- fixed PowerShell repo detection so `ota detect` / detector-led `ota init` now infer `runtimes.pwsh` for `pwsh`-based script repos instead of emitting the legacy `runtimes.powershell` key that caused `ota doctor` to probe Windows PowerShell incorrectly
 - made starter-agent inference explicit in `ota detect --dry-run` and detector-led `ota init --dry-run`: both previews now render an `Agent boundary` outcome (`Inferred`, `Partially inferred`, or `Omitted`) so repos without a safe inferred task see why the starter omits `agent` instead of having to reverse-engineer that omission from the YAML preview
 - added first-class task launch sources: tasks can now declare structured `launch` in addition to
   shell `run` and `script`, with `kind: command` for inspectable packaged-command entrypoints and
