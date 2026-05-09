@@ -23,15 +23,17 @@
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::{
-    BackendFulfillmentEvidence, ExecutionOverrides, ResolvedTaskRuntime,
+    BackendFulfillmentEvidence, ExecutionOverrides, ResolvedExecutionBackend, ResolvedTaskRuntime,
     SharedLocalBackendEvidence, TaskTargetResolutionEvidence, blocking_declared_env_source_label,
     effective_task_execution, env_resolution_source_label, load_declared_env_sources,
     load_policy_env_overlay, resolve_declared_env_source_value,
+    resolve_execution_backend_with_contract_path,
 };
 use crate::schema::{
     AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
@@ -2288,6 +2290,14 @@ impl<'a> WorkflowSummary<'a> {
     }
 
     pub fn from_contract_named(contract: &'a Contract, workflow_name: &'a str) -> Option<Self> {
+        Self::from_contract_named_with_path(contract, None, workflow_name)
+    }
+
+    pub fn from_contract_named_with_path(
+        contract: &'a Contract,
+        contract_path: Option<&Path>,
+        workflow_name: &'a str,
+    ) -> Option<Self> {
         let workflow = contract.workflow(workflow_name)?;
         Some(Self {
             name: workflow_name,
@@ -2306,7 +2316,12 @@ impl<'a> WorkflowSummary<'a> {
                     crate::schema::WorkflowExposeSpec::Url(url) => Some(url.clone()),
                     crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => {
                         workflow.run.as_ref().and_then(|run| {
-                            workflow_surface_host_url(contract, run.task.as_str(), surface)
+                            workflow_surface_host_url(
+                                contract,
+                                contract_path,
+                                run.task.as_str(),
+                                surface,
+                            )
                         })
                     }
                 })
@@ -2323,11 +2338,26 @@ impl<'a> WorkflowSummary<'a> {
         contract: &'a Contract,
         workflow_name: Option<&str>,
     ) -> Option<Self> {
+        Self::from_contract_selected_with_path(contract, None, workflow_name)
+    }
+
+    pub fn from_contract_selected_with_path(
+        contract: &'a Contract,
+        contract_path: Option<&Path>,
+        workflow_name: Option<&str>,
+    ) -> Option<Self> {
         let (name, _) = contract.selected_workflow(workflow_name)?;
-        Self::from_contract_named(contract, name)
+        Self::from_contract_named_with_path(contract, contract_path, name)
     }
 
     pub fn list_from_contract(contract: &'a Contract) -> Vec<ListedWorkflowSummary<'a>> {
+        Self::list_from_contract_with_path(contract, None)
+    }
+
+    pub fn list_from_contract_with_path(
+        contract: &'a Contract,
+        contract_path: Option<&Path>,
+    ) -> Vec<ListedWorkflowSummary<'a>> {
         let default_name = contract
             .workflows
             .as_ref()
@@ -2340,7 +2370,12 @@ impl<'a> WorkflowSummary<'a> {
                     .items
                     .keys()
                     .filter_map(|name| {
-                        Self::from_contract_named(contract, name.as_str()).map(|workflow| {
+                        Self::from_contract_named_with_path(
+                            contract,
+                            contract_path,
+                            name.as_str(),
+                        )
+                        .map(|workflow| {
                             ListedWorkflowSummary {
                                 default: default_name == Some(name.as_str()),
                                 workflow,
@@ -2355,11 +2390,12 @@ impl<'a> WorkflowSummary<'a> {
 
 fn workflow_surface_host_url(
     contract: &Contract,
+    contract_path: Option<&Path>,
     task_name: &str,
     surface_name: &str,
 ) -> Option<String> {
     let task = contract.tasks.get(task_name)?;
-    let backend = task.workflow_backend(contract.execution.as_ref());
+    let backend = workflow_surface_backend(contract, contract_path, task_name, task)?;
     let runtime = task.service_runtime_for_backend(backend)?;
     if !runtime.surfaces.contains_name(surface_name) {
         return None;
@@ -2377,6 +2413,32 @@ fn workflow_surface_host_url(
         }
         crate::schema::TaskRuntimeProtocol::Tcp => Some(format!("tcp://{}:{}", host.address, port)),
     }
+}
+
+fn workflow_surface_backend(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    task_name: &str,
+    task: &TaskSpec,
+) -> Option<Backend> {
+    if let Some(contract_path) = contract_path {
+        let backend = match resolve_execution_backend_with_contract_path(
+            contract,
+            task_name,
+            ExecutionOverrides::default(),
+            Some(contract_path),
+        )
+        .ok()?
+        {
+            ResolvedExecutionBackend::Native { .. } => Backend::Native,
+            ResolvedExecutionBackend::Container { .. } => Backend::Container,
+            ResolvedExecutionBackend::Remote { .. }
+            | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
+        };
+        return Some(backend);
+    }
+
+    Some(task.workflow_backend(contract.execution.as_ref()))
 }
 
 impl<'a> AgentSummary<'a> {

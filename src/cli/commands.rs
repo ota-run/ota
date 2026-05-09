@@ -12071,7 +12071,10 @@ pub fn workflows(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let workflows = WorkflowSummary::list_from_contract(&target.contract);
+                let workflows = WorkflowSummary::list_from_contract_with_path(
+                    &target.contract,
+                    Some(&target.contract_path),
+                );
                 let default = target
                     .contract
                     .workflows
@@ -12145,8 +12148,10 @@ pub fn workflows(
 
                     let mut member_results = Vec::new();
                     for (member, member_target) in &member_targets {
-                        let member_workflows =
-                            WorkflowSummary::list_from_contract(&member_target.contract);
+                        let member_workflows = WorkflowSummary::list_from_contract_with_path(
+                            &member_target.contract,
+                            Some(&member_target.contract_path),
+                        );
                         let member_default = member_target
                             .contract
                             .workflows
@@ -12246,7 +12251,10 @@ pub fn workflows(
 
                 let mut member_results = Vec::new();
                 for (member, target) in &member_targets {
-                    let workflows = WorkflowSummary::list_from_contract(&target.contract);
+                    let workflows = WorkflowSummary::list_from_contract_with_path(
+                        &target.contract,
+                        Some(&target.contract_path),
+                    );
                     let default = target
                         .contract
                         .workflows
@@ -48372,8 +48380,9 @@ fn resolve_selected_workflow_summary<'a>(
             workflow_name,
         ));
     }
-    Ok(WorkflowSummary::from_contract_selected(
+    Ok(WorkflowSummary::from_contract_selected_with_path(
         contract,
+        Some(contract_path),
         workflow_name,
     ))
 }
