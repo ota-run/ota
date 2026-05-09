@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- made starter-agent inference explicit in `ota detect --dry-run` and detector-led `ota init --dry-run`: both previews now render an `Agent boundary` outcome (`Inferred`, `Partially inferred`, or `Omitted`) so repos without a safe inferred task see why the starter omits `agent` instead of having to reverse-engineer that omission from the YAML preview
 - added first-class task launch sources: tasks can now declare structured `launch` in addition to
   shell `run` and `script`, with `kind: command` for inspectable packaged-command entrypoints and
   a narrow `kind: container` slice for packaged service runtimes that still preserve

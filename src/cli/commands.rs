@@ -173,9 +173,10 @@ pub(crate) use self::init_starter::{
     NodePackageManager, PythonTestRunner, StarterPack, StarterPackConfig, StarterPackOptions,
 };
 use self::init_starter::{
-    apply_detected_agent_boundary, apply_detected_starter_contract_defaults,
-    apply_inferred_init_env_sources, bootstrap_init_contract, starter_pack_advisory,
-    starter_pack_catalog, starter_pack_contract,
+    StarterAgentBoundaryOutcome, StarterAgentBoundaryOutcomeKind, apply_detected_agent_boundary,
+    apply_detected_starter_contract_defaults, apply_inferred_init_env_sources,
+    bootstrap_init_contract, starter_agent_boundary_outcome_from_detect_report,
+    starter_pack_advisory, starter_pack_catalog, starter_pack_contract,
 };
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, normalize_workspace_doctor_report, render_check_summary_text,
@@ -21285,6 +21286,7 @@ pub fn detect(
                     selected_detect_comparison(comparison.as_ref(), &report, &selected_fields);
                 let mut preview_contract = report.contract.clone();
                 apply_detected_starter_contract_defaults(&mut preview_contract, &report);
+                let agent_boundary = starter_agent_boundary_outcome_from_detect_report(&report);
                 let yaml = serde_yaml::to_string(&preview_contract)
                     .expect("serializing detected contract should not fail");
                 match format {
@@ -21322,6 +21324,13 @@ pub fn detect(
                                 comparison_mode,
                             );
                         }
+                        append_agent_boundary_outcome_section(
+                            &mut stdout,
+                            &preview_contract,
+                            &agent_boundary,
+                            &report.root,
+                            AgentBoundaryRenderContext::DetectPreview,
+                        );
                         let next_lines = detect_preview_next_steps(
                             comparison_mode,
                             &compact_root_display,
@@ -26870,6 +26879,7 @@ fn render_init(
     } else {
         bootstrap_init_contract(&report)
     };
+    let agent_boundary = starter_agent_boundary_outcome_from_detect_report(&report);
     let mut preview_detected_contract = if mode == "detected" || mode == "pack" {
         report.contract.clone()
     } else {
@@ -27178,10 +27188,28 @@ fn render_init(
                 ));
                 render_init_pack_advisory_text(&mut stdout, pack_advisory.as_ref());
             }
+            stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+            stdout.push_str(&stylize_yaml_preview(review_yaml.trim_end()));
+            if mode == "blank" {
+                stdout.push_str(
+                    "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
+                );
+            }
+            render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
+            if pack.is_none() {
+                append_agent_boundary_outcome_section(
+                    &mut stdout,
+                    &bootstrap_contract,
+                    &agent_boundary,
+                    &report.root,
+                    AgentBoundaryRenderContext::InitPreview,
+                );
+            }
             if pack.is_some() || mode == "blank" {
                 stdout.push_str(&format!(
-                    "\n{} review this starter contract, edit it if needed, then run `{}`",
-                    paint_next_header(),
+                    "\n\n{} {} review this starter contract, edit it if needed, then run `{}`",
+                    primary_warn_marker(),
+                    paint_key("Next:"),
                     highlighted_init,
                 ));
             } else {
@@ -27192,14 +27220,6 @@ fn render_init(
                     format!("run `{highlighted_init}` to write this starter contract"),
                 ]));
             }
-            stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
-            stdout.push_str(&stylize_yaml_preview(review_yaml.trim_end()));
-            if mode == "blank" {
-                stdout.push_str(
-                    "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
-                );
-            }
-            render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
             CommandOutput::success(stdout)
         }
         OutputFormat::Json => CommandOutput::success(to_json(&InitSuccess {
@@ -27445,6 +27465,226 @@ fn render_detect_comparison_source_detail(change: &DetectComparisonChange) -> Op
         detail.push(']');
     }
     Some(detail)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentBoundaryRenderContext {
+    DetectPreview,
+    InitPreview,
+}
+
+fn append_agent_boundary_outcome_section(
+    stdout: &mut String,
+    contract: &DetectContract,
+    outcome: &StarterAgentBoundaryOutcome,
+    repo_root: &Path,
+    context: AgentBoundaryRenderContext,
+) {
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Agent boundary")));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        match outcome.kind {
+            StarterAgentBoundaryOutcomeKind::Inferred => primary_success_marker(),
+            StarterAgentBoundaryOutcomeKind::PartiallyInferred
+            | StarterAgentBoundaryOutcomeKind::Omitted => primary_warn_marker(),
+        },
+        match outcome.kind {
+            StarterAgentBoundaryOutcomeKind::Inferred => "Inferred",
+            StarterAgentBoundaryOutcomeKind::PartiallyInferred => "Partially inferred",
+            StarterAgentBoundaryOutcomeKind::Omitted => "Omitted",
+        }
+    ));
+
+    stdout.push_str(&format!("\n{}", paint_key("Why:")));
+    for line in agent_boundary_why_lines(contract, outcome, context) {
+        stdout.push_str(&format!("\n {}  {}", summary_bullet(), line));
+    }
+
+    if outcome.kind != StarterAgentBoundaryOutcomeKind::Omitted {
+        stdout.push_str(&format!("\n{}", paint_key("Boundary:")));
+        if !outcome.safe_tasks.is_empty() {
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("safe_tasks:"),
+                render_inline_code_list(&outcome.safe_tasks)
+            ));
+        }
+        if !outcome.writable_paths.is_empty() {
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("writable_paths:"),
+                render_inline_code_list(&outcome.writable_paths)
+            ));
+        }
+        if !outcome.protected_paths.is_empty() {
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("protected_paths:"),
+                render_inline_code_list(&outcome.protected_paths)
+            ));
+        }
+    }
+
+    stdout.push_str(&format_next_timeline(&agent_boundary_next_steps(
+        outcome, repo_root, context,
+    )));
+}
+
+fn agent_boundary_why_lines(
+    contract: &DetectContract,
+    outcome: &StarterAgentBoundaryOutcome,
+    context: AgentBoundaryRenderContext,
+) -> Vec<String> {
+    let unsafe_tasks = contract
+        .tasks
+        .iter()
+        .filter(|(name, _)| !outcome.safe_tasks.iter().any(|safe| safe == *name))
+        .collect::<Vec<_>>();
+    let unsafe_task_line = agent_boundary_unsafe_task_line(&unsafe_tasks, context);
+
+    match (context, outcome.kind) {
+        (_, StarterAgentBoundaryOutcomeKind::Inferred) => {
+            let task_line = if outcome.safe_tasks.len() == 1 {
+                format!(
+                    "agent-safe task {} was inferred from repo signals",
+                    paint_backticked_code(&outcome.safe_tasks[0])
+                )
+            } else {
+                format!(
+                    "agent-safe tasks {} were inferred from repo signals",
+                    render_inline_code_list(&outcome.safe_tasks)
+                )
+            };
+            vec![
+                task_line,
+                String::from(
+                    "writable and protected path defaults were inferred from repo signals",
+                ),
+            ]
+        }
+        (
+            AgentBoundaryRenderContext::DetectPreview,
+            StarterAgentBoundaryOutcomeKind::PartiallyInferred,
+        ) => vec![
+            String::from("writable and protected paths were inferred from repo signals"),
+            String::from("no safe task was inferred yet"),
+        ],
+        (
+            AgentBoundaryRenderContext::InitPreview,
+            StarterAgentBoundaryOutcomeKind::PartiallyInferred,
+        ) => vec![
+            String::from("starter boundary defaults were inferred from repo signals"),
+            String::from("Ota still did not infer a safe task for the agent block"),
+        ],
+        (AgentBoundaryRenderContext::DetectPreview, StarterAgentBoundaryOutcomeKind::Omitted) => {
+            let mut lines = vec![String::from("no safe task was inferred for this repo")];
+            if let Some(line) = unsafe_task_line {
+                lines.push(line);
+            }
+            if unsafe_tasks.len() == 1 {
+                let (_, task) = unsafe_tasks[0];
+                lines.push(format!(
+                    "Ota cannot prove what {} mutates, provisions, or starts",
+                    paint_backticked_code(&task.run)
+                ));
+            } else if !unsafe_tasks.is_empty() {
+                lines.push(String::from(
+                    "Ota cannot prove what the detected tasks mutate, provision, or start",
+                ));
+            }
+            lines
+        }
+        (AgentBoundaryRenderContext::InitPreview, StarterAgentBoundaryOutcomeKind::Omitted) => {
+            let mut lines = vec![String::from(
+                "Ota only writes an inferred `agent` block when at least one safe task is present",
+            )];
+            if let Some(line) = unsafe_task_line {
+                lines.push(line.replace("agent-safe", "safe"));
+            }
+            lines
+        }
+    }
+}
+
+fn agent_boundary_unsafe_task_line(
+    unsafe_tasks: &[(&String, &crate::detector::DetectTask)],
+    context: AgentBoundaryRenderContext,
+) -> Option<String> {
+    if unsafe_tasks.is_empty() {
+        return None;
+    }
+
+    let qualifier = match context {
+        AgentBoundaryRenderContext::DetectPreview => "agent-safe",
+        AgentBoundaryRenderContext::InitPreview => "safe",
+    };
+
+    if unsafe_tasks.len() == 1 {
+        return Some(format!(
+            "detected task {} is not treated as {qualifier} by default",
+            paint_backticked_code(unsafe_tasks[0].0)
+        ));
+    }
+
+    Some(format!(
+        "detected tasks {} are not treated as {qualifier} by default",
+        render_inline_code_list(
+            &unsafe_tasks
+                .iter()
+                .map(|(name, _)| (*name).clone())
+                .collect::<Vec<_>>()
+        )
+    ))
+}
+
+fn agent_boundary_next_steps(
+    outcome: &StarterAgentBoundaryOutcome,
+    repo_root: &Path,
+    context: AgentBoundaryRenderContext,
+) -> Vec<String> {
+    match (context, outcome.kind) {
+        (_, StarterAgentBoundaryOutcomeKind::Inferred) => vec![
+            String::from(
+                "review `agent.writable_paths` and `agent.protected_paths` before trusting automation",
+            ),
+            String::from(
+                "set `agent.inferred_boundary.reviewed: true` after that boundary review is complete",
+            ),
+        ],
+        (AgentBoundaryRenderContext::DetectPreview, StarterAgentBoundaryOutcomeKind::Omitted)
+        | (
+            AgentBoundaryRenderContext::DetectPreview,
+            StarterAgentBoundaryOutcomeKind::PartiallyInferred,
+        ) => vec![
+            String::from(
+                "add or expose one verifier task such as `test`, `typecheck`, or `lint` when it exists",
+            ),
+            String::from("declare `agent.safe_tasks` explicitly after review if needed"),
+            format!(
+                "rerun `{}` to confirm the inferred agent boundary",
+                command_for_repo("ota detect --dry-run", repo_root)
+            ),
+        ],
+        (AgentBoundaryRenderContext::InitPreview, StarterAgentBoundaryOutcomeKind::Omitted)
+        | (
+            AgentBoundaryRenderContext::InitPreview,
+            StarterAgentBoundaryOutcomeKind::PartiallyInferred,
+        ) => vec![
+            String::from(
+                "review whether this repo has a verifier task such as `test`, `typecheck`, or `lint`",
+            ),
+            String::from(
+                "author `agent.safe_tasks` explicitly after the starter contract is written",
+            ),
+            format!(
+                "run `{}` only after the contract declares the agent boundary",
+                command_for_repo("ota agents --write", repo_root)
+            ),
+        ],
+    }
 }
 
 fn repo_contract_write_next_steps(contract_path: &Path) -> Vec<String> {

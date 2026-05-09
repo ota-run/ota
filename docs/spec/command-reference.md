@@ -1232,6 +1232,7 @@ Current behavior:
 - when the detected tasks are confident enough, the starter contract now keeps a derived `agent` block and review notes even when writable-path inference is still partial; ota now combines broader common app/source directories with detector-backed nested project roots and a bounded stack-aware source-root scan so custom code roots can surface in `agent.writable_paths` without falling back to `.`, while detector-backed control files such as manifests and lockfiles now surface explicitly in `agent.protected_paths` and operational directories such as `config`, `database`, `migrations`, `manifests`, `deploy`, and `infra` stay out of the default starter allowlist
 - starter contracts now also carry `agent.inferred_boundary.reviewed: false` plus provenance for the inferred writable and protected paths, so the boundary is visible as inferred state rather than silent starter magic; detector-led init uses `detect:...` provenance, while explicit pack mode uses `init:...` provenance for the starter defaults it owns
 - those starter `agent.notes` now explicitly tell authors to review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before trusting automation
+- detector-led `ota init --dry-run` now renders the same explicit `Agent boundary` outcome as detect preview, so repos without a safe inferred task see why the starter omits `agent` instead of having to infer that omission from the YAML alone
 
 Choosing an init path:
 
@@ -2052,6 +2053,7 @@ Dry-run behavior:
 - when `ota.yaml` already exists, text output leads with the existing-contract comparison and drift review before the inferred contract details
 - existing-contract add/update lines include the detector source and confidence for the proposed value
 - when `ota.yaml` already exists and only drift is present, text output says there are no additive detected changes and points users at merge vs rewrite review
+- text preview now renders an explicit `Agent boundary` outcome: `Inferred` when safe tasks were inferred, `Partially inferred` when only writable/protected boundary defaults were inferred, and `Omitted` when ota intentionally withholds the starter `agent` block because no safe task was inferred
 - does not write anything
 
 Contract preview behavior:

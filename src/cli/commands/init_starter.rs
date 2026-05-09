@@ -718,6 +718,49 @@ fn starter_agent_safe_tasks(contract: &DetectContract) -> Vec<String> {
     safe_tasks
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StarterAgentBoundaryOutcomeKind {
+    Inferred,
+    PartiallyInferred,
+    Omitted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct StarterAgentBoundaryOutcome {
+    pub(super) kind: StarterAgentBoundaryOutcomeKind,
+    pub(super) safe_tasks: Vec<String>,
+    pub(super) writable_paths: Vec<String>,
+    pub(super) protected_paths: Vec<String>,
+}
+
+pub(super) fn starter_agent_boundary_outcome_from_detect_report(
+    report: &DetectReport,
+) -> StarterAgentBoundaryOutcome {
+    let safe_tasks = starter_agent_safe_tasks(&report.contract);
+    let boundary = starter_agent_boundary_inference_for_detect_report(report);
+    starter_agent_boundary_outcome_from_parts(safe_tasks, boundary)
+}
+
+fn starter_agent_boundary_outcome_from_parts(
+    safe_tasks: Vec<String>,
+    boundary: StarterAgentBoundaryInference,
+) -> StarterAgentBoundaryOutcome {
+    let kind = if !safe_tasks.is_empty() {
+        StarterAgentBoundaryOutcomeKind::Inferred
+    } else if !boundary.writable_paths.is_empty() {
+        StarterAgentBoundaryOutcomeKind::PartiallyInferred
+    } else {
+        StarterAgentBoundaryOutcomeKind::Omitted
+    };
+
+    StarterAgentBoundaryOutcome {
+        kind,
+        safe_tasks,
+        writable_paths: boundary.writable_paths,
+        protected_paths: boundary.protected_paths,
+    }
+}
+
 #[derive(Debug, Default)]
 struct StarterAgentBoundaryInference {
     writable_paths: Vec<String>,
