@@ -2063,7 +2063,8 @@ impl TaskSpec {
         }
 
         if let Some(context_name) = self.context.as_deref()
-            && let Some(context) = execution.and_then(|execution| execution.contexts.get(context_name))
+            && let Some(context) =
+                execution.and_then(|execution| execution.contexts.get(context_name))
         {
             return context.backend;
         }

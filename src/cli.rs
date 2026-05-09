@@ -9896,10 +9896,10 @@ tasks:
   setup:
     run: echo ready
 checks:
-  - name: rust-installed
+  - name: contract-identity-check
     kind: precondition
     severity: error
-    run: rustc --version
+    run: echo ok
 "#,
         );
 
@@ -14005,6 +14005,27 @@ tasks:
 "#,
         );
 
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let lsof_path = bin_dir.join(if cfg!(windows) { "lsof.cmd" } else { "lsof" });
+        fs::write(
+            &lsof_path,
+            if cfg!(windows) {
+                "@exit /b 0\r\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            },
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&lsof_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&lsof_path, permissions).unwrap();
+        }
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
         let output = run_with(["ota", "run", "dev", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
@@ -15963,9 +15984,11 @@ workflows:
         let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["path"], missing.display().to_string());
-        assert!(json["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("contract path does not exist")));
+        assert!(
+            json["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("contract path does not exist"))
+        );
     }
 
     #[test]
@@ -18126,7 +18149,46 @@ policies:
         )
         .unwrap();
 
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let node_path = bin_dir.join(if cfg!(windows) { "node.cmd" } else { "node" });
+        fs::write(
+            &node_path,
+            if cfg!(windows) {
+                "@echo v22.11.0\r\n"
+            } else {
+                "#!/bin/sh\necho v22.11.0\n"
+            },
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&node_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&node_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
         let output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
@@ -25084,7 +25146,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("Phase: post-setup diagnosis"));
+        assert!(stdout.contains("Phase: post-up diagnosis"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -25225,7 +25287,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("Phase: post-setup diagnosis"));
+        assert!(stdout.contains("Phase: post-up diagnosis"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
         assert!(bin_dir.path().join("provisioned-tool").exists());
     }
@@ -25530,7 +25592,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["status"], "READY");
-        assert_eq!(json["phase"], "post-setup diagnosis");
+        assert_eq!(json["phase"], "post-up diagnosis");
         assert!(json["findings"].is_array());
         assert_eq!(
             json["receipt"]["contract_identity"]["project"]["name"],
@@ -25924,7 +25986,7 @@ checks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
-        assert!(stdout.contains("Phase: post-setup diagnosis"));
+        assert!(stdout.contains("Phase: post-up diagnosis"));
         assert!(stdout.contains("ERROR  Check failed: health-check"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
@@ -27925,7 +27987,7 @@ tasks:
         assert_eq!(up.exit_code, 0);
         assert!(up_stdout.contains(&format!("UP {}", compact_contract(fixture.file_path()))));
         assert!(up_stdout.contains("READY"));
-        assert!(up_stdout.contains("Phase: post-setup diagnosis"));
+        assert!(up_stdout.contains("Phase: post-up diagnosis"));
         assert!(!up_stdout.contains("\n---\n"));
 
         let detect_fixture = ContractFixture::new_dir();

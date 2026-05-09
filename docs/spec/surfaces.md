@@ -33,6 +33,9 @@ The short version:
 - full listeners keep advanced bind and projection control
 - surfaces remove repeated endpoint truth across several tasks and workflows
 
+For one canonical contract that shows all three together, see
+[`examples/full-contract/ota.yaml`](../../examples/full-contract/ota.yaml).
+
 ## What a surface is
 
 A surface is a reusable runtime endpoint shape.
@@ -61,8 +64,8 @@ Tasks still decide whether they actually expose it.
 
 Large app repos often repeat the same endpoint meaning several times:
 
-- the same backend listener on `dev`, `dev:be`, `dev:ai`, and `start`
-- the same editor listener on `dev` and `dev:fe`
+- the same backend listener on `dev`, `backend`, `worker`, and `start`
+- the same frontend listener on `dev` and `frontend`
 - the same readiness path in several runtime blocks
 - the same workflow expose URL repeated as a literal string
 
@@ -71,6 +74,8 @@ Surfaces let the contract define that endpoint once and attach it where it is ac
 ## Attach surfaces to tasks
 
 Tasks attach declared surfaces through `tasks.<name>.runtime.surfaces`.
+
+### Native list form
 
 Use the list form when the task can publish the surface with defaults:
 
@@ -84,7 +89,7 @@ surfaces:
       kind: http
       path: /healthz/readiness
       timeout: 10000
-  editor:
+  frontend:
     kind: http
     port: 8080
     path: /
@@ -100,15 +105,28 @@ tasks:
       kind: service
       surfaces:
         - backend
-        - editor
+        - frontend
 
-  dev:be:
-    run: pnpm dev:be
+  backend:
+    run: pnpm dev:backend
     runtime:
       kind: service
       surfaces:
         - backend
+
+  frontend:
+    run: pnpm dev:frontend
+    runtime:
+      kind: service
+      surfaces:
+        - frontend
 ```
+
+Native list form is intentionally small.
+The top-level surface owns endpoint meaning.
+Each task only opts into the surfaces it actually publishes.
+
+### Container attachment override
 
 Use the object form when the runtime needs explicit publication:
 
@@ -144,6 +162,11 @@ tasks:
               primary: true
 ```
 
+Container-backed runtimes often need this form because the container bind address and the host
+projection are not always the same endpoint.
+The attachment owns only publication shape.
+It does not redefine what the `site` surface means.
+
 Attachment behavior:
 
 - each attached surface normalizes into the existing runtime listener model internally
@@ -164,6 +187,58 @@ Attachment behavior:
   attached surface is marked `project.host.primary: true`, ota derives runtime readiness from that
   primary surface
 
+### Multi-surface app
+
+Use several surfaces when one task publishes more than one user-facing endpoint.
+Mark the primary host projection when the task needs one canonical readiness target.
+
+```yaml
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+    path: /
+    readiness:
+      kind: http
+      path: /healthz/readiness
+  frontend:
+    kind: http
+    port: 8080
+    path: /
+    readiness:
+      kind: http
+      path: /
+
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          project:
+            host:
+              primary: true
+        frontend:
+          project:
+            host:
+              path: /
+
+  backend:
+    run: pnpm dev:backend
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+
+  frontend:
+    run: pnpm dev:frontend
+    runtime:
+      kind: service
+      surfaces:
+        - frontend
+```
+
 ## Workflow readiness and exposes
 
 Workflows can reference surfaces directly.
@@ -177,14 +252,14 @@ workflows:
     readiness:
       surfaces:
         - backend
-        - editor
+        - frontend
     exposes:
       - surface: backend
-      - surface: editor
+      - surface: frontend
 
   backend:
     run:
-      task: dev:be
+      task: backend
     readiness:
       surfaces:
         - backend
@@ -200,6 +275,30 @@ Current behavior:
   - literal URL strings
   - object form `{ surface: <name> }`
 - surface exposes resolve to the attached run-task host URL instead of repeating a hardcoded URL
+
+## Literal external URLs
+
+Use literal URL probes and exposes when the endpoint is external, third-party, or not owned by an
+Ota task runtime.
+
+```yaml
+readiness:
+  probes:
+    billing-api:
+      kind: http
+      url: https://billing.example.com/health
+      expect_status: 200
+      timeout: 10000
+
+checks:
+  - name: billing-api-ready
+    kind: health
+    severity: warning
+    probe: billing-api
+```
+
+Use surfaces for Ota-owned runtime endpoints.
+Use literal URLs for endpoints that should stay outside Ota's topology model.
 
 ## When to use surfaces
 

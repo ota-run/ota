@@ -2738,6 +2738,17 @@ fn resolve_execution_plan(
     let backend = effective.backend;
     let lifecycle = effective.lifecycle;
     let execution = contract.execution.as_ref();
+    let selected_task_lifecycle = selected_task
+        .and_then(|task_name| contract.tasks.get(task_name))
+        .and_then(|task| task.mode_execution_branch(backend))
+        .and_then(|branch| branch.lifecycle)
+        .is_some();
+    let context_lifecycle = effective
+        .context_name
+        .and_then(|context_name| {
+            execution.and_then(|execution| execution.contexts.get(context_name))
+        })
+        .is_some_and(|context| context.lifecycle.is_some());
     let backend_source = if overrides.backend.is_some() {
         "override"
     } else if selected_task.is_some() {
@@ -2759,12 +2770,9 @@ fn resolve_execution_plan(
     };
     let mut lifecycle_source = if overrides.lifecycle.is_some() {
         String::from("override")
-    } else if selected_task.is_some() && effective.lifecycle.is_some() {
+    } else if selected_task_lifecycle {
         String::from("workflow task")
-    } else if execution
-        .and_then(|execution| execution.default_context.as_deref())
-        .is_some_and(|name| effective.context_name == Some(name) && effective.lifecycle.is_some())
-    {
+    } else if context_lifecycle {
         String::from("context lifecycle")
     } else if contract
         .execution
@@ -12073,7 +12081,7 @@ pub fn workflows(
             Ok(target) if members.is_empty() || members.len() == 1 => {
                 let workflows = WorkflowSummary::list_from_contract_with_path(
                     &target.contract,
-                    Some(&target.contract_path),
+                    &target.contract_path,
                 );
                 let default = target
                     .contract
@@ -12150,7 +12158,7 @@ pub fn workflows(
                     for (member, member_target) in &member_targets {
                         let member_workflows = WorkflowSummary::list_from_contract_with_path(
                             &member_target.contract,
-                            Some(&member_target.contract_path),
+                            &member_target.contract_path,
                         );
                         let member_default = member_target
                             .contract
@@ -12253,7 +12261,7 @@ pub fn workflows(
                 for (member, target) in &member_targets {
                     let workflows = WorkflowSummary::list_from_contract_with_path(
                         &target.contract,
-                        Some(&target.contract_path),
+                        &target.contract_path,
                     );
                     let default = target
                         .contract
@@ -19451,7 +19459,12 @@ pub fn agents(
     let output_path_display = output_path.display().to_string();
     let compact_output_display = compact_path(&normalized_display_path(&output_path), "AGENTS.md");
 
-    let content = render_agents_markdown(&contract, agent.as_ref(), &repo_local_contract_display);
+    let content = render_agents_markdown(
+        &contract,
+        &contract_path,
+        agent.as_ref(),
+        &repo_local_contract_display,
+    );
     let detect_dry_run_raw = command_for_contract("ota detect --dry-run", &contract_path);
     let init_dry_run_raw = command_for_contract("ota init --dry-run", &contract_path);
     let write_raw = command_for_contract("ota agents --write", &contract_path);
@@ -34203,10 +34216,11 @@ fn render_doctor_agent_summary_text(
 
 fn render_agents_markdown(
     contract: &Contract,
+    contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     source_display: &str,
 ) -> String {
-    let workflow = WorkflowSummary::from_contract(contract);
+    let workflow = WorkflowSummary::from_contract_with_path(contract, contract_path);
     let mut output = String::new();
     output.push_str("# AGENTS.md\n\n");
     output.push_str("Generated from `");
@@ -47338,6 +47352,9 @@ execution:
   backends:
     container:
       image: ghcr.io/ota/dev:latest
+tasks:
+  setup:
+    run: "true"
 checks:
   - name: host-health
     kind: health
@@ -48382,7 +48399,7 @@ fn resolve_selected_workflow_summary<'a>(
     }
     Ok(WorkflowSummary::from_contract_selected_with_path(
         contract,
-        Some(contract_path),
+        contract_path,
         workflow_name,
     ))
 }

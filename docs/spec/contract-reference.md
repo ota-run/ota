@@ -929,7 +929,7 @@ surfaces:
       kind: http
       path: /healthz/readiness
       timeout: 10000
-  editor:
+  frontend:
     kind: http
     port: 8080
     path: /
@@ -1666,7 +1666,7 @@ readiness:
       kind: http
       target:
         kind: task
-        name: dev:be
+        name: backend
         listener: backend
         address_view: host
       method: GET

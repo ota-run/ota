@@ -217,8 +217,8 @@ tasks:
       kind: service
       surfaces:
         - backend
-  dev:be:
-    run: pnpm dev:be
+  backend:
+    run: pnpm dev:backend
     runtime:
       kind: service
       surfaces:
@@ -236,7 +236,7 @@ workflows:
       - surface: backend
   backend:
     run:
-      task: dev:be
+      task: backend
     readiness:
       surfaces:
         - backend
