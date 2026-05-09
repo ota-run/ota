@@ -497,8 +497,8 @@ JSON output:
 
 - success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `surfaces`, `services`, and `tasks`
 - top-level `readiness_probes` entries include literal URL or target source details plus the declared HTTP/TCP request contract fields that belong to that probe
-- top-level `surfaces` entries include declared surface kind, port, optional path, and optional readiness contract
-- task runtime entries may include `backend_binding`, `readiness`, `attached_surfaces`, and normalized `listeners`
+- top-level `surfaces` entries include declared surface kind, port, optional label, optional purpose, optional visibility, optional path, and optional readiness contract
+- task runtime entries may include `backend_binding`, `readiness`, `attached_surfaces`, additive `surface_attachments`, and normalized `listeners`
 - task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
 

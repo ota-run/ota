@@ -923,6 +923,9 @@ shorthand and full listeners, see [surfaces.md](surfaces.md).
 surfaces:
   backend:
     kind: http
+    label: Backend API
+    purpose: Primary application API for local development
+    visibility: internal
     port: 5678
     path: /
     readiness:
@@ -931,6 +934,9 @@ surfaces:
       timeout: 10000
   frontend:
     kind: http
+    label: Editor UI
+    purpose: Browser-facing editor surface
+    visibility: public
     port: 8080
     path: /
     readiness:
@@ -941,9 +947,12 @@ surfaces:
 
 Fields:
 
-- `<name>.kind`: required `http` or `tcp`
+- `<name>.kind`: required `http`, `https`, or `tcp`
 - `<name>.port`: required fixed port number
-- `<name>.path`: optional HTTP path; defaults to `/` for HTTP surfaces
+- `<name>.label`: optional short operator-facing label for command and topology rendering
+- `<name>.purpose`: optional short purpose string for operators and docs
+- `<name>.visibility`: optional `public` or `internal` metadata for output and UX grouping
+- `<name>.path`: optional HTTP/HTTPS path; defaults to `/` for HTTP/HTTPS surfaces
 - `<name>.readiness`: optional reusable readiness contract for that surface
 - `<name>.readiness.kind`: required when readiness is declared; `http` or `tcp`
 - `<name>.readiness.path`: optional for HTTP readiness when the surface path is already sufficient;
@@ -964,9 +973,13 @@ Current behavior:
   `tasks.<name>.runtime.surfaces`
 - attached surfaces normalize into the existing runtime listener model with conservative loopback
   defaults
+- `kind: https` reuses the existing HTTPS listener protocol and HTTP readiness semantics without
+  inventing separate certificate or trust-management contract fields
 - workflows may reference attached surfaces for readiness and exposes without repeating host URLs
 - `ota execution topology` reports both top-level declared surfaces and the normalized listener
   shape on attached runtimes
+- `ota execution topology` also reports additive `surface_attachments` on task runtimes so machine
+  consumers can see whether one attached surface used defaults or explicit bind/project overrides
 
 ## `tasks`
 
@@ -1141,6 +1154,8 @@ Surface attachment rules:
   - `project.host.primary`
 - each attached surface normalizes into the same runtime listener model used by explicit
   `runtime.listeners`
+- topology JSON now also exposes additive `runtime.surface_attachments.<name>` intent alongside the
+  normalized listener truth
 - attached surface names become normalized listener names
 - a runtime must not attach an unknown surface
 - a runtime must not declare `runtime.listeners.<name>` and also attach `runtime.surfaces.<name>`

@@ -371,7 +371,8 @@ Notes:
   exposes the canonical literal-URL or topology-derived source plus the declared HTTP/TCP request
   contract for each probe
 - top-level `surfaces` is present when the contract declares reusable runtime surfaces; it exposes
-  the declared kind, port, optional path, and optional readiness contract for each reusable surface
+  the declared kind, port, optional label, optional purpose, optional visibility, optional path,
+  and optional readiness contract for each reusable surface
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the
   default command-host slice reports `command_host`, while observer-backed task probes report the
   named task plane they resolve through
@@ -434,6 +435,9 @@ Success:
     "backend": {
       "kind": "http",
       "port": 3000,
+      "label": "Backend API",
+      "purpose": "Primary local application API",
+      "visibility": "internal",
       "path": "/",
       "readiness": {
         "kind": "http",
@@ -454,6 +458,24 @@ Success:
           "path": "/health"
         },
         "attached_surfaces": ["backend"],
+        "surface_attachments": {
+          "backend": {
+            "uses_defaults": false,
+            "bind": {
+              "address": "0.0.0.0",
+              "port_mode": "fixed",
+              "port_value": 3000
+            },
+            "project": {
+              "host": {
+                "address": "127.0.0.1",
+                "port_mode": "fixed",
+                "port_value": 3001,
+                "primary": true
+              }
+            }
+          }
+        },
         "listeners": {
           "backend": {
             "protocol": "http",

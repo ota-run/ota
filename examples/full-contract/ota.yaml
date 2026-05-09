@@ -86,6 +86,9 @@ env:
 surfaces:
   site:
     kind: http
+    label: Docs App
+    purpose: Canonical browser-facing application surface
+    visibility: public
     port: 3000
     path: /
     readiness:

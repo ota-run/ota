@@ -2865,9 +2865,13 @@ fn validate_task_runtime_readiness(
                 )));
                 return;
             };
-            if !matches!(listener.protocol, crate::schema::TaskRuntimeProtocol::Http) {
+            if !matches!(
+                listener.protocol,
+                crate::schema::TaskRuntimeProtocol::Http
+                    | crate::schema::TaskRuntimeProtocol::Https
+            ) {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` runtime readiness `kind: http` requires listener `{listener_name}` to use `protocol: http`"
+                    "task `{task_name}` runtime readiness `kind: http` requires listener `{listener_name}` to use `protocol: http` or `protocol: https`"
                 )));
             }
             let Some(path) = readiness.path.as_deref().map(str::trim) else {
@@ -3041,13 +3045,17 @@ fn validate_probe_backed_runtime_listener(
 
     let protocol_matches = match probe_kind {
         crate::schema::ReadinessProbeKind::Http => {
-            matches!(listener.protocol, crate::schema::TaskRuntimeProtocol::Http)
+            matches!(
+                listener.protocol,
+                crate::schema::TaskRuntimeProtocol::Http
+                    | crate::schema::TaskRuntimeProtocol::Https
+            )
         }
         crate::schema::ReadinessProbeKind::Tcp => true,
     };
     if !protocol_matches {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` runtime readiness `probe` requires listener `{selected_listener_name}` to use `protocol: http`"
+            "task `{task_name}` runtime readiness `probe` requires listener `{selected_listener_name}` to use `protocol: http` or `protocol: https`"
         )));
     }
 
@@ -5092,13 +5100,31 @@ fn validate_surfaces(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`surfaces` must not declare an empty surface name",
             ));
         }
+        if surface
+            .label
+            .as_deref()
+            .is_some_and(|label| label.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "`surfaces.{name}.label` must not be empty"
+            )));
+        }
+        if surface
+            .purpose
+            .as_deref()
+            .is_some_and(|purpose| purpose.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "`surfaces.{name}.purpose` must not be empty"
+            )));
+        }
         if surface.port == 0 {
             errors.push(ValidationError::new(format!(
                 "`surfaces.{name}.port` must be between 1 and 65535"
             )));
         }
         match surface.kind {
-            crate::schema::SurfaceKind::Http => {
+            crate::schema::SurfaceKind::Http | crate::schema::SurfaceKind::Https => {
                 if let Some(path) = surface.path.as_deref()
                     && !path.starts_with('/')
                 {
@@ -5110,7 +5136,7 @@ fn validate_surfaces(contract: &Contract, errors: &mut Vec<ValidationError>) {
             crate::schema::SurfaceKind::Tcp => {
                 if surface.path.is_some() {
                     errors.push(ValidationError::new(format!(
-                        "`surfaces.{name}.path` is only supported for `kind: http` surfaces"
+                        "`surfaces.{name}.path` is only supported for `kind: http` or `kind: https` surfaces"
                     )));
                 }
             }
@@ -5122,9 +5148,12 @@ fn validate_surfaces(contract: &Contract, errors: &mut Vec<ValidationError>) {
         match readiness.kind {
             crate::schema::TaskRuntimeReadinessKind::Http => {
                 let effective_path = readiness.path.clone().or_else(|| {
-                    matches!(surface.kind, crate::schema::SurfaceKind::Http)
-                        .then(|| surface.effective_path())
-                        .flatten()
+                    matches!(
+                        surface.kind,
+                        crate::schema::SurfaceKind::Http | crate::schema::SurfaceKind::Https
+                    )
+                    .then(|| surface.effective_path())
+                    .flatten()
                 });
                 if effective_path.is_none() {
                     errors.push(ValidationError::new(format!(
@@ -5523,10 +5552,13 @@ fn validate_task_target_probe_resolution(
             match select_target_listener_for_host_view(producer_task, listener_name) {
                 Ok(Some(listener)) => {
                     if matches!(probe_kind, crate::schema::ReadinessProbeKind::Http)
-                        && !matches!(listener.protocol, TaskRuntimeProtocol::Http)
+                        && !matches!(
+                            listener.protocol,
+                            TaskRuntimeProtocol::Http | TaskRuntimeProtocol::Https
+                        )
                     {
                         errors.push(ValidationError::new(format!(
-                            "`readiness.probes.{probe_name}` uses `kind: http`, but task listener `{}.{listener_name}` does not use `protocol: http`",
+                            "`readiness.probes.{probe_name}` uses `kind: http`, but task listener `{}.{listener_name}` does not use `protocol: http` or `protocol: https`",
                             target.name
                         )));
                     }
@@ -5570,10 +5602,13 @@ fn validate_task_target_probe_resolution(
                 return;
             };
             if matches!(probe_kind, crate::schema::ReadinessProbeKind::Http)
-                && !matches!(listener.protocol, TaskRuntimeProtocol::Http)
+                && !matches!(
+                    listener.protocol,
+                    TaskRuntimeProtocol::Http | TaskRuntimeProtocol::Https
+                )
             {
                 errors.push(ValidationError::new(format!(
-                    "`readiness.probes.{probe_name}` uses `kind: http`, but task listener `{}.{listener_name}` does not use `protocol: http` on backend `{}`",
+                    "`readiness.probes.{probe_name}` uses `kind: http`, but task listener `{}.{listener_name}` does not use `protocol: http` or `protocol: https` on backend `{}`",
                     target.name,
                     probe_observer_backend_name(observer_backend),
                 )));
@@ -6644,6 +6679,40 @@ tasks:
 
         validate_contract(&contract)
             .expect("probe-backed runtime listener selection should validate");
+    }
+
+    #[test]
+    fn accepts_https_surface_with_http_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  docs:
+    kind: https
+    label: Docs Preview
+    purpose: Browser-facing docs preview
+    visibility: public
+    port: 443
+    path: /preview
+    readiness:
+      kind: http
+      path: /health
+      timeout: 5s
+tasks:
+  docs:preview:
+    run: pnpm docs:preview
+    runtime:
+      kind: service
+      surfaces:
+        - docs
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("https surface with http readiness should validate");
     }
 
     #[test]

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- extended reusable runtime surfaces additively: surfaces now support optional UX metadata
+  (`label`, `purpose`, `visibility`), `kind: https` now maps cleanly onto the existing HTTPS
+  listener/readiness model, and `ota execution topology --json` now exposes additive
+  `surface_attachments` intent alongside normalized listener truth
 - consolidated the modern workflow/surface authoring story across examples and docs: the
   `examples/full-contract/ota.yaml` contract now demonstrates listener shorthand for one host-only
   service, reusable top-level `surfaces`, attachment overrides for container publication, and

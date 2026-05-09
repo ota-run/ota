@@ -634,6 +634,8 @@ pub struct ExecutionTopologyRuntimeSummary {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attached_surfaces: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub surface_attachments: BTreeMap<String, ExecutionTopologySurfaceAttachmentSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub listeners: BTreeMap<String, ExecutionTopologyListenerSummary>,
 }
 
@@ -642,9 +644,54 @@ pub struct ExecutionTopologySurfaceSummary {
     pub kind: String,
     pub port: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readiness: Option<ExecutionTopologyReadinessSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceAttachmentSummary {
+    pub uses_defaults: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind: Option<ExecutionTopologySurfaceBindOverrideSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<ExecutionTopologySurfaceProjectionOverrideSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceBindOverrideSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_value: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceProjectionOverrideSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<ExecutionTopologySurfaceHostProjectionOverrideSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologySurfaceHostProjectionOverrideSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_value: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2275,6 +2322,14 @@ pub struct WorkflowSummary<'a> {
     pub exposes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub expose_surfaces: Vec<String>,
+    #[serde(skip)]
+    pub expose_entries: Vec<WorkflowExposeEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowExposeEntry {
+    pub url: String,
+    pub surface: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2311,6 +2366,32 @@ impl<'a> WorkflowSummary<'a> {
         workflow_name: &'a str,
     ) -> Option<Self> {
         let workflow = contract.workflow(workflow_name)?;
+        let mut exposes = Vec::new();
+        let mut expose_surfaces = Vec::new();
+        let mut expose_entries = Vec::new();
+        for expose in &workflow.exposes {
+            match expose {
+                crate::schema::WorkflowExposeSpec::Url(url) => {
+                    exposes.push(url.clone());
+                    expose_entries.push(WorkflowExposeEntry {
+                        url: url.clone(),
+                        surface: None,
+                    });
+                }
+                crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => {
+                    expose_surfaces.push(surface.clone());
+                    if let Some(url) = workflow.run.as_ref().and_then(|run| {
+                        workflow_surface_host_url(contract, contract_path, run.task.as_str(), surface)
+                    }) {
+                        exposes.push(url.clone());
+                        expose_entries.push(WorkflowExposeEntry {
+                            url,
+                            surface: Some(surface.clone()),
+                        });
+                    }
+                }
+            }
+        }
         Some(Self {
             name: workflow_name,
             intent: workflow.intent.as_deref(),
@@ -2321,28 +2402,9 @@ impl<'a> WorkflowSummary<'a> {
             readiness_checks: workflow.readiness.checks.clone(),
             readiness_probes: workflow.readiness.probes.clone(),
             readiness_surfaces: workflow.readiness.surfaces.clone(),
-            exposes: workflow
-                .exposes
-                .iter()
-                .filter_map(|expose| match expose {
-                    crate::schema::WorkflowExposeSpec::Url(url) => Some(url.clone()),
-                    crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => {
-                        workflow.run.as_ref().and_then(|run| {
-                            workflow_surface_host_url(
-                                contract,
-                                contract_path,
-                                run.task.as_str(),
-                                surface,
-                            )
-                        })
-                    }
-                })
-                .collect(),
-            expose_surfaces: workflow
-                .exposes
-                .iter()
-                .filter_map(|expose| expose.surface_name().map(String::from))
-                .collect(),
+            exposes,
+            expose_surfaces,
+            expose_entries,
         })
     }
 
