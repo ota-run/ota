@@ -12016,13 +12016,19 @@ pub fn workflows(
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
+            let unresolved_path = unresolved_contract_target_path(path, file_override);
             return finalize_debug(
                 match format {
                     OutputFormat::Text => {
                         missing_repo_contract_command_output("WORKFLOWS", "ota workflows", &error)
                             .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
                     }
-                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&WorkflowsFailure {
+                        ok: false,
+                        path: &unresolved_path,
+                        errors: Vec::new(),
+                        error: Some(error.to_string()),
+                    })),
                 },
                 debug,
                 vec![String::from("DEBUG command=workflows")],
@@ -36370,6 +36376,75 @@ workflows:
     }
 
     #[test]
+    fn workflow_summary_resolves_surface_exposes_from_default_container_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          runtime:
+            kind: service
+            surfaces:
+              backend:
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 5678
+                project:
+                  host:
+                    address: 127.0.0.1
+                    port:
+                      mode: fixed
+                      value: 3000
+                    path: /app
+                    primary: true
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        let workflow =
+            crate::output::WorkflowSummary::from_contract_selected(&contract, Some("backend"))
+                .expect("workflow summary should exist");
+
+        assert_eq!(
+            workflow.exposes,
+            vec![String::from("http://127.0.0.1:3000/app")]
+        );
+        assert_eq!(workflow.expose_surfaces, vec![String::from("backend")]);
+    }
+
+    #[test]
     fn render_execution_topology_text_surfaces_readiness_probes() {
         let mut readiness_probes = BTreeMap::new();
         readiness_probes.insert(
@@ -56236,6 +56311,19 @@ fn resolve_contract_path(
             discover_contract_path(&current_dir)
         }
     }
+}
+
+fn unresolved_contract_target_path(path: Option<&Path>, file_override: Option<&Path>) -> String {
+    if let Some(file_override) = file_override {
+        return file_override.display().to_string();
+    }
+
+    if let Some(file_override) = std::env::var_os("OTA_FILE") {
+        return Path::new(&file_override).display().to_string();
+    }
+
+    path.map(|path| path.display().to_string())
+        .unwrap_or_else(|| String::from("."))
 }
 
 pub(crate) fn resolve_contract_path_for_completion(

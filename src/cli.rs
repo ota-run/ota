@@ -15953,6 +15953,22 @@ workflows:
     }
 
     #[test]
+    fn workflows_json_missing_explicit_path_returns_structured_failure() {
+        let fixture = TempDir::new().unwrap();
+        let missing = fixture.path().join("ota.yaml");
+
+        let output = run_with(["ota", "workflows", "--json", missing.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["path"], missing.display().to_string());
+        assert!(json["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("contract path does not exist")));
+    }
+
+    #[test]
     fn tasks_json_does_not_infer_default_mode_from_mode_list() {
         let fixture = ContractFixture::new(
             r#"
