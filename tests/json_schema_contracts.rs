@@ -791,7 +791,9 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let task = &repo["tasks"]["items"]["properties"];
-    let task_kind_enum = task["kind"]["enum"].as_array().expect("workspace task kind enum");
+    let task_kind_enum = task["kind"]["enum"]
+        .as_array()
+        .expect("workspace task kind enum");
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
 
     assert!(properties.get("summary").is_some());

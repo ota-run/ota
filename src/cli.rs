@@ -20703,6 +20703,36 @@ name = "fastapi"
     }
 
     #[test]
+    fn detect_infers_pwsh_runtime_for_powershell_script_repos() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("bootstrap.ps1", "Write-Host 'ready'\n");
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("runtimes:"));
+        assert!(preview_stdout.contains("\n  pwsh: '*'"));
+        assert!(!preview_stdout.contains("\n  powershell:"));
+        assert!(preview_stdout.contains("pwsh -File bootstrap.ps1"));
+    }
+
+    #[test]
+    fn init_writes_pwsh_runtime_for_powershell_script_repos() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("bootstrap.ps1", "Write-Host 'ready'\n");
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("runtimes:"));
+        assert!(written.contains("\n  pwsh: '*'"));
+        assert!(!written.contains("\n  powershell:"));
+        assert!(written.contains("pwsh -File bootstrap.ps1"));
+    }
+
+    #[test]
     fn detect_reports_partially_inferred_agent_boundary_when_paths_exist_without_safe_task() {
         let fixture = ContractFixture::new_dir();
         fixture.write(

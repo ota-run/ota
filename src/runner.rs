@@ -4575,8 +4575,11 @@ fn remove_existing_launch_container_if_present(
     let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
     if inspect.exit_code == 0 {
         let labels = persistent_container_labels_for_name(task_name, engine, container_name)?;
-        if !launch_container_name_matches_owned_managed_family(&labels, repo_ownership_token, family_token)
-        {
+        if !launch_container_name_matches_owned_managed_family(
+            &labels,
+            repo_ownership_token,
+            family_token,
+        ) {
             return Err(RunError::LaunchContainerNameConflict {
                 task: task_name.to_string(),
                 container: container_name.to_string(),

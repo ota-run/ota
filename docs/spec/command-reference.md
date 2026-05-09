@@ -2054,6 +2054,7 @@ Dry-run behavior:
 - existing-contract add/update lines include the detector source and confidence for the proposed value
 - when `ota.yaml` already exists and only drift is present, text output says there are no additive detected changes and points users at merge vs rewrite review
 - text preview now renders an explicit `Agent boundary` outcome: `Inferred` when safe tasks were inferred, `Partially inferred` when only writable/protected boundary defaults were inferred, and `Omitted` when ota intentionally withholds the starter `agent` block because no safe task was inferred
+- PowerShell-script detection now emits `runtimes.pwsh` for `pwsh`-based repos instead of the legacy `runtimes.powershell` key, so the inferred contract and later runtime probes stay aligned with the detected task/tool surface
 - does not write anything
 
 Contract preview behavior:
