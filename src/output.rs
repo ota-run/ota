@@ -564,6 +564,8 @@ pub struct ExecutionTopologySuccess<'a> {
     pub declared_execution: Option<ExecutionSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub shared_backends: Vec<ExecutionTopologySharedBackendSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub readiness_probes: BTreeMap<String, ExecutionTopologyProbeSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<ServiceSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -627,6 +629,52 @@ pub struct ExecutionTopologyRuntimeSummary {
     pub readiness: Option<ExecutionTopologyReadinessSummary>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub listeners: BTreeMap<String, ExecutionTopologyListenerSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyProbeSummary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<ExecutionTopologyProbeTargetSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success: Option<ExecutionTopologyReadinessSuccessSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<ExecutionTopologyReadinessBodySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyProbeTargetSummary {
+    pub kind: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address_view: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observer: Option<ExecutionTopologyProbeObserverSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_plane: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionTopologyProbeObserverSummary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

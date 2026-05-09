@@ -29,8 +29,8 @@ use std::thread;
 use serde::{Deserialize, Serialize};
 
 use crate::doctor::{
-    AdapterBootstrapDiagnostics, DoctorReport, Finding, FindingSeverity, ProvisioningDiagnostics,
-    DoctorMode, diagnose_contract_with_mode_and_lifecycle_for_workflow,
+    AdapterBootstrapDiagnostics, DoctorMode, DoctorReport, Finding, FindingSeverity,
+    ProvisioningDiagnostics, diagnose_contract_with_mode_and_lifecycle_for_workflow,
 };
 use crate::execution::{format_backend, format_lifecycle};
 use crate::output::DoctorVerdict;
@@ -723,7 +723,10 @@ pub fn validate_workspace_shape(
             name: name.clone(),
             path: repo_root,
             contract_path,
-            workflow: repo.workflow.as_ref().map(|workflow| workflow.trim().to_string()),
+            workflow: repo
+                .workflow
+                .as_ref()
+                .map(|workflow| workflow.trim().to_string()),
             required: repo.required,
             depends_on: repo.depends_on.clone(),
             present,
@@ -1717,7 +1720,12 @@ repos:
             errors.errors()[0].to_string(),
             format!(
                 "workspace repo `web` workflow `backend` is not declared in contract `{}`",
-                fixture.path().join("apps").join("web").join("ota.yaml").display()
+                fixture
+                    .path()
+                    .join("apps")
+                    .join("web")
+                    .join("ota.yaml")
+                    .display()
             )
         );
     }

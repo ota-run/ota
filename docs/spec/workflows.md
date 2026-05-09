@@ -73,7 +73,8 @@ readiness:
     app-ready:
       kind: http
       url: http://127.0.0.1:5678/healthz/readiness
-      expect_status: 200
+      success:
+        status: [200]
       timeout: 10000
 
 workflows:
@@ -228,10 +229,32 @@ Workflows can now reference reusable `readiness.probes` directly.
 
 Use that when:
 
-- one HTTP readiness probe should be shared by more than one workflow
+- one readiness probe should be shared by more than one workflow
 - the same readiness target should also appear as a named `check`
 - you want `doctor` to validate workflow readiness without forcing an inline shell command such as
   `node -e "fetch(...)"` into the contract
+
+Use literal `url` probes when the endpoint is external or not modeled by Ota topology yet.
+
+Use target-based probes when the endpoint already belongs to:
+
+- one declared task listener
+- one declared service endpoint
+- one canonical local topology path whose host, port, and endpoint identity should not drift from
+  the rest of the contract
+
+Reusable HTTP probes use the same canonical request surface as runtime/service readiness:
+
+- `method`
+- `headers`
+- `success.status`
+- `body.contains`
+
+Success-rule authoring is flexible:
+
+- omit both `expect_status` and `success.status` for the normal default `200`
+- use `expect_status` when one shorthand status is clearer
+- use `success.status` when you want multiple accepted statuses
 
 Use `checks[].probe` when the same underlying probe should also participate in the explicit
 `ota check` surface with a named severity.

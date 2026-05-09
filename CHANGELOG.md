@@ -36,6 +36,38 @@
   keep `readiness.listener` as an explicit non-default listener selector, and ota validates that
   selected listener as the real HTTP service surface instead of rejecting the field or silently
   collapsing back to the primary listener
+- added topology-derived readiness probes on top-level `readiness.probes`: probes can now resolve
+  from declared task listeners or service endpoints instead of copying host/port URLs, while
+  `ota execution topology` now also surfaces the task-probe reachability plane explicitly as
+  `target.resolution_plane: command_host` so machine consumers can distinguish the shipped
+  command-plane host-view slice from broader task-target semantics
+  literal `url` probes remain supported for external endpoints and quick-start adoption
+- extended task-target readiness probes with first-class observer-task resolution: top-level
+  probes may now declare `target.observer.kind: task` plus `target.observer.task` so `host`,
+  `topology`, and `internal` task views resolve exactly from that named task's effective backend
+  plane instead of pretending the invoking host process sees every topology the same way
+- tightened observer-backed probe reuse and timeout behavior: contract-level reusable probe
+  resolution now preserves observer-backed task probe contracts without forcing host-view endpoint
+  resolution, rejects unknown observer tasks/listeners/service endpoints even on the contract-only
+  path, and observer-backed backend probe commands now return deterministic timeout status instead
+  of collapsing Python fallback timeouts into generic failures; the generated Python probe branches
+  now preserve that timeout classification instead of short-circuiting it through unconditional
+  shell success/failure glue
+- tightened topology-derived task-probe validation so `ota validate` now rejects task targets that
+  name one host-view listener without a real `project.host`, a fixed projected host port, or
+  `protocol: http` when the probe itself is `kind: http`, instead of deferring those failures to
+  runtime resolution
+- aligned reusable HTTP probes with the canonical readiness request model: `readiness.probes`
+  now supports `method`, `headers`, `success.status`, and `body.contains` in addition to the
+  older single-status shorthand, so literal and topology-derived probes can own the full HTTP
+  readiness contract instead of collapsing to path-plus-status only
+- extended `ota execution topology` with first-class `readiness_probes` output so the declared
+  machine-facing graph now exposes reusable probe definitions directly, including literal-vs-target
+  source details and the declared HTTP/TCP request contract, instead of forcing consumers to infer
+  probe truth indirectly from runtime/workflow references
+- clarified probe authoring guidance so docs now say explicitly that Ota supports all three HTTP
+  success styles: omit both fields for default `200`, use `expect_status` as the one-status
+  shorthand, or use `success.status` when the fuller status-list model is clearer
 - added a dedicated workflows concept page so the docs now explain what repo workflows are, when to add them, why they exist beyond tasks, and how they relate to `ota up`, `ota doctor`, and `agent.default_task`
 - clarified workflow summary text so repo command output now labels the surfaced workflow neutrally as `Name` instead of incorrectly calling an explicitly selected `--workflow <name>` path the repo `Default`
 - fixed workflow-scoped readiness semantics so `ota up --workflow <name>` and workspace `repos.<name>.workflow` now keep the final service and post-up diagnosis scoped to the selected workflow instead of falling back to repo-wide blockers, and workflow run selection no longer substitutes `agent.default_task` / `agent.entrypoint` when a workflow omits `run.task`

@@ -568,7 +568,7 @@ Current behavior:
 - for `manager.kind: compose`, `ota doctor` derives `start/stop/healthcheck` commands from compose metadata
 - for `manager.kind: host`, `ota doctor` runs healthchecks in the resolved host command context
 - `services.<name>.readiness.from` with a named endpoint projection validates readiness from that execution context
-- `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same HTTP request/timeout truth as checks and workflows while `from` still selects the service endpoint projection
+- `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same transport and timeout truth as checks and workflows while `from` still selects the service endpoint projection
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
@@ -1203,7 +1203,7 @@ Current `runtime.readiness` support for service tasks:
 
 - `probe: <name>`
   - references one top-level `readiness.probes.<name>` declaration
-  - reuses that probe's HTTP request and timeout contract while the selected listener still determines the runtime endpoint
+  - reuses that probe's transport and timeout contract while the selected listener still determines the runtime endpoint
   - may optionally declare `listener` when the readiness target should bind to one non-default runtime listener explicitly
   - may still declare `interval`, `retries`, and `start_period` to control polling semantics for this runtime
   - must not also declare inline `kind`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
@@ -1543,25 +1543,71 @@ readiness:
   probes:
     backend-ready:
       kind: http
-      url: http://127.0.0.1:5678/healthz/readiness
-      expect_status: 200
+      target:
+        kind: task
+        name: dev:be
+        listener: backend
+        address_view: host
+      method: GET
+      path: /healthz/readiness
+      headers:
+        x-ota-probe: workflow
+      success:
+        status: [200]
       timeout: 10000
 ```
 
 Fields:
 
-- `probes.<name>.kind`: currently `http`
-- `probes.<name>.url`: required absolute `http://` URL
-- `probes.<name>.expect_status`: optional expected HTTP status; defaults to `200` when omitted
+- `probes.<name>.kind`: `http` or `tcp`
+- `probes.<name>.url`: optional absolute `http://` URL for literal URL probes
+- `probes.<name>.target`: optional topology-derived target
+  - `target.kind`: `task` or `service`
+  - `target.name`: required task or service name
+  - `target.listener`: required for task targets
+  - `target.address_view`: optional for task targets; defaults to `host`
+  - `target.observer`: optional for task targets
+    - `observer.kind`: `command_host` (default) or `task`
+    - `observer.task`: required when `observer.kind: task`
+  - `target.endpoint`: optional for service targets; required when the service declares more than
+    one endpoint
+- `probes.<name>.method`: optional HTTP method (`GET` by default, `HEAD` supported)
+- `probes.<name>.path`: required for target-based `kind: http` probes
+- `probes.<name>.headers`: optional HTTP headers for `kind: http`
+- `probes.<name>.success.status`: optional accepted HTTP status list for `kind: http`
+- `probes.<name>.body.contains`: optional HTTP body substring match for `kind: http`
+- `probes.<name>.expect_status`: optional shorthand for one accepted HTTP status when
+  `success.status` is omitted
 - `probes.<name>.timeout`: required integer timeout in milliseconds
 
 Current behavior:
 
 - top-level probes are canonical reusable readiness definitions
+- literal `url` probes stay first-class for external or intentionally non-topological endpoints
+- target-based probes can resolve from declared task listeners or service endpoints instead of
+  copying host/port values into one URL string
 - `checks[].probe` can reference a named probe instead of repeating a shell command
 - `workflows.<name>.readiness.probes` can reference probes directly when the workflow should be
   ready as soon as those probes pass
-- the first shipped probe kind is intentionally narrow and deterministic: plain `http://` only
+- `tasks.<name>.runtime.readiness.probe` and `services.<name>.readiness.probe` still reuse the
+  named probe transport and timeout contract while keeping their own runtime/service endpoint
+  selection semantics
+- `kind: http` supports literal `url` probes and topology-derived `target` probes
+- `kind: tcp` currently supports topology-derived `target` probes
+- reusable `kind: http` probes now use the same request-shaping surface Ota already ships for
+  runtime and service readiness: `method`, `headers`, `success.status`, and `body.contains`
+- for plain `200`, authors may omit both `expect_status` and `success.status`
+- both `expect_status` and `success.status` are fully supported for non-default success rules:
+  - use `expect_status` when one shorthand status is clearer
+  - use `success.status` when you want multiple accepted statuses
+- task-target probes without `target.observer` still resolve from ota's invoking command plane, so
+  `target.address_view: host` remains the correct default when one published host endpoint is the
+  truth you want to reuse directly
+- task-target probes may now declare `target.observer.kind: task` plus `target.observer.task` when
+  `topology`, `internal`, or one caller-relative `host` view should be resolved exactly as that
+  observer task sees it from its effective backend plane
+- observer-backed task probes reuse the same target-binding semantics ota already ships for task
+  targets instead of inventing a probe-only topology model
 - unsupported schemes such as `https://` are rejected during validation instead of silently
   downgraded
 - probe execution is direct inside ota; it does not depend on `curl`, `node`, or other repo-local
@@ -1580,7 +1626,8 @@ readiness:
     app-ready:
       kind: http
       url: http://127.0.0.1:5678/healthz/readiness
-      expect_status: 200
+      success:
+        status: [200]
       timeout: 10000
 
 workflows:
