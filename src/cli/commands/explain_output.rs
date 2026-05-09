@@ -538,15 +538,17 @@ mod tests {
             severity: FindingSeverity::Error,
             summary: String::from("Check failed: node-installed"),
             why: String::from("the configured `node-installed` check did not finish within 10ms"),
-            next: String::from("raise `checks.timeout` for `node-installed` and rerun `ota doctor`"),
+            next: String::from(
+                "raise `checks.timeout` for `node-installed` and rerun `ota doctor`",
+            ),
         }];
 
         let text = render_explain_steps_text(&findings, Path::new("./ota.yaml"));
         set_plain_mode(false);
 
-        assert!(text.contains(
-            "Why: the configured `node-installed` check did not finish within 10ms"
-        ));
+        assert!(
+            text.contains("Why: the configured `node-installed` check did not finish within 10ms")
+        );
         assert!(!text.contains(
             "Why:\n    - the configured `node-installed` check did not finish within 10ms"
         ));

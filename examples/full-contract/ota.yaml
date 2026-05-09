@@ -153,6 +153,52 @@ tasks:
                 value: 3000
               path: /
               primary: true
+  preview:quickstart:
+    context: host
+    description: Start the packaged preview through a structured command launch
+    category: dev
+    launch:
+      kind: command
+      exe: npx
+      args:
+        - vite
+        - --host
+        - 127.0.0.1
+        - --port
+        - "3000"
+    depends_on:
+      - setup
+    runtime:
+      kind: service
+      surfaces:
+        - site
+  preview:packaged:
+    context: host
+    description: Start the packaged preview image through a structured container launch
+    category: dev
+    launch:
+      kind: container
+      image: ghcr.io/ota/full-contract-docs:latest
+      volumes:
+        - name: full_contract_docs
+          target: /var/lib/full-contract
+    runtime:
+      kind: service
+      surfaces:
+        site:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+              primary: true
   test:
     context: host
     description: Run the validation suite
@@ -181,6 +227,28 @@ workflows:
       task: setup
     run:
       task: dev
+    readiness:
+      surfaces:
+        - site
+    exposes:
+      - surface: site
+  quickstart:
+    intent: quickstart
+    description: Structured packaged-command path for the browser preview
+    setup:
+      task: setup
+    run:
+      task: preview:quickstart
+    readiness:
+      surfaces:
+        - site
+    exposes:
+      - surface: site
+  packaged:
+    intent: packaged_runtime
+    description: Structured packaged-container path for the browser preview
+    run:
+      task: preview:packaged
     readiness:
       surfaces:
         - site

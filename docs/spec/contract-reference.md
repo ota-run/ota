@@ -1077,6 +1077,7 @@ Fields:
 - `context`: optional execution context name
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
+- `launch`: optional structured launch source for inspectable command or packaged container starts
 - `execution`: optional mode-aware execution branches for one task intent
 - `runtime`: optional long-running workload shape for endpoint-bearing tasks
 - `variants`: optional list of conditional task executions
@@ -1094,16 +1095,89 @@ Fields:
 - `modes.<mode>.env`: optional env map merged over task-level `env`
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
+- `modes.<mode>.launch`: optional structured launch override for that mode
 - `modes.<mode>.runtime`: optional runtime/listener override for that mode
 
 `execution` mode rules:
 
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
-- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`
-- when a selected branch omits `run`/`script`, or when no branch exists for the selected mode, ota falls back to the task-level execution body (including OS variants)
+- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`launch`, and `runtime`
+- when a selected branch omits `run`/`script`/`launch`, or when no branch exists for the selected mode, ota falls back to the task-level execution body (including OS variants)
 - use `modes.<mode>` only for mode-specific overrides; you do not need an empty branch such as `modes.native: {}` just to pair with `default_mode: native`
 - `modes.native.lifecycle` and `modes.remote.lifecycle` are invalid; lifecycle is only valid for container execution
+
+`launch` fields:
+
+- `launch.kind`: required `command` or `container`
+- `launch.kind: command`
+  - `launch.exe`: required executable name or path
+  - `launch.args`: optional argument list
+- `launch.kind: container`
+  - `launch.image`: required packaged runtime image
+  - `launch.engine`: optional engine override; defaults to `docker`
+  - `launch.args`: optional container command arguments
+  - `launch.name`: optional stable container name
+  - `launch.remove`: optional boolean; not valid for service runtimes in this slice
+  - `launch.volumes`: optional named-volume mounts
+  - `launch.volumes[].name` or `launch.volumes[].source`: required source identifier
+  - `launch.volumes[].target`: required container path
+
+`launch` rules:
+
+- each task must declare exactly one executable source:
+  - `run`
+  - `script`
+  - `launch`
+- `run` stays the simple shell shorthand
+- `script` stays the multiline shell escape hatch
+- `launch` is for structured, inspectable starts that Ota should render and reason about without
+  hiding everything inside one shell string
+- `launch.kind: command` reuses existing task env, input, receipt, dependency, and agent-safety
+  behavior
+- `launch.kind: container` is a task launch source, not an execution context
+- service tasks that use `launch.kind: container` still treat `runtime.surfaces` as the canonical
+  public endpoint truth; launch must not create a competing published-port contract
+
+Examples:
+
+```yaml
+tasks:
+  quickstart:
+    launch:
+      kind: command
+      exe: npx
+      args: [n8n]
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+
+  packaged:
+    launch:
+      kind: container
+      image: docker.n8n.io/n8nio/n8n
+      volumes:
+        - name: n8n_data
+          target: /home/node/.n8n
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+              path: /
+              primary: true
+```
 
 `runtime` fields:
 

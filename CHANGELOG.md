@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added first-class task launch sources: tasks can now declare structured `launch` in addition to
+  shell `run` and `script`, with `kind: command` for inspectable packaged-command entrypoints and
+  a narrow `kind: container` slice for packaged service runtimes that still preserve
+  `runtime.surfaces` as the canonical publication truth; `ota tasks`, `ota workflows`,
+  `ota execution topology`, workspace task inventory output, receipts, and JSON surfaces now carry
+  launch details additively instead of forcing common runtime front doors into opaque shell strings
 - extended reusable runtime surfaces additively: surfaces now support optional UX metadata
   (`label`, `purpose`, `visibility`), `kind: https` now maps cleanly onto the existing HTTPS
   listener/readiness model, and `ota execution topology --json` now exposes additive

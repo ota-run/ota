@@ -745,6 +745,15 @@ pub enum RunError {
         details: String,
     },
     #[error(
+        "task `{task}` cannot reuse launch container name `{container}` with container engine `{engine}`: {details}"
+    )]
+    LaunchContainerNameConflict {
+        task: String,
+        container: String,
+        engine: String,
+        details: String,
+    },
+    #[error(
         "task `{task}` could not {action} ephemeral container `{container}` using container engine `{engine}`: {details}"
     )]
     EphemeralContainerCleanupFailure {
@@ -3588,6 +3597,20 @@ enum TaskExecutionMode {
     CaptureActivation,
 }
 
+#[derive(Debug, Clone)]
+enum PreparedTaskExecution {
+    Shell {
+        command: String,
+    },
+    NativeCommand {
+        exe: String,
+        args: Vec<String>,
+    },
+    LaunchContainer {
+        launch: crate::schema::TaskContainerLaunchSpec,
+    },
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ResolvedTaskRuntime {
     pub kind: TaskRuntimeKind,
@@ -4232,6 +4255,659 @@ fn run_host_shell_command(
     }
 }
 
+#[derive(Clone, Copy)]
+enum ShellQuoteStyle {
+    Posix,
+    #[cfg(windows)]
+    WindowsCmd,
+}
+
+fn shell_quote_command_argv(
+    backend: &ResolvedExecutionBackend,
+    exe: &str,
+    args: &[String],
+) -> String {
+    let style = match backend {
+        #[cfg(windows)]
+        ResolvedExecutionBackend::Native { .. } => ShellQuoteStyle::WindowsCmd,
+        _ => ShellQuoteStyle::Posix,
+    };
+    let mut rendered = Vec::with_capacity(args.len() + 1);
+    rendered.push(shell_quote_command_word(exe, style));
+    rendered.extend(args.iter().map(|arg| shell_quote_command_word(arg, style)));
+    rendered.join(" ")
+}
+
+fn shell_quote_command_word(value: &str, style: ShellQuoteStyle) -> String {
+    match style {
+        ShellQuoteStyle::Posix => shell_quote(value),
+        #[cfg(windows)]
+        ShellQuoteStyle::WindowsCmd => cmd_quote(value),
+    }
+}
+
+#[cfg(any(windows, test))]
+fn cmd_quote(value: &str) -> String {
+    if value.is_empty() {
+        return String::from("\"\"");
+    }
+
+    let needs_quotes = value.chars().any(|ch| {
+        ch.is_whitespace() || matches!(ch, '"' | '&' | '|' | '<' | '>' | '^' | '(' | ')' | '%')
+    });
+    if !needs_quotes {
+        return value.to_string();
+    }
+
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0usize;
+    for ch in value.chars() {
+        match ch {
+            '\\' => backslashes += 1,
+            '"' => {
+                quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.push_str(&"\\".repeat(backslashes));
+                backslashes = 0;
+                if matches!(ch, '^' | '&' | '|' | '<' | '>' | '(' | ')' | '%') {
+                    quoted.push('^');
+                }
+                quoted.push(ch);
+            }
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes * 2));
+    quoted.push('"');
+    quoted
+}
+
+fn execute_native_launch_command(
+    task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    exe: &str,
+    args: &[String],
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    mode: TaskExecutionMode,
+    backend: &ResolvedExecutionBackend,
+) -> Result<TaskCommandOutput, RunError> {
+    let mut process = Command::new(exe);
+    process
+        .args(args)
+        .current_dir(working_dir)
+        .envs(env_overrides.iter());
+
+    match mode {
+        TaskExecutionMode::Stream {
+            emit_progress,
+            capture_output,
+            live_log,
+        } => {
+            if emit_progress {
+                let interrupt_epoch = current_run_interrupt_epoch();
+                let loader = StreamPhaseLoader::start(&running_loader_label(task_name, backend));
+                let notifier = loader.as_ref().map(|loader| loader.notifier());
+                let mut child = process
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+
+                let stdout_notifier = notifier.clone();
+                let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
+                let stdout_handle = child.stdout.take().map(|stdout| {
+                    thread::spawn(move || {
+                        stream_reader_to_sink(
+                            stdout,
+                            io::stdout(),
+                            stdout_notifier,
+                            capture_output,
+                            stdout_log,
+                        )
+                    })
+                });
+                let stderr_notifier = notifier;
+                let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
+                let stderr_handle = child.stderr.take().map(|stderr| {
+                    thread::spawn(move || {
+                        stream_reader_to_sink(
+                            stderr,
+                            io::stderr(),
+                            stderr_notifier,
+                            capture_output,
+                            stderr_log,
+                        )
+                    })
+                });
+                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
+                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+                let stdout =
+                    join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let stderr =
+                    join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                if let Some(loader) = loader {
+                    loader.stop();
+                }
+                let exit_code = status.code().unwrap_or(1);
+                let interrupted = interruption_observed_since(interrupt_epoch);
+                Ok(TaskCommandOutput {
+                    exit_code,
+                    stdout,
+                    stderr,
+                    target: None,
+                    runtime,
+                    service_termination: None,
+                    execution_note: interruption_execution_note(interrupted, exit_code),
+                    interrupted,
+                })
+            } else {
+                let interrupt_epoch = current_run_interrupt_epoch();
+                let mut child = if capture_output {
+                    process
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                } else {
+                    process
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .spawn()
+                }
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+                let stdout_handle = if capture_output {
+                    let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
+                    child.stdout.take().map(|stdout| {
+                        thread::spawn(move || {
+                            stream_reader_to_sink(stdout, io::stdout(), None, true, stdout_log)
+                        })
+                    })
+                } else {
+                    None
+                };
+                let stderr_handle = if capture_output {
+                    let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
+                    child.stderr.take().map(|stderr| {
+                        thread::spawn(move || {
+                            stream_reader_to_sink(stderr, io::stderr(), None, true, stderr_log)
+                        })
+                    })
+                } else {
+                    None
+                };
+                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
+                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+                let stdout =
+                    join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let stderr =
+                    join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let exit_code = status.code().unwrap_or(1);
+                let interrupted = interruption_observed_since(interrupt_epoch);
+                Ok(TaskCommandOutput {
+                    exit_code,
+                    stdout,
+                    stderr,
+                    target: None,
+                    runtime,
+                    service_termination: None,
+                    execution_note: interruption_execution_note(interrupted, exit_code),
+                    interrupted,
+                })
+            }
+        }
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
+            let interrupt_epoch = current_run_interrupt_epoch();
+            let mut child = process
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                thread::spawn(move || stream_reader_to_sink(stdout, io::sink(), None, true, None))
+            });
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true, None))
+            });
+            let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
+            let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+            let stdout =
+                join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let stderr =
+                join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let exit_code = status.code().unwrap_or(1);
+            let interrupted = interruption_observed_since(interrupt_epoch);
+            Ok(TaskCommandOutput {
+                exit_code,
+                stdout,
+                stderr,
+                target: None,
+                runtime,
+                service_termination: None,
+                execution_note: interruption_execution_note(interrupted, exit_code),
+                interrupted,
+            })
+        }
+    }
+}
+
+fn task_launch_container_shape_seed(
+    launch: &crate::schema::TaskContainerLaunchSpec,
+    listener_publications: &[(String, ContainerPortPublication)],
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    launch.image.hash(&mut hasher);
+    launch.engine.hash(&mut hasher);
+    launch.args.hash(&mut hasher);
+    launch.name.hash(&mut hasher);
+    launch.remove.hash(&mut hasher);
+    for volume in &launch.volumes {
+        (volume.kind as u8).hash(&mut hasher);
+        volume.source.hash(&mut hasher);
+        volume.target.hash(&mut hasher);
+    }
+    for (listener_name, publication) in listener_publications {
+        listener_name.hash(&mut hasher);
+        publication.bind_port.hash(&mut hasher);
+        publication.host_address.hash(&mut hasher);
+        match publication.host_port_mode {
+            TaskRuntimeHostPortMode::Fixed => "fixed".hash(&mut hasher),
+            TaskRuntimeHostPortMode::Auto => "auto".hash(&mut hasher),
+        }
+        publication.host_port.hash(&mut hasher);
+        match publication.protocol {
+            TaskRuntimeProtocol::Http => "http".hash(&mut hasher),
+            TaskRuntimeProtocol::Https => "https".hash(&mut hasher),
+            TaskRuntimeProtocol::Tcp => "tcp".hash(&mut hasher),
+        }
+    }
+    format!("{:x}", hasher.finish())
+}
+
+fn remove_existing_launch_container_if_present(
+    task_name: &str,
+    engine: &str,
+    container_name: &str,
+    repo_ownership_token: &str,
+    family_token: &str,
+) -> Result<(), RunError> {
+    let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
+    if inspect.exit_code == 0 {
+        let labels = persistent_container_labels_for_name(task_name, engine, container_name)?;
+        if !launch_container_name_matches_owned_managed_family(&labels, repo_ownership_token, family_token)
+        {
+            return Err(RunError::LaunchContainerNameConflict {
+                task: task_name.to_string(),
+                container: container_name.to_string(),
+                engine: engine.to_string(),
+                details: launch_container_name_conflict_details(
+                    &labels,
+                    repo_ownership_token,
+                    family_token,
+                ),
+            });
+        }
+        let remove = remove_persistent_container(engine, container_name, task_name)?;
+        if remove.exit_code != 0 {
+            return Err(RunError::PersistentContainerCleanupFailure {
+                task: task_name.to_string(),
+                action: String::from("remove"),
+                container: container_name.to_string(),
+                engine: engine.to_string(),
+                details: container_command_failure_details(
+                    engine,
+                    &["rm", "-f", container_name],
+                    &remove,
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn launch_container_name_matches_owned_managed_family(
+    labels: &BTreeMap<String, String>,
+    repo_ownership_token: &str,
+    family_token: &str,
+) -> bool {
+    labels.get("dev.ota.managed").map(String::as_str) == Some("true")
+        && labels.get("dev.ota.lifecycle").map(String::as_str) == Some("persistent")
+        && labels.get(OTA_REPO_CONTAINER_LABEL_KEY).map(String::as_str)
+            == Some(repo_ownership_token)
+        && labels
+            .get(OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY)
+            .map(String::as_str)
+            == Some(family_token)
+}
+
+fn launch_container_name_conflict_details(
+    labels: &BTreeMap<String, String>,
+    repo_ownership_token: &str,
+    family_token: &str,
+) -> String {
+    if labels.get("dev.ota.managed").map(String::as_str) != Some("true") {
+        return String::from("an existing container with that name is not Ota-managed");
+    }
+    if labels.get("dev.ota.lifecycle").map(String::as_str) != Some("persistent") {
+        return String::from(
+            "an existing Ota-managed container with that name is not a persistent launch container",
+        );
+    }
+    if labels.get(OTA_REPO_CONTAINER_LABEL_KEY).map(String::as_str) != Some(repo_ownership_token) {
+        return String::from(
+            "an existing Ota-managed container with that name belongs to a different repo",
+        );
+    }
+    if labels
+        .get(OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY)
+        .map(String::as_str)
+        != Some(family_token)
+    {
+        return String::from(
+            "an existing Ota-managed container with that name belongs to a different task family",
+        );
+    }
+    String::from("an existing container with that name cannot be safely replaced")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_native_container_launch_command(
+    contract: Option<&Contract>,
+    task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    launch: &crate::schema::TaskContainerLaunchSpec,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    secret_env_names: &BTreeSet<String>,
+    host_port_override: Option<u16>,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    let runtime = runtime.expect("validated container launch should declare runtime");
+    let engine = launch.engine.as_deref().unwrap_or("docker");
+    let repo_ownership_token = repo_ownership_token_for_working_dir(task_name, working_dir)?;
+    if let Some(issue) = probe_container_backend(engine, task_name)? {
+        return Ok(TaskCommandOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: issue,
+            target: None,
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        });
+    }
+
+    let runtime_listener_publications = task_runtime_listener_publications(Some(runtime));
+    let projection = prepare_container_runtime_projection(
+        task_name,
+        Some(runtime),
+        &[],
+        &runtime_listener_publications,
+        false,
+        host_port_override,
+    )?;
+    preflight_container_host_publications(task_name, &projection.listener_publications)?;
+
+    let mut resolved_env = env_overrides.clone();
+    resolved_env.extend(projection.env.clone());
+    extend_missing_env(&mut resolved_env, runtime_bind_env(Some(runtime)));
+
+    let resolved_runtime = resolve_container_task_runtime_from_publications(
+        Some(runtime),
+        &projection.listener_publications,
+    );
+    let family_token = format!("launch:{task_name}");
+    let shape_token = task_launch_container_shape_seed(launch, &projection.listener_publications);
+    let container_name = launch.name.clone().unwrap_or_else(|| {
+        persistent_container_name_for_seed(
+            working_dir,
+            &launch.image,
+            engine,
+            Some(shape_token.as_str()),
+        )
+    });
+    remove_existing_launch_container_if_present(
+        task_name,
+        engine,
+        &container_name,
+        &repo_ownership_token,
+        &family_token,
+    )?;
+
+    let mut create = Command::new(engine);
+    create
+        .arg("create")
+        .arg("-i")
+        .arg("--name")
+        .arg(&container_name)
+        .arg("--label")
+        .arg(OTA_MANAGED_CONTAINER_LABEL)
+        .arg("--label")
+        .arg(OTA_PERSISTENT_CONTAINER_LABEL)
+        .arg("--label")
+        .arg(format!(
+            "{OTA_REPO_CONTAINER_LABEL_KEY}={repo_ownership_token}"
+        ))
+        .arg("--label")
+        .arg(format!(
+            "{OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY}={family_token}"
+        ))
+        .arg("--label")
+        .arg(format!(
+            "{OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY}={shape_token}"
+        ));
+    append_container_publication_args(&mut create, &projection.publications);
+    for volume in &launch.volumes {
+        create
+            .arg("-v")
+            .arg(format!("{}:{}", volume.source, volume.target));
+    }
+    for (name, value) in &resolved_env {
+        if secret_env_names.contains(name) {
+            create.env(name, value);
+            create.arg("--env").arg(name);
+        } else {
+            create.arg("--env").arg(format!("{name}={value}"));
+        }
+    }
+    create.arg(&launch.image);
+    create.args(&launch.args);
+
+    let created = create.output().map_err(|source| RunError::SpawnFailed {
+        task: task_name.to_string(),
+        source,
+    })?;
+    if !created.status.success() {
+        return Ok(TaskCommandOutput {
+            exit_code: created.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&created.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&created.stderr).into_owned(),
+            target: Some(container_name),
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        });
+    }
+
+    let attached = !matches!(mode, TaskExecutionMode::CaptureActivation);
+    let mut start = Command::new(engine);
+    start.arg("start");
+    if attached {
+        start.arg("-ai");
+    }
+    start.arg(&container_name);
+
+    match mode {
+        TaskExecutionMode::Stream {
+            capture_output,
+            live_log,
+            ..
+        } => {
+            let interrupt_epoch = current_run_interrupt_epoch();
+            let mut readiness_probe = None;
+            let output_result = run_streaming_command_with_capture_with_loader_hook_options(
+                &mut start,
+                &running_loader_label_for_backend(task_name, Backend::Native),
+                true,
+                capture_output,
+                live_log.as_ref(),
+                |notifier| {
+                    readiness_probe = start_runtime_readiness_probe(
+                        contract,
+                        Some(runtime),
+                        resolved_runtime.as_ref(),
+                        true,
+                        notifier,
+                        interrupt_epoch,
+                    );
+                },
+            );
+            let output = match output_result {
+                Ok(output) => output,
+                Err(source) => {
+                    return Err(RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    });
+                }
+            };
+            let interrupted = interruption_observed_since(interrupt_epoch);
+            let readiness_observed = readiness_probe
+                .map(RuntimeReadinessProbe::stop_and_collect)
+                .unwrap_or(false);
+            let termination_state =
+                inspect_container_termination_state(task_name, engine, &container_name);
+            let service_termination = classify_container_service_termination(
+                Some(runtime),
+                resolved_runtime.as_ref(),
+                readiness_observed,
+                termination_state.as_ref(),
+                output.exit_code,
+                interrupted,
+                &container_name,
+            );
+            Ok(TaskCommandOutput {
+                exit_code: if service_termination.is_some() && output.exit_code == 0 {
+                    1
+                } else {
+                    output.exit_code
+                },
+                stdout: output.stdout,
+                stderr: output.stderr,
+                target: Some(container_name),
+                runtime: resolved_runtime,
+                service_termination: service_termination.clone(),
+                execution_note: merge_execution_note(
+                    interruption_execution_note(interrupted, output.exit_code),
+                    service_termination
+                        .as_ref()
+                        .map(service_termination_execution_note),
+                ),
+                interrupted,
+            })
+        }
+        TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
+            let interrupt_epoch = current_run_interrupt_epoch();
+            let output = start
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .and_then(|child| child.wait_with_output())
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let readiness_probe = start_runtime_readiness_probe(
+                contract,
+                Some(runtime),
+                resolved_runtime.as_ref(),
+                false,
+                None,
+                interrupt_epoch,
+            );
+            let interrupted = interruption_observed_since(interrupt_epoch);
+            let readiness_observed = readiness_probe
+                .map(RuntimeReadinessProbe::stop_and_collect)
+                .unwrap_or(false);
+            let exit_code = output.status.code().unwrap_or(1);
+            let termination_state =
+                inspect_container_termination_state(task_name, engine, &container_name);
+            let service_termination = classify_container_service_termination(
+                Some(runtime),
+                resolved_runtime.as_ref(),
+                readiness_observed,
+                termination_state.as_ref(),
+                exit_code,
+                interrupted,
+                &container_name,
+            );
+            Ok(TaskCommandOutput {
+                exit_code: if service_termination.is_some() && exit_code == 0 {
+                    1
+                } else {
+                    exit_code
+                },
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: Some(container_name),
+                runtime: resolved_runtime,
+                service_termination: service_termination.clone(),
+                execution_note: merge_execution_note(
+                    interruption_execution_note(interrupted, exit_code),
+                    service_termination
+                        .as_ref()
+                        .map(service_termination_execution_note),
+                ),
+                interrupted,
+            })
+        }
+    }
+}
+
 pub(crate) fn service_start_order(contract: &Contract) -> Vec<String> {
     let mut visited = BTreeSet::new();
     let mut order = Vec::new();
@@ -4424,10 +5100,29 @@ fn execute_task_with_hooks(
     let mut combined_env = env_overrides;
     combined_env.extend(input_resolution.env_overrides.clone());
     let runtime = task.service_runtime_for_backend(backend_kind);
-    let mut command = execution.body.to_string();
-    if !backend_fulfillment_preparation
-        .source_managed_actions
-        .is_empty()
+    let mut shell_command = match execution.launch() {
+        Some(crate::schema::TaskLaunchSpec::Command(command))
+            if !matches!(backend, ResolvedExecutionBackend::Native { .. })
+                || matches!(mode, TaskExecutionMode::CaptureActivation)
+                || !backend_fulfillment_preparation
+                    .source_managed_actions
+                    .is_empty()
+                || path_export.is_some() =>
+        {
+            Some(shell_quote_command_argv(
+                &backend,
+                command.exe.as_str(),
+                &command.args,
+            ))
+        }
+        Some(crate::schema::TaskLaunchSpec::Command(_)) => None,
+        Some(crate::schema::TaskLaunchSpec::Container(_)) => None,
+        None => execution.shell_body().map(str::to_string),
+    };
+    if let Some(command) = shell_command.as_mut()
+        && !backend_fulfillment_preparation
+            .source_managed_actions
+            .is_empty()
     {
         if source_managed_tool_wrappers_required(
             &backend_fulfillment_preparation.source_managed_actions,
@@ -4436,16 +5131,36 @@ fn execute_task_with_hooks(
                 path_export.as_deref(),
             ));
         }
-        command = wrap_command_for_source_managed_actions(
+        *command = wrap_command_for_source_managed_actions(
             command.as_str(),
             &backend_fulfillment_preparation.source_managed_actions,
         );
     }
+    let prepared_execution = match execution.launch() {
+        Some(crate::schema::TaskLaunchSpec::Command(command)) => {
+            if let Some(command) = shell_command {
+                PreparedTaskExecution::Shell { command }
+            } else {
+                PreparedTaskExecution::NativeCommand {
+                    exe: command.exe.clone(),
+                    args: command.args.clone(),
+                }
+            }
+        }
+        Some(crate::schema::TaskLaunchSpec::Container(container)) => {
+            PreparedTaskExecution::LaunchContainer {
+                launch: container.clone(),
+            }
+        }
+        None => PreparedTaskExecution::Shell {
+            command: shell_command.expect("shell execution should provide a command"),
+        },
+    };
     let command_output = execute_task_command(
         Some(contract),
         task_name,
         runtime,
-        command.as_str(),
+        &prepared_execution,
         working_dir,
         &combined_env,
         path_export.as_deref(),
@@ -4954,7 +5669,7 @@ fn execute_task_command(
     contract: Option<&Contract>,
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
-    command: &str,
+    execution: &PreparedTaskExecution,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     path_export: Option<&str>,
@@ -4966,97 +5681,133 @@ fn execute_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
 
-    match backend {
-        ResolvedExecutionBackend::Native { .. } => {
+    match (backend, execution) {
+        (
+            ResolvedExecutionBackend::Native { .. },
+            PreparedTaskExecution::NativeCommand { exe, args },
+        ) => {
             let mut resolved_env = env_overrides.clone();
             extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
-            execute_native_task_command(
+            execute_native_launch_command(
                 task_name,
                 runtime,
-                command,
+                exe,
+                args,
                 working_dir,
                 &resolved_env,
                 mode,
                 backend,
             )
         }
-        ResolvedExecutionBackend::Container {
-            context_name,
-            shared_local_backend,
-            image,
-            engine,
-            lifecycle,
-            memory_bytes,
-            compose_networks,
-            publications,
-            dependency_isolation_paths,
-        } => execute_container_task_command(
+        (
+            ResolvedExecutionBackend::Native { .. },
+            PreparedTaskExecution::LaunchContainer { launch },
+        ) => execute_native_container_launch_command(
             contract,
             task_name,
             runtime,
-            context_name.as_deref(),
-            shared_local_backend
-                .as_ref()
-                .map(|shared| shared.name.as_str()),
-            command,
+            launch,
             working_dir,
             env_overrides,
-            path_export,
             secret_env_names,
-            image,
-            engine,
-            *lifecycle,
-            *memory_bytes,
-            compose_networks,
-            effective_execution_publications(
-                *lifecycle,
-                shared_local_backend.as_ref(),
-                publications,
-            ),
-            dependency_isolation_paths,
-            deferred_backend_fulfillment,
             host_port_override,
             mode,
         ),
-        ResolvedExecutionBackend::Remote {
-            shared_local_backend: _,
-            provider,
-            target,
-            cwd,
-            ssh,
-        } => execute_remote_task_command(
-            task_name,
-            runtime,
-            command,
-            env_overrides,
-            provider,
-            target,
-            cwd.as_deref(),
-            ssh.as_ref(),
-            mode,
-        ),
-        ResolvedExecutionBackend::BackendProvider {
-            shared_local_backend: _,
-            provider,
-            command: provider_command,
-            target,
-            cwd,
-        } => execute_backend_provider_task_command(
-            task_name,
-            command,
-            working_dir,
-            env_overrides,
-            provider,
-            provider_command,
-            target,
-            cwd.as_deref(),
-            if matches!(mode, TaskExecutionMode::CaptureActivation) {
-                BackendProviderCommandContext::Activation
-            } else {
-                BackendProviderCommandContext::Run
-            },
-            mode,
-        ),
+        (_, PreparedTaskExecution::Shell { command, .. }) => match backend {
+            ResolvedExecutionBackend::Native { .. } => {
+                let mut resolved_env = env_overrides.clone();
+                extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
+                execute_native_task_command(
+                    task_name,
+                    runtime,
+                    command,
+                    working_dir,
+                    &resolved_env,
+                    mode,
+                    backend,
+                )
+            }
+            ResolvedExecutionBackend::Container {
+                context_name,
+                shared_local_backend,
+                image,
+                engine,
+                lifecycle,
+                memory_bytes,
+                compose_networks,
+                publications,
+                dependency_isolation_paths,
+            } => execute_container_task_command(
+                contract,
+                task_name,
+                runtime,
+                context_name.as_deref(),
+                shared_local_backend
+                    .as_ref()
+                    .map(|shared| shared.name.as_str()),
+                command,
+                working_dir,
+                env_overrides,
+                path_export,
+                secret_env_names,
+                image,
+                engine,
+                *lifecycle,
+                *memory_bytes,
+                compose_networks,
+                effective_execution_publications(
+                    *lifecycle,
+                    shared_local_backend.as_ref(),
+                    publications,
+                ),
+                dependency_isolation_paths,
+                deferred_backend_fulfillment,
+                host_port_override,
+                mode,
+            ),
+            ResolvedExecutionBackend::Remote {
+                shared_local_backend: _,
+                provider,
+                target,
+                cwd,
+                ssh,
+            } => execute_remote_task_command(
+                task_name,
+                runtime,
+                command,
+                env_overrides,
+                provider,
+                target,
+                cwd.as_deref(),
+                ssh.as_ref(),
+                mode,
+            ),
+            ResolvedExecutionBackend::BackendProvider {
+                shared_local_backend: _,
+                provider,
+                command: provider_command,
+                target,
+                cwd,
+            } => execute_backend_provider_task_command(
+                task_name,
+                command,
+                working_dir,
+                env_overrides,
+                provider,
+                provider_command,
+                target,
+                cwd.as_deref(),
+                if matches!(mode, TaskExecutionMode::CaptureActivation) {
+                    BackendProviderCommandContext::Activation
+                } else {
+                    BackendProviderCommandContext::Run
+                },
+                mode,
+            ),
+        },
+        _ => Err(RunError::InvalidTaskExecution {
+            task: task_name.to_string(),
+        }),
     }
 }
 
@@ -5070,7 +5821,9 @@ pub(crate) fn run_backend_command_captured(
         None,
         task_name,
         None,
-        command,
+        &PreparedTaskExecution::Shell {
+            command: command.to_string(),
+        },
         working_dir,
         &BTreeMap::new(),
         None,
@@ -6880,7 +7633,7 @@ fn ensure_target_producer_state(
     })?;
     let producer_task_command = producer_task
         .resolved_execution_for_backend(producer_backend_kind, current_os)
-        .map(|execution| execution.body.to_string())
+        .map(|execution| execution.preview())
         .ok_or_else(|| RunError::TaskTargetResolutionFailed {
             task: task_name.to_string(),
             target: target_name.to_string(),
@@ -26187,6 +26940,217 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_executes_command_launch() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  quickstart:
+    launch:
+      kind: command
+      exe: sh
+      args:
+        - -c
+        - printf hello && printf error >&2
+"#,
+        );
+
+        let outcome =
+            run_task_captured(&fixture.contract, fixture.file_path(), "quickstart").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.stdout, "hello");
+        assert_eq!(outcome.stderr, "error");
+        assert_eq!(outcome.executed_tasks, vec![String::from("quickstart")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_container_name_conflict_does_not_remove_non_ota_container() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "n8n";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+
+        let repo_token =
+            super::repo_ownership_token_for_working_dir("quickstart", fixture.dir.path()).unwrap();
+        let error = super::remove_existing_launch_container_if_present(
+            "quickstart",
+            docker_path.to_str().unwrap(),
+            container_name,
+            &repo_token,
+            "launch:quickstart",
+        )
+        .unwrap_err();
+
+        match error {
+            RunError::LaunchContainerNameConflict {
+                task,
+                container,
+                details,
+                ..
+            } => {
+                assert_eq!(task, "quickstart");
+                assert_eq!(container, "n8n");
+                assert!(details.contains("not Ota-managed"));
+            }
+            other => panic!("expected launch name conflict, got {other:?}"),
+        }
+        assert!(
+            state_dir.join(format!("{container_name}.path")).exists(),
+            "foreign container should not be removed"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_container_name_replaces_matching_repo_owned_container() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "n8n";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+
+        let repo_token =
+            super::repo_ownership_token_for_working_dir("quickstart", fixture.dir.path()).unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.labels")),
+            format!(
+                "{}\n{}\n{}={}\n{}={}\n{}={}\n",
+                super::OTA_MANAGED_CONTAINER_LABEL,
+                super::OTA_PERSISTENT_CONTAINER_LABEL,
+                super::OTA_REPO_CONTAINER_LABEL_KEY,
+                repo_token,
+                super::OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY,
+                "launch:quickstart",
+                super::OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY,
+                "shape-1",
+            ),
+        )
+        .unwrap();
+
+        super::remove_existing_launch_container_if_present(
+            "quickstart",
+            docker_path.to_str().unwrap(),
+            container_name,
+            &repo_token,
+            "launch:quickstart",
+        )
+        .unwrap();
+
+        assert!(
+            !state_dir.join(format!("{container_name}.path")).exists(),
+            "matching managed launch container should be removed for replacement"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launch_container_name_replaces_repo_owned_container_after_shape_change() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "n8n";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+
+        let repo_token =
+            super::repo_ownership_token_for_working_dir("quickstart", fixture.dir.path()).unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.labels")),
+            format!(
+                "{}\n{}\n{}={}\n{}={}\n{}={}\n",
+                super::OTA_MANAGED_CONTAINER_LABEL,
+                super::OTA_PERSISTENT_CONTAINER_LABEL,
+                super::OTA_REPO_CONTAINER_LABEL_KEY,
+                repo_token,
+                super::OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY,
+                "launch:quickstart",
+                super::OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY,
+                "shape-old",
+            ),
+        )
+        .unwrap();
+
+        super::remove_existing_launch_container_if_present(
+            "quickstart",
+            docker_path.to_str().unwrap(),
+            container_name,
+            &repo_token,
+            "launch:quickstart",
+        )
+        .unwrap();
+
+        assert!(
+            !state_dir.join(format!("{container_name}.path")).exists(),
+            "same-family managed launch container should be removed across shape drift"
+        );
+    }
+
     #[test]
     fn run_task_captured_reports_fixed_native_runtime_endpoint() {
         let _guard = env_mutex_lock();
@@ -38517,6 +39481,19 @@ tasks:
         assert_eq!(
             super::wrap_command_for_source_managed_actions("yq --version", &actions),
             "yq --version"
+        );
+    }
+
+    #[test]
+    fn cmd_quote_quotes_spaces_and_metacharacters() {
+        assert_eq!(super::cmd_quote("npx"), "npx");
+        assert_eq!(
+            super::cmd_quote(r#"C:\Program Files\node\npx.cmd"#),
+            r#""C:\Program Files\node\npx.cmd""#
+        );
+        assert_eq!(
+            super::cmd_quote(r#"hello & goodbye"#),
+            r#""hello ^& goodbye""#
         );
     }
 

@@ -35,11 +35,19 @@ fn load_schema(path: &str) -> Value {
 fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
     let success = &schema["oneOf"][0]["properties"];
+    let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
     let agent_properties = &success["agent"]["properties"];
     let task_properties = &success["tasks"]["items"]["properties"];
     let member_properties = &success["members"]["items"]["properties"];
     let member_agent_properties = &member_properties["agent"]["properties"];
     let member_task_properties = &member_properties["tasks"]["items"]["properties"];
+    let task_kind_enum = task_properties["kind"]
+        .as_object()
+        .and_then(|_| task_properties["kind"]["enum"].as_array())
+        .expect("task kind enum");
+    let task_mode_kind_enum = task_properties["modes"]["items"]["properties"]["kind"]["enum"]
+        .as_array()
+        .expect("task mode kind enum");
 
     assert!(success.get("agent").is_some());
     assert!(success.get("members").is_some());
@@ -58,9 +66,18 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_properties.get("variants").is_some());
     assert!(task_properties.get("default_mode").is_some());
     assert!(task_properties.get("modes").is_some());
+    assert!(task_properties.get("launch").is_some());
+    assert!(task_launch.get("exe").is_some());
+    assert!(task_launch.get("image").is_some());
+    assert!(task_launch.get("volumes").is_some());
+    assert!(task_kind_enum.iter().any(|entry| entry == "command"));
+    assert!(task_kind_enum.iter().any(|entry| entry == "container"));
+    assert!(task_mode_kind_enum.iter().any(|entry| entry == "command"));
+    assert!(task_mode_kind_enum.iter().any(|entry| entry == "container"));
     assert!(member_task_properties.get("requires_services").is_some());
     assert!(member_task_properties.get("default_mode").is_some());
     assert!(member_task_properties.get("modes").is_some());
+    assert!(member_task_properties.get("launch").is_some());
 }
 
 #[test]
@@ -774,6 +791,8 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let task = &repo["tasks"]["items"]["properties"];
+    let task_kind_enum = task["kind"]["enum"].as_array().expect("workspace task kind enum");
+    let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
 
     assert!(properties.get("summary").is_some());
     assert!(repo.get("acquired").is_some());
@@ -787,6 +806,11 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(task.get("after_success").is_some());
     assert!(task.get("after_failure").is_some());
     assert!(task.get("after_always").is_some());
+    assert!(task.get("launch").is_some());
+    assert!(task_launch.get("exe").is_some());
+    assert!(task_launch.get("image").is_some());
+    assert!(task_kind_enum.iter().any(|entry| entry == "command"));
+    assert!(task_kind_enum.iter().any(|entry| entry == "container"));
 }
 
 #[test]

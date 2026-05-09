@@ -108,8 +108,6 @@ tasks:
       cargo fmt --check
       cargo check
       cargo test --lib -- --test-threads=1
-    execution:
-      default_mode: native
     depends_on:
       - setup
     safe_for_agent: true

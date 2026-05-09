@@ -263,6 +263,8 @@ Current behavior:
 - hides `internal: true` tasks by default and includes them only when `--all` is set
 - prints tasks in deterministic order
 - resolves the execution form for the current OS
+- renders structured `launch` sources additively when a task uses command or packaged-container
+  launch instead of shell `run` / `script`
 - includes task metadata when present
 - includes task `env` and `inputs` when present
 - includes task `description` and optional `notes` when present, where `notes` carries purpose and
@@ -276,6 +278,7 @@ Text output:
 
 - header: `TASKS <path>`
 - each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
+- each task may include `Launch` when the resolved execution source is structured `launch`
 - each task may include `env`, `inputs`, and `requires_services`
 - each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
 - each task includes a short execution preview
@@ -287,6 +290,8 @@ JSON output:
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
+- each task may include additive `launch` when the resolved execution source is structured command
+  or packaged-container launch
 - failure: `ok`, `path`, and either `errors` or `error`
 
 ## `ota workflows`
@@ -317,7 +322,7 @@ Text output:
 - header: `WORKFLOWS <path>`
 - overview includes workflow count and the selected default workflow when declared
 - each workflow may include `intent`, `description`, `setup`, `run`, `services`,
-  `readiness_checks`, `readiness_probes`, `readiness_surfaces`, and `exposes`
+  `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, and `exposes`
 - when no workflows are declared, the text output says so explicitly and points users back to
   `ota tasks` or contract authoring instead of ending empty
 
@@ -481,6 +486,8 @@ Current behavior:
 - when `--member` is set, inspects the merged member contract
 - stays read-only
 - reports the contract identity, declared execution surface, shared backends, reusable readiness probes, reusable runtime surfaces, services, normalized runtime listeners, and task target bindings exactly as the repo declares them
+- when tasks use structured `launch`, surfaces render that launch source additively instead of
+  flattening it back into shell-only text
 - when runtimes attach reusable `surfaces`, shows both the declared top-level surfaces and the
   normalized listener truth that those attachments produced
 - task-target readiness probes surface their current reachability plane explicitly; top-level probes report whether they resolve from the invoking command host or from one named observer task plane
@@ -491,13 +498,14 @@ Text output:
 - header: `EXECUTION TOPOLOGY <path>`
 - `Overview` section with project and topology counts
 - `Execution` section when the contract declares execution intent
-- `Shared Backends`, `Readiness Probes`, `Surfaces`, `Services`, and `Tasks` sections with runtime/listener/target detail when present
+- `Shared Backends`, `Readiness Probes`, `Surfaces`, `Services`, and `Tasks` sections with runtime/listener/launch/target detail when present
 
 JSON output:
 
 - success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `surfaces`, `services`, and `tasks`
 - top-level `readiness_probes` entries include literal URL or target source details plus the declared HTTP/TCP request contract fields that belong to that probe
 - top-level `surfaces` entries include declared surface kind, port, optional label, optional purpose, optional visibility, optional path, and optional readiness contract
+- task entries may include additive `launch` when the task uses structured command or container launch
 - task runtime entries may include `backend_binding`, `readiness`, `attached_surfaces`, additive `surface_attachments`, and normalized `listeners`
 - task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
@@ -2245,6 +2253,8 @@ Current behavior:
 - validates workspace shape and present repo contracts
 - preserves workspace dependency order in output
 - lists non-internal task declarations for each acquired repo contract, including task descriptions and declared `after_success`, `after_failure`, and `after_always` hook relationships when the repo contract declares them
+- carries structured task `launch` additively when one repo task uses command or
+  packaged-container launch instead of shell `run` / `script`
 - reports non-acquired repos with `acquired: false` and empty task lists
 - does not execute tasks
 
@@ -2260,7 +2270,7 @@ JSON output:
 - `summary` with `repo_count`, `acquired_count`, and `task_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `depends_on`, `tasks`
-- each task includes: `name`, `kind`, optional `description`, one execution body field (`run` or `script`), `depends_on`, `requires_services`, `after_success`, `after_failure`, `after_always`
+- each task includes: `name`, `kind`, optional `description`, one execution body field (`run` or `script`) or additive `launch`, `depends_on`, `requires_services`, `after_success`, `after_failure`, `after_always`
 
 ## `ota workspace list`
 

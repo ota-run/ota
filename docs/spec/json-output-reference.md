@@ -60,7 +60,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
-- use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything, including reusable readiness probes, reusable runtime surfaces, normalized listeners, and attached surface names
+- use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything, including reusable readiness probes, reusable runtime surfaces, structured task launch sources, normalized listeners, and attached surface names
 - use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
 - use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
 - use `ota assist bind-task --json` when you want a deterministic target-binding proposal or apply result without scraping review text
@@ -373,6 +373,8 @@ Notes:
 - top-level `surfaces` is present when the contract declares reusable runtime surfaces; it exposes
   the declared kind, port, optional label, optional purpose, optional visibility, optional path,
   and optional readiness contract for each reusable surface
+- `tasks[*].launch` is present when one task uses structured `launch` instead of shell `run` or
+  `script`; it exposes the launch kind plus the structured command or packaged container metadata
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the
   default command-host slice reports `command_host`, while observer-backed task probes report the
   named task plane they resolve through
@@ -449,6 +451,11 @@ Success:
   "tasks": [
     {
       "name": "api",
+      "launch": {
+        "kind": "command",
+        "exe": "npx",
+        "args": ["vite", "--host", "127.0.0.1", "--port", "3000"]
+      },
       "runtime": {
         "kind": "service",
         "backend_binding": "workbench",
@@ -1268,11 +1275,16 @@ Success:
   "default": "app",
   "workflows": [
     {
-      "name": "app",
-      "intent": "local_development",
-      "description": "Canonical local app path",
+      "name": "quickstart",
+      "intent": "quickstart",
+      "description": "Structured packaged command path",
       "setup_task": "setup",
-      "run_task": "dev",
+      "run_task": "preview:quickstart",
+      "run_task_launch": {
+        "kind": "command",
+        "exe": "npx",
+        "args": ["vite", "--host", "127.0.0.1", "--port", "3000"]
+      },
       "required_services": ["postgres"],
       "readiness_checks": [],
       "readiness_probes": [],
@@ -1304,6 +1316,7 @@ Notes:
   - `description`
   - `setup_task`
   - `run_task`
+  - `run_task_launch`
   - `required_services`
   - `readiness_checks`
   - `readiness_probes`
@@ -1313,6 +1326,8 @@ Notes:
   - `default`
 - `exposes` contains resolved URL strings; `expose_surfaces` preserves the named surface refs that
   produced them
+- `run_task_launch` preserves the selected run task's structured launch source when that workflow
+  path runs through `launch` instead of shell `run` or `script`
 - when the target is a monorepo root and members are requested, success may include additive
   top-level `members`, each with `member`, optional `default`, and `workflows`
 
@@ -2018,6 +2033,20 @@ selected workflow name as additive `workflow`.
           "after_success": ["verify-lockfile"],
           "after_failure": [],
           "after_always": ["cleanup-temp"]
+        },
+        {
+          "name": "quickstart",
+          "description": "Run the packaged preview command.",
+          "kind": "command",
+          "launch": {
+            "kind": "command",
+            "exe": "npx",
+            "args": ["vite", "--host", "127.0.0.1", "--port", "3000"]
+          },
+          "depends_on": [],
+          "after_success": [],
+          "after_failure": [],
+          "after_always": []
         }
       ]
     }
@@ -2027,8 +2056,10 @@ selected workflow name as additive `workflow`.
 
 Non-acquired repos keep `acquired: false` and `tasks: []`. Each task report can also carry
 `requires_services`, `after_success`, `after_failure`, and `after_always` so automation can see
-the same service and post-outcome task graph that `ota run` executes. When the workspace contract
-pins `repos.<name>.workflow`, each repo item may also include additive `workflow`.
+the same service and post-outcome task graph that `ota run` executes. Structured task launch is
+additive through `tasks[*].launch` when the repo task uses command or packaged-container launch.
+When the workspace contract pins `repos.<name>.workflow`, each repo item may also include additive
+`workflow`.
 
 ## `ota workspace list --json`
 

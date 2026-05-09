@@ -1385,29 +1385,52 @@ fn validate_tasks(
             }
         }
 
-        let has_base_fields = task.run.is_some() || task.script.is_some();
+        let has_base_fields = task.run.is_some() || task.script.is_some() || task.launch.is_some();
         let has_mode_branches = task
             .execution
             .as_ref()
             .is_some_and(|execution| execution.modes.any());
-        match (task.run.as_deref(), task.script.as_deref()) {
-            (Some(run), None) if run.trim().is_empty() => errors.push(ValidationError::new(
+        match (
+            task.run.as_deref(),
+            task.script.as_deref(),
+            task.launch.as_ref(),
+        ) {
+            (Some(run), None, None) if run.trim().is_empty() => errors.push(ValidationError::new(
                 format!("task `{name}` must declare a non-empty `run` command"),
             )),
-            (None, Some(script)) if script.trim().is_empty() => errors.push(ValidationError::new(
-                format!("task `{name}` must declare a non-empty `script` body"),
-            )),
-            (Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+            (None, Some(script), None) if script.trim().is_empty() => {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must declare a non-empty `script` body"
+                )))
+            }
+            (Some(_), Some(_), None) => errors.push(ValidationError::new(format!(
                 "task `{name}` must declare exactly one of `run` or `script`"
             ))),
-            (Some(_), None) | (None, Some(_)) => {}
-            (None, None) => {}
+            (Some(_), None, Some(_)) | (None, Some(_), Some(_)) | (Some(_), Some(_), Some(_)) => {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must declare exactly one of `run`, `script`, or `launch`"
+                )))
+            }
+            (Some(_), None, None) | (None, Some(_), None) | (None, None, Some(_)) => {}
+            (None, None, None) => {}
         }
 
         if !has_base_fields && task.variants.is_empty() && !has_mode_branches {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run` or `script`"
+                "task `{name}` must declare exactly one of `run`, `script`, or `launch`"
             )));
+        }
+        if let Some(launch) = task.launch.as_ref() {
+            let backend = task.workflow_backend(contract.execution.as_ref());
+            validate_task_launch(
+                contract,
+                name,
+                "task",
+                launch,
+                task.runtime.as_ref(),
+                backend,
+                errors,
+            );
         }
         if let Some(mode_execution) = task.execution.as_ref() {
             validate_task_mode_execution(
@@ -1631,29 +1654,129 @@ fn validate_task_mode_execution(
             )));
         }
 
-        match (branch.run.as_deref(), branch.script.as_deref()) {
-            (Some(run), None) if run.trim().is_empty() => errors.push(ValidationError::new(
+        match (branch.run.as_deref(), branch.script.as_deref(), branch.launch.as_ref()) {
+            (Some(run), None, None) if run.trim().is_empty() => errors.push(ValidationError::new(
                 format!(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `run` command"
                 ),
             )),
-            (None, Some(script)) if script.trim().is_empty() => errors.push(ValidationError::new(
-                format!(
+            (None, Some(script), None) if script.trim().is_empty() => {
+                errors.push(ValidationError::new(format!(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `script` body"
-                ),
-            )),
-            (Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                )))
+            }
+            (Some(_), Some(_), None) => errors.push(ValidationError::new(format!(
                 "task `{task_name}` mode `{mode_name}` must declare exactly one of `run` or `script`"
             ))),
-            (None, None) if !has_fallback_execution => errors.push(ValidationError::new(format!(
-                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run` or `script` because the task has no base execution to inherit"
+            (Some(_), None, Some(_))
+            | (None, Some(_), Some(_))
+            | (Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, or `launch`"
+            ))),
+            (None, None, None) if !has_fallback_execution => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, or `launch` because the task has no base execution to inherit"
             ))),
             _ => {}
+        }
+        if let Some(launch) = branch.launch.as_ref() {
+            validate_task_launch(
+                contract,
+                task_name,
+                &format!("task mode `{mode_name}`"),
+                launch,
+                branch.runtime.as_ref().or(task.runtime.as_ref()),
+                mode,
+                errors,
+            );
         }
 
         if let Some(runtime) = branch.runtime.as_ref() {
             let backend = task_execution_backend(contract, task, mode);
             validate_task_runtime(contract, task_name, runtime, backend, errors);
+        }
+    }
+}
+
+fn validate_task_launch(
+    _contract: &Contract,
+    task_name: &str,
+    scope: &str,
+    launch: &crate::schema::TaskLaunchSpec,
+    runtime: Option<&TaskRuntimeSpec>,
+    backend: Backend,
+    errors: &mut Vec<ValidationError>,
+) {
+    match launch {
+        crate::schema::TaskLaunchSpec::Command(command) => {
+            if command.exe.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` must declare a non-empty `launch.exe`"
+                )));
+            }
+        }
+        crate::schema::TaskLaunchSpec::Container(container) => {
+            if container.image.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` must declare a non-empty `launch.image`"
+                )));
+            }
+            if backend != Backend::Native {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: container`, which is only supported for native execution in this slice"
+                )));
+            }
+            let Some(runtime) = runtime else {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: container`, but does not declare `runtime`"
+                )));
+                return;
+            };
+            if runtime.kind != TaskRuntimeKind::Service {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: container`, but runtime kind `{}` is not supported",
+                    match runtime.kind {
+                        TaskRuntimeKind::Service => "service",
+                    }
+                )));
+            }
+            if runtime.surfaces.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: container`, but `runtime.surfaces` is empty"
+                )));
+            }
+            if container.remove && runtime.kind == TaskRuntimeKind::Service {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` must not declare `launch.remove: true` for a service runtime"
+                )));
+            }
+            for volume in &container.volumes {
+                if volume.source.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "{scope} `{task_name}` must declare a non-empty `launch.volumes[].source`"
+                    )));
+                }
+                if volume.target.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "{scope} `{task_name}` must declare a non-empty `launch.volumes[].target`"
+                    )));
+                }
+            }
+            for listener_name in runtime.surfaces.names() {
+                let Some(listener) = runtime.listeners.get(listener_name) else {
+                    continue;
+                };
+                let Some(host) = listener.project.host.as_ref() else {
+                    errors.push(ValidationError::new(format!(
+                        "{scope} `{task_name}` uses `launch.kind: container`, but attached surface `{listener_name}` does not project to the host"
+                    )));
+                    continue;
+                };
+                if host.port.mode != crate::schema::TaskRuntimeHostPortMode::Fixed {
+                    errors.push(ValidationError::new(format!(
+                        "{scope} `{task_name}` uses `launch.kind: container`, but attached surface `{listener_name}` must project a fixed host port in this slice"
+                    )));
+                }
+            }
         }
     }
 }
@@ -9793,6 +9916,135 @@ tasks:
             errors.errors()[0].to_string(),
             "task `dev` must declare exactly one of `run` or `script`"
         );
+    }
+
+    #[test]
+    fn rejects_tasks_with_both_run_and_launch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: cargo run
+    launch:
+      kind: command
+      exe: cargo
+      args: [run]
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
+        );
+    }
+
+    #[test]
+    fn rejects_tasks_with_both_script_and_launch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    script: echo dev
+    launch:
+      kind: command
+      exe: cargo
+      args: [run]
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
+        );
+    }
+
+    #[test]
+    fn rejects_tasks_without_run_script_or_launch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    description: Missing execution
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
+        );
+    }
+
+    #[test]
+    fn accepts_task_launch_command() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: cargo
+      args: [run]
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn accepts_task_launch_container_with_service_surface() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  packaged:
+    launch:
+      kind: container
+      image: docker.n8n.io/n8nio/n8n
+      volumes:
+        - name: n8n_data
+          target: /home/node/.n8n
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
     }
 
     #[test]

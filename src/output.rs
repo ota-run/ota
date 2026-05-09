@@ -56,6 +56,21 @@ fn contract_identity_execution_is_empty(value: &ContractIdentityExecution) -> bo
         && value.image.is_none()
 }
 
+#[cfg(target_os = "windows")]
+fn current_os() -> &'static str {
+    "windows"
+}
+
+#[cfg(target_os = "macos")]
+fn current_os() -> &'static str {
+    "macos"
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn current_os() -> &'static str {
+    "linux"
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     Text,
@@ -1163,6 +1178,8 @@ pub struct WorkspaceTaskSummary {
     pub run: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch: Option<WorkspaceTaskLaunchSummary>,
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
     pub after_success: Vec<String>,
@@ -1196,6 +1213,32 @@ pub struct WorkspaceTasksSummary {
     pub repo_count: usize,
     pub acquired_count: usize,
     pub task_count: usize,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct WorkspaceTaskLaunchSummary {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exe: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<WorkspaceTaskLaunchVolumeSummary>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct WorkspaceTaskLaunchVolumeSummary {
+    pub kind: &'static str,
+    pub source: String,
+    pub target: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2310,6 +2353,8 @@ pub struct WorkflowSummary<'a> {
     pub setup_task: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_task_launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required_services: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2381,7 +2426,12 @@ impl<'a> WorkflowSummary<'a> {
                 crate::schema::WorkflowExposeSpec::SurfaceRef { surface } => {
                     expose_surfaces.push(surface.clone());
                     if let Some(url) = workflow.run.as_ref().and_then(|run| {
-                        workflow_surface_host_url(contract, contract_path, run.task.as_str(), surface)
+                        workflow_surface_host_url(
+                            contract,
+                            contract_path,
+                            run.task.as_str(),
+                            surface,
+                        )
                     }) {
                         exposes.push(url.clone());
                         expose_entries.push(WorkflowExposeEntry {
@@ -2398,6 +2448,15 @@ impl<'a> WorkflowSummary<'a> {
             description: workflow.description.as_deref(),
             setup_task: workflow.setup.as_ref().map(|phase| phase.task.as_str()),
             run_task: workflow.run.as_ref().map(|phase| phase.task.as_str()),
+            run_task_launch: workflow
+                .run
+                .as_ref()
+                .and_then(|phase| contract.tasks.get(phase.task.as_str()))
+                .and_then(|task| {
+                    let backend = task.workflow_backend(contract.execution.as_ref());
+                    task.resolved_execution_for_backend(backend, current_os())
+                })
+                .and_then(|execution| summarize_task_launch(execution.launch())),
             required_services: workflow.services.required.clone(),
             readiness_checks: workflow.readiness.checks.clone(),
             readiness_probes: workflow.readiness.probes.clone(),
@@ -2642,6 +2701,8 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch: Option<TaskLaunchSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_variant_os: Option<&'a str>,
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
@@ -2679,8 +2740,13 @@ impl<'a> TaskSummary<'a> {
             env: &task.env,
             inputs: &task.inputs,
             kind: resolved_execution.kind,
-            run: (resolved_execution.kind == "run").then_some(resolved_execution.body),
-            script: (resolved_execution.kind == "script").then_some(resolved_execution.body),
+            run: (resolved_execution.kind == "run")
+                .then(|| resolved_execution.shell_body())
+                .flatten(),
+            script: (resolved_execution.kind == "script")
+                .then(|| resolved_execution.shell_body())
+                .flatten(),
+            launch: summarize_task_launch(resolved_execution.launch()),
             selected_variant_os: resolved_execution.os,
             depends_on: task.depends_on.clone(),
             requires_services: task.requires_services.clone(),
@@ -2732,6 +2798,10 @@ impl<'a> TaskSummary<'a> {
                                 kind: branch_execution.map(|execution| execution.kind),
                                 run: branch.run.as_deref(),
                                 script: branch.script.as_deref(),
+                                launch: branch
+                                    .launch
+                                    .as_ref()
+                                    .and_then(|launch| summarize_task_launch(Some(launch))),
                                 has_runtime: branch.runtime.is_some(),
                             }
                         })
@@ -2766,7 +2836,109 @@ pub struct TaskModeView<'a> {
     pub run: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch: Option<TaskLaunchSummary<'a>>,
     pub has_runtime: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskLaunchSummary<'a> {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exe: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<&'a str>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<TaskLaunchVolumeSummary<'a>>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskLaunchVolumeSummary<'a> {
+    pub kind: &'static str,
+    pub source: &'a str,
+    pub target: &'a str,
+}
+
+fn summarize_task_launch<'a>(
+    launch: Option<&'a crate::schema::TaskLaunchSpec>,
+) -> Option<TaskLaunchSummary<'a>> {
+    match launch? {
+        crate::schema::TaskLaunchSpec::Command(command) => Some(TaskLaunchSummary {
+            kind: "command",
+            exe: Some(command.exe.as_str()),
+            args: command.args.iter().map(String::as_str).collect(),
+            image: None,
+            engine: None,
+            name: None,
+            remove: false,
+            volumes: Vec::new(),
+        }),
+        crate::schema::TaskLaunchSpec::Container(container) => Some(TaskLaunchSummary {
+            kind: "container",
+            exe: None,
+            args: container.args.iter().map(String::as_str).collect(),
+            image: Some(container.image.as_str()),
+            engine: container.engine.as_deref(),
+            name: container.name.as_deref(),
+            remove: container.remove,
+            volumes: container
+                .volumes
+                .iter()
+                .map(|volume| TaskLaunchVolumeSummary {
+                    kind: match volume.kind {
+                        crate::schema::TaskContainerLaunchVolumeKind::Named => "named",
+                    },
+                    source: volume.source.as_str(),
+                    target: volume.target.as_str(),
+                })
+                .collect(),
+        }),
+    }
+}
+
+pub fn summarize_task_launch_owned(
+    launch: Option<&crate::schema::TaskLaunchSpec>,
+) -> Option<WorkspaceTaskLaunchSummary> {
+    match launch? {
+        crate::schema::TaskLaunchSpec::Command(command) => Some(WorkspaceTaskLaunchSummary {
+            kind: "command",
+            exe: Some(command.exe.clone()),
+            args: command.args.clone(),
+            image: None,
+            engine: None,
+            name: None,
+            remove: false,
+            volumes: Vec::new(),
+        }),
+        crate::schema::TaskLaunchSpec::Container(container) => Some(WorkspaceTaskLaunchSummary {
+            kind: "container",
+            exe: None,
+            args: container.args.clone(),
+            image: Some(container.image.clone()),
+            engine: container.engine.clone(),
+            name: container.name.clone(),
+            remove: container.remove,
+            volumes: container
+                .volumes
+                .iter()
+                .map(|volume| WorkspaceTaskLaunchVolumeSummary {
+                    kind: match volume.kind {
+                        crate::schema::TaskContainerLaunchVolumeKind::Named => "named",
+                    },
+                    source: volume.source.clone(),
+                    target: volume.target.clone(),
+                })
+                .collect(),
+        }),
+    }
 }
 
 fn task_mode_name(mode: Backend) -> &'static str {
