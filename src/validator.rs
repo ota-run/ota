@@ -106,6 +106,7 @@ pub fn validate_contract_with_path(
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
     validate_readiness(contract, &mut errors);
+    validate_surfaces(contract, &mut errors);
     validate_services(contract, contract_path, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
     validate_workflows(contract, &mut errors);
@@ -1132,6 +1133,47 @@ fn validate_tasks(
             }
         }
 
+        if let Some(runtime) = task.runtime.as_ref() {
+            validate_runtime_surface_attachments(
+                contract,
+                &format!("tasks.{name}.runtime"),
+                runtime,
+                errors,
+            );
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            if let Some(branch) = execution.modes.native.as_ref()
+                && let Some(runtime) = branch.runtime.as_ref()
+            {
+                validate_runtime_surface_attachments(
+                    contract,
+                    &format!("tasks.{name}.execution.modes.native.runtime"),
+                    runtime,
+                    errors,
+                );
+            }
+            if let Some(branch) = execution.modes.container.as_ref()
+                && let Some(runtime) = branch.runtime.as_ref()
+            {
+                validate_runtime_surface_attachments(
+                    contract,
+                    &format!("tasks.{name}.execution.modes.container.runtime"),
+                    runtime,
+                    errors,
+                );
+            }
+            if let Some(branch) = execution.modes.remote.as_ref()
+                && let Some(runtime) = branch.runtime.as_ref()
+            {
+                validate_runtime_surface_attachments(
+                    contract,
+                    &format!("tasks.{name}.execution.modes.remote.runtime"),
+                    runtime,
+                    errors,
+                );
+            }
+        }
+
         for (input_name, input) in &task.inputs {
             if !is_task_input_name(input_name) {
                 errors.push(ValidationError::new(format!(
@@ -1479,6 +1521,40 @@ fn validate_tasks(
     validate_container_runtime_publication_conflicts(contract, errors);
     detect_task_target_activation_cycles(tasks, errors);
     detect_task_cycles(tasks, errors);
+}
+
+fn validate_runtime_surface_attachments(
+    contract: &Contract,
+    field_path: &str,
+    runtime: &TaskRuntimeSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut seen = BTreeSet::new();
+    for surface_name in &runtime.surfaces {
+        if !seen.insert(surface_name.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "`{field_path}.surfaces` must not declare duplicate surface `{surface_name}`"
+            )));
+            continue;
+        }
+
+        if !contract.surfaces.contains_key(surface_name.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "`{field_path}.surfaces` references unknown surface `{surface_name}`"
+            )));
+            continue;
+        }
+
+        if runtime.listeners.contains_key(surface_name.as_str())
+            && !runtime
+                .normalized_surface_listeners
+                .contains(surface_name.as_str())
+        {
+            errors.push(ValidationError::new(format!(
+                "`{field_path}.surfaces` attaches surface `{surface_name}`, but `{field_path}.listeners.{surface_name}` is already declared"
+            )));
+        }
+    }
 }
 
 fn validate_task_mode_execution(
@@ -3005,6 +3081,38 @@ fn validate_runtime_readiness_timing(
     if matches!(readiness.retries, Some(0)) {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` runtime readiness `retries` must be greater than zero"
+        )));
+    }
+}
+
+fn validate_surface_readiness_timing(
+    surface_name: &str,
+    readiness: &crate::schema::SurfaceReadinessSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (field_name, value) in [
+        ("interval", readiness.interval.as_deref()),
+        ("timeout", readiness.timeout.as_deref()),
+        ("start_period", readiness.start_period.as_deref()),
+    ] {
+        if let Some(value) = value {
+            let Some(duration) = parse_readiness_duration_spec(value) else {
+                errors.push(ValidationError::new(format!(
+                    "`surfaces.{surface_name}.readiness.{field_name}` must use a positive duration like `200ms`, `3s`, or `1m`"
+                )));
+                continue;
+            };
+            if duration.is_zero() {
+                errors.push(ValidationError::new(format!(
+                    "`surfaces.{surface_name}.readiness.{field_name}` must be greater than zero"
+                )));
+            }
+        }
+    }
+
+    if matches!(readiness.retries, Some(0)) {
+        errors.push(ValidationError::new(format!(
+            "`surfaces.{surface_name}.readiness.retries` must be greater than zero"
         )));
     }
 }
@@ -4881,6 +4989,206 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
             }
         }
+        for surface in &workflow.readiness.surfaces {
+            if !contract.surfaces.contains_key(surface) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.readiness.surfaces` references unknown surface `{surface}`"
+                )));
+            }
+        }
+        let run_task = workflow
+            .run
+            .as_ref()
+            .and_then(|run| contract.tasks.get(run.task.as_str()));
+        if !workflow.readiness.surfaces.is_empty() && run_task.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.readiness.surfaces` requires `workflows.{name}.run.task` to resolve to a declared task"
+            )));
+        }
+        if let Some(task) = run_task {
+            for surface in &workflow.readiness.surfaces {
+                if let Some(message) =
+                    workflow_surface_attachment_error(contract, task, surface.as_str())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.readiness.surfaces` references surface `{surface}`, but run task `{}` {message}",
+                        workflow
+                            .run
+                            .as_ref()
+                            .expect("run task should exist when task resolved")
+                            .task
+                    )));
+                }
+            }
+        }
+        for expose in &workflow.exposes {
+            if let Some(surface) = expose.surface_name() {
+                if !contract.surfaces.contains_key(surface) {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.exposes` references unknown surface `{surface}`"
+                    )));
+                    continue;
+                }
+                let Some(run_task) = run_task else {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.exposes` surface references require `workflows.{name}.run.task` to resolve to a declared task"
+                    )));
+                    continue;
+                };
+                if let Some(message) =
+                    workflow_surface_attachment_error(contract, run_task, surface)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.exposes` references surface `{surface}`, but run task `{}` {message}",
+                        workflow
+                            .run
+                            .as_ref()
+                            .expect("run task should exist when task resolved")
+                            .task
+                    )));
+                }
+            }
+        }
+    }
+}
+
+fn workflow_surface_attachment_error(
+    contract: &Contract,
+    task: &TaskSpec,
+    surface: &str,
+) -> Option<String> {
+    let mut backends = vec![task_execution_backend(contract, task, Backend::Native)];
+    for backend in [Backend::Native, Backend::Container, Backend::Remote] {
+        if task.mode_execution_branch(backend).is_some() && !backends.contains(&backend) {
+            backends.push(backend);
+        }
+    }
+
+    for backend in backends {
+        let Some(runtime) = task.service_runtime_for_backend(backend) else {
+            return Some(format!(
+                "does not resolve to a service runtime for backend `{}`",
+                format_backend(backend)
+            ));
+        };
+        if !runtime.surfaces.iter().any(|declared| declared == surface) {
+            return Some(format!(
+                "does not attach that surface for backend `{}`",
+                format_backend(backend)
+            ));
+        }
+    }
+
+    None
+}
+
+fn validate_surfaces(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (name, surface) in &contract.surfaces {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`surfaces` must not declare an empty surface name",
+            ));
+        }
+        if surface.port == 0 {
+            errors.push(ValidationError::new(format!(
+                "`surfaces.{name}.port` must be between 1 and 65535"
+            )));
+        }
+        match surface.kind {
+            crate::schema::SurfaceKind::Http => {
+                if let Some(path) = surface.path.as_deref()
+                    && !path.starts_with('/')
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.path` must start with `/`"
+                    )));
+                }
+            }
+            crate::schema::SurfaceKind::Tcp => {
+                if surface.path.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.path` is only supported for `kind: http` surfaces"
+                    )));
+                }
+            }
+        }
+
+        let Some(readiness) = surface.readiness.as_ref() else {
+            continue;
+        };
+        match readiness.kind {
+            crate::schema::TaskRuntimeReadinessKind::Http => {
+                let effective_path = readiness.path.clone().or_else(|| {
+                    matches!(surface.kind, crate::schema::SurfaceKind::Http)
+                        .then(|| surface.effective_path())
+                        .flatten()
+                });
+                if effective_path.is_none() {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.path` is required for HTTP surface readiness"
+                    )));
+                } else if !effective_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with('/'))
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.path` must start with `/`"
+                    )));
+                }
+                for header_name in readiness.headers.keys() {
+                    if header_name.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "`surfaces.{name}.readiness.headers` must not use an empty header name"
+                        )));
+                    }
+                }
+                if let Some(success) = readiness.success.as_ref() {
+                    if success.status.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "`surfaces.{name}.readiness.success.status` must declare at least one HTTP status code"
+                        )));
+                    }
+                    for status in &success.status {
+                        if !(100..=599).contains(status) {
+                            errors.push(ValidationError::new(format!(
+                                "`surfaces.{name}.readiness.success.status` must use valid HTTP status codes between 100 and 599"
+                            )));
+                            break;
+                        }
+                    }
+                }
+                if let Some(body) = readiness.body.as_ref()
+                    && body.contains.trim().is_empty()
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.body.contains` must not be empty"
+                    )));
+                }
+                if readiness.method == Some(crate::schema::TaskRuntimeReadinessHttpMethod::Head)
+                    && readiness.body.is_some()
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.method: HEAD` must not declare `body.contains`"
+                    )));
+                }
+            }
+            crate::schema::TaskRuntimeReadinessKind::Tcp => {
+                for (field_name, present) in [
+                    ("path", readiness.path.is_some()),
+                    ("method", readiness.method.is_some()),
+                    ("headers", !readiness.headers.is_empty()),
+                    ("success", readiness.success.is_some()),
+                    ("body", readiness.body.is_some()),
+                ] {
+                    if present {
+                        errors.push(ValidationError::new(format!(
+                            "`surfaces.{name}.readiness.{field_name}` is only supported for `kind: http` surface readiness"
+                        )));
+                    }
+                }
+            }
+        }
+        validate_surface_readiness_timing(name, readiness, errors);
     }
 }
 
@@ -5803,6 +6111,175 @@ workflows:
         assert!(message.contains(
             "`workflows.backend.readiness.probes` references unknown probe `missing-probe`"
         ));
+    }
+
+    #[test]
+    fn rejects_workflow_readiness_surface_not_attached_to_run_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+  dev:fe:
+    run: pnpm dev:fe
+    runtime:
+      kind: service
+workflows:
+  default: frontend
+  frontend:
+    run:
+      task: dev:fe
+    readiness:
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("workflow surface readiness should reject unattached run-task surfaces");
+        assert!(error.to_string().contains(
+            "`workflows.frontend.readiness.surfaces` references surface `backend`, but run task `dev:fe` does not attach that surface for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_expose_surface_not_attached_to_run_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+  dev:fe:
+    run: pnpm dev:fe
+    runtime:
+      kind: service
+workflows:
+  default: frontend
+  frontend:
+    run:
+      task: dev:fe
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("workflow surface expose should reject unattached run-task surfaces");
+        assert!(error.to_string().contains(
+            "`workflows.frontend.exposes` references surface `backend`, but run task `dev:fe` does not attach that surface for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_surface_attached_only_in_non_default_mode_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      modes:
+        container:
+          runtime:
+            kind: service
+            surfaces:
+              - backend
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err(
+            "workflow surface should reject branch-only attachment off the default runtime path",
+        );
+        assert!(error.to_string().contains(
+            "`workflows.app.readiness.surfaces` references surface `backend`, but run task `dev` does not resolve to a service runtime for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn accepts_workflow_surface_attached_on_default_mode_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      modes:
+        native:
+          runtime:
+            kind: service
+            surfaces:
+              - backend
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("default-mode native attachment should satisfy workflow surfaces");
     }
 
     #[test]

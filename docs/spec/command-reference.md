@@ -439,7 +439,7 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, inspects the merged member contract
 - stays read-only
-- reports the contract identity, declared execution surface, shared backends, reusable readiness probes, services, runtime listeners, and task target bindings exactly as the repo declares them
+- reports the contract identity, declared execution surface, shared backends, reusable readiness probes, reusable runtime surfaces, services, normalized runtime listeners, and task target bindings exactly as the repo declares them
 - task-target readiness probes surface their current reachability plane explicitly; top-level probes report whether they resolve from the invoking command host or from one named observer task plane
 - does not resolve effective readiness state or start anything; this is topology inspection, not execution planning
 
@@ -448,13 +448,14 @@ Text output:
 - header: `EXECUTION TOPOLOGY <path>`
 - `Overview` section with project and topology counts
 - `Execution` section when the contract declares execution intent
-- `Shared Backends`, `Readiness Probes`, `Services`, and `Tasks` sections with runtime/listener/target detail when present
+- `Shared Backends`, `Readiness Probes`, `Surfaces`, `Services`, and `Tasks` sections with runtime/listener/target detail when present
 
 JSON output:
 
-- success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `services`, and `tasks`
+- success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `surfaces`, `services`, and `tasks`
 - top-level `readiness_probes` entries include literal URL or target source details plus the declared HTTP/TCP request contract fields that belong to that probe
-- task runtime entries may include `backend_binding`, `readiness`, and `listeners`
+- top-level `surfaces` entries include declared surface kind, port, optional path, and optional readiness contract
+- task runtime entries may include `backend_binding`, `readiness`, `attached_surfaces`, and normalized `listeners`
 - task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
 

@@ -1554,6 +1554,7 @@ pub fn execution_topology(
                 );
                 let readiness_probes =
                     build_execution_topology_readiness_probe_summaries(&target.contract);
+                let surfaces = build_execution_topology_surface_summaries(&target.contract);
                 let services = target
                     .contract
                     .services
@@ -1581,6 +1582,7 @@ pub fn execution_topology(
                         declared_execution.as_ref(),
                         &shared_backends,
                         &readiness_probes,
+                        &surfaces,
                         &services,
                         &tasks,
                     )),
@@ -1594,6 +1596,7 @@ pub fn execution_topology(
                             declared_execution,
                             shared_backends,
                             readiness_probes,
+                            surfaces,
                             services,
                             tasks,
                         }))
@@ -1852,6 +1855,56 @@ fn build_execution_topology_readiness_probe_summaries(
         .collect()
 }
 
+fn build_execution_topology_surface_summaries(
+    contract: &Contract,
+) -> BTreeMap<String, crate::output::ExecutionTopologySurfaceSummary> {
+    contract
+        .surfaces
+        .iter()
+        .map(|(name, surface)| {
+            (
+                name.clone(),
+                crate::output::ExecutionTopologySurfaceSummary {
+                    kind: surface.kind.as_str().to_string(),
+                    port: surface.port,
+                    path: surface.effective_path(),
+                    readiness: surface.readiness.as_ref().map(|readiness| {
+                        ExecutionTopologyReadinessSummary {
+                            kind: readiness.kind.as_str().to_string(),
+                            probe: None,
+                            listener: None,
+                            method: readiness.method.map(|method| method.as_str().to_string()),
+                            path: readiness.path.clone().or_else(|| {
+                                matches!(
+                                    readiness.kind,
+                                    crate::schema::TaskRuntimeReadinessKind::Http
+                                )
+                                .then(|| surface.effective_path())
+                                .flatten()
+                            }),
+                            headers: readiness.headers.clone(),
+                            success: readiness.success.as_ref().map(|success| {
+                                crate::output::ExecutionTopologyReadinessSuccessSummary {
+                                    status: success.status.clone(),
+                                }
+                            }),
+                            body: readiness.body.as_ref().map(|body| {
+                                crate::output::ExecutionTopologyReadinessBodySummary {
+                                    contains: body.contains.clone(),
+                                }
+                            }),
+                            interval: readiness.interval.clone(),
+                            timeout: readiness.timeout.clone(),
+                            retries: readiness.retries,
+                            start_period: readiness.start_period.clone(),
+                        }
+                    }),
+                },
+            )
+        })
+        .collect()
+}
+
 fn build_execution_topology_task_summary<'a>(
     name: &'a str,
     task: &'a TaskSpec,
@@ -1940,6 +1993,7 @@ fn build_execution_topology_runtime_summary(
                 retries: readiness.retries,
                 start_period: readiness.start_period.clone(),
             }),
+        attached_surfaces: runtime.surfaces.clone(),
         listeners: runtime
             .listeners
             .iter()
@@ -1987,6 +2041,7 @@ fn render_execution_topology_text(
     declared_execution: Option<&ExecutionSummary<'_>>,
     shared_backends: &[ExecutionTopologySharedBackendSummary],
     readiness_probes: &BTreeMap<String, ExecutionTopologyProbeSummary>,
+    surfaces: &BTreeMap<String, crate::output::ExecutionTopologySurfaceSummary>,
     services: &[ServiceSummary],
     tasks: &[ExecutionTopologyTaskSummary<'_>],
 ) -> String {
@@ -2044,6 +2099,14 @@ fn render_execution_topology_text(
             &paint(&readiness_probes.len().to_string(), "1;38;2;255;255;255"),
         )
     ));
+    output.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Surfaces:", "1;38;2;102;217;255"),
+            &paint(&surfaces.len().to_string(), "1;38;2;255;255;255"),
+        )
+    ));
 
     if let Some(execution) = declared_execution {
         output.push_str("\n\n");
@@ -2056,6 +2119,7 @@ fn render_execution_topology_text(
     output.push_str(&render_execution_topology_readiness_probes_text(
         readiness_probes,
     ));
+    output.push_str(&render_execution_topology_surfaces_text(surfaces));
     output.push_str(&render_execution_topology_services_text(services));
     output.push_str(&render_execution_topology_tasks_text(tasks));
     output
@@ -2224,6 +2288,39 @@ fn render_execution_topology_readiness_probes_text(
     output
 }
 
+fn render_execution_topology_surfaces_text(
+    surfaces: &BTreeMap<String, crate::output::ExecutionTopologySurfaceSummary>,
+) -> String {
+    let mut output = String::from("\n\n");
+    output.push_str(&paint_section_title("Surfaces"));
+    if surfaces.is_empty() {
+        output.push_str(&format!("\n{}", detail_list_item("none")));
+        return output;
+    }
+
+    for (surface_name, surface) in surfaces {
+        output.push_str(&format!(
+            "\n\n{} {}",
+            list_bullet(),
+            paint(surface_name, "1")
+        ));
+        output.push_str(&format!("\n  {} {}", paint_key("Kind:"), surface.kind));
+        output.push_str(&format!("\n  {} {}", paint_key("Port:"), surface.port));
+        if let Some(path) = surface.path.as_deref() {
+            output.push_str(&format!("\n  {} {}", paint_key("Path:"), path));
+        }
+        if let Some(readiness) = surface.readiness.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Readiness:"),
+                readiness.kind
+            ));
+        }
+    }
+
+    output
+}
+
 fn render_execution_topology_services_text(services: &[ServiceSummary]) -> String {
     let mut output = String::from("\n\n");
     output.push_str(&paint_section_title("Services"));
@@ -2329,6 +2426,13 @@ fn render_execution_topology_tasks_text(tasks: &[ExecutionTopologyTaskSummary<'_
                     "\n  {} {}",
                     paint_key("Readiness:"),
                     readiness_detail
+                ));
+            }
+            if !runtime.attached_surfaces.is_empty() {
+                output.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Attached Surfaces:"),
+                    runtime.attached_surfaces.join(", ")
                 ));
             }
             if !runtime.listeners.is_empty() {
@@ -8488,6 +8592,8 @@ fn build_assist_add_task_proposal(
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
+            surfaces: Vec::new(),
+            normalized_surface_listeners: BTreeSet::new(),
             listeners,
         });
         assumptions.push(String::from(
@@ -29466,12 +29572,29 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
             workflow.readiness_probes.join(",")
         }
     ));
-    if !workflow.exposes.is_empty() {
+    output.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Readiness Surfaces:"),
+        if workflow.readiness_surfaces.is_empty() {
+            String::from("-")
+        } else {
+            workflow.readiness_surfaces.join(",")
+        }
+    ));
+    if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
+        let mut exposes = workflow.exposes.clone();
+        exposes.extend(
+            workflow
+                .expose_surfaces
+                .iter()
+                .map(|surface| format!("surface:{surface}")),
+        );
         output.push_str(&format!(
             "\n {}  {} {}",
             summary_bullet(),
             paint_key("Exposes:"),
-            workflow.exposes.join(",")
+            exposes.join(",")
         ));
     }
     output
@@ -31413,7 +31536,6 @@ fn render_doctor_ready_next(
     let mut items = Vec::new();
     if let Some(task) = workflow
         .and_then(|workflow| workflow.run_task)
-        .or_else(|| agent.and_then(|agent| agent.default_task.or(agent.entrypoint)))
         .filter(|task| !task.trim().is_empty())
     {
         let run_command = contract_path
@@ -31421,6 +31543,16 @@ fn render_doctor_ready_next(
             .unwrap_or_else(|| format!("ota run {task}"));
         items.push(format!(
             "run `{run_command}` to activate the canonical repo workflow"
+        ));
+    } else if let Some(task) = agent
+        .and_then(|agent| agent.default_task.or(agent.entrypoint))
+        .filter(|task| !task.trim().is_empty())
+    {
+        let run_command = contract_path
+            .map(|path| command_for_repo_contract_target(&format!("ota run {task}"), path))
+            .unwrap_or_else(|| format!("ota run {task}"));
+        items.push(format!(
+            "run `{run_command}` to execute the default repo task"
         ));
     } else {
         let tasks_command = contract_path
@@ -35746,7 +35878,9 @@ tasks:
             required_services: vec![String::from("postgres")],
             readiness_checks: vec![String::from("app-health")],
             readiness_probes: vec![String::from("app-ready")],
+            readiness_surfaces: vec![String::from("backend")],
             exposes: vec![String::from("http://127.0.0.1:5678")],
+            expose_surfaces: vec![String::from("backend")],
         };
         let task = TaskSummary {
             name: "dev",
@@ -35783,6 +35917,55 @@ tasks:
             rendered.contains("Readiness Probes: app-ready"),
             "{rendered}"
         );
+        assert!(
+            rendered.contains("Readiness Surfaces: backend"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Exposes: http://127.0.0.1:5678,surface:backend"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn workflow_summary_resolves_surface_exposes_to_urls() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        let workflow =
+            crate::output::WorkflowSummary::from_contract_selected(&contract, Some("backend"))
+                .expect("workflow summary should exist");
+
+        assert_eq!(
+            workflow.exposes,
+            vec![String::from("http://127.0.0.1:5678/")]
+        );
+        assert_eq!(workflow.expose_surfaces, vec![String::from("backend")]);
     }
 
     #[test]
@@ -35837,6 +36020,7 @@ tasks:
             None,
             &[],
             &readiness_probes,
+            &BTreeMap::new(),
             &[],
             &[],
         ));
@@ -35937,6 +36121,50 @@ tasks:
             3000
         );
         assert_eq!(body["listeners"]["backend"]["host_projection"]["path"], "/");
+    }
+
+    #[test]
+    fn execution_topology_json_includes_declared_surfaces_and_attached_surface_names() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: topology-demo
+surfaces:
+  backend:
+    kind: http
+    port: 3000
+    readiness:
+      kind: http
+      path: /healthz/readiness
+tasks:
+  api:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let surfaces = super::build_execution_topology_surface_summaries(&contract);
+        assert_eq!(surfaces["backend"].kind, "http");
+        assert_eq!(surfaces["backend"].port, 3000);
+        assert_eq!(surfaces["backend"].path.as_deref(), Some("/"));
+
+        let task = super::build_execution_topology_task_summary(
+            "api",
+            contract.tasks.get("api").expect("api task should exist"),
+            super::current_os(),
+            &contract,
+        );
+        let body = serde_json::to_value(task.runtime.expect("runtime summary should exist"))
+            .expect("runtime summary should serialize");
+
+        assert_eq!(body["attached_surfaces"][0], "backend");
+        assert_eq!(body["listeners"]["backend"]["bind_port_value"], 3000);
     }
 
     #[test]
@@ -41546,7 +41774,9 @@ execution:
             required_services: Vec::new(),
             readiness_checks: Vec::new(),
             readiness_probes: Vec::new(),
+            readiness_surfaces: Vec::new(),
             exposes: Vec::new(),
+            expose_surfaces: Vec::new(),
         };
         let writable_paths = vec![String::from("src")];
         let safe_tasks = vec![String::from("dev")];
@@ -58152,6 +58382,7 @@ fn resolve_up_workloads(
 
 fn remote_up_blocker_finding(
     phase_task: Option<&str>,
+    setup_task: bool,
     context_name: Option<&str>,
     remote: Option<&crate::schema::RemoteBackend>,
 ) -> Finding {
@@ -58172,12 +58403,17 @@ fn remote_up_blocker_finding(
     match phase_task {
         Some(task) => Finding {
             severity: FindingSeverity::Error,
-            summary: String::from("Remote workflow tasks are not supported by `ota up` yet"),
+            summary: if setup_task {
+                String::from("Remote setup contexts are not supported by `ota up` yet")
+            } else {
+                String::from("Remote workflow tasks are not supported by `ota up` yet")
+            },
             why: format!(
                 "task `{task}` resolves to remote{context_suffix} via provider `{provider}`{target_suffix}, but current `ota up` orchestration only prepares native and container workload planes authoritatively"
             ),
             next: format!(
-                "use `ota run {task}`, `ota execution plan --mode remote`, and `ota doctor` together, or move the selected workflow task to a native/container context until remote `ota up` support ships",
+                "use `ota run {task}`, `ota execution plan --mode remote`, and `ota doctor` together, or move the selected {} to a native/container context until remote `ota up` support ships",
+                if setup_task { "setup task" } else { "workflow task" }
             ),
         },
         None => Finding {
@@ -58202,11 +58438,13 @@ fn up_remote_execution_blocker(
     if let Some(task_name) = selected_up_primary_task_name(contract, workflow_name) {
         let effective = effective_task_execution(contract, task_name, overrides);
         if effective.backend == Backend::Remote {
+            let setup_task = selected_up_setup_task_name(contract, workflow_name) == Some(task_name);
             return Some((
                 task_phase_execution_context(contract, resolved_path, task_name, overrides, None),
                 Some(task_name.to_string()),
                 remote_up_blocker_finding(
                     Some(task_name),
+                    setup_task,
                     reported_task_context_for_backend(contract, task_name, effective.backend),
                     effective.remote,
                 ),
@@ -58234,7 +58472,7 @@ fn up_remote_execution_blocker(
             return Some((
                 context,
                 None,
-                remote_up_blocker_finding(None, context_name.as_deref(), remote),
+                remote_up_blocker_finding(None, false, context_name.as_deref(), remote),
             ));
         }
     }
