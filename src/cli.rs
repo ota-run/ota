@@ -20652,6 +20652,9 @@ policies:
         assert!(preview_stdout.contains("reviewed: false"));
         assert!(preview_stdout.contains("provenance:"));
         assert!(preview_stdout.contains("- detect:contract_file_default"));
+        assert!(preview_stdout.contains("Agent boundary"));
+        assert!(preview_stdout.contains("Inferred"));
+        assert!(preview_stdout.contains("safe_tasks: `setup`, `test`"));
         assert!(!preview_stdout.contains("writable_paths:"));
         assert!(!preview_stdout.contains("\n  - .\n"));
 
@@ -20668,6 +20671,111 @@ policies:
         assert!(written.contains("- detect:contract_file_default"));
         assert!(!written.contains("writable_paths:"));
         assert!(!written.contains("\n- .\n"));
+    }
+
+    #[test]
+    fn detect_reports_omitted_agent_boundary_when_no_safe_task_is_inferred() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "pyproject.toml",
+            r#"[project]
+name = "fastapi"
+"#,
+        );
+        fixture.write(".python-version", "3.11\n");
+        fixture.write("bootstrap.ps1", "Write-Output 'ready'\n");
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("Agent boundary"));
+        assert!(preview_stdout.contains("Omitted"));
+        assert!(preview_stdout.contains("no safe task was inferred for this repo"));
+        assert!(
+            preview_stdout.contains("detected task `run` is not treated as agent-safe by default")
+        );
+        assert!(preview_stdout.contains(
+            "Ota cannot prove what `pwsh -File bootstrap.ps1` mutates, provisions, or starts"
+        ));
+        assert!(preview_stdout.contains("confirm the inferred agent boundary"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
+    }
+
+    #[test]
+    fn detect_reports_partially_inferred_agent_boundary_when_paths_exist_without_safe_task() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "pyproject.toml",
+            r#"[project]
+name = "fastapi"
+"#,
+        );
+        fixture.write(".python-version", "3.11\n");
+        fixture.write("bootstrap.ps1", "Write-Output 'ready'\n");
+        fixture.write("src/main.py", "print('ready')\n");
+
+        let preview = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("Agent boundary"));
+        assert!(preview_stdout.contains("Partially inferred"));
+        assert!(preview_stdout.contains("writable_paths:"));
+        assert!(preview_stdout.contains("`src`"));
+        assert!(preview_stdout.contains("protected_paths:"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
+    }
+
+    #[test]
+    fn init_reports_omitted_agent_boundary_when_no_safe_task_is_inferred() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "pyproject.toml",
+            r#"[project]
+name = "fastapi"
+"#,
+        );
+        fixture.write(".python-version", "3.11\n");
+        fixture.write("bootstrap.ps1", "Write-Output 'ready'\n");
+
+        let preview = run_with(["ota", "init", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("Agent boundary"));
+        assert!(preview_stdout.contains("Omitted"));
+        assert!(preview_stdout.contains(
+            "Ota only writes an inferred `agent` block when at least one safe task is present"
+        ));
+        assert!(preview_stdout.contains("detected task `run` is not treated as safe by default"));
+        assert!(preview_stdout.contains("run `ota agents --write"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
+    }
+
+    #[test]
+    fn init_reports_partially_inferred_agent_boundary_when_paths_exist_without_safe_task() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "pyproject.toml",
+            r#"[project]
+name = "fastapi"
+"#,
+        );
+        fixture.write(".python-version", "3.11\n");
+        fixture.write("bootstrap.ps1", "Write-Output 'ready'\n");
+        fixture.write("src/main.py", "print('ready')\n");
+
+        let preview = run_with(["ota", "init", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(preview_stdout.contains("Agent boundary"));
+        assert!(preview_stdout.contains("Partially inferred"));
+        assert!(preview_stdout.contains("writable_paths:"));
+        assert!(preview_stdout.contains("`src`"));
+        assert!(preview_stdout.contains("protected_paths:"));
+        assert!(!preview_stdout.contains("\nagent:\n"));
     }
 
     #[test]
@@ -20711,6 +20819,12 @@ policies:
         assert!(preview_stdout.contains("provenance:"));
         assert!(preview_stdout.contains("- detect:common_source_roots"));
         assert!(preview_stdout.contains("- detect:detected_control_files"));
+        assert!(preview_stdout.contains("Agent boundary"));
+        assert!(preview_stdout.contains("Inferred"));
+        assert!(preview_stdout.contains("safe_tasks:"));
+        assert!(preview_stdout.contains("`typecheck`"));
+        assert!(preview_stdout.contains("writable_paths:"));
+        assert!(preview_stdout.contains("protected_paths:"));
         assert!(preview_stdout.contains(
             "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo."
         ));
@@ -27996,8 +28110,12 @@ edition = "2024"
         assert!(detect_stdout.contains("Mode: dry-run (no write)"));
         assert!(detect_stdout.contains("Contract"));
         assert!(detect_stdout.contains("Annotations:"));
+        assert!(detect_stdout.contains("Agent boundary"));
         assert!(detect_stdout.contains("Next:"));
         assert!(detect_stdout.find("Annotations:").unwrap() < detect_stdout.find("Next:").unwrap());
+        assert!(
+            detect_stdout.find("Agent boundary").unwrap() < detect_stdout.find("Next:").unwrap()
+        );
         assert!(!detect_stdout.contains("\n---\n"));
 
         let detect_contract = run_with(["ota", "detect", "--contract", detect_fixture.path()]);
