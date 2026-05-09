@@ -211,15 +211,7 @@ fn render_explain_group(
 
     if !concise_mode() {
         let why_lines = explain_group_why_lines(group);
-        if !why_lines.is_empty() {
-            output.push_str("\n  ");
-            output.push_str(&explain_why_key());
-            for line in why_lines {
-                append_wrapped_bullet_text(output, summary_bullet(), &line, "    ", 84, |value| {
-                    render_backticked_text(value, Some(contract_path))
-                });
-            }
-        }
+        append_explain_why_text(output, &why_lines, "  ", 84, contract_path);
     }
 
     if let Some(provenance) = explain_group_provenance(group) {
@@ -260,15 +252,7 @@ fn render_explain_context_group(
 
     if !concise_mode() {
         let why_lines = explain_group_why_lines(group);
-        if !why_lines.is_empty() {
-            output.push_str("\n  ");
-            output.push_str(&explain_why_key());
-            for line in why_lines {
-                append_wrapped_bullet_text(output, summary_bullet(), &line, "    ", 84, |value| {
-                    render_backticked_text(value, Some(contract_path))
-                });
-            }
-        }
+        append_explain_why_text(output, &why_lines, "  ", 84, contract_path);
     }
 
     if show_provenance {
@@ -372,6 +356,36 @@ fn explain_group_why_lines(group: &DoctorFindingGroup<'_>) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+fn append_explain_why_text(
+    output: &mut String,
+    why_lines: &[String],
+    indent: &str,
+    fallback_max_width: usize,
+    contract_path: &Path,
+) {
+    match why_lines {
+        [] => {}
+        [single] => append_wrapped_labeled_text(
+            output,
+            "Why:",
+            single,
+            indent,
+            fallback_max_width,
+            false,
+            paint_key,
+            |value| render_backticked_text(value, Some(contract_path)),
+        ),
+        _ => {
+            output.push_str(&format!("\n{indent}{}", explain_why_key()));
+            for line in why_lines {
+                append_wrapped_bullet_text(output, summary_bullet(), line, "    ", 84, |value| {
+                    render_backticked_text(value, Some(contract_path))
+                });
+            }
+        }
+    }
 }
 
 fn explain_groups(findings: &[Finding]) -> Vec<DoctorFindingGroup<'_>> {
@@ -514,6 +528,28 @@ mod tests {
         assert!(text.contains("Why:\n    - service `postgres` did not pass its configured readiness probe from context `app`"));
         assert!(text.contains("    - projected endpoint is `postgres:5432`"));
         assert!(text.contains("Policy-backed version rules are declared"));
+    }
+
+    #[test]
+    fn explain_steps_keep_single_why_line_inline() {
+        set_plain_mode(true);
+
+        let findings = vec![Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Check failed: node-installed"),
+            why: String::from("the configured `node-installed` check did not finish within 10ms"),
+            next: String::from("raise `checks.timeout` for `node-installed` and rerun `ota doctor`"),
+        }];
+
+        let text = render_explain_steps_text(&findings, Path::new("./ota.yaml"));
+        set_plain_mode(false);
+
+        assert!(text.contains(
+            "Why: the configured `node-installed` check did not finish within 10ms"
+        ));
+        assert!(!text.contains(
+            "Why:\n    - the configured `node-installed` check did not finish within 10ms"
+        ));
     }
 
     #[test]
@@ -667,6 +703,7 @@ mod tests {
                     name: String::from("api"),
                     path: String::from("./api"),
                     contract_path: String::from("./api/ota.yaml"),
+                    workflow: None,
                     required: true,
                     ok: false,
                     agent_verdict: DoctorVerdict::NotReady,
@@ -688,6 +725,7 @@ mod tests {
                     name: String::from("web"),
                     path: String::from("./web"),
                     contract_path: String::from("./web/ota.yaml"),
+                    workflow: None,
                     required: true,
                     ok: false,
                     agent_verdict: DoctorVerdict::NotReady,

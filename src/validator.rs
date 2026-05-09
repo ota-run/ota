@@ -28,13 +28,13 @@ use crate::execution::{
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::schema::{
-    AgentConfig, Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext,
-    ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
-    ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
-    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExecutionSharedBackend,
+    ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope, ExtensionKind, Lifecycle,
+    RuntimeRequirement, ServiceProducerSpec, ServiceSpec, TaskRuntimeHostPortMode,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
+    TaskTargetServiceRefSpec, TaskTargetSpec, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -105,10 +105,13 @@ pub fn validate_contract_with_path(
     validate_tool_details(&contract.tools, &mut errors);
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
+    validate_readiness(contract, &mut errors);
+    validate_surfaces(contract, &mut errors);
     validate_services(contract, contract_path, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
+    validate_workflows(contract, &mut errors);
     validate_checks(contract, &mut errors);
-    validate_agent(contract.agent.as_ref(), &contract.tasks, &mut errors);
+    validate_agent(contract, &mut errors);
 
     if errors.is_empty() {
         Ok(())
@@ -1130,6 +1133,47 @@ fn validate_tasks(
             }
         }
 
+        if let Some(runtime) = task.runtime.as_ref() {
+            validate_runtime_surface_attachments(
+                contract,
+                &format!("tasks.{name}.runtime"),
+                runtime,
+                errors,
+            );
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            if let Some(branch) = execution.modes.native.as_ref()
+                && let Some(runtime) = branch.runtime.as_ref()
+            {
+                validate_runtime_surface_attachments(
+                    contract,
+                    &format!("tasks.{name}.execution.modes.native.runtime"),
+                    runtime,
+                    errors,
+                );
+            }
+            if let Some(branch) = execution.modes.container.as_ref()
+                && let Some(runtime) = branch.runtime.as_ref()
+            {
+                validate_runtime_surface_attachments(
+                    contract,
+                    &format!("tasks.{name}.execution.modes.container.runtime"),
+                    runtime,
+                    errors,
+                );
+            }
+            if let Some(branch) = execution.modes.remote.as_ref()
+                && let Some(runtime) = branch.runtime.as_ref()
+            {
+                validate_runtime_surface_attachments(
+                    contract,
+                    &format!("tasks.{name}.execution.modes.remote.runtime"),
+                    runtime,
+                    errors,
+                );
+            }
+        }
+
         for (input_name, input) in &task.inputs {
             if !is_task_input_name(input_name) {
                 errors.push(ValidationError::new(format!(
@@ -1477,6 +1521,51 @@ fn validate_tasks(
     validate_container_runtime_publication_conflicts(contract, errors);
     detect_task_target_activation_cycles(tasks, errors);
     detect_task_cycles(tasks, errors);
+}
+
+fn validate_runtime_surface_attachments(
+    contract: &Contract,
+    field_path: &str,
+    runtime: &TaskRuntimeSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    for surface_name in runtime.surfaces.duplicate_names() {
+        errors.push(ValidationError::new(format!(
+            "`{field_path}.surfaces` must not declare duplicate surface `{surface_name}`"
+        )));
+    }
+
+    for (surface_name, attachment) in runtime.surfaces.iter() {
+        if !contract.surfaces.contains_key(surface_name.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "`{field_path}.surfaces` references unknown surface `{surface_name}`"
+            )));
+            continue;
+        }
+
+        let surface = &contract.surfaces[surface_name];
+
+        if runtime.listeners.contains_key(surface_name.as_str())
+            && !runtime
+                .normalized_surface_listeners
+                .contains(surface_name.as_str())
+        {
+            errors.push(ValidationError::new(format!(
+                "`{field_path}.surfaces` attaches surface `{surface_name}`, but `{field_path}.listeners.{surface_name}` is already declared"
+            )));
+        }
+
+        if let Some(bind) = attachment.bind.as_ref()
+            && let Some(port) = bind.port.as_ref()
+            && (port.mode != crate::schema::TaskRuntimePortMode::Fixed
+                || port.value != Some(surface.port))
+        {
+            errors.push(ValidationError::new(format!(
+                "`{field_path}.surfaces.{surface_name}.bind.port` must preserve declared surface port {} with `mode: fixed`",
+                surface.port
+            )));
+        }
+    }
 }
 
 fn validate_task_mode_execution(
@@ -2695,6 +2784,12 @@ fn validate_task_runtime_readiness(
     let Some(readiness) = runtime.readiness.as_ref() else {
         return;
     };
+    let probe_name = readiness
+        .probe
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    let uses_named_probe = !probe_name.is_empty();
 
     let listener_name = readiness.listener.as_deref().map(str::trim);
     let referenced_listener = listener_name.and_then(|name| runtime.listeners.get(name));
@@ -2712,7 +2807,51 @@ fn validate_task_runtime_readiness(
             })
             .is_some_and(|shared_backend| shared_backend.backend == Backend::Remote);
 
-    match readiness.kind {
+    if uses_named_probe {
+        if !contract.readiness.probes.contains_key(probe_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness references unknown probe `{probe_name}`"
+            )));
+        }
+        for (field_name, present) in [
+            ("kind", readiness.kind.is_some()),
+            ("method", readiness.method.is_some()),
+            ("path", readiness.path.is_some()),
+            ("headers", !readiness.headers.is_empty()),
+            ("success", readiness.success.is_some()),
+            ("body", readiness.body.is_some()),
+            ("timeout", readiness.timeout.is_some()),
+        ] {
+            if present {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `probe` must not also declare `readiness.{field_name}`"
+                )));
+            }
+        }
+        validate_runtime_readiness_timing(task_name, readiness, errors);
+        validate_probe_backed_runtime_listener(
+            task_name,
+            runtime,
+            contract
+                .probe(probe_name)
+                .map(|probe| probe.kind)
+                .unwrap_or(crate::schema::ReadinessProbeKind::Http),
+            listener_name,
+            referenced_listener,
+            allows_shared_remote_bind_probe,
+            errors,
+        );
+        return;
+    }
+
+    let Some(kind) = readiness.kind else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness must declare `kind` when `probe` is not used"
+        )));
+        return;
+    };
+
+    match kind {
         crate::schema::TaskRuntimeReadinessKind::Http => {
             let Some(listener_name) = listener_name.filter(|name| !name.is_empty()) else {
                 errors.push(ValidationError::new(format!(
@@ -2726,9 +2865,13 @@ fn validate_task_runtime_readiness(
                 )));
                 return;
             };
-            if !matches!(listener.protocol, crate::schema::TaskRuntimeProtocol::Http) {
+            if !matches!(
+                listener.protocol,
+                crate::schema::TaskRuntimeProtocol::Http
+                    | crate::schema::TaskRuntimeProtocol::Https
+            ) {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` runtime readiness `kind: http` requires listener `{listener_name}` to use `protocol: http`"
+                    "task `{task_name}` runtime readiness `kind: http` requires listener `{listener_name}` to use `protocol: http` or `protocol: https`"
                 )));
             }
             let Some(path) = readiness.path.as_deref().map(str::trim) else {
@@ -2859,6 +3002,77 @@ fn validate_task_runtime_readiness(
     }
 }
 
+fn validate_probe_backed_runtime_listener(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    probe_kind: crate::schema::ReadinessProbeKind,
+    listener_name: Option<&str>,
+    referenced_listener: Option<&crate::schema::TaskRuntimeListenerSpec>,
+    allows_shared_remote_bind_probe: bool,
+    errors: &mut Vec<ValidationError>,
+) {
+    let selected_listener_name =
+        if let Some(listener_name) = listener_name.filter(|name| !name.is_empty()) {
+            listener_name
+        } else {
+            let mut projected = runtime
+                .listeners
+                .iter()
+                .filter(|(_, listener)| listener.project.host.is_some());
+            if let Some((primary_name, _)) = projected.clone().find(|(_, listener)| {
+                listener
+                    .project
+                    .host
+                    .as_ref()
+                    .is_some_and(|host| host.primary)
+            }) {
+                primary_name.as_str()
+            } else if let Some((first_name, _)) = projected.next() {
+                first_name.as_str()
+            } else {
+                return;
+            }
+        };
+
+    let Some(listener) =
+        referenced_listener.or_else(|| runtime.listeners.get(selected_listener_name))
+    else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness references unknown listener `{selected_listener_name}`"
+        )));
+        return;
+    };
+
+    let protocol_matches = match probe_kind {
+        crate::schema::ReadinessProbeKind::Http => {
+            matches!(
+                listener.protocol,
+                crate::schema::TaskRuntimeProtocol::Http
+                    | crate::schema::TaskRuntimeProtocol::Https
+            )
+        }
+        crate::schema::ReadinessProbeKind::Tcp => true,
+    };
+    if !protocol_matches {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness `probe` requires listener `{selected_listener_name}` to use `protocol: http` or `protocol: https`"
+        )));
+    }
+
+    if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness listener `{selected_listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
+        )));
+    } else if listener.project.host.is_none()
+        && (listener.bind.port.mode != TaskRuntimePortMode::Fixed
+            || listener.bind.port.value.is_none())
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness listener `{selected_listener_name}` must declare a fixed `bind.port.value` when shared-remote readiness probes the backend plane"
+        )));
+    }
+}
+
 fn validate_runtime_readiness_timing(
     task_name: &str,
     readiness: &crate::schema::TaskRuntimeReadinessSpec,
@@ -2886,6 +3100,38 @@ fn validate_runtime_readiness_timing(
     if matches!(readiness.retries, Some(0)) {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` runtime readiness `retries` must be greater than zero"
+        )));
+    }
+}
+
+fn validate_surface_readiness_timing(
+    surface_name: &str,
+    readiness: &crate::schema::SurfaceReadinessSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (field_name, value) in [
+        ("interval", readiness.interval.as_deref()),
+        ("timeout", readiness.timeout.as_deref()),
+        ("start_period", readiness.start_period.as_deref()),
+    ] {
+        if let Some(value) = value {
+            let Some(duration) = parse_readiness_duration_spec(value) else {
+                errors.push(ValidationError::new(format!(
+                    "`surfaces.{surface_name}.readiness.{field_name}` must use a positive duration like `200ms`, `3s`, or `1m`"
+                )));
+                continue;
+            };
+            if duration.is_zero() {
+                errors.push(ValidationError::new(format!(
+                    "`surfaces.{surface_name}.readiness.{field_name}` must be greater than zero"
+                )));
+            }
+        }
+    }
+
+    if matches!(readiness.retries, Some(0)) {
+        errors.push(ValidationError::new(format!(
+            "`surfaces.{surface_name}.readiness.retries` must be greater than zero"
         )));
     }
 }
@@ -4121,10 +4367,16 @@ fn validate_services(
         if let Some(readiness) = &service.readiness {
             let from = readiness.from.as_deref().map(str::trim).unwrap_or_default();
             let run = readiness.run.as_deref().map(str::trim).unwrap_or_default();
+            let probe = readiness
+                .probe
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
             let uses_legacy_command = !run.is_empty();
+            let uses_named_probe = !probe.is_empty();
             let structured_kind = readiness.kind;
 
-            if from.is_empty() {
+            if from.is_empty() && !uses_named_probe {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness field `from` must not be empty"
                 )));
@@ -4134,9 +4386,19 @@ fn validate_services(
                     "service `{name}` readiness must not declare both legacy `run` and structured `kind`; choose one readiness form"
                 )));
             }
-            if !uses_legacy_command && structured_kind.is_none() {
+            if uses_legacy_command && uses_named_probe {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` readiness must declare either legacy `run` or structured `kind`"
+                    "service `{name}` readiness must not declare both legacy `run` and `probe`; choose one readiness form"
+                )));
+            }
+            if uses_named_probe && structured_kind.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness must not declare both `probe` and structured `kind`; keep the named probe or the inline readiness contract"
+                )));
+            }
+            if !uses_legacy_command && !uses_named_probe && structured_kind.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness must declare legacy `run`, named `probe`, or structured `kind`"
                 )));
             }
             if uses_legacy_command {
@@ -4157,6 +4419,36 @@ fn validate_services(
                         )));
                     }
                 }
+            } else if uses_named_probe {
+                if from.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness `probe` must also declare `from` so ota can select the service endpoint projection"
+                    )));
+                } else if service.endpoint_for_context(from).is_none() {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness references unknown endpoint context `{from}`"
+                    )));
+                }
+                if !contract.readiness.probes.contains_key(probe) {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness references unknown probe `{probe}`"
+                    )));
+                }
+                for (field_name, present) in [
+                    ("method", readiness.method.is_some()),
+                    ("path", readiness.path.is_some()),
+                    ("headers", !readiness.headers.is_empty()),
+                    ("success", readiness.success.is_some()),
+                    ("body", readiness.body.is_some()),
+                    ("timeout", readiness.timeout.is_some()),
+                ] {
+                    if present {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` readiness `probe` must not also declare `readiness.{field_name}`"
+                        )));
+                    }
+                }
+                validate_service_readiness_timing(name, readiness, errors);
             } else if let Some(kind) = structured_kind {
                 match kind {
                     crate::schema::TaskRuntimeReadinessKind::Http => {
@@ -4587,9 +4879,43 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new("check name must not be empty"));
         }
 
-        if check.run.trim().is_empty() {
+        if check.run.is_some() && check.probe.is_some() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must not declare both `run` and `probe`",
+                check.name
+            )));
+        }
+        if check.run.is_none() && check.probe.is_none() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must declare either `run` or `probe`",
+                check.name
+            )));
+        }
+        if check
+            .run
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
             errors.push(ValidationError::new(format!(
                 "check `{}` must declare a non-empty `run` command",
+                check.name
+            )));
+        }
+        if check
+            .probe
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must declare a non-empty `probe` reference",
+                check.name
+            )));
+        }
+        if let Some(probe_name) = check.probe.as_deref()
+            && !contract.readiness.probes.contains_key(probe_name)
+        {
+            errors.push(ValidationError::new(format!(
+                "check `{}` references unknown probe `{probe_name}`",
                 check.name
             )));
         }
@@ -4603,11 +4929,839 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
     }
 }
 
-fn validate_agent(
-    agent: Option<&AgentConfig>,
-    tasks: &BTreeMap<String, TaskSpec>,
+fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(workflows) = contract.workflows.as_ref() else {
+        return;
+    };
+
+    if workflows.default.trim().is_empty() {
+        errors.push(ValidationError::new(
+            "`workflows.default` must not be empty",
+        ));
+    }
+    if workflows.items.is_empty() {
+        errors.push(ValidationError::new(
+            "`workflows` must declare at least one named workflow in addition to `default`",
+        ));
+        return;
+    }
+    if !workflows.items.contains_key(workflows.default.as_str()) {
+        errors.push(ValidationError::new(format!(
+            "`workflows.default` references unknown workflow `{}`",
+            workflows.default
+        )));
+    }
+
+    for (name, workflow) in &workflows.items {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`workflows` must not declare an empty workflow name",
+            ));
+        }
+        if workflow
+            .intent
+            .as_deref()
+            .is_some_and(|intent| intent.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.intent` must not be empty"
+            )));
+        }
+        if let Some(setup) = workflow.setup.as_ref() {
+            validate_task_reference(
+                &format!("workflows.{name}.setup.task"),
+                Some(setup.task.as_str()),
+                &contract.tasks,
+                errors,
+            );
+        }
+        if let Some(run) = workflow.run.as_ref() {
+            validate_task_reference(
+                &format!("workflows.{name}.run.task"),
+                Some(run.task.as_str()),
+                &contract.tasks,
+                errors,
+            );
+        }
+        for service in &workflow.services.required {
+            if !contract.services.contains_key(service) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.services.required` references unknown service `{service}`"
+                )));
+            }
+        }
+        for check in &workflow.readiness.checks {
+            if !contract
+                .checks
+                .iter()
+                .any(|declared| declared.name == *check)
+            {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.readiness.checks` references unknown check `{check}`"
+                )));
+            }
+        }
+        for probe in &workflow.readiness.probes {
+            if !contract.readiness.probes.contains_key(probe) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.readiness.probes` references unknown probe `{probe}`"
+                )));
+            }
+        }
+        for surface in &workflow.readiness.surfaces {
+            if !contract.surfaces.contains_key(surface) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.readiness.surfaces` references unknown surface `{surface}`"
+                )));
+            }
+        }
+        let run_task = workflow
+            .run
+            .as_ref()
+            .and_then(|run| contract.tasks.get(run.task.as_str()));
+        if !workflow.readiness.surfaces.is_empty() && run_task.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.readiness.surfaces` requires `workflows.{name}.run.task` to resolve to a declared task"
+            )));
+        }
+        if let Some(task) = run_task {
+            for surface in &workflow.readiness.surfaces {
+                if let Some(message) =
+                    workflow_surface_attachment_error(contract, task, surface.as_str())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.readiness.surfaces` references surface `{surface}`, but run task `{}` {message}",
+                        workflow
+                            .run
+                            .as_ref()
+                            .expect("run task should exist when task resolved")
+                            .task
+                    )));
+                }
+            }
+        }
+        for expose in &workflow.exposes {
+            if let Some(surface) = expose.surface_name() {
+                if !contract.surfaces.contains_key(surface) {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.exposes` references unknown surface `{surface}`"
+                    )));
+                    continue;
+                }
+                let Some(run_task) = run_task else {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.exposes` surface references require `workflows.{name}.run.task` to resolve to a declared task"
+                    )));
+                    continue;
+                };
+                if let Some(message) =
+                    workflow_surface_attachment_error(contract, run_task, surface)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.exposes` references surface `{surface}`, but run task `{}` {message}",
+                        workflow
+                            .run
+                            .as_ref()
+                            .expect("run task should exist when task resolved")
+                            .task
+                    )));
+                }
+            }
+        }
+    }
+}
+
+fn workflow_surface_attachment_error(
+    contract: &Contract,
+    task: &TaskSpec,
+    surface: &str,
+) -> Option<String> {
+    let backend = task.workflow_backend(contract.execution.as_ref());
+    let Some(runtime) = task.service_runtime_for_backend(backend) else {
+        return Some(format!(
+            "does not resolve to a service runtime for backend `{}`",
+            format_backend(backend)
+        ));
+    };
+    if !runtime.surfaces.contains_name(surface) {
+        return Some(format!(
+            "does not attach that surface for backend `{}`",
+            format_backend(backend)
+        ));
+    }
+
+    None
+}
+
+fn validate_surfaces(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (name, surface) in &contract.surfaces {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`surfaces` must not declare an empty surface name",
+            ));
+        }
+        if surface
+            .label
+            .as_deref()
+            .is_some_and(|label| label.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "`surfaces.{name}.label` must not be empty"
+            )));
+        }
+        if surface
+            .purpose
+            .as_deref()
+            .is_some_and(|purpose| purpose.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "`surfaces.{name}.purpose` must not be empty"
+            )));
+        }
+        if surface.port == 0 {
+            errors.push(ValidationError::new(format!(
+                "`surfaces.{name}.port` must be between 1 and 65535"
+            )));
+        }
+        match surface.kind {
+            crate::schema::SurfaceKind::Http | crate::schema::SurfaceKind::Https => {
+                if let Some(path) = surface.path.as_deref()
+                    && !path.starts_with('/')
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.path` must start with `/`"
+                    )));
+                }
+            }
+            crate::schema::SurfaceKind::Tcp => {
+                if surface.path.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.path` is only supported for `kind: http` or `kind: https` surfaces"
+                    )));
+                }
+            }
+        }
+
+        let Some(readiness) = surface.readiness.as_ref() else {
+            continue;
+        };
+        match readiness.kind {
+            crate::schema::TaskRuntimeReadinessKind::Http => {
+                let effective_path = readiness.path.clone().or_else(|| {
+                    matches!(
+                        surface.kind,
+                        crate::schema::SurfaceKind::Http | crate::schema::SurfaceKind::Https
+                    )
+                    .then(|| surface.effective_path())
+                    .flatten()
+                });
+                if effective_path.is_none() {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.path` is required for HTTP surface readiness"
+                    )));
+                } else if !effective_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with('/'))
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.path` must start with `/`"
+                    )));
+                }
+                for header_name in readiness.headers.keys() {
+                    if header_name.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "`surfaces.{name}.readiness.headers` must not use an empty header name"
+                        )));
+                    }
+                }
+                if let Some(success) = readiness.success.as_ref() {
+                    if success.status.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "`surfaces.{name}.readiness.success.status` must declare at least one HTTP status code"
+                        )));
+                    }
+                    for status in &success.status {
+                        if !(100..=599).contains(status) {
+                            errors.push(ValidationError::new(format!(
+                                "`surfaces.{name}.readiness.success.status` must use valid HTTP status codes between 100 and 599"
+                            )));
+                            break;
+                        }
+                    }
+                }
+                if let Some(body) = readiness.body.as_ref()
+                    && body.contains.trim().is_empty()
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.body.contains` must not be empty"
+                    )));
+                }
+                if readiness.method == Some(crate::schema::TaskRuntimeReadinessHttpMethod::Head)
+                    && readiness.body.is_some()
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`surfaces.{name}.readiness.method: HEAD` must not declare `body.contains`"
+                    )));
+                }
+            }
+            crate::schema::TaskRuntimeReadinessKind::Tcp => {
+                for (field_name, present) in [
+                    ("path", readiness.path.is_some()),
+                    ("method", readiness.method.is_some()),
+                    ("headers", !readiness.headers.is_empty()),
+                    ("success", readiness.success.is_some()),
+                    ("body", readiness.body.is_some()),
+                ] {
+                    if present {
+                        errors.push(ValidationError::new(format!(
+                            "`surfaces.{name}.readiness.{field_name}` is only supported for `kind: http` surface readiness"
+                        )));
+                    }
+                }
+            }
+        }
+        validate_surface_readiness_timing(name, readiness, errors);
+    }
+}
+
+fn validate_readiness(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (name, probe) in &contract.readiness.probes {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`readiness.probes` must not declare an empty probe name",
+            ));
+        }
+        let url = probe.url.as_deref().map(str::trim).unwrap_or_default();
+        let has_url = !url.is_empty();
+        let has_target = probe.target.is_some();
+        if has_url == has_target {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}` must declare exactly one of `url` or `target`"
+            )));
+        }
+        if probe.timeout.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.timeout` is required"
+            )));
+        }
+        if matches!(probe.timeout, Some(0)) {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.timeout` must declare a timeout greater than zero"
+            )));
+        }
+        if has_url
+            && matches!(probe.kind, crate::schema::ReadinessProbeKind::Http)
+            && !url.starts_with("http://")
+        {
+            let detail = if url.starts_with("https://") {
+                "only plain `http://` readiness probes are supported today"
+            } else {
+                "http readiness probes must declare an absolute `http://` URL"
+            };
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.url` is invalid: {detail}"
+            )));
+        }
+        if has_url && matches!(probe.kind, crate::schema::ReadinessProbeKind::Tcp) {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.url` is only supported for `kind: http` probes"
+            )));
+        }
+        if matches!(probe.kind, crate::schema::ReadinessProbeKind::Tcp) && probe.method.is_some() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.method` is only supported for `kind: http` probes"
+            )));
+        }
+        if matches!(probe.kind, crate::schema::ReadinessProbeKind::Tcp) && !probe.headers.is_empty()
+        {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.headers` is only supported for `kind: http` probes"
+            )));
+        }
+        if matches!(probe.kind, crate::schema::ReadinessProbeKind::Tcp) && probe.success.is_some() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.success` is only supported for `kind: http` probes"
+            )));
+        }
+        if matches!(probe.kind, crate::schema::ReadinessProbeKind::Tcp) && probe.body.is_some() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.body` is only supported for `kind: http` probes"
+            )));
+        }
+        if has_url && probe.path.is_some() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.path` is only supported for target-based HTTP probes"
+            )));
+        }
+        if matches!(probe.kind, crate::schema::ReadinessProbeKind::Tcp)
+            && probe.expect_status.is_some()
+        {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.expect_status` is only supported for `kind: http` probes"
+            )));
+        }
+        if probe.expect_status.is_some() && probe.success.is_some() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}` must not declare both `expect_status` and `success.status`; choose one HTTP success form"
+            )));
+        }
+        if let Some(expect_status) = probe.expect_status
+            && !(100..=599).contains(&expect_status)
+        {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.expect_status` must be a valid HTTP status code between 100 and 599"
+            )));
+        }
+        if matches!(probe.kind, crate::schema::ReadinessProbeKind::Http) {
+            for header_name in probe.headers.keys() {
+                if header_name.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`readiness.probes.{name}.headers` must not use an empty header name"
+                    )));
+                }
+            }
+            if let Some(success) = probe.success.as_ref() {
+                if success.status.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`readiness.probes.{name}.success.status` must declare at least one HTTP status code"
+                    )));
+                } else if success
+                    .status
+                    .iter()
+                    .any(|status| !(100..=599).contains(status))
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`readiness.probes.{name}.success.status` must use valid HTTP status codes between 100 and 599"
+                    )));
+                }
+            }
+            if let Some(body) = probe.body.as_ref()
+                && body.contains.trim().is_empty()
+            {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.body.contains` must not be empty"
+                )));
+            }
+            if matches!(
+                probe.method,
+                Some(crate::schema::TaskRuntimeReadinessHttpMethod::Head)
+            ) && probe.body.is_some()
+            {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.method: HEAD` must not declare `body.contains`"
+                )));
+            }
+        }
+        if let Some(target) = probe.target.as_ref() {
+            validate_readiness_probe_target(contract, name, probe, target, errors);
+        }
+    }
+}
+
+fn validate_readiness_probe_target(
+    contract: &Contract,
+    name: &str,
+    probe: &crate::schema::ReadinessProbeSpec,
+    target: &crate::schema::ReadinessProbeTargetSpec,
     errors: &mut Vec<ValidationError>,
 ) {
+    if target.name.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "`readiness.probes.{name}.target.name` must not be empty"
+        )));
+        return;
+    }
+    match target.kind {
+        crate::schema::ReadinessProbeTargetKind::Task => {
+            if !contract.tasks.contains_key(target.name.as_str()) {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.name` references unknown task `{}`",
+                    target.name
+                )));
+            }
+            let listener_name = target
+                .listener
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            if listener_name.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.listener` is required for task targets"
+                )));
+            }
+            if target.endpoint.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.endpoint` is not valid for task targets"
+                )));
+            }
+            let observer = target.observer.as_ref();
+            if let Some(observer) = observer {
+                match observer.kind {
+                    crate::schema::ReadinessProbeObserverKind::CommandHost => {
+                        if observer.task.is_some() {
+                            errors.push(ValidationError::new(format!(
+                                "`readiness.probes.{name}.target.observer.task` is only valid when `observer.kind: task`"
+                            )));
+                        }
+                        if target.address_view != TaskTargetAddressView::Host {
+                            errors.push(ValidationError::new(format!(
+                                "`readiness.probes.{name}.target.address_view: {}` requires `target.observer.kind: task`",
+                                match target.address_view {
+                                    TaskTargetAddressView::Topology => "topology",
+                                    TaskTargetAddressView::Host => "host",
+                                    TaskTargetAddressView::Internal => "internal",
+                                }
+                            )));
+                        }
+                    }
+                    crate::schema::ReadinessProbeObserverKind::Task => {
+                        let observer_task_name =
+                            observer.task.as_deref().map(str::trim).unwrap_or_default();
+                        if observer_task_name.is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "`readiness.probes.{name}.target.observer.task` is required when `observer.kind: task`"
+                            )));
+                        } else if !contract.tasks.contains_key(observer_task_name) {
+                            errors.push(ValidationError::new(format!(
+                                "`readiness.probes.{name}.target.observer.task` references unknown task `{observer_task_name}`"
+                            )));
+                        }
+                    }
+                }
+            } else if target.address_view != TaskTargetAddressView::Host {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.address_view: {}` requires `target.observer.kind: task`",
+                    match target.address_view {
+                        TaskTargetAddressView::Topology => "topology",
+                        TaskTargetAddressView::Host => "host",
+                        TaskTargetAddressView::Internal => "internal",
+                    }
+                )));
+            }
+            if let Some(task) = contract.tasks.get(target.name.as_str()) {
+                let listeners = declared_runtime_listener_names(task);
+                if !listener_name.is_empty() && !listeners.contains(listener_name) {
+                    errors.push(ValidationError::new(format!(
+                        "`readiness.probes.{name}.target.listener` references unknown task listener `{}.{listener_name}`",
+                        target.name
+                    )));
+                } else if !listener_name.is_empty() {
+                    validate_task_target_probe_resolution(
+                        contract,
+                        name,
+                        probe.kind,
+                        target,
+                        task,
+                        listener_name,
+                        errors,
+                    );
+                }
+            }
+        }
+        crate::schema::ReadinessProbeTargetKind::Service => {
+            if !contract.services.contains_key(target.name.as_str()) {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.name` references unknown service `{}`",
+                    target.name
+                )));
+            }
+            if target.listener.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.listener` is not valid for service targets"
+                )));
+            }
+            if target.address_view != TaskTargetAddressView::Host {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.address_view` is not valid for service targets"
+                )));
+            }
+            if target.observer.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.target.observer` is not valid for service targets"
+                )));
+            }
+            if let Some(service) = contract.services.get(target.name.as_str()) {
+                let endpoint_name = target
+                    .endpoint
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or_default();
+                if endpoint_name.is_empty() && service.endpoints.len() != 1 {
+                    errors.push(ValidationError::new(format!(
+                        "`readiness.probes.{name}.target.endpoint` is required when service `{}` has multiple endpoints",
+                        target.name
+                    )));
+                } else if !endpoint_name.is_empty()
+                    && service.endpoint_for_context(endpoint_name).is_none()
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`readiness.probes.{name}.target.endpoint` references unknown service endpoint `{}.{endpoint_name}`",
+                        target.name
+                    )));
+                }
+            }
+        }
+    }
+
+    match probe.kind {
+        crate::schema::ReadinessProbeKind::Http => {
+            let path = probe.path.as_deref().map(str::trim).unwrap_or_default();
+            if path.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.path` is required for target-based HTTP probes"
+                )));
+            } else if !path.starts_with('/') {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.path` must start with `/`"
+                )));
+            }
+        }
+        crate::schema::ReadinessProbeKind::Tcp => {
+            if probe
+                .path
+                .as_deref()
+                .is_some_and(|path| !path.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{name}.path` is not valid for TCP probes"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_task_target_probe_resolution(
+    contract: &Contract,
+    probe_name: &str,
+    probe_kind: crate::schema::ReadinessProbeKind,
+    target: &crate::schema::ReadinessProbeTargetSpec,
+    producer_task: &TaskSpec,
+    listener_name: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let observer_task_name = target
+        .observer
+        .as_ref()
+        .filter(|observer| observer.kind == crate::schema::ReadinessProbeObserverKind::Task)
+        .and_then(|observer| observer.task.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+
+    match target.address_view {
+        TaskTargetAddressView::Host => {
+            match select_target_listener_for_host_view(producer_task, listener_name) {
+                Ok(Some(listener)) => {
+                    if matches!(probe_kind, crate::schema::ReadinessProbeKind::Http)
+                        && !matches!(
+                            listener.protocol,
+                            TaskRuntimeProtocol::Http | TaskRuntimeProtocol::Https
+                        )
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`readiness.probes.{probe_name}` uses `kind: http`, but task listener `{}.{listener_name}` does not use `protocol: http` or `protocol: https`",
+                            target.name
+                        )));
+                    }
+                    let Some(host_projection) = listener.project.host.as_ref() else {
+                        errors.push(ValidationError::new(format!(
+                            "`readiness.probes.{probe_name}` requires task listener `{}.{listener_name}` to declare `project.host` for `target.address_view: host`",
+                            target.name
+                        )));
+                        return;
+                    };
+                    if host_projection.port.value.is_none() {
+                        errors.push(ValidationError::new(format!(
+                            "`readiness.probes.{probe_name}` requires task listener `{}.{listener_name}` to declare a fixed `project.host.port.value` for `target.address_view: host`",
+                            target.name
+                        )));
+                    }
+                }
+                Ok(None) => {}
+                Err(details) => errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{probe_name}.target.listener` is invalid: {details}"
+                ))),
+            }
+        }
+        TaskTargetAddressView::Topology | TaskTargetAddressView::Internal => {
+            let Some(observer_task_name) = observer_task_name else {
+                return;
+            };
+            let Some(observer_task) = contract.tasks.get(observer_task_name) else {
+                return;
+            };
+            let observer_backend = selected_probe_observer_backend(contract, observer_task_name);
+            let listener = producer_task
+                .service_runtime_for_backend(observer_backend)
+                .and_then(|runtime| runtime.listeners.get(listener_name));
+            let Some(listener) = listener else {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{probe_name}.target.listener` references unknown task listener `{}.{listener_name}` for observer task `{observer_task_name}` on backend `{}`",
+                    target.name,
+                    probe_observer_backend_name(observer_backend),
+                )));
+                return;
+            };
+            if matches!(probe_kind, crate::schema::ReadinessProbeKind::Http)
+                && !matches!(
+                    listener.protocol,
+                    TaskRuntimeProtocol::Http | TaskRuntimeProtocol::Https
+                )
+            {
+                errors.push(ValidationError::new(format!(
+                    "`readiness.probes.{probe_name}` uses `kind: http`, but task listener `{}.{listener_name}` does not use `protocol: http` or `protocol: https` on backend `{}`",
+                    target.name,
+                    probe_observer_backend_name(observer_backend),
+                )));
+            }
+
+            let shared_container = observer_backend == Backend::Container
+                && observer_task.backend_binding_for_backend(Backend::Container)
+                    == producer_task.backend_binding_for_backend(Backend::Container)
+                && observer_task
+                    .backend_binding_for_backend(Backend::Container)
+                    .is_some();
+            let shared_native = observer_backend == Backend::Native
+                && observer_task.backend_binding_for_backend(Backend::Native)
+                    == producer_task.backend_binding_for_backend(Backend::Native)
+                && observer_task
+                    .backend_binding_for_backend(Backend::Native)
+                    .is_some();
+            let shared_remote = observer_backend == Backend::Remote
+                && observer_task.backend_binding_for_backend(Backend::Remote)
+                    == producer_task.backend_binding_for_backend(Backend::Remote)
+                && observer_task
+                    .backend_binding_for_backend(Backend::Remote)
+                    .is_some();
+
+            match target.address_view {
+                TaskTargetAddressView::Topology => {
+                    if observer_backend == Backend::Native {
+                        let has_fixed_host = listener.project.host.as_ref().is_some_and(|host| {
+                            host.port.mode == TaskRuntimeHostPortMode::Fixed
+                                && host.port.value.is_some()
+                        });
+                        let has_shared_bind = shared_native
+                            && listener.bind.port.mode == TaskRuntimePortMode::Fixed
+                            && listener.bind.port.value.is_some();
+                        if !has_fixed_host && !has_shared_bind {
+                            errors.push(ValidationError::new(format!(
+                                "`readiness.probes.{probe_name}` uses `target.address_view: topology` with observer task `{observer_task_name}`, but task listener `{}.{listener_name}` does not declare a fixed host projection or one shared native backend bind endpoint",
+                                target.name
+                            )));
+                        }
+                    } else if observer_backend == Backend::Container {
+                        if !shared_container {
+                            errors.push(ValidationError::new(format!(
+                                "`readiness.probes.{probe_name}` uses `target.address_view: topology` with container observer task `{observer_task_name}`, but `{observer_task_name}` and `{}` do not share one declared container backend binding",
+                                target.name
+                            )));
+                        } else if listener.bind.port.mode != TaskRuntimePortMode::Fixed
+                            || listener.bind.port.value.is_none()
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "`readiness.probes.{probe_name}` uses `target.address_view: topology` with container observer task `{observer_task_name}`, but task listener `{}.{listener_name}` does not declare a fixed `bind.port.value`",
+                                target.name
+                            )));
+                        }
+                    } else if !shared_remote {
+                        errors.push(ValidationError::new(format!(
+                            "`readiness.probes.{probe_name}` uses `target.address_view: topology` with remote observer task `{observer_task_name}`, but `{observer_task_name}` and `{}` do not share one declared remote backend binding",
+                            target.name
+                        )));
+                    } else if listener.bind.port.mode != TaskRuntimePortMode::Fixed
+                        || listener.bind.port.value.is_none()
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`readiness.probes.{probe_name}` uses `target.address_view: topology` with remote observer task `{observer_task_name}`, but task listener `{}.{listener_name}` does not declare a fixed `bind.port.value`",
+                            target.name
+                        )));
+                    }
+                }
+                TaskTargetAddressView::Internal => {
+                    let shared = match observer_backend {
+                        Backend::Native => shared_native,
+                        Backend::Container => shared_container,
+                        Backend::Remote => shared_remote,
+                    };
+                    if !shared {
+                        errors.push(ValidationError::new(format!(
+                            "`readiness.probes.{probe_name}` uses `target.address_view: internal` with observer task `{observer_task_name}`, but `{observer_task_name}` and `{}` do not share one declared {} backend binding",
+                            target.name,
+                            probe_observer_backend_name(observer_backend),
+                        )));
+                    } else if listener.bind.port.mode != TaskRuntimePortMode::Fixed
+                        || listener.bind.port.value.is_none()
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`readiness.probes.{probe_name}` uses `target.address_view: internal` with observer task `{observer_task_name}`, but task listener `{}.{listener_name}` does not declare a fixed `bind.port.value`",
+                            target.name
+                        )));
+                    }
+                }
+                TaskTargetAddressView::Host => {}
+            }
+        }
+    }
+}
+
+fn selected_probe_observer_backend(contract: &Contract, task_name: &str) -> Backend {
+    let execution = contract.execution.as_ref();
+    let default_context_backend = execution
+        .and_then(|execution| execution.default_context())
+        .map(|(_, context)| context.backend);
+    contract
+        .tasks
+        .get(task_name)
+        .and_then(TaskSpec::mode_default_backend)
+        .or_else(|| {
+            execution.and_then(|execution| {
+                contract
+                    .tasks
+                    .get(task_name)
+                    .and_then(|task| task.context.as_deref())
+                    .and_then(|context_name| execution.contexts.get(context_name))
+                    .map(|context| context.backend)
+            })
+        })
+        .or(default_context_backend)
+        .or_else(|| execution.and_then(|execution| execution.preferred))
+        .unwrap_or(Backend::Native)
+}
+
+fn probe_observer_backend_name(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    }
+}
+
+fn declared_runtime_listener_names(task: &TaskSpec) -> BTreeSet<String> {
+    let mut listeners = BTreeSet::new();
+    if let Some(runtime) = task
+        .runtime
+        .as_ref()
+        .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+    {
+        listeners.extend(runtime.listeners.keys().cloned());
+    }
+    if let Some(execution) = task.execution.as_ref() {
+        for (_, branch) in execution.modes.iter() {
+            let Some(runtime) = branch
+                .runtime
+                .as_ref()
+                .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+            else {
+                continue;
+            };
+            listeners.extend(runtime.listeners.keys().cloned());
+        }
+    }
+    listeners
+}
+
+fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let agent = contract.agent.as_ref();
     let Some(agent) = agent else {
         return;
     };
@@ -4615,27 +5769,40 @@ fn validate_agent(
     validate_task_reference(
         "agent.entrypoint",
         agent.entrypoint.as_deref(),
-        tasks,
+        &contract.tasks,
         errors,
     );
     validate_task_reference(
         "agent.default_task",
         agent.default_task.as_deref(),
-        tasks,
+        &contract.tasks,
         errors,
     );
 
     for task in &agent.safe_tasks {
-        validate_task_reference("agent.safe_tasks", Some(task.as_str()), tasks, errors);
+        validate_task_reference(
+            "agent.safe_tasks",
+            Some(task.as_str()),
+            &contract.tasks,
+            errors,
+        );
     }
 
     for task in &agent.verify_after_changes {
         validate_task_reference(
             "agent.verify_after_changes",
             Some(task.as_str()),
-            tasks,
+            &contract.tasks,
             errors,
         );
+    }
+
+    if let Some((name, workflow)) = contract.default_workflow() {
+        if workflow.run.is_none() && agent.default_task.is_none() && agent.entrypoint.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}` does not declare `run.task`, and the agent surface also lacks `agent.default_task` or `agent.entrypoint`"
+            )));
+        }
     }
 
     for path in &agent.writable_paths {
@@ -4709,8 +5876,8 @@ fn validate_agent(
         }
     }
 
-    for task in tasks.values() {
-        for name in task.env.keys() {
+    for task in contract.tasks.values() {
+        for name in task.env.keys().map(String::as_str) {
             if name.trim().is_empty() {
                 errors.push(ValidationError::new("task env keys must not be empty"));
             }
@@ -4823,6 +5990,1537 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_workflow_references_and_default_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  app:
+    start: echo app
+checks:
+  - name: app-health
+    kind: health
+    severity: error
+    run: test -f .env.local
+tasks:
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    intent: local_development
+    setup:
+      task: setup
+    run:
+      task: dev
+    services:
+      required:
+        - app
+    readiness:
+      checks:
+        - app-health
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_workflow_references_to_missing_contract_members() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+    services:
+      required:
+        - app
+    readiness:
+      checks:
+        - app-health
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("workflow should be rejected");
+        let message = error.to_string();
+        assert!(message.contains("`workflows.app.setup.task` references unknown task `setup`"));
+        assert!(
+            message.contains("`workflows.app.services.required` references unknown service `app`")
+        );
+        assert!(
+            message
+                .contains("`workflows.app.readiness.checks` references unknown check `app-health`")
+        );
+    }
+
+    #[test]
+    fn validates_probe_backed_checks_and_workflow_probe_references() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: backend-ready
+tasks:
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+workflows:
+  default: backend
+  backend:
+    setup:
+      task: setup
+    run:
+      task: dev
+    readiness:
+      probes:
+        - backend-ready
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_probe_references() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: missing-probe
+workflows:
+  default: backend
+  backend:
+    readiness:
+      probes:
+        - missing-probe
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("probe references should be rejected");
+        let message = error.to_string();
+        assert!(message.contains("check `backend-ready` references unknown probe `missing-probe`"));
+        assert!(message.contains(
+            "`workflows.backend.readiness.probes` references unknown probe `missing-probe`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_readiness_surface_not_attached_to_run_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+  dev:fe:
+    run: pnpm dev:fe
+    runtime:
+      kind: service
+workflows:
+  default: frontend
+  frontend:
+    run:
+      task: dev:fe
+    readiness:
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("workflow surface readiness should reject unattached run-task surfaces");
+        assert!(error.to_string().contains(
+            "`workflows.frontend.readiness.surfaces` references surface `backend`, but run task `dev:fe` does not attach that surface for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_expose_surface_not_attached_to_run_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+  dev:fe:
+    run: pnpm dev:fe
+    runtime:
+      kind: service
+workflows:
+  default: frontend
+  frontend:
+    run:
+      task: dev:fe
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("workflow surface expose should reject unattached run-task surfaces");
+        assert!(error.to_string().contains(
+            "`workflows.frontend.exposes` references surface `backend`, but run task `dev:fe` does not attach that surface for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_surface_attached_only_in_non_default_mode_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      modes:
+        container:
+          runtime:
+            kind: service
+            surfaces:
+              - backend
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err(
+            "workflow surface should reject branch-only attachment off the default runtime path",
+        );
+        assert!(error.to_string().contains(
+            "`workflows.app.readiness.surfaces` references surface `backend`, but run task `dev` does not resolve to a service runtime for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn accepts_workflow_surface_attached_on_default_mode_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      modes:
+        native:
+          runtime:
+            kind: service
+            surfaces:
+              - backend
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("default-mode native attachment should satisfy workflow surfaces");
+    }
+
+    #[test]
+    fn accepts_workflow_surface_attached_on_default_container_mode_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          runtime:
+            kind: service
+            surfaces:
+              backend:
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 5678
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("default-mode container attachment should satisfy workflow surfaces");
+    }
+
+    #[test]
+    fn accepts_workflow_surface_when_only_effective_mode_branch_attaches_it() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      default_mode: container
+      modes:
+        native:
+          runtime:
+            kind: service
+            listeners:
+              diagnostics:
+                http: 9000
+        container:
+          context: app
+          runtime:
+            kind: service
+            surfaces:
+              backend:
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 5678
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - surface: backend
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("workflow surfaces should validate against the effective runtime branch only");
+    }
+
+    #[test]
+    fn rejects_checks_that_declare_both_run_and_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    run: test -f ready
+    probe: backend-ready
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("check with run and probe should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("check `backend-ready` must not declare both `run` and `probe`")
+        );
+    }
+
+    #[test]
+    fn rejects_checks_that_declare_neither_run_nor_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("check without run or probe should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("check `backend-ready` must declare either `run` or `probe`")
+        );
+    }
+
+    #[test]
+    fn validates_runtime_and_service_probe_reuse() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+services:
+  api:
+    required: true
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5678
+    readiness:
+      from: host
+      probe: app-ready
+      retries: 3
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: app-ready
+        interval: 5s
+        retries: 12
+        start_period: 10s
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("runtime and service probes should validate");
+    }
+
+    #[test]
+    fn rejects_runtime_probe_mixed_with_inline_http_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: app-ready
+        kind: http
+        listener: backend
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("runtime probe should reject inline drift");
+        let message = error.to_string();
+        assert!(message.contains(
+            "task `dev` runtime readiness `probe` must not also declare `readiness.kind`"
+        ));
+    }
+
+    #[test]
+    fn accepts_runtime_probe_listener_selection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+readiness:
+  probes:
+    editor-ready:
+      kind: http
+      url: http://127.0.0.1:8080/
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: editor-ready
+        listener: editor
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 5678
+        editor:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("probe-backed runtime listener selection should validate");
+    }
+
+    #[test]
+    fn accepts_https_surface_with_http_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  docs:
+    kind: https
+    label: Docs Preview
+    purpose: Browser-facing docs preview
+    visibility: public
+    port: 443
+    path: /preview
+    readiness:
+      kind: http
+      path: /health
+      timeout: 5s
+tasks:
+  docs:preview:
+    run: pnpm docs:preview
+    runtime:
+      kind: service
+      surfaces:
+        - docs
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("https surface with http readiness should validate");
+    }
+
+    #[test]
+    fn rejects_runtime_probe_listener_on_non_http_runtime_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+readiness:
+  probes:
+    tcpish:
+      kind: http
+      url: http://127.0.0.1:8080/
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: tcpish
+        listener: redis
+      listeners:
+        redis:
+          protocol: tcp
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 6379
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 6379
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("probe-backed runtime listener should require an http listener");
+        assert!(error.to_string().contains(
+            "task `dev` runtime readiness `probe` requires listener `redis` to use `protocol: http`"
+        ));
+    }
+
+    #[test]
+    fn validates_target_based_readiness_probes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+        address_view: host
+      path: /healthz/readiness
+      timeout: 10000
+    postgres-ready:
+      kind: tcp
+      target:
+        kind: service
+        name: postgres
+        endpoint: app
+      timeout: 10000
+services:
+  postgres:
+    endpoints:
+      app:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("target-based probes should validate");
+    }
+
+    #[test]
+    fn rejects_task_target_topology_probe_without_observer() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+        address_view: topology
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("topology task probe should require an observer task");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready.target.address_view: topology` requires `target.observer.kind: task`"
+        ));
+    }
+
+    #[test]
+    fn validates_task_target_topology_probe_with_observer_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+        address_view: topology
+        observer:
+          kind: task
+          task: sandbox
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5678
+  sandbox:
+    run: pnpm sandbox
+    runtime:
+      kind: service
+      backend_binding: workbench
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("observer-backed topology task probe should validate");
+    }
+
+    #[test]
+    fn rejects_unknown_task_target_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: missing
+        listener: backend
+      path: /ready
+      timeout: 10000
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("unknown task target should fail");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready.target.name` references unknown task `missing`"
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_task_listener_target_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: missing
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("unknown listener should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("`readiness.probes.backend-ready.target.listener` references unknown task listener `dev.missing`")
+        );
+    }
+
+    #[test]
+    fn accepts_task_target_probe_listener_declared_under_execution_mode_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    execution:
+      modes:
+        native:
+          runtime:
+            kind: service
+            listeners:
+              backend:
+                protocol: http
+                bind:
+                  address: 127.0.0.1
+                  port:
+                    mode: fixed
+                    value: 5678
+                project:
+                  host:
+                    address: 127.0.0.1
+                    primary: true
+                    port:
+                      mode: fixed
+                      value: 5678
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("task target probe should see listeners declared under execution modes");
+    }
+
+    #[test]
+    fn rejects_http_task_target_probe_on_non_http_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    metrics-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: metrics
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        metrics:
+          protocol: tcp
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 9100
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 9100
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("http task target probe should require an http listener");
+        assert!(error.to_string().contains(
+            "`readiness.probes.metrics-ready` uses `kind: http`, but task listener `dev.metrics` does not use `protocol: http`"
+        ));
+    }
+
+    #[test]
+    fn rejects_task_target_probe_without_project_host() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("task target probe should require project.host");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready` requires task listener `dev.backend` to declare `project.host` for `target.address_view: host`"
+        ));
+    }
+
+    #[test]
+    fn rejects_task_target_probe_without_fixed_project_host_port() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: auto
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("task target probe should require a fixed projected host port");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready` requires task listener `dev.backend` to declare a fixed `project.host.port.value` for `target.address_view: host`"
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_service_target_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    postgres-ready:
+      kind: tcp
+      target:
+        kind: service
+        name: missing
+      timeout: 10000
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("unknown service target should fail");
+        assert!(error.to_string().contains(
+            "`readiness.probes.postgres-ready.target.name` references unknown service `missing`"
+        ));
+    }
+
+    #[test]
+    fn rejects_ambiguous_service_target_probe_without_endpoint() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    postgres-ready:
+      kind: tcp
+      target:
+        kind: service
+        name: postgres
+      timeout: 10000
+services:
+  postgres:
+    endpoints:
+      app:
+        address: 127.0.0.1
+        port: 5432
+      host:
+        address: 127.0.0.1
+        port: 15432
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("ambiguous service target should require endpoint");
+        assert!(
+            error
+                .to_string()
+                .contains("`readiness.probes.postgres-ready.target.endpoint` is required when service `postgres` has multiple endpoints")
+        );
+    }
+
+    #[test]
+    fn rejects_service_target_probe_with_observer() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    postgres-ready:
+      kind: tcp
+      target:
+        kind: service
+        name: postgres
+        endpoint: app
+        observer:
+          kind: task
+          task: sandbox
+      timeout: 10000
+services:
+  postgres:
+    endpoints:
+      app:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  sandbox:
+    run: echo sandbox
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("service target probe should reject observer config");
+        assert!(error.to_string().contains(
+            "`readiness.probes.postgres-ready.target.observer` is not valid for service targets"
+        ));
+    }
+
+    #[test]
+    fn rejects_url_and_target_together_on_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/ready
+      target:
+        kind: task
+        name: dev
+        listener: backend
+      path: /ready
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("url and target together should fail");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready` must declare exactly one of `url` or `target`"
+        ));
+    }
+
+    #[test]
+    fn rejects_http_target_probe_without_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      target:
+        kind: task
+        name: dev
+        listener: backend
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("http target probe should require path");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready.path` is required for target-based HTTP probes"
+        ));
+    }
+
+    #[test]
+    fn rejects_tcp_target_probe_with_http_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    postgres-ready:
+      kind: tcp
+      target:
+        kind: service
+        name: postgres
+        endpoint: app
+      path: /ready
+      expect_status: 200
+      timeout: 10000
+services:
+  postgres:
+    endpoints:
+      app:
+        address: 127.0.0.1
+        port: 5432
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("tcp target probe should reject http-only fields");
+        let message = error.to_string();
+        assert!(
+            message.contains("`readiness.probes.postgres-ready.path` is not valid for TCP probes")
+        );
+        assert!(message.contains("`readiness.probes.postgres-ready.expect_status` is only supported for `kind: http` probes"));
+    }
+
+    #[test]
+    fn rejects_probe_with_both_expect_status_and_success_status() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/ready
+      expect_status: 200
+      success:
+        status: [200, 204]
+      timeout: 10000
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("probe should reject both expect_status and success.status");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready` must not declare both `expect_status` and `success.status`; choose one HTTP success form"
+        ));
+    }
+
+    #[test]
+    fn rejects_head_probe_with_body_contains() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/ready
+      method: HEAD
+      body:
+        contains: UP
+      timeout: 10000
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("head probe should reject body.contains");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready.method: HEAD` must not declare `body.contains`"
+        ));
+    }
+
+    #[test]
+    fn rejects_probe_with_empty_header_name() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/ready
+      headers:
+        "": test
+      timeout: 10000
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("probe should reject empty header name");
+        assert!(error.to_string().contains(
+            "`readiness.probes.backend-ready.headers` must not use an empty header name"
+        ));
     }
 
     #[test]

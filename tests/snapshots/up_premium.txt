@@ -1,7 +1,7 @@
 🦦 UP ./ota.yaml
 
 ✓ READY
-Phase: post-setup diagnosis
+Phase: post-up diagnosis
 Backend: native
 
 ◉ WARN  Ephemeral lifecycle is advisory in native mode (1)
@@ -15,7 +15,7 @@ Scope:       repo
 Path:        .
 Contract:    ./ota.yaml
 Mode:        native
-Task:        post-setup diagnosis
+Task:        post-up diagnosis
 Lifecycle:   ephemeral
 Note:        running on the host environment; requested `--lifecycle ephemeral` is advisory in native mode only
 

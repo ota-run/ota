@@ -26,6 +26,75 @@
 
 ## Unreleased
 
+- extended reusable runtime surfaces additively: surfaces now support optional UX metadata
+  (`label`, `purpose`, `visibility`), `kind: https` now maps cleanly onto the existing HTTPS
+  listener/readiness model, and `ota execution topology --json` now exposes additive
+  `surface_attachments` intent alongside normalized listener truth
+- consolidated the modern workflow/surface authoring story across examples and docs: the
+  `examples/full-contract/ota.yaml` contract now demonstrates listener shorthand for one host-only
+  service, reusable top-level `surfaces`, attachment overrides for container publication, and
+  workflow `readiness.surfaces` / `{ surface: ... }` exposes in one canonical example, while the
+  execution-topology docs now explain the declared-surface plus normalized-listener split directly
+  and the JSON output reference now documents `ota workflows --json`
+- added `ota workflows` as a read-only workflow inventory command: repo contracts can now list
+  declared workflows directly, inspect the default workflow and each workflow's setup/run tasks,
+  readiness surfaces, probes, checks, and resolved exposes without falling back to the full task
+  inventory surface
+- added first-class top-level `surfaces` as reusable runtime endpoint definitions: repo contracts can now declare one `surfaces.<name>` block for shared HTTP/TCP endpoint truth, attach those surfaces to service-task runtimes through `tasks.<name>.runtime.surfaces`, and use either list-form default attachments or object-form publication overrides for bind/project shaping and primary selection without creating a second listener system; workflow readiness and workflow exposes can reference surfaces directly, `ota execution topology` shows both declared surfaces and normalized attached listener shape, surface attachment is validated strictly, and derived runtime readiness now follows a single attached surface or the primary attached surface when one runtime publishes multiple surfaces
+- added listener shorthand as authoring sugar for common local listeners: `listeners.<name>.http:
+  <port>` and `listeners.<name>.tcp: <port>` now normalize into the existing verbose listener
+  model with conservative `127.0.0.1` bind/host defaults, topology JSON still reports the normal
+  expanded listener shape, and mixed shorthand/verbose forms are rejected clearly at parse time
+- added first-class reusable readiness probes under `readiness.probes`: checks can now reference
+  `probe` instead of duplicating shell commands, workflows can now declare `readiness.probes`, and
+  repo readiness no longer has to restate HTTP readiness as inline helper commands just to keep
+  `doctor`, `check`, and workflow-scoped diagnosis aligned; task runtime readiness and
+  `services.<name>.readiness` can now also reuse those same named HTTP probes instead of
+  duplicating transport fields inline
+- fixed named runtime probe endpoint selection so `tasks.<name>.runtime.readiness.probe` may now
+  keep `readiness.listener` as an explicit non-default listener selector, and ota validates that
+  selected listener as the real HTTP service surface instead of rejecting the field or silently
+  collapsing back to the primary listener
+- added topology-derived readiness probes on top-level `readiness.probes`: probes can now resolve
+  from declared task listeners or service endpoints instead of copying host/port URLs, while
+  `ota execution topology` now also surfaces the task-probe reachability plane explicitly as
+  `target.resolution_plane: command_host` so machine consumers can distinguish the shipped
+  command-plane host-view slice from broader task-target semantics
+  literal `url` probes remain supported for external endpoints and quick-start adoption
+- extended task-target readiness probes with first-class observer-task resolution: top-level
+  probes may now declare `target.observer.kind: task` plus `target.observer.task` so `host`,
+  `topology`, and `internal` task views resolve exactly from that named task's effective backend
+  plane instead of pretending the invoking host process sees every topology the same way
+- tightened observer-backed probe reuse and timeout behavior: contract-level reusable probe
+  resolution now preserves observer-backed task probe contracts without forcing host-view endpoint
+  resolution, rejects unknown observer tasks/listeners/service endpoints even on the contract-only
+  path, and observer-backed backend probe commands now return deterministic timeout status instead
+  of collapsing Python fallback timeouts into generic failures; the generated Python probe branches
+  now preserve that timeout classification instead of short-circuiting it through unconditional
+  shell success/failure glue
+- tightened reusable probe validation so `readiness.probes.<name>.target.observer` is now rejected
+  for `target.kind: service` instead of being silently accepted and ignored
+- tightened topology-derived task-probe validation so `ota validate` now rejects task targets that
+  name one host-view listener without a real `project.host`, a fixed projected host port, or
+  `protocol: http` when the probe itself is `kind: http`, instead of deferring those failures to
+  runtime resolution
+- aligned reusable HTTP probes with the canonical readiness request model: `readiness.probes`
+  now supports `method`, `headers`, `success.status`, and `body.contains` in addition to the
+  older single-status shorthand, so literal and topology-derived probes can own the full HTTP
+  readiness contract instead of collapsing to path-plus-status only
+- extended `ota execution topology` with first-class `readiness_probes` output so the declared
+  machine-facing graph now exposes reusable probe definitions directly, including literal-vs-target
+  source details and the declared HTTP/TCP request contract, instead of forcing consumers to infer
+  probe truth indirectly from runtime/workflow references
+- clarified probe authoring guidance so docs now say explicitly that Ota supports all three HTTP
+  success styles: omit both fields for default `200`, use `expect_status` as the one-status
+  shorthand, or use `success.status` when the fuller status-list model is clearer
+- added a dedicated workflows concept page so the docs now explain what repo workflows are, when to add them, why they exist beyond tasks, and how they relate to `ota up`, `ota doctor`, and `agent.default_task`
+- clarified workflow summary text so repo command output now labels the surfaced workflow neutrally as `Name` instead of incorrectly calling an explicitly selected `--workflow <name>` path the repo `Default`
+- fixed workflow-scoped readiness semantics so `ota up --workflow <name>` and workspace `repos.<name>.workflow` now keep the final service and post-up diagnosis scoped to the selected workflow instead of falling back to repo-wide blockers, and workflow run selection no longer substitutes `agent.default_task` / `agent.entrypoint` when a workflow omits `run.task`
+- taught workspace orchestration about per-repo workflow selection: `ota.workspace.yaml` can now declare `repos.<name>.workflow`, workspace validation now rejects unknown repo workflow names against the referenced repo contract, workspace `check` / `doctor` / `up` / `status` now target that selected workflow instead of silently assuming the repo default path, workspace `list` now reports readiness against the pinned workflow when present, and workspace JSON surfaces now expose the selected workflow name per repo
+- extended execution planning to the same canonical workflow model: `ota execution plan` now supports `--workflow <name>` and resolves through the selected workflow's setup or run task instead of guessing from repo-wide execution defaults, while `ota workspace execution plan` now honors `repos.<name>.workflow` and exposes additive per-repo `workflow` / `task` in text and JSON output
+- added first-class repo `workflows` with `workflows.default` as the canonical operational path: `ota doctor`, `ota check`, `ota tasks`, and generated `AGENTS.md` now surface the default workflow, `ota up` now targets workflow setup/run/services instead of hard-coding repo-wide `setup`, and workflow-declared service/runtime readiness is now the long-term source of truth with legacy `tasks.setup` and repo-level required services preserved only as compatibility fallbacks
 - added canonical workspace producer ownership on `services.<name>.producer`: required services can now point at a producer task in another repo declared under `ota.workspace.yaml`, `ota doctor` / `ota up` / `ota run` now surface and honor that ownership through the producer repo contract, and `ota assist declare-service` can now author the producer-owned service shape directly; the shipped cross-repo service slice stays intentionally explicit by supporting `producer.address_view: host` only and requiring one fixed `project.host` endpoint on the producer listener
 - added first-class workspace repo producer refs under `tasks.<name>.targets.<target>.service.repo`: consumer tasks can now resolve another repo declared in `ota.workspace.yaml` through its host-projected service endpoint, and host-view `activation.mode` can now reuse or start that producer through the owning repo contract before the consumer runs; the shipped cross-repo slice stays explicit by supporting `address_view: host` only and requiring one fixed `project.host` endpoint on the producer listener
 - taught Ota to diagnose task mutation of managed isolated attachment paths end-to-end: `ota validate` and `ota doctor` now warn when an obvious task body cleanup like `rm -rf .next` targets a declared `execution.contexts.*.attachments.isolated_paths` path, and `ota run` now upgrades matching `resource busy` task failures into a product-level `Task mutated managed isolated path` blocker instead of leaking only the raw runtime error

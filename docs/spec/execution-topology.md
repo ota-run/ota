@@ -67,6 +67,18 @@ The current shipped model makes these things first-class:
 6. context-scoped readiness
 7. context-scoped requirements
 
+It also now makes reusable runtime surfaces first-class in topology inspection:
+
+- top-level `surfaces` declare reusable endpoint identity and default readiness truth
+- `tasks.<name>.runtime.surfaces` attaches those surfaces to one service runtime
+- `ota execution topology` shows both the declared surface definitions and the normalized listener
+  shape that the attached runtime actually publishes
+- `ota execution topology` also shows additive `surface_attachments` intent so machines can see
+  whether one runtime used default publication or explicit bind/project overrides
+- `tasks[*].runtime.attached_surfaces` tells you which named surfaces were attached
+- `tasks[*].runtime.listeners` remains the operational truth that execution, readiness, and receipts
+  consume
+
 ## Design principles
 
 - Keep the control plane separate from the workload plane.
@@ -74,6 +86,56 @@ The current shipped model makes these things first-class:
 - Do not run service-manager CLIs inside workload containers by default.
 - Prefer explicit topology over Docker-specific heuristics.
 - Keep `doctor`, `up`, `run`, JSON output, and receipts on one topology truth.
+
+## Surfaces in topology
+
+Reusable surfaces are topology declarations, not a second listener system.
+
+Example:
+
+```yaml
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+    path: /
+    readiness:
+      kind: http
+      path: /health
+
+tasks:
+  dev:
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+              path: /
+              primary: true
+```
+
+`ota execution topology` should then expose:
+
+- the declared reusable `surfaces.backend` endpoint truth
+- `tasks.dev.runtime.attached_surfaces: ["backend"]`
+- the normalized `tasks.dev.runtime.listeners.backend` publication shape that ota actually uses for
+  readiness, workflow exposes, execution planning, and receipts
+
+That split is deliberate:
+
+- top-level surface = reusable endpoint identity
+- runtime attachment = runtime-specific publication
+- normalized listener = operational truth
 
 ## Proposed contract model
 
