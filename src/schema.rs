@@ -21,8 +21,9 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
-use serde::de::Deserializer;
+use serde::de::{Deserializer, Error as DeError, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 const MEMORY_KIB: u64 = 1024;
@@ -2052,13 +2053,191 @@ pub(crate) fn parse_readiness_duration_spec(value: &str) -> Option<std::time::Du
     None
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct TaskRuntimeListenerSpec {
     pub protocol: TaskRuntimeProtocol,
     pub bind: TaskRuntimeBindSpec,
     #[serde(default)]
     pub project: TaskRuntimeProjectionSpec,
+}
+
+impl<'de> Deserialize<'de> for TaskRuntimeListenerSpec {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        enum Field {
+            Protocol,
+            Bind,
+            Project,
+            Http,
+            Tcp,
+        }
+
+        impl<'de> Deserialize<'de> for Field {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                struct FieldVisitor;
+
+                impl<'de> Visitor<'de> for FieldVisitor {
+                    type Value = Field;
+
+                    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        formatter.write_str("a listener field")
+                    }
+
+                    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+                    where
+                        E: DeError,
+                    {
+                        match value {
+                            "protocol" => Ok(Field::Protocol),
+                            "bind" => Ok(Field::Bind),
+                            "project" => Ok(Field::Project),
+                            "http" => Ok(Field::Http),
+                            "tcp" => Ok(Field::Tcp),
+                            _ => Err(E::unknown_field(
+                                value,
+                                &["protocol", "bind", "project", "http", "tcp"],
+                            )),
+                        }
+                    }
+                }
+
+                deserializer.deserialize_identifier(FieldVisitor)
+            }
+        }
+
+        struct ListenerVisitor;
+
+        impl<'de> Visitor<'de> for ListenerVisitor {
+            type Value = TaskRuntimeListenerSpec;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a task runtime listener spec")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut protocol_present = false;
+                let mut bind_present = false;
+                let mut project_present = false;
+                let mut protocol = None;
+                let mut bind = None;
+                let mut project = None;
+                let mut http = None;
+                let mut tcp = None;
+
+                while let Some(field) = map.next_key()? {
+                    match field {
+                        Field::Protocol => {
+                            if protocol_present {
+                                return Err(A::Error::duplicate_field("protocol"));
+                            }
+                            protocol_present = true;
+                            protocol = map.next_value::<Option<TaskRuntimeProtocol>>()?;
+                        }
+                        Field::Bind => {
+                            if bind_present {
+                                return Err(A::Error::duplicate_field("bind"));
+                            }
+                            bind_present = true;
+                            bind = map.next_value::<Option<TaskRuntimeBindSpec>>()?;
+                        }
+                        Field::Project => {
+                            if project_present {
+                                return Err(A::Error::duplicate_field("project"));
+                            }
+                            project_present = true;
+                            project = Some(map.next_value::<TaskRuntimeProjectionSpec>()?);
+                        }
+                        Field::Http => {
+                            if http.is_some() {
+                                return Err(A::Error::duplicate_field("http"));
+                            }
+                            http = Some(map.next_value::<u16>()?);
+                        }
+                        Field::Tcp => {
+                            if tcp.is_some() {
+                                return Err(A::Error::duplicate_field("tcp"));
+                            }
+                            tcp = Some(map.next_value::<u16>()?);
+                        }
+                    }
+                }
+
+                let shorthand_count = usize::from(http.is_some()) + usize::from(tcp.is_some());
+                if shorthand_count > 1 {
+                    return Err(A::Error::custom(
+                        "listener shorthand must declare only one of `http` or `tcp`",
+                    ));
+                }
+                if shorthand_count == 1 {
+                    if protocol_present || bind_present || project_present {
+                        return Err(A::Error::custom(
+                            "listener shorthand cannot be combined with `protocol`, `bind`, or `project`",
+                        ));
+                    }
+                    if let Some(port) = http {
+                        return normalize_listener_shorthand(port, TaskRuntimeProtocol::Http)
+                            .map_err(A::Error::custom);
+                    }
+                    if let Some(port) = tcp {
+                        return normalize_listener_shorthand(port, TaskRuntimeProtocol::Tcp)
+                            .map_err(A::Error::custom);
+                    }
+                }
+
+                Ok(TaskRuntimeListenerSpec {
+                    protocol: protocol.ok_or_else(|| A::Error::missing_field("protocol"))?,
+                    bind: bind.ok_or_else(|| A::Error::missing_field("bind"))?,
+                    project: project.unwrap_or_default(),
+                })
+            }
+        }
+
+        deserializer.deserialize_map(ListenerVisitor)
+    }
+}
+
+fn normalize_listener_shorthand(
+    port: u16,
+    protocol: TaskRuntimeProtocol,
+) -> Result<TaskRuntimeListenerSpec, String> {
+    if port == 0 {
+        return Err(String::from(
+            "listener shorthand port must be between 1 and 65535",
+        ));
+    }
+    Ok(TaskRuntimeListenerSpec {
+        protocol,
+        bind: TaskRuntimeBindSpec {
+            address: String::from("127.0.0.1"),
+            port: TaskRuntimePortSpec {
+                mode: TaskRuntimePortMode::Fixed,
+                value: Some(port),
+            },
+        },
+        project: TaskRuntimeProjectionSpec {
+            host: Some(TaskRuntimeHostProjectionSpec {
+                address: String::from("127.0.0.1"),
+                port: TaskRuntimeHostPortSpec {
+                    mode: TaskRuntimeHostPortMode::Fixed,
+                    value: Some(port),
+                },
+                primary: false,
+                path: match protocol {
+                    TaskRuntimeProtocol::Http => Some(String::from("/")),
+                    TaskRuntimeProtocol::Https => Some(String::from("/")),
+                    TaskRuntimeProtocol::Tcp => None,
+                },
+            }),
+        },
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -2416,7 +2595,7 @@ mod tests {
 
     use crate::parser::parse_contract_str;
 
-    use super::Backend;
+    use super::{Backend, TaskRuntimeProtocol};
 
     #[test]
     fn task_env_for_backend_merges_context_task_and_mode_env_in_order() {
@@ -2549,5 +2728,256 @@ agent:
         .unwrap();
 
         assert_eq!(contract.selected_run_task_name_for(None), Some("agent-dev"));
+    }
+
+    #[test]
+    fn listener_http_shorthand_normalizes_to_verbose_shape() {
+        let shorthand = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          http: 5678
+"#,
+        )
+        .unwrap();
+        let verbose = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+              path: /
+"#,
+        )
+        .unwrap();
+
+        let shorthand_listener = &shorthand.tasks["dev"]
+            .runtime
+            .as_ref()
+            .expect("runtime should exist")
+            .listeners["backend"];
+        let verbose_listener = &verbose.tasks["dev"]
+            .runtime
+            .as_ref()
+            .expect("runtime should exist")
+            .listeners["backend"];
+
+        assert_eq!(shorthand_listener, verbose_listener);
+        assert_eq!(shorthand_listener.protocol, TaskRuntimeProtocol::Http);
+        assert_eq!(
+            shorthand_listener
+                .project
+                .host
+                .as_ref()
+                .and_then(|host| host.path.as_deref()),
+            Some("/")
+        );
+    }
+
+    #[test]
+    fn listener_tcp_shorthand_normalizes_to_verbose_shape() {
+        let shorthand = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        redis:
+          tcp: 6379
+"#,
+        )
+        .unwrap();
+        let listener = &shorthand.tasks["dev"]
+            .runtime
+            .as_ref()
+            .expect("runtime should exist")
+            .listeners["redis"];
+
+        assert_eq!(listener.protocol, TaskRuntimeProtocol::Tcp);
+        assert_eq!(listener.bind.address, "127.0.0.1");
+        assert_eq!(listener.bind.port.value, Some(6379));
+        assert_eq!(
+            listener
+                .project
+                .host
+                .as_ref()
+                .and_then(|host| host.port.value),
+            Some(6379)
+        );
+        assert_eq!(
+            listener
+                .project
+                .host
+                .as_ref()
+                .and_then(|host| host.path.as_deref()),
+            None
+        );
+    }
+
+    #[test]
+    fn listener_shorthand_rejects_mixed_verbose_fields() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          http: 5678
+          protocol: http
+"#,
+        )
+        .expect_err("mixed shorthand and verbose fields should fail");
+
+        assert!(error.to_string().contains(
+            "listener shorthand cannot be combined with `protocol`, `bind`, or `project`"
+        ));
+    }
+
+    #[test]
+    fn listener_shorthand_rejects_empty_project_field_presence() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          http: 5678
+          project: {}
+"#,
+        )
+        .expect_err("empty project field should still count as mixed shorthand");
+
+        assert!(error.to_string().contains(
+            "listener shorthand cannot be combined with `protocol`, `bind`, or `project`"
+        ));
+    }
+
+    #[test]
+    fn listener_shorthand_rejects_null_protocol_field_presence() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          http: 5678
+          protocol: null
+"#,
+        )
+        .expect_err("null protocol field should still count as mixed shorthand");
+
+        assert!(error.to_string().contains(
+            "listener shorthand cannot be combined with `protocol`, `bind`, or `project`"
+        ));
+    }
+
+    #[test]
+    fn listener_shorthand_rejects_multiple_protocol_keys() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          http: 5678
+          tcp: 5678
+"#,
+        )
+        .expect_err("multiple shorthand protocol keys should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("listener shorthand must declare only one of `http` or `tcp`")
+        );
+    }
+
+    #[test]
+    fn listener_shorthand_rejects_port_zero() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        backend:
+          http: 0
+"#,
+        )
+        .expect_err("port zero should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("listener shorthand port must be between 1 and 65535")
+        );
     }
 }
