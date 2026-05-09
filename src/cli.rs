@@ -51,7 +51,7 @@ pub(crate) use commands::parse_container_host_port_conflict;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  compare exact starter text   ota detect --contract .\n  review starter write path    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
+    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  compare exact starter text   ota detect --contract .\n  review starter write path    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  inspect declared workflows   ota workflows\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -120,6 +120,18 @@ enum Commands {
         path: Option<PathBuf>,
     },
     #[command(display_order = 9)]
+    /// List declared workflows from an Ota contract.
+    Workflows {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Run the command against one or more monorepo members declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Vec<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    #[command(display_order = 10)]
     /// List declared services from an Ota contract.
     Services {
         /// Print machine-readable JSON output.
@@ -131,7 +143,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
-    #[command(display_order = 10)]
+    #[command(display_order = 11)]
     /// Inspect resolved environment requirements from an Ota contract.
     Env {
         /// Print machine-readable JSON output.
@@ -3261,6 +3273,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
         command,
         Commands::Validate { .. }
             | Commands::Tasks { .. }
+            | Commands::Workflows { .. }
             | Commands::Clean { .. }
             | Commands::Services { .. }
             | Commands::Up { stream: false, .. }
@@ -4142,6 +4155,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         &cli.command,
         Commands::Validate { json: true, .. }
             | Commands::Tasks { json: true, .. }
+            | Commands::Workflows { json: true, .. }
             | Commands::Services { json: true, .. }
             | Commands::Assist {
                 command: AssistCommands::DeclareReadiness { json: true, .. },
@@ -4200,6 +4214,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
             workflow.as_deref(),
             use_cmd,
             all,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Workflows { json, member, path } => commands::workflows(
+            path.as_deref(),
+            file.as_deref(),
+            &member,
             format_from_json(json),
             debug,
         ),
@@ -5202,6 +5223,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     let suggestion = match command {
         Commands::Validate { .. } => "run `ota init` to create a starter contract",
         Commands::Tasks { .. } => "run `ota tasks` to inspect available task names",
+        Commands::Workflows { .. } => "run `ota workflows` to inspect declared workflows",
         Commands::Services { .. } => "run `ota services` to inspect declared services",
         Commands::Assist {
             command: AssistCommands::DeclareReadiness { .. },
@@ -5421,6 +5443,7 @@ fn command_requests_json(command: &Commands) -> bool {
     match command {
         Commands::Validate { json, .. }
         | Commands::Tasks { json, .. }
+        | Commands::Workflows { json, .. }
         | Commands::Services { json, .. }
         | Commands::Assist {
             command: AssistCommands::DeclareReadiness { json, .. },
@@ -5505,6 +5528,7 @@ fn command_where_label(command: &Commands) -> &'static str {
     match command {
         Commands::Validate { .. } => "ota validate",
         Commands::Tasks { .. } => "ota tasks",
+        Commands::Workflows { .. } => "ota workflows",
         Commands::Services { .. } => "ota services",
         Commands::Assist {
             command: AssistCommands::DeclareReadiness { .. },
@@ -15830,6 +15854,105 @@ tasks:
     }
 
     #[test]
+    fn workflows_text_lists_declared_workflows() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: repo-ready
+    kind: health
+    severity: error
+    run: echo ready
+tasks:
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    description: Full app workflow
+    setup:
+      task: setup
+    run:
+      task: dev
+    readiness:
+      checks:
+        - repo-ready
+  backend:
+    run:
+      task: dev
+"#,
+        );
+
+        let output = run_with(["ota", "workflows", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKFLOWS "));
+        assert!(body.contains("Default: app"));
+        assert!(body.contains("Name: app"));
+        assert!(body.contains("Description: Full app workflow"));
+        assert!(body.contains("Readiness Checks: repo-ready"));
+        assert!(body.contains("Run: `ota run dev`"));
+        assert!(body.contains("Default: true"));
+        assert!(body.contains("Name: backend"));
+        assert!(body.contains("Default: false"));
+    }
+
+    #[test]
+    fn workflows_json_reports_declared_workflows() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+    exposes:
+      - http://127.0.0.1:5678/
+  backend:
+    run:
+      task: dev
+"#,
+        );
+
+        let output = run_with(["ota", "workflows", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["path"], fixture.file_path().display().to_string());
+        assert_eq!(json["default"], "app");
+        assert_eq!(json["workflows"][0]["name"], "app");
+        assert_eq!(json["workflows"][0]["default"], true);
+        assert_eq!(json["workflows"][0]["run_task"], "dev");
+        assert_eq!(json["workflows"][0]["readiness_surfaces"][0], "backend");
+        assert_eq!(json["workflows"][0]["exposes"][0], "http://127.0.0.1:5678/");
+        assert_eq!(json["workflows"][1]["name"], "backend");
+        assert_eq!(json["workflows"][1]["default"], false);
+    }
+
+    #[test]
     fn tasks_json_does_not_infer_default_mode_from_mode_list() {
         let fixture = ContractFixture::new(
             r#"
@@ -23334,6 +23457,8 @@ tasks:
 
     #[test]
     fn run_skip_deps_surfaces_override_in_receipt_and_next_steps() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1

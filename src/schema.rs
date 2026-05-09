@@ -23,7 +23,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use serde::de::{Deserializer, Error as DeError, MapAccess, Visitor};
+use serde::de::{Deserializer, Error as DeError, MapAccess, SeqAccess, Visitor};
+use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
 const MEMORY_KIB: u64 = 1024;
@@ -1320,7 +1321,14 @@ impl SurfaceSpec {
     }
 
     pub fn normalized_listener(&self) -> TaskRuntimeListenerSpec {
-        TaskRuntimeListenerSpec {
+        self.normalized_listener_with_attachment(&TaskRuntimeSurfaceAttachmentSpec::default())
+    }
+
+    pub fn normalized_listener_with_attachment(
+        &self,
+        attachment: &TaskRuntimeSurfaceAttachmentSpec,
+    ) -> TaskRuntimeListenerSpec {
+        let mut listener = TaskRuntimeListenerSpec {
             protocol: self.kind.as_runtime_protocol(),
             bind: TaskRuntimeBindSpec {
                 address: String::from("127.0.0.1"),
@@ -1340,7 +1348,36 @@ impl SurfaceSpec {
                     path: self.effective_path(),
                 }),
             },
+        };
+
+        if let Some(bind) = attachment.bind.as_ref() {
+            if let Some(address) = bind.address.as_ref() {
+                listener.bind.address = address.clone();
+            }
+            if let Some(port) = bind.port.as_ref() {
+                listener.bind.port = port.clone();
+            }
         }
+
+        if let Some(project) = attachment.project.as_ref()
+            && let Some(host_override) = project.host.as_ref()
+            && let Some(host) = listener.project.host.as_mut()
+        {
+            if let Some(address) = host_override.address.as_ref() {
+                host.address = address.clone();
+            }
+            if let Some(port) = host_override.port.as_ref() {
+                host.port = port.clone();
+            }
+            if let Some(primary) = host_override.primary {
+                host.primary = primary;
+            }
+            if let Some(path) = host_override.path.as_ref() {
+                host.path = Some(path.clone());
+            }
+        }
+
+        listener
     }
 
     pub fn derived_runtime_readiness(
@@ -1376,6 +1413,173 @@ impl SurfaceSpec {
             ),
             SurfaceKind::Tcp => format!("tcp://127.0.0.1:{}", self.port),
         }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeSurfaceAttachmentSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind: Option<TaskRuntimeSurfaceBindOverrideSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<TaskRuntimeSurfaceProjectionOverrideSpec>,
+}
+
+impl TaskRuntimeSurfaceAttachmentSpec {
+    pub const fn uses_defaults(&self) -> bool {
+        self.bind.is_none() && self.project.is_none()
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeSurfaceBindOverrideSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<TaskRuntimePortSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeSurfaceProjectionOverrideSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<TaskRuntimeSurfaceHostProjectionOverrideSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeSurfaceHostProjectionOverrideSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<TaskRuntimeHostPortSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TaskRuntimeSurfaceAttachments {
+    entries: BTreeMap<String, TaskRuntimeSurfaceAttachmentSpec>,
+    duplicate_names: Vec<String>,
+}
+
+impl TaskRuntimeSurfaceAttachments {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &TaskRuntimeSurfaceAttachmentSpec)> {
+        self.entries.iter()
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &String> {
+        self.entries.keys()
+    }
+
+    pub fn names_cloned(&self) -> Vec<String> {
+        self.entries.keys().cloned().collect()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&TaskRuntimeSurfaceAttachmentSpec> {
+        self.entries.get(name)
+    }
+
+    pub fn contains_name(&self, name: &str) -> bool {
+        self.entries.contains_key(name)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn duplicate_names(&self) -> &[String] {
+        &self.duplicate_names
+    }
+}
+
+impl Serialize for TaskRuntimeSurfaceAttachments {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self
+            .entries
+            .values()
+            .all(TaskRuntimeSurfaceAttachmentSpec::uses_defaults)
+        {
+            let mut seq = serializer.serialize_seq(Some(self.entries.len()))?;
+            for name in self.entries.keys() {
+                seq.serialize_element(name)?;
+            }
+            return seq.end();
+        }
+
+        let mut map = serializer.serialize_map(Some(self.entries.len()))?;
+        for (name, attachment) in &self.entries {
+            map.serialize_entry(name, attachment)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskRuntimeSurfaceAttachments {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SurfaceAttachmentsVisitor;
+
+        impl<'de> Visitor<'de> for SurfaceAttachmentsVisitor {
+            type Value = TaskRuntimeSurfaceAttachments;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a surface attachment list or mapping")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut entries = BTreeMap::new();
+                let mut duplicate_names = Vec::new();
+                while let Some(name) = seq.next_element::<String>()? {
+                    if entries.contains_key(name.as_str()) {
+                        duplicate_names.push(name);
+                        continue;
+                    }
+                    entries.insert(name, TaskRuntimeSurfaceAttachmentSpec::default());
+                }
+
+                Ok(TaskRuntimeSurfaceAttachments {
+                    entries,
+                    duplicate_names,
+                })
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut entries = BTreeMap::new();
+                let mut duplicate_names = Vec::new();
+                while let Some(name) = map.next_key::<String>()? {
+                    let attachment = map.next_value::<TaskRuntimeSurfaceAttachmentSpec>()?;
+                    if entries.insert(name.clone(), attachment).is_some() {
+                        duplicate_names.push(name);
+                    }
+                }
+
+                Ok(TaskRuntimeSurfaceAttachments {
+                    entries,
+                    duplicate_names,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(SurfaceAttachmentsVisitor)
     }
 }
 
@@ -2007,7 +2211,7 @@ impl TaskSpec {
             .as_ref()
             .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
         {
-            surfaces.extend(runtime.surfaces.iter().cloned());
+            surfaces.extend(runtime.surfaces.names().cloned());
         }
         if let Some(execution) = self.execution.as_ref() {
             for (_, branch) in execution.modes.iter() {
@@ -2016,7 +2220,7 @@ impl TaskSpec {
                     .as_ref()
                     .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
                 {
-                    surfaces.extend(runtime.surfaces.iter().cloned());
+                    surfaces.extend(runtime.surfaces.names().cloned());
                 }
             }
         }
@@ -2124,7 +2328,7 @@ pub struct TaskRuntimeSpec {
     #[serde(default)]
     pub readiness: Option<TaskRuntimeReadinessSpec>,
     #[serde(default)]
-    pub surfaces: Vec<String>,
+    pub surfaces: TaskRuntimeSurfaceAttachments,
     #[serde(default)]
     pub listeners: BTreeMap<String, TaskRuntimeListenerSpec>,
     #[serde(skip, default)]
@@ -2791,7 +2995,7 @@ mod tests {
     use crate::parser::parse_contract_str;
     use crate::validator::validate_contract;
 
-    use super::{Backend, TaskRuntimeProtocol};
+    use super::{Backend, TaskRuntimeHostPortMode, TaskRuntimePortMode, TaskRuntimeProtocol};
 
     #[test]
     fn task_env_for_backend_merges_context_task_and_mode_env_in_order() {
@@ -3239,7 +3443,8 @@ tasks:
 "#,
         )
         .expect("unknown surface attachment should still parse structurally");
-        let error = validate_contract(&contract).expect_err("unknown surface attachment should fail validation");
+        let error = validate_contract(&contract)
+            .expect_err("unknown surface attachment should fail validation");
 
         assert!(
             error
@@ -3271,8 +3476,8 @@ tasks:
 "#,
         )
         .expect("duplicate surface attachment should still parse structurally");
-        let error =
-            validate_contract(&contract).expect_err("duplicate surface attachment should fail validation");
+        let error = validate_contract(&contract)
+            .expect_err("duplicate surface attachment should fail validation");
 
         assert!(
             error.to_string().contains(
@@ -3306,13 +3511,164 @@ tasks:
 "#,
         )
         .expect("surface/listener collision should still parse structurally");
-        let error =
-            validate_contract(&contract).expect_err("surface/listener collision should fail validation");
+        let error = validate_contract(&contract)
+            .expect_err("surface/listener collision should fail validation");
 
         assert!(
             error.to_string().contains(
                 "`tasks.dev.runtime.surfaces` attaches surface `backend`, but `tasks.dev.runtime.listeners.backend` is already declared"
             )
         );
+    }
+
+    #[test]
+    fn attached_surface_object_form_normalizes_publication_override() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  site:
+    kind: http
+    port: 3000
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      surfaces:
+        site:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+              primary: true
+"#,
+        )
+        .expect("surface attachment override should parse");
+
+        let listener = &contract.tasks["dev"]
+            .runtime
+            .as_ref()
+            .expect("runtime should exist")
+            .listeners["site"];
+
+        assert_eq!(listener.protocol, TaskRuntimeProtocol::Http);
+        assert_eq!(listener.bind.address, "0.0.0.0");
+        assert_eq!(listener.bind.port.mode, TaskRuntimePortMode::Fixed);
+        assert_eq!(listener.bind.port.value, Some(3000));
+        assert_eq!(
+            listener
+                .project
+                .host
+                .as_ref()
+                .map(|host| host.address.as_str()),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            listener.project.host.as_ref().map(|host| host.port.mode),
+            Some(TaskRuntimeHostPortMode::Auto)
+        );
+        assert_eq!(
+            listener
+                .project
+                .host
+                .as_ref()
+                .and_then(|host| host.path.as_deref()),
+            Some("/")
+        );
+        assert_eq!(
+            listener.project.host.as_ref().map(|host| host.primary),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn attached_surface_bind_port_must_preserve_declared_surface_port() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          bind:
+            port:
+              mode: fixed
+              value: 4000
+"#,
+        )
+        .expect("surface attachment override should still parse structurally");
+        let error = validate_contract(&contract)
+            .expect_err("surface bind port override should fail validation");
+
+        assert!(error.to_string().contains(
+            "`tasks.dev.runtime.surfaces.backend.bind.port` must preserve declared surface port 5678 with `mode: fixed`"
+        ));
+    }
+
+    #[test]
+    fn attached_primary_surface_derives_runtime_readiness_for_multi_surface_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+    readiness:
+      kind: http
+      path: /healthz/readiness
+  editor:
+    kind: http
+    port: 8080
+    readiness:
+      kind: http
+      path: /
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          project:
+            host:
+              primary: true
+        editor: {}
+"#,
+        )
+        .expect("surface attachments should parse");
+
+        let readiness = contract.tasks["dev"]
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.readiness.as_ref())
+            .expect("primary attached surface should derive runtime readiness");
+
+        assert_eq!(readiness.listener.as_deref(), Some("backend"));
+        assert_eq!(readiness.path.as_deref(), Some("/healthz/readiness"));
     }
 }

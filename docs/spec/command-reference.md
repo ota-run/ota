@@ -92,6 +92,7 @@ ota currently ships these commands:
 - `ota detect`
 - `ota validate`
 - `ota tasks`
+- `ota workflows`
 - `ota services`
 - `ota diff`
 - `ota check`
@@ -286,6 +287,46 @@ JSON output:
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
+- failure: `ok`, `path`, and either `errors` or `error`
+
+## `ota workflows`
+
+List declared workflows from a validated contract.
+
+```bash
+ota workflows [PATH]
+ota workflows --json [PATH]
+ota workflows --member api [PATH]
+ota workflows --member api --member web --json [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when a root contract declares `workspace.type: monorepo`, plain `ota workflows` lists root
+  workflows and grouped summaries for each declared member
+- when `--member` is set, lists workflows from the merged member contract
+- repeated `--member` values list workflows for those members in the provided order
+- prints declared workflows in deterministic order
+- resolves workflow surface exposes through the selected run task so the output shows the same URL
+  surfaces `ota doctor`, `ota up`, and `ota execution plan` would target
+- keeps workflow discovery read-only; it does not prepare or run the workflow
+
+Text output:
+
+- header: `WORKFLOWS <path>`
+- overview includes workflow count and the selected default workflow when declared
+- each workflow may include `intent`, `description`, `setup`, `run`, `services`,
+  `readiness_checks`, `readiness_probes`, `readiness_surfaces`, and `exposes`
+- when no workflows are declared, the text output says so explicitly and points users back to
+  `ota tasks` or contract authoring instead of ending empty
+
+JSON output:
+
+- success: `ok`, `path`, `default`, `workflows`
+- monorepo root summaries include grouped per-member results in `members`
+- repeated `--member` values return grouped per-member results in `members`
+- each workflow includes the resolved workflow summary plus a `default` boolean
 - failure: `ok`, `path`, and either `errors` or `error`
 
 ## `ota services`

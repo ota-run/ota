@@ -182,35 +182,23 @@ fn normalize_contract_surfaces(contract: &mut Contract) {
     let declared_surfaces = contract.surfaces.clone();
     for task in contract.tasks.values_mut() {
         if let Some(runtime) = task.runtime.as_mut() {
-            normalize_runtime_surfaces(
-                &declared_surfaces,
-                runtime,
-            );
+            normalize_runtime_surfaces(&declared_surfaces, runtime);
         }
         if let Some(execution) = task.execution.as_mut() {
             if let Some(branch) = execution.modes.native.as_mut()
                 && let Some(runtime) = branch.runtime.as_mut()
             {
-                normalize_runtime_surfaces(
-                    &declared_surfaces,
-                    runtime,
-                );
+                normalize_runtime_surfaces(&declared_surfaces, runtime);
             }
             if let Some(branch) = execution.modes.container.as_mut()
                 && let Some(runtime) = branch.runtime.as_mut()
             {
-                normalize_runtime_surfaces(
-                    &declared_surfaces,
-                    runtime,
-                );
+                normalize_runtime_surfaces(&declared_surfaces, runtime);
             }
             if let Some(branch) = execution.modes.remote.as_mut()
                 && let Some(runtime) = branch.runtime.as_mut()
             {
-                normalize_runtime_surfaces(
-                    &declared_surfaces,
-                    runtime,
-                );
+                normalize_runtime_surfaces(&declared_surfaces, runtime);
             }
         }
     }
@@ -227,7 +215,7 @@ fn normalize_runtime_surfaces(
 
     let mut seen = std::collections::BTreeSet::new();
     let mut derived_surface_name = None;
-    for surface_name in runtime.surfaces.clone() {
+    for (surface_name, attachment) in runtime.surfaces.iter() {
         if !seen.insert(surface_name.clone()) {
             continue;
         }
@@ -237,16 +225,36 @@ fn normalize_runtime_surfaces(
         if runtime.listeners.contains_key(surface_name.as_str()) {
             continue;
         }
-        runtime
-            .listeners
-            .insert(surface_name.clone(), surface.normalized_listener());
+        runtime.listeners.insert(
+            surface_name.clone(),
+            surface.normalized_listener_with_attachment(attachment),
+        );
         runtime
             .normalized_surface_listeners
             .insert(surface_name.clone());
-        derived_surface_name = Some(surface_name);
+        derived_surface_name = Some(surface_name.clone());
     }
 
-    if runtime.readiness.is_none() && runtime.surfaces.len() == 1 {
+    if runtime.readiness.is_none() {
+        let derived_surface_name = if runtime.surfaces.len() == 1 {
+            derived_surface_name
+        } else {
+            runtime
+                .listeners
+                .iter()
+                .find(|(surface_name, listener)| {
+                    runtime
+                        .normalized_surface_listeners
+                        .contains(surface_name.as_str())
+                        && listener
+                            .project
+                            .host
+                            .as_ref()
+                            .is_some_and(|host| host.primary)
+                })
+                .map(|(surface_name, _)| surface_name.clone())
+        };
+
         if let Some(surface_name) = derived_surface_name
             .filter(|surface_name| runtime.normalized_surface_listeners.contains(surface_name))
             && let Some(surface) = declared_surfaces.get(surface_name.as_str())

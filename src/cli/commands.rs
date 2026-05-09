@@ -83,14 +83,15 @@ use crate::output::{
     ExecutionTopologyTargetSummary, ExecutionTopologyTaskSummary, ExplainFailure, ExplainStep,
     ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
     InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
-    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffComparison,
-    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
-    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
-    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
-    TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
-    ValidateFailure, ValidateSuccess, ValidateSummary, WorkflowSummary, WorkspaceDiffSuccess,
+    InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberWorkflowsSuccess,
+    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
+    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceReadinessSummary,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess,
     WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
     WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
@@ -1993,7 +1994,7 @@ fn build_execution_topology_runtime_summary(
                 retries: readiness.retries,
                 start_period: readiness.start_period.clone(),
             }),
-        attached_surfaces: runtime.surfaces.clone(),
+        attached_surfaces: runtime.surfaces.names_cloned(),
         listeners: runtime
             .listeners
             .iter()
@@ -8592,7 +8593,7 @@ fn build_assist_add_task_proposal(
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: crate::schema::TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners,
         });
@@ -11982,6 +11983,344 @@ pub fn services(
                     ],
                 )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ServicesFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workflows(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    members: &[String],
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if let Some(duplicate) = duplicate_member(members) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                format!("`--member {duplicate}` was provided more than once"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=workflows")],
+        );
+    }
+
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("WORKFLOWS", "ota workflows", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
+                debug,
+                vec![String::from("DEBUG command=workflows")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=workflows"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    for member in members {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "WORKFLOWS",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota workflows` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota workflows", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, single_member) {
+            Ok(target) if members.is_empty() || members.len() == 1 => {
+                let workflows = WorkflowSummary::list_from_contract(&target.contract);
+                let default = target
+                    .contract
+                    .workflows
+                    .as_ref()
+                    .map(|workflows| workflows.default.as_str());
+
+                if members.is_empty()
+                    && target.contract_path == resolved_path
+                    && target.contract.workspace.as_ref().is_some_and(|workspace| {
+                        workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                    })
+                {
+                    let mut text_sections = vec![render_workflows_output_text(
+                        &text_path_display,
+                        default,
+                        &workflows,
+                    )];
+                    let mut member_targets = Vec::new();
+
+                    if let Some(workspace) = target.contract.workspace.as_ref() {
+                        for member in &workspace.members {
+                            let member_target =
+                                match load_and_validate_target(&resolved_path, Some(member)) {
+                                    Ok(target) => target,
+                                    Err(ContractProblem::Validation(errors)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(errors.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&WorkflowsFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: errors
+                                                            .errors()
+                                                            .iter()
+                                                            .map(ToString::to_string)
+                                                            .collect(),
+                                                        error: None,
+                                                    }),
+                                                ),
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                    Err(ContractProblem::Load(error)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(error.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&WorkflowsFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: Vec::new(),
+                                                        error: Some(error.to_string()),
+                                                    }),
+                                                ),
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                };
+                            member_targets.push((member.as_str(), member_target));
+                        }
+                    }
+
+                    let mut member_results = Vec::new();
+                    for (member, member_target) in &member_targets {
+                        let member_workflows =
+                            WorkflowSummary::list_from_contract(&member_target.contract);
+                        let member_default = member_target
+                            .contract
+                            .workflows
+                            .as_ref()
+                            .map(|workflows| workflows.default.as_str());
+                        text_sections.push(render_workflows_output_text(
+                            &display_contract_target(&compact_path_display, Some(member)),
+                            member_default,
+                            &member_workflows,
+                        ));
+                        member_results.push(MemberWorkflowsSuccess {
+                            member,
+                            default: member_default,
+                            workflows: member_workflows,
+                        });
+                    }
+
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
+                        OutputFormat::Json => CommandOutput::success(to_json(&WorkflowsSuccess {
+                            ok: true,
+                            path: &path_display,
+                            default,
+                            members: member_results,
+                            workflows,
+                        })),
+                    }
+                } else {
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_workflows_output_text(
+                            &text_path_display,
+                            default,
+                            &workflows,
+                        )),
+                        OutputFormat::Json => CommandOutput::success(to_json(&WorkflowsSuccess {
+                            ok: true,
+                            path: &path_display,
+                            default,
+                            members: Vec::new(),
+                            workflows,
+                        })),
+                    }
+                }
+            }
+            Ok(_) => {
+                let mut text_sections = Vec::new();
+                let mut member_targets = Vec::new();
+                for member in members {
+                    let target =
+                        match load_and_validate_target(&resolved_path, Some(member.as_str())) {
+                            Ok(target) => target,
+                            Err(ContractProblem::Validation(errors)) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(errors.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&WorkflowsFailure {
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: errors
+                                                    .errors()
+                                                    .iter()
+                                                    .map(ToString::to_string)
+                                                    .collect(),
+                                                error: None,
+                                            }))
+                                        }
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                            Err(ContractProblem::Load(error)) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(error.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&WorkflowsFailure {
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: Vec::new(),
+                                                error: Some(error.to_string()),
+                                            }))
+                                        }
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
+                    member_targets.push((member.as_str(), target));
+                }
+
+                let mut member_results = Vec::new();
+                for (member, target) in &member_targets {
+                    let workflows = WorkflowSummary::list_from_contract(&target.contract);
+                    let default = target
+                        .contract
+                        .workflows
+                        .as_ref()
+                        .map(|workflows| workflows.default.as_str());
+                    text_sections.push(render_workflows_output_text(
+                        &display_contract_target(&compact_path_display, Some(member)),
+                        default,
+                        &workflows,
+                    ));
+                    member_results.push(MemberWorkflowsSuccess {
+                        member,
+                        default,
+                        workflows,
+                    });
+                }
+
+                match format {
+                    OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
+                    OutputFormat::Json => CommandOutput::success(to_json(&WorkflowsSuccess {
+                        ok: true,
+                        path: &path_display,
+                        default: None,
+                        members: member_results,
+                        workflows: Vec::new(),
+                    })),
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "WORKFLOWS",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota workflows", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&WorkflowsFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "WORKFLOWS",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota workflows", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&WorkflowsFailure {
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -29723,6 +30062,55 @@ fn render_tasks_output_text(
     }
 }
 
+fn render_workflows_output_text(
+    path: &str,
+    default: Option<&str>,
+    workflows: &[ListedWorkflowSummary<'_>],
+) -> String {
+    let mut output = format_command_header("WORKFLOWS", path);
+    output.push('\n');
+
+    output.push_str(&format!("\n\n{}", paint_section_title("Overview")));
+    output.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Workflows:"),
+        paint(&workflows.len().to_string(), "1;37")
+    ));
+    output.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Default:"),
+        default.unwrap_or("-")
+    ));
+
+    if workflows.is_empty() {
+        output.push_str(&format!(
+            "\n\n{} {}",
+            list_bullet(),
+            paint("No declared workflows.", "1")
+        ));
+        output.push_str(&format_next_timeline(&[
+            String::from("run `ota tasks` to inspect task-level runnable entrypoints"),
+            String::from("add `workflows` to `ota.yaml` when the repo has more than one meaningful operational path"),
+        ]));
+        return output;
+    }
+
+    for listed in workflows {
+        output.push_str("\n\n");
+        output.push_str(&render_workflow_summary_text(&listed.workflow));
+        output.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Default:"),
+            if listed.default { "true" } else { "false" }
+        ));
+    }
+
+    output
+}
+
 pub fn annotations(
     mode: AnnotationMode,
     format: AnnotationFormat,
@@ -35945,7 +36333,20 @@ tasks:
     runtime:
       kind: service
       surfaces:
-        - backend
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /app
+              primary: true
 workflows:
   default: backend
   backend:
@@ -35963,7 +36364,7 @@ workflows:
 
         assert_eq!(
             workflow.exposes,
-            vec![String::from("http://127.0.0.1:5678/")]
+            vec![String::from("http://127.0.0.1:3000/app")]
         );
         assert_eq!(workflow.expose_surfaces, vec![String::from("backend")]);
     }
@@ -36966,6 +37367,22 @@ tasks:
                 "add `services` to `ota.yaml` when repo readiness depends on local infra"
             )
         );
+    }
+
+    #[test]
+    fn workflows_text_without_declared_workflows_includes_next_steps() {
+        let text = strip_ansi_codes(&super::render_workflows_output_text(
+            "./ota.yaml",
+            None,
+            &[],
+        ));
+
+        assert!(text.contains("WORKFLOWS ./ota.yaml"));
+        assert!(text.contains("No declared workflows."));
+        assert!(text.contains("run `ota tasks` to inspect task-level runnable entrypoints"));
+        assert!(text.contains(
+            "add `workflows` to `ota.yaml` when the repo has more than one meaningful operational path"
+        ));
     }
 
     #[test]
@@ -58413,7 +58830,11 @@ fn remote_up_blocker_finding(
             ),
             next: format!(
                 "use `ota run {task}`, `ota execution plan --mode remote`, and `ota doctor` together, or move the selected {} to a native/container context until remote `ota up` support ships",
-                if setup_task { "setup task" } else { "workflow task" }
+                if setup_task {
+                    "setup task"
+                } else {
+                    "workflow task"
+                }
             ),
         },
         None => Finding {
@@ -58438,7 +58859,8 @@ fn up_remote_execution_blocker(
     if let Some(task_name) = selected_up_primary_task_name(contract, workflow_name) {
         let effective = effective_task_execution(contract, task_name, overrides);
         if effective.backend == Backend::Remote {
-            let setup_task = selected_up_setup_task_name(contract, workflow_name) == Some(task_name);
+            let setup_task =
+                selected_up_setup_task_name(contract, workflow_name) == Some(task_name);
             return Some((
                 task_phase_execution_context(contract, resolved_path, task_name, overrides, None),
                 Some(task_name.to_string()),

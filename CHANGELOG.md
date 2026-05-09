@@ -26,7 +26,11 @@
 
 ## Unreleased
 
-- added first-class top-level `surfaces` as reusable runtime endpoint definitions: repo contracts can now declare one `surfaces.<name>` block for shared HTTP/TCP endpoint truth, attach those surfaces to service-task runtimes through `tasks.<name>.runtime.surfaces`, reference them from workflow readiness and workflow exposes, and inspect both declared surfaces and normalized attached listener shape through `ota execution topology`; listener shorthand and full listeners remain fully supported, surface attachment is validated strictly, and normalized runtime behavior stays on the existing listener/readiness model
+- added `ota workflows` as a read-only workflow inventory command: repo contracts can now list
+  declared workflows directly, inspect the default workflow and each workflow's setup/run tasks,
+  readiness surfaces, probes, checks, and resolved exposes without falling back to the full task
+  inventory surface
+- added first-class top-level `surfaces` as reusable runtime endpoint definitions: repo contracts can now declare one `surfaces.<name>` block for shared HTTP/TCP endpoint truth, attach those surfaces to service-task runtimes through `tasks.<name>.runtime.surfaces`, and use either list-form default attachments or object-form publication overrides for bind/project shaping and primary selection without creating a second listener system; workflow readiness and workflow exposes can reference surfaces directly, `ota execution topology` shows both declared surfaces and normalized attached listener shape, surface attachment is validated strictly, and derived runtime readiness now follows a single attached surface or the primary attached surface when one runtime publishes multiple surfaces
 - added listener shorthand as authoring sugar for common local listeners: `listeners.<name>.http:
   <port>` and `listeners.<name>.tcp: <port>` now normalize into the existing verbose listener
   model with conservative `127.0.0.1` bind/host defaults, topology JSON still reports the normal

@@ -13080,11 +13080,7 @@ pub(crate) fn task_surface_host_readiness_probe_for_backend(
             }
         )
     })?;
-    if !runtime
-        .surfaces
-        .iter()
-        .any(|surface| surface == surface_name)
-    {
+    if !runtime.surfaces.contains_name(surface_name) {
         return Err(format!(
             "service runtime does not attach surface `{surface_name}`"
         ));
@@ -18019,6 +18015,7 @@ mod tests {
 
     use crate::parser::{load_contract, load_contract_for_member, parse_contract_str};
     use crate::policy_pack::{ProvisioningAction, ProvisioningActionKind, ProvisioningTargetKind};
+    use crate::schema::TaskRuntimeSurfaceAttachments;
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
@@ -26404,7 +26401,7 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
@@ -37299,7 +37296,7 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
@@ -37373,7 +37370,7 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
@@ -37437,7 +37434,7 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
@@ -37516,7 +37513,7 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
@@ -37575,7 +37572,7 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([(
                 String::from("http"),
@@ -37615,7 +37612,7 @@ tasks:
             kind: TaskRuntimeKind::Service,
             backend_binding: None,
             readiness: None,
-            surfaces: Vec::new(),
+            surfaces: TaskRuntimeSurfaceAttachments::default(),
             normalized_surface_listeners: BTreeSet::new(),
             listeners: BTreeMap::from([
                 (
