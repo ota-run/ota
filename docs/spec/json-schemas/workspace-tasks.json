@@ -2,6 +2,39 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dist.ota.run/spec/json-schemas/latest/workspace-tasks.json",
   "title": "ota workspace tasks --json",
+  "$defs": {
+    "taskLaunchVolume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "target"],
+      "properties": {
+        "kind": { "enum": ["named"] },
+        "source": { "type": "string" },
+        "target": { "type": "string" }
+      }
+    },
+    "taskLaunch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["command", "container"] },
+        "exe": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "image": { "type": "string" },
+        "engine": { "type": "string" },
+        "name": { "type": "string" },
+        "remove": { "type": "boolean" },
+        "volumes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskLaunchVolume" }
+        }
+      }
+    }
+  },
   "type": "object",
   "additionalProperties": false,
   "required": ["ok", "path", "summary", "repos"],
@@ -50,10 +83,11 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "type": "string" },
+                "kind": { "enum": ["run", "script", "command", "container"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },
+                "launch": { "$ref": "#/$defs/taskLaunch" },
                 "depends_on": {
                   "type": "array",
                   "items": { "type": "string" }

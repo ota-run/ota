@@ -2031,6 +2031,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub script: Option<String>,
     #[serde(default)]
+    pub launch: Option<TaskLaunchSpec>,
+    #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub requires_services: Vec<String>,
@@ -2054,17 +2056,26 @@ pub struct TaskSpec {
 
 impl TaskSpec {
     pub fn default_execution_kind(&self) -> Option<&'static str> {
-        match (self.run.as_ref(), self.script.as_ref()) {
-            (Some(_), None) => Some("run"),
-            (None, Some(_)) => Some("script"),
+        match (
+            self.run.as_ref(),
+            self.script.as_ref(),
+            self.launch.as_ref(),
+        ) {
+            (Some(_), None, None) => Some("run"),
+            (None, Some(_), None) => Some("script"),
+            (None, None, Some(launch)) => Some(launch.kind_str()),
             _ => None,
         }
     }
 
     pub fn default_execution_body(&self) -> Option<&str> {
-        match (self.run.as_deref(), self.script.as_deref()) {
-            (Some(run), None) => Some(run),
-            (None, Some(script)) => Some(script),
+        match (
+            self.run.as_deref(),
+            self.script.as_deref(),
+            self.launch.as_ref(),
+        ) {
+            (Some(run), None, None) => Some(run),
+            (None, Some(script), None) => Some(script),
             _ => None,
         }
     }
@@ -2077,7 +2088,8 @@ impl TaskSpec {
             .or_else(|| {
                 Some(TaskExecution {
                     kind: self.default_execution_kind()?,
-                    body: self.default_execution_body()?,
+                    body: self.default_execution_body(),
+                    launch: self.launch.as_ref(),
                     os: None,
                 })
             })
@@ -2351,22 +2363,33 @@ pub struct TaskModeBranchSpec {
     #[serde(default)]
     pub script: Option<String>,
     #[serde(default)]
+    pub launch: Option<TaskLaunchSpec>,
+    #[serde(default)]
     pub runtime: Option<TaskRuntimeSpec>,
 }
 
 impl TaskModeBranchSpec {
     pub fn execution_kind(&self) -> Option<&'static str> {
-        match (self.run.as_ref(), self.script.as_ref()) {
-            (Some(_), None) => Some("run"),
-            (None, Some(_)) => Some("script"),
+        match (
+            self.run.as_ref(),
+            self.script.as_ref(),
+            self.launch.as_ref(),
+        ) {
+            (Some(_), None, None) => Some("run"),
+            (None, Some(_), None) => Some("script"),
+            (None, None, Some(launch)) => Some(launch.kind_str()),
             _ => None,
         }
     }
 
     pub fn execution_body(&self) -> Option<&str> {
-        match (self.run.as_deref(), self.script.as_deref()) {
-            (Some(run), None) => Some(run),
-            (None, Some(script)) => Some(script),
+        match (
+            self.run.as_deref(),
+            self.script.as_deref(),
+            self.launch.as_ref(),
+        ) {
+            (Some(run), None, None) => Some(run),
+            (None, Some(script), None) => Some(script),
             _ => None,
         }
     }
@@ -2374,10 +2397,89 @@ impl TaskModeBranchSpec {
     pub fn execution(&self) -> Option<TaskExecution<'_>> {
         Some(TaskExecution {
             kind: self.execution_kind()?,
-            body: self.execution_body()?,
+            body: self.execution_body(),
+            launch: self.launch.as_ref(),
             os: None,
         })
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskLaunchSpec {
+    Command(TaskCommandLaunchSpec),
+    Container(TaskContainerLaunchSpec),
+}
+
+impl TaskLaunchSpec {
+    pub const fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Command(_) => "command",
+            Self::Container(_) => "container",
+        }
+    }
+
+    pub fn preview(&self) -> String {
+        match self {
+            Self::Command(command) => {
+                let mut preview = command.exe.clone();
+                for arg in &command.args {
+                    preview.push(' ');
+                    preview.push_str(arg);
+                }
+                preview
+            }
+            Self::Container(container) => container.image.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCommandLaunchSpec {
+    pub exe: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskContainerLaunchSpec {
+    pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<TaskContainerLaunchVolumeSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskContainerLaunchVolumeKind {
+    #[default]
+    Named,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskContainerLaunchVolumeSpec {
+    #[serde(
+        default,
+        skip_serializing_if = "is_default_task_container_launch_volume_kind"
+    )]
+    pub kind: TaskContainerLaunchVolumeKind,
+    #[serde(alias = "name")]
+    pub source: String,
+    pub target: String,
+}
+
+fn is_default_task_container_launch_volume_kind(kind: &TaskContainerLaunchVolumeKind) -> bool {
+    *kind == TaskContainerLaunchVolumeKind::Named
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -2916,7 +3018,8 @@ impl TaskVariantSpec {
     pub fn execution(&self) -> Option<TaskExecution<'_>> {
         Some(TaskExecution {
             kind: self.execution_kind()?,
-            body: self.execution_body()?,
+            body: self.execution_body(),
+            launch: None,
             os: self.when.os.as_deref(),
         })
     }
@@ -2938,8 +3041,26 @@ impl TaskWhen {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskExecution<'a> {
     pub kind: &'static str,
-    pub body: &'a str,
+    pub body: Option<&'a str>,
+    pub launch: Option<&'a TaskLaunchSpec>,
     pub os: Option<&'a str>,
+}
+
+impl<'a> TaskExecution<'a> {
+    pub fn shell_body(&self) -> Option<&'a str> {
+        self.body
+    }
+
+    pub fn launch(&self) -> Option<&'a TaskLaunchSpec> {
+        self.launch
+    }
+
+    pub fn preview(&self) -> String {
+        self.body
+            .map(ToOwned::to_owned)
+            .or_else(|| self.launch.map(TaskLaunchSpec::preview))
+            .unwrap_or_else(|| String::from("-"))
+    }
 }
 
 #[derive(Debug, Serialize)]

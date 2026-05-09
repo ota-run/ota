@@ -98,8 +98,9 @@ use crate::output::{
     WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
     WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskLaunchSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -2458,6 +2459,13 @@ fn render_execution_topology_tasks_text(tasks: &[ExecutionTopologyTaskSummary<'_
             task.task.context.unwrap_or("-")
         ));
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.task.kind));
+        if let Some(launch) = task.task.launch.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Launch:"),
+                render_task_launch_text(launch)
+            ));
+        }
         if let Some(runtime) = task.runtime.as_ref() {
             output.push_str(&format!("\n  {} {}", paint_key("Runtime:"), runtime.kind));
             output.push_str(&format!(
@@ -8621,6 +8629,7 @@ fn build_assist_add_task_proposal(
         targets: BTreeMap::new(),
         run: None,
         script: None,
+        launch: None,
         depends_on: Vec::new(),
         requires_services: Vec::new(),
         runtime: None,
@@ -23081,9 +23090,15 @@ pub fn workspace_tasks(
                                 name: name.clone(),
                                 kind: execution.kind.to_string(),
                                 description: task.description.clone(),
-                                run: (execution.kind == "run").then(|| execution.body.to_string()),
+                                run: (execution.kind == "run")
+                                    .then(|| execution.shell_body().map(str::to_string))
+                                    .flatten(),
                                 script: (execution.kind == "script")
-                                    .then(|| execution.body.to_string()),
+                                    .then(|| execution.shell_body().map(str::to_string))
+                                    .flatten(),
+                                launch: crate::output::summarize_task_launch_owned(
+                                    execution.launch(),
+                                ),
                                 depends_on: filter_relationships(&task.depends_on),
                                 requires_services: task.requires_services.clone(),
                                 after_success: filter_relationships(&task.after_success),
@@ -29760,6 +29775,7 @@ fn render_tasks_text(
                 task.script
                     .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
             })
+            .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
             .unwrap_or_else(|| String::from("-"));
 
         output.push_str(&format!("\n\n{} {}", list_bullet(), paint(task.name, "1")));
@@ -29800,6 +29816,13 @@ fn render_tasks_text(
             output.push_str(&format!("\n  {} {}", paint_key("Env:"), env));
         }
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
+        if let Some(launch) = task.launch.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Launch:"),
+                render_task_launch_text(launch)
+            ));
+        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Mode Branches:"),
@@ -29871,6 +29894,68 @@ fn render_task_relationships(values: &[String]) -> String {
     }
 }
 
+fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
+    match launch.kind {
+        "command" => {
+            let mut preview = launch.exe.unwrap_or("-").to_string();
+            if !launch.args.is_empty() {
+                preview.push(' ');
+                preview.push_str(&launch.args.join(" "));
+            }
+            preview
+        }
+        "container" => launch.image.unwrap_or("-").to_string(),
+        _ => String::from("-"),
+    }
+}
+
+fn render_task_launch_text(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
+    match launch.kind {
+        "command" => render_task_launch_preview(launch),
+        "container" => {
+            let mut parts = vec![launch.image.unwrap_or("-").to_string()];
+            if let Some(name) = launch.name {
+                parts.push(format!("name={name}"));
+            }
+            if let Some(engine) = launch.engine {
+                parts.push(format!("engine={engine}"));
+            }
+            if !launch.volumes.is_empty() {
+                parts.push(format!("volumes={}", launch.volumes.len()));
+            }
+            parts.join(" ")
+        }
+        _ => String::from("-"),
+    }
+}
+
+fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> String {
+    match launch.kind {
+        "command" => {
+            let mut preview = launch.exe.as_deref().unwrap_or("-").to_string();
+            if !launch.args.is_empty() {
+                preview.push(' ');
+                preview.push_str(&launch.args.join(" "));
+            }
+            preview
+        }
+        "container" => {
+            let mut parts = vec![launch.image.as_deref().unwrap_or("-").to_string()];
+            if let Some(name) = launch.name.as_deref() {
+                parts.push(format!("name={name}"));
+            }
+            if let Some(engine) = launch.engine.as_deref() {
+                parts.push(format!("engine={engine}"));
+            }
+            if !launch.volumes.is_empty() {
+                parts.push(format!("volumes={}", launch.volumes.len()));
+            }
+            parts.join(" ")
+        }
+        _ => String::from("-"),
+    }
+}
+
 fn render_task_mode_branches(task: &TaskSummary<'_>) -> String {
     if task.modes.is_empty() {
         return String::from("-");
@@ -29928,6 +30013,13 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint_key("Command:"),
             paint_code(&usage)
         ));
+        if let Some(launch) = task.launch.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Launch:"),
+                render_task_launch_text(launch)
+            ));
+        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Mode Branches:"),
@@ -29998,6 +30090,14 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
             paint_code(&format!("ota run {run_task}"))
         ));
     }
+    if let Some(launch) = workflow.run_task_launch.as_ref() {
+        output.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Run Launch:"),
+            render_task_launch_text(launch)
+        ));
+    }
     output.push_str(&format!(
         "\n {}  {} {}",
         summary_bullet(),
@@ -30039,7 +30139,11 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
-        output.push_str(&format!("\n {}  {}", summary_bullet(), paint_key("Exposes:")));
+        output.push_str(&format!(
+            "\n {}  {}",
+            summary_bullet(),
+            paint_key("Exposes:")
+        ));
         if !workflow.expose_entries.is_empty() {
             for expose in &workflow.expose_entries {
                 let detail = if let Some(surface) = expose.surface.as_deref() {
@@ -36287,6 +36391,7 @@ tasks:
             kind: "script",
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
+            launch: None,
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -36351,6 +36456,7 @@ tasks:
             kind: "script",
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
+            launch: None,
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -36390,6 +36496,7 @@ tasks:
             description: Some("Primary local app workflow"),
             setup_task: Some("setup"),
             run_task: Some("dev"),
+            run_task_launch: None,
             required_services: vec![String::from("postgres")],
             readiness_checks: vec![String::from("app-health")],
             readiness_probes: vec![String::from("app-ready")],
@@ -36413,6 +36520,7 @@ tasks:
             kind: "script",
             run: Some("pnpm dev"),
             script: None,
+            launch: None,
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -36685,6 +36793,121 @@ workflows:
         assert!(rendered.contains("Path: /health"), "{rendered}");
         assert!(rendered.contains("Success Status: 200"), "{rendered}");
         assert!(rendered.contains("Timeout: 10000ms"), "{rendered}");
+    }
+
+    #[test]
+    fn render_execution_topology_text_includes_task_launch() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = crate::output::ExecutionTopologyTaskSummary {
+            task: TaskSummary {
+                name: "quickstart",
+                context: Some("host"),
+                default_mode: None,
+                description: Some("Run packaged quickstart"),
+                notes: None,
+                category: None,
+                env: &env,
+                inputs: &inputs,
+                kind: "command",
+                run: None,
+                script: None,
+                launch: Some(crate::output::TaskLaunchSummary {
+                    kind: "command",
+                    exe: Some("npx"),
+                    args: vec!["n8n"],
+                    image: None,
+                    engine: None,
+                    name: None,
+                    remove: false,
+                    volumes: Vec::new(),
+                }),
+                selected_variant_os: None,
+                depends_on: Vec::new(),
+                requires_services: Vec::new(),
+                after_success: Vec::new(),
+                after_failure: Vec::new(),
+                after_always: Vec::new(),
+                safe_for_agent: true,
+                internal: false,
+                variants: Vec::new(),
+                modes: Vec::new(),
+            },
+            runtime: None,
+            targets: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&super::render_execution_topology_text(
+            ".",
+            &ContractIdentity {
+                version: 1,
+                project: crate::output::ContractIdentityProject {
+                    name: String::from("topology-demo"),
+                    project_type: Some(String::from("application")),
+                },
+                metadata: crate::output::ContractIdentityMetadata::default(),
+                execution: crate::output::ContractIdentityExecution::default(),
+                counts: crate::output::ContractIdentityCounts {
+                    runtimes: 0,
+                    tools: 0,
+                    env: 0,
+                    services: 0,
+                    checks: 0,
+                    tasks: 1,
+                    repos: None,
+                    policies: None,
+                },
+            },
+            None,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            &[task],
+        ));
+
+        assert!(rendered.contains("Launch: npx n8n"), "{rendered}");
+    }
+
+    #[test]
+    fn render_workspace_tasks_text_includes_launch() {
+        let output = super::render_workspace_tasks_text(
+            ".",
+            &[crate::output::WorkspaceRepoTasksReport {
+                name: String::from("n8n"),
+                path: String::from("/tmp/n8n"),
+                contract_path: String::from("/tmp/n8n/ota.yaml"),
+                workflow: Some(String::from("instant")),
+                required: true,
+                acquired: true,
+                depends_on: Vec::new(),
+                tasks: vec![crate::output::WorkspaceTaskSummary {
+                    name: String::from("quickstart"),
+                    kind: String::from("command"),
+                    description: Some(String::from("Run n8n quickly")),
+                    run: None,
+                    script: None,
+                    launch: Some(crate::output::WorkspaceTaskLaunchSummary {
+                        kind: "command",
+                        exe: Some(String::from("npx")),
+                        args: vec![String::from("n8n")],
+                        image: None,
+                        engine: None,
+                        name: None,
+                        remove: false,
+                        volumes: Vec::new(),
+                    }),
+                    depends_on: Vec::new(),
+                    requires_services: Vec::new(),
+                    after_success: Vec::new(),
+                    after_failure: Vec::new(),
+                    after_always: Vec::new(),
+                }],
+            }],
+        );
+
+        let rendered = strip_ansi_codes(&output.stdout);
+        assert!(rendered.contains("Launch: npx n8n"), "{rendered}");
     }
 
     #[test]
@@ -42467,6 +42690,7 @@ execution:
             description: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
+            run_task_launch: None,
             required_services: Vec::new(),
             readiness_checks: Vec::new(),
             readiness_probes: Vec::new(),
@@ -55547,6 +55771,13 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     description
                 ));
             }
+            if let Some(launch) = task.launch.as_ref() {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Launch:"),
+                    render_workspace_task_launch_text(launch)
+                ));
+            }
         }
     }
 
@@ -60974,7 +61205,7 @@ fn render_failed_status_label(value: &str) -> String {
 
 fn task_command_preview(task: &TaskSpec) -> Option<String> {
     let execution = task.resolved_execution(current_os())?;
-    Some(execution.body.to_string())
+    Some(execution.preview())
 }
 
 fn emit_workspace_progress_line(
