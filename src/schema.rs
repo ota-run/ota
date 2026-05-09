@@ -1307,6 +1307,12 @@ pub struct SurfaceSpec {
     pub kind: SurfaceKind,
     pub port: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<SurfaceVisibility>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<SurfaceReadinessSpec>,
@@ -1315,7 +1321,9 @@ pub struct SurfaceSpec {
 impl SurfaceSpec {
     pub fn effective_path(&self) -> Option<String> {
         match self.kind {
-            SurfaceKind::Http => Some(self.path.clone().unwrap_or_else(|| String::from("/"))),
+            SurfaceKind::Http | SurfaceKind::Https => {
+                Some(self.path.clone().unwrap_or_else(|| String::from("/")))
+            }
             SurfaceKind::Tcp => None,
         }
     }
@@ -1408,6 +1416,11 @@ impl SurfaceSpec {
         match self.kind {
             SurfaceKind::Http => format!(
                 "http://127.0.0.1:{}{}",
+                self.port,
+                self.effective_path().unwrap_or_else(|| String::from("/"))
+            ),
+            SurfaceKind::Https => format!(
+                "https://127.0.0.1:{}{}",
                 self.port,
                 self.effective_path().unwrap_or_else(|| String::from("/"))
             ),
@@ -1587,6 +1600,7 @@ impl<'de> Deserialize<'de> for TaskRuntimeSurfaceAttachments {
 #[serde(rename_all = "lowercase")]
 pub enum SurfaceKind {
     Http,
+    Https,
     Tcp,
 }
 
@@ -1594,13 +1608,14 @@ impl SurfaceKind {
     pub const fn as_runtime_protocol(self) -> TaskRuntimeProtocol {
         match self {
             Self::Http => TaskRuntimeProtocol::Http,
+            Self::Https => TaskRuntimeProtocol::Https,
             Self::Tcp => TaskRuntimeProtocol::Tcp,
         }
     }
 
     pub const fn as_readiness_kind(self) -> TaskRuntimeReadinessKind {
         match self {
-            Self::Http => TaskRuntimeReadinessKind::Http,
+            Self::Http | Self::Https => TaskRuntimeReadinessKind::Http,
             Self::Tcp => TaskRuntimeReadinessKind::Tcp,
         }
     }
@@ -1608,7 +1623,24 @@ impl SurfaceKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Http => "http",
+            Self::Https => "https",
             Self::Tcp => "tcp",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SurfaceVisibility {
+    Public,
+    Internal,
+}
+
+impl SurfaceVisibility {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Internal => "internal",
         }
     }
 }

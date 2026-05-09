@@ -1868,6 +1868,11 @@ fn build_execution_topology_surface_summaries(
                 crate::output::ExecutionTopologySurfaceSummary {
                     kind: surface.kind.as_str().to_string(),
                     port: surface.port,
+                    label: surface.label.clone(),
+                    purpose: surface.purpose.clone(),
+                    visibility: surface
+                        .visibility
+                        .map(|visibility| visibility.as_str().to_string()),
                     path: surface.effective_path(),
                     readiness: surface.readiness.as_ref().map(|readiness| {
                         ExecutionTopologyReadinessSummary {
@@ -1995,6 +2000,47 @@ fn build_execution_topology_runtime_summary(
                 start_period: readiness.start_period.clone(),
             }),
         attached_surfaces: runtime.surfaces.names_cloned(),
+        surface_attachments: runtime
+            .surfaces
+            .iter()
+            .map(|(surface_name, attachment)| {
+                (
+                    surface_name.clone(),
+                    crate::output::ExecutionTopologySurfaceAttachmentSummary {
+                        uses_defaults: attachment.uses_defaults(),
+                        bind: attachment.bind.as_ref().map(|bind| {
+                            crate::output::ExecutionTopologySurfaceBindOverrideSummary {
+                                address: bind.address.clone(),
+                                port_mode: bind.port.as_ref().map(|port| match port.mode {
+                                    crate::schema::TaskRuntimePortMode::Fixed => "fixed",
+                                    crate::schema::TaskRuntimePortMode::Discover => "discover",
+                                    crate::schema::TaskRuntimePortMode::Auto => "auto",
+                                }
+                                .to_string()),
+                                port_value: bind.port.as_ref().and_then(|port| port.value),
+                            }
+                        }),
+                        project: attachment.project.as_ref().map(|project| {
+                            crate::output::ExecutionTopologySurfaceProjectionOverrideSummary {
+                                host: project.host.as_ref().map(|host| {
+                                    crate::output::ExecutionTopologySurfaceHostProjectionOverrideSummary {
+                                        address: host.address.clone(),
+                                        port_mode: host.port.as_ref().map(|port| match port.mode {
+                                            crate::schema::TaskRuntimeHostPortMode::Fixed => "fixed",
+                                            crate::schema::TaskRuntimeHostPortMode::Auto => "auto",
+                                        }
+                                        .to_string()),
+                                        port_value: host.port.as_ref().and_then(|port| port.value),
+                                        primary: host.primary,
+                                        path: host.path.clone(),
+                                    }
+                                }),
+                            }
+                        }),
+                    },
+                )
+            })
+            .collect(),
         listeners: runtime
             .listeners
             .iter()
@@ -2305,6 +2351,15 @@ fn render_execution_topology_surfaces_text(
             list_bullet(),
             paint(surface_name, "1")
         ));
+        if let Some(label) = surface.label.as_deref() {
+            output.push_str(&format!("\n  {} {}", paint_key("Label:"), label));
+        }
+        if let Some(purpose) = surface.purpose.as_deref() {
+            output.push_str(&format!("\n  {} {}", paint_key("Purpose:"), purpose));
+        }
+        if let Some(visibility) = surface.visibility.as_deref() {
+            output.push_str(&format!("\n  {} {}", paint_key("Visibility:"), visibility));
+        }
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), surface.kind));
         output.push_str(&format!("\n  {} {}", paint_key("Port:"), surface.port));
         if let Some(path) = surface.path.as_deref() {
@@ -2435,6 +2490,41 @@ fn render_execution_topology_tasks_text(tasks: &[ExecutionTopologyTaskSummary<'_
                     paint_key("Attached Surfaces:"),
                     runtime.attached_surfaces.join(", ")
                 ));
+                if !runtime.surface_attachments.is_empty() {
+                    output.push_str(&format!("\n  {}", paint_key("Surface Attachment Intent:")));
+                    for (surface_name, attachment) in &runtime.surface_attachments {
+                        let mut details = Vec::new();
+                        if attachment.uses_defaults {
+                            details.push(String::from("default"));
+                        } else {
+                            if attachment.bind.is_some() {
+                                details.push(String::from("bind override"));
+                            }
+                            if attachment.project.is_some() {
+                                details.push(String::from("project override"));
+                            }
+                            if attachment
+                                .project
+                                .as_ref()
+                                .and_then(|project| project.host.as_ref())
+                                .and_then(|host| host.primary)
+                                .is_some_and(|primary| primary)
+                            {
+                                details.push(String::from("primary"));
+                            }
+                        }
+                        output.push_str(&format!(
+                            "\n    {} {} ({})",
+                            detail_arrow(),
+                            surface_name,
+                            if details.is_empty() {
+                                String::from("custom")
+                            } else {
+                                details.join(", ")
+                            }
+                        ));
+                    }
+                }
             }
             if !runtime.listeners.is_empty() {
                 output.push_str(&format!("\n  {}", paint_key("Listeners:")));
@@ -29949,19 +30039,28 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
-        let mut exposes = workflow.exposes.clone();
-        exposes.extend(
-            workflow
-                .expose_surfaces
-                .iter()
-                .map(|surface| format!("surface:{surface}")),
-        );
-        output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Exposes:"),
-            exposes.join(",")
-        ));
+        output.push_str(&format!("\n {}  {}", summary_bullet(), paint_key("Exposes:")));
+        if !workflow.expose_entries.is_empty() {
+            for expose in &workflow.expose_entries {
+                let detail = if let Some(surface) = expose.surface.as_deref() {
+                    format!("{} (surface: {surface})", expose.url)
+                } else {
+                    expose.url.clone()
+                };
+                output.push_str(&format!("\n    {} {}", verdict_bullet(), detail));
+            }
+        } else {
+            for expose in &workflow.exposes {
+                output.push_str(&format!("\n    {} {}", verdict_bullet(), expose));
+            }
+            for surface in &workflow.expose_surfaces {
+                output.push_str(&format!(
+                    "\n    {} {}",
+                    verdict_bullet(),
+                    format!("surface: {surface}")
+                ));
+            }
+        }
     }
     output
 }
@@ -36297,6 +36396,10 @@ tasks:
             readiness_surfaces: vec![String::from("backend")],
             exposes: vec![String::from("http://127.0.0.1:5678")],
             expose_surfaces: vec![String::from("backend")],
+            expose_entries: vec![crate::output::WorkflowExposeEntry {
+                url: String::from("http://127.0.0.1:5678"),
+                surface: Some(String::from("backend")),
+            }],
         };
         let task = TaskSummary {
             name: "dev",
@@ -36338,7 +36441,7 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("Exposes: http://127.0.0.1:5678,surface:backend"),
+            rendered.contains("Exposes:\n    ● http://127.0.0.1:5678 (surface: backend)"),
             "{rendered}"
         );
     }
@@ -36395,6 +36498,56 @@ workflows:
             vec![String::from("http://127.0.0.1:3000/app")]
         );
         assert_eq!(workflow.expose_surfaces, vec![String::from("backend")]);
+    }
+
+    #[test]
+    fn workflow_summary_resolves_https_surface_exposes_to_urls() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  docs:
+    kind: https
+    port: 443
+    path: /preview
+tasks:
+  docs:preview:
+    run: pnpm docs:preview
+    runtime:
+      kind: service
+      surfaces:
+        docs:
+          project:
+            host:
+              address: docs.local
+              port:
+                mode: fixed
+                value: 8443
+              path: /preview
+              primary: true
+workflows:
+  default: docs
+  docs:
+    run:
+      task: docs:preview
+    exposes:
+      - surface: docs
+"#,
+        )
+        .unwrap();
+
+        let workflow =
+            crate::output::WorkflowSummary::from_contract_selected(&contract, Some("docs"))
+                .expect("workflow summary should exist");
+
+        assert_eq!(
+            workflow.exposes,
+            vec![String::from("https://docs.local:8443/preview")]
+        );
+        assert_eq!(workflow.expose_surfaces, vec![String::from("docs")]);
     }
 
     #[test]
@@ -36632,6 +36785,9 @@ project:
 surfaces:
   backend:
     kind: http
+    label: Backend API
+    purpose: Primary local application API
+    visibility: internal
     port: 3000
     readiness:
       kind: http
@@ -36642,13 +36798,27 @@ tasks:
     runtime:
       kind: service
       surfaces:
-        - backend
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              primary: true
 "#,
         )
         .unwrap();
 
         let surfaces = super::build_execution_topology_surface_summaries(&contract);
         assert_eq!(surfaces["backend"].kind, "http");
+        assert_eq!(surfaces["backend"].label.as_deref(), Some("Backend API"));
+        assert_eq!(
+            surfaces["backend"].purpose.as_deref(),
+            Some("Primary local application API")
+        );
+        assert_eq!(surfaces["backend"].visibility.as_deref(), Some("internal"));
         assert_eq!(surfaces["backend"].port, 3000);
         assert_eq!(surfaces["backend"].path.as_deref(), Some("/"));
 
@@ -36662,6 +36832,18 @@ tasks:
             .expect("runtime summary should serialize");
 
         assert_eq!(body["attached_surfaces"][0], "backend");
+        assert_eq!(
+            body["surface_attachments"]["backend"]["uses_defaults"],
+            false
+        );
+        assert_eq!(
+            body["surface_attachments"]["backend"]["bind"]["address"],
+            "0.0.0.0"
+        );
+        assert_eq!(
+            body["surface_attachments"]["backend"]["project"]["host"]["primary"],
+            true
+        );
         assert_eq!(body["listeners"]["backend"]["bind_port_value"], 3000);
     }
 
@@ -42291,6 +42473,7 @@ execution:
             readiness_surfaces: Vec::new(),
             exposes: Vec::new(),
             expose_surfaces: Vec::new(),
+            expose_entries: Vec::new(),
         };
         let writable_paths = vec![String::from("src")];
         let safe_tasks = vec![String::from("dev")];

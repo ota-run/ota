@@ -8836,11 +8836,8 @@ checks:
             report.findings[0].summary,
             "Probe check failed: backend-ready"
         );
-        assert!(
-            report.findings[0]
-                .why
-                .contains("probe-backed check did not succeed")
-        );
+        assert!(report.findings[0].why.contains("probe-backed check"));
+        assert!(report.findings[0].why.contains("did not succeed"));
     }
 
     #[test]

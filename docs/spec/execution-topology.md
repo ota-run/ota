@@ -73,6 +73,8 @@ It also now makes reusable runtime surfaces first-class in topology inspection:
 - `tasks.<name>.runtime.surfaces` attaches those surfaces to one service runtime
 - `ota execution topology` shows both the declared surface definitions and the normalized listener
   shape that the attached runtime actually publishes
+- `ota execution topology` also shows additive `surface_attachments` intent so machines can see
+  whether one runtime used default publication or explicit bind/project overrides
 - `tasks[*].runtime.attached_surfaces` tells you which named surfaces were attached
 - `tasks[*].runtime.listeners` remains the operational truth that execution, readiness, and receipts
   consume

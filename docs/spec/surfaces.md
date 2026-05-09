@@ -36,6 +36,28 @@ The short version:
 For one canonical contract that shows all three together, see
 [`examples/full-contract/ota.yaml`](../../examples/full-contract/ota.yaml).
 
+## Recommended learning path
+
+Learn surfaces in this order:
+
+1. native simple case
+   - `runtime.surfaces: [backend]`
+2. container publication case
+   - `runtime.surfaces.backend.bind` / `project`
+3. multi-surface app
+   - `backend` + `frontend`, with one `project.host.primary: true`
+4. workflow surface readiness and exposes
+   - `readiness.surfaces` + `exposes: [{ surface: backend }]`
+5. literal external URL
+   - only for external, third-party, or otherwise non-Ota-owned endpoints
+
+That order keeps the model honest:
+
+- top-level `surfaces` own endpoint meaning
+- task attachment owns runtime publication
+- workflows consume attached surfaces instead of repeating URLs
+- literal URLs stay the escape hatch for endpoints outside Ota topology
+
 ## What a surface is
 
 A surface is a reusable runtime endpoint shape.
@@ -49,6 +71,9 @@ Example:
 surfaces:
   backend:
     kind: http
+    label: Backend API
+    purpose: Primary application API for local development
+    visibility: internal
     port: 5678
     path: /
     readiness:
@@ -59,6 +84,12 @@ surfaces:
 
 That declares one reusable `backend` endpoint shape.
 Tasks still decide whether they actually expose it.
+
+Optional surface metadata can improve command and topology UX without changing runtime behavior:
+
+- `label`: short operator-facing name
+- `purpose`: short explanation of why the surface exists
+- `visibility`: `public` or `internal`
 
 ## Why surfaces exist
 
@@ -181,6 +212,9 @@ Attachment behavior:
   - it may shape `project`
   - it may select `project.host.primary`
   - it must not override surface `kind`, readiness, or endpoint identity
+- `kind: https` is also supported when the runtime already exposes HTTPS honestly; ota reuses the
+  existing HTTPS listener protocol and the normal HTTP readiness request semantics instead of
+  inventing certificate-management fields
 - if one runtime attaches exactly one surface, has no inline `runtime.readiness`, and that surface
   declares readiness, ota derives the equivalent runtime readiness automatically
 - if a runtime attaches multiple surfaces, has no inline `runtime.readiness`, and exactly one
@@ -307,6 +341,8 @@ Use surfaces when:
 - the same endpoint appears in more than one task
 - readiness belongs to the endpoint and should not drift across tasks
 - workflows should expose or prove one runtime endpoint without repeating literal URLs
+- operator-facing commands or topology JSON should preserve one short label or purpose for that
+  endpoint
 
 Do not use surfaces when:
 
@@ -328,6 +364,9 @@ Do not use surfaces when:
 - full listeners:
   - best for advanced topology beyond the surface attachment model
   - example: `protocol` + `bind` + `project.host`
+- topology output:
+  - preserves both the additive `surface_attachments` author intent and the normalized listener
+    truth used operationally
 
 ## Design rule
 

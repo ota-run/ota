@@ -25237,9 +25237,7 @@ tasks:
     #[cfg(unix)]
     fn up_runs_setup_before_preconditions_fail() {
         let _guard = env_mutex_lock();
-        let bin_dir = TempDir::new().unwrap();
-        let contract = format!(
-            r#"
+        let contract = r#"
 version: 1
 project:
   name: ota
@@ -25247,49 +25245,38 @@ checks:
   - name: provisioned-tool
     kind: precondition
     severity: error
-    run: provisioned-tool --version
+    run: ./bin/provisioned-tool --version
 tasks:
   setup:
     run: |
-      mkdir -p "{bin_dir}"
+      mkdir -p ./bin
       printf '%s\n' \
         '#!/bin/sh' \
         'if [ "$1" = "--version" ]; then' \
         '  echo "provisioned-tool 1.0.0"' \
         '  exit 0' \
         'fi' \
-        'exit 0' > "{bin_dir}/provisioned-tool"
-      chmod +x "{bin_dir}/provisioned-tool"
+        'exit 0' > ./bin/provisioned-tool
+      chmod +x ./bin/provisioned-tool
       printf ready > prepared.txt
-"#,
-            bin_dir = bin_dir.path().display()
-        );
-        let fixture = ContractFixture::new(&contract);
-        let original_path = std::env::var_os("PATH");
-        let mut path_entries = vec![bin_dir.path().to_path_buf()];
-        if let Some(path) = original_path.as_ref() {
-            path_entries.extend(std::env::split_paths(path));
-        }
-        let joined_path = std::env::join_paths(path_entries).unwrap();
-        unsafe {
-            std::env::set_var("PATH", &joined_path);
-        }
+"#;
+        let fixture = ContractFixture::new(contract);
 
         let output = run_with(["ota", "up", fixture.path()]);
-
-        unsafe {
-            match original_path {
-                Some(value) => std::env::set_var("PATH", value),
-                None => std::env::remove_var("PATH"),
-            }
-        }
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("Phase: post-up diagnosis"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
-        assert!(bin_dir.path().join("provisioned-tool").exists());
+        assert!(
+            fixture
+                .dir
+                .path()
+                .join("bin")
+                .join("provisioned-tool")
+                .exists()
+        );
     }
 
     #[test]
