@@ -105,6 +105,7 @@ pub fn validate_contract_with_path(
     validate_tool_details(&contract.tools, &mut errors);
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
+    validate_readiness(contract, &mut errors);
     validate_services(contract, contract_path, &mut errors);
     validate_tasks(contract, contract_path, &mut errors);
     validate_workflows(contract, &mut errors);
@@ -2696,6 +2697,8 @@ fn validate_task_runtime_readiness(
     let Some(readiness) = runtime.readiness.as_ref() else {
         return;
     };
+    let probe_name = readiness.probe.as_deref().map(str::trim).unwrap_or_default();
+    let uses_named_probe = !probe_name.is_empty();
 
     let listener_name = readiness.listener.as_deref().map(str::trim);
     let referenced_listener = listener_name.and_then(|name| runtime.listeners.get(name));
@@ -2713,7 +2716,47 @@ fn validate_task_runtime_readiness(
             })
             .is_some_and(|shared_backend| shared_backend.backend == Backend::Remote);
 
-    match readiness.kind {
+    if uses_named_probe {
+        if !contract.readiness.probes.contains_key(probe_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness references unknown probe `{probe_name}`"
+            )));
+        }
+        for (field_name, present) in [
+            ("kind", readiness.kind.is_some()),
+            ("method", readiness.method.is_some()),
+            ("path", readiness.path.is_some()),
+            ("headers", !readiness.headers.is_empty()),
+            ("success", readiness.success.is_some()),
+            ("body", readiness.body.is_some()),
+            ("timeout", readiness.timeout.is_some()),
+        ] {
+            if present {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime readiness `probe` must not also declare `readiness.{field_name}`"
+                )));
+            }
+        }
+        validate_runtime_readiness_timing(task_name, readiness, errors);
+        validate_probe_backed_runtime_listener(
+            task_name,
+            runtime,
+            listener_name,
+            referenced_listener,
+            allows_shared_remote_bind_probe,
+            errors,
+        );
+        return;
+    }
+
+    let Some(kind) = readiness.kind else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness must declare `kind` when `probe` is not used"
+        )));
+        return;
+    };
+
+    match kind {
         crate::schema::TaskRuntimeReadinessKind::Http => {
             let Some(listener_name) = listener_name.filter(|name| !name.is_empty()) else {
                 errors.push(ValidationError::new(format!(
@@ -2857,6 +2900,63 @@ fn validate_task_runtime_readiness(
                 )));
             }
         }
+    }
+}
+
+fn validate_probe_backed_runtime_listener(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    listener_name: Option<&str>,
+    referenced_listener: Option<&crate::schema::TaskRuntimeListenerSpec>,
+    allows_shared_remote_bind_probe: bool,
+    errors: &mut Vec<ValidationError>,
+) {
+    let selected_listener_name = if let Some(listener_name) = listener_name.filter(|name| !name.is_empty()) {
+        listener_name
+    } else {
+        let mut projected = runtime
+            .listeners
+            .iter()
+            .filter(|(_, listener)| listener.project.host.is_some());
+        if let Some((primary_name, _)) = projected.clone().find(|(_, listener)| {
+            listener
+                .project
+                .host
+                .as_ref()
+                .is_some_and(|host| host.primary)
+        }) {
+            primary_name.as_str()
+        } else if let Some((first_name, _)) = projected.next() {
+            first_name.as_str()
+        } else {
+            return;
+        }
+    };
+
+    let Some(listener) = referenced_listener.or_else(|| runtime.listeners.get(selected_listener_name)) else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness references unknown listener `{selected_listener_name}`"
+        )));
+        return;
+    };
+
+    if !matches!(listener.protocol, crate::schema::TaskRuntimeProtocol::Http) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness `probe` requires listener `{selected_listener_name}` to use `protocol: http`"
+        )));
+    }
+
+    if listener.project.host.is_none() && !allows_shared_remote_bind_probe {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness listener `{selected_listener_name}` must declare `project.host`; runtime readiness currently probes projected host endpoints"
+        )));
+    } else if listener.project.host.is_none()
+        && (listener.bind.port.mode != TaskRuntimePortMode::Fixed
+            || listener.bind.port.value.is_none())
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime readiness listener `{selected_listener_name}` must declare a fixed `bind.port.value` when shared-remote readiness probes the backend plane"
+        )));
     }
 }
 
@@ -4122,10 +4222,12 @@ fn validate_services(
         if let Some(readiness) = &service.readiness {
             let from = readiness.from.as_deref().map(str::trim).unwrap_or_default();
             let run = readiness.run.as_deref().map(str::trim).unwrap_or_default();
+            let probe = readiness.probe.as_deref().map(str::trim).unwrap_or_default();
             let uses_legacy_command = !run.is_empty();
+            let uses_named_probe = !probe.is_empty();
             let structured_kind = readiness.kind;
 
-            if from.is_empty() {
+            if from.is_empty() && !uses_named_probe {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness field `from` must not be empty"
                 )));
@@ -4135,9 +4237,19 @@ fn validate_services(
                     "service `{name}` readiness must not declare both legacy `run` and structured `kind`; choose one readiness form"
                 )));
             }
-            if !uses_legacy_command && structured_kind.is_none() {
+            if uses_legacy_command && uses_named_probe {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` readiness must declare either legacy `run` or structured `kind`"
+                    "service `{name}` readiness must not declare both legacy `run` and `probe`; choose one readiness form"
+                )));
+            }
+            if uses_named_probe && structured_kind.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness must not declare both `probe` and structured `kind`; keep the named probe or the inline readiness contract"
+                )));
+            }
+            if !uses_legacy_command && !uses_named_probe && structured_kind.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness must declare legacy `run`, named `probe`, or structured `kind`"
                 )));
             }
             if uses_legacy_command {
@@ -4158,6 +4270,36 @@ fn validate_services(
                         )));
                     }
                 }
+            } else if uses_named_probe {
+                if from.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness `probe` must also declare `from` so ota can select the service endpoint projection"
+                    )));
+                } else if service.endpoint_for_context(from).is_none() {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness references unknown endpoint context `{from}`"
+                    )));
+                }
+                if !contract.readiness.probes.contains_key(probe) {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness references unknown probe `{probe}`"
+                    )));
+                }
+                for (field_name, present) in [
+                    ("method", readiness.method.is_some()),
+                    ("path", readiness.path.is_some()),
+                    ("headers", !readiness.headers.is_empty()),
+                    ("success", readiness.success.is_some()),
+                    ("body", readiness.body.is_some()),
+                    ("timeout", readiness.timeout.is_some()),
+                ] {
+                    if present {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` readiness `probe` must not also declare `readiness.{field_name}`"
+                        )));
+                    }
+                }
+                validate_service_readiness_timing(name, readiness, errors);
             } else if let Some(kind) = structured_kind {
                 match kind {
                     crate::schema::TaskRuntimeReadinessKind::Http => {
@@ -4588,9 +4730,43 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new("check name must not be empty"));
         }
 
-        if check.run.trim().is_empty() {
+        if check.run.is_some() && check.probe.is_some() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must not declare both `run` and `probe`",
+                check.name
+            )));
+        }
+        if check.run.is_none() && check.probe.is_none() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must declare either `run` or `probe`",
+                check.name
+            )));
+        }
+        if check
+            .run
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
             errors.push(ValidationError::new(format!(
                 "check `{}` must declare a non-empty `run` command",
+                check.name
+            )));
+        }
+        if check
+            .probe
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must declare a non-empty `probe` reference",
+                check.name
+            )));
+        }
+        if let Some(probe_name) = check.probe.as_deref()
+            && !contract.readiness.probes.contains_key(probe_name)
+        {
+            errors.push(ValidationError::new(format!(
+                "check `{}` references unknown probe `{probe_name}`",
                 check.name
             )));
         }
@@ -4669,6 +4845,50 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     "`workflows.{name}.readiness.checks` references unknown check `{check}`"
                 )));
             }
+        }
+        for probe in &workflow.readiness.probes {
+            if !contract.readiness.probes.contains_key(probe) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.readiness.probes` references unknown probe `{probe}`"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_readiness(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (name, probe) in &contract.readiness.probes {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`readiness.probes` must not declare an empty probe name",
+            ));
+        }
+        if probe.url.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.url` must not be empty"
+            )));
+        }
+        if probe.timeout.is_none() {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.timeout` is required"
+            )));
+        }
+        if matches!(probe.timeout, Some(0)) {
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.timeout` must declare a timeout greater than zero"
+            )));
+        }
+        if matches!(probe.kind, crate::schema::ReadinessProbeKind::Http)
+            && !probe.url.starts_with("http://")
+        {
+            let detail = if probe.url.starts_with("https://") {
+                "only plain `http://` readiness probes are supported today"
+            } else {
+                "http readiness probes must declare an absolute `http://` URL"
+            };
+            errors.push(ValidationError::new(format!(
+                "`readiness.probes.{name}.url` is invalid: {detail}"
+            )));
         }
     }
 }
@@ -4984,6 +5204,354 @@ workflows:
         assert!(message.contains(
             "`workflows.app.readiness.checks` references unknown check `app-health`"
         ));
+    }
+
+    #[test]
+    fn validates_probe_backed_checks_and_workflow_probe_references() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: backend-ready
+tasks:
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+workflows:
+  default: backend
+  backend:
+    setup:
+      task: setup
+    run:
+      task: dev
+    readiness:
+      probes:
+        - backend-ready
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_probe_references() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    probe: missing-probe
+workflows:
+  default: backend
+  backend:
+    readiness:
+      probes:
+        - missing-probe
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("probe references should be rejected");
+        let message = error.to_string();
+        assert!(message.contains("check `backend-ready` references unknown probe `missing-probe`"));
+        assert!(message.contains(
+            "`workflows.backend.readiness.probes` references unknown probe `missing-probe`"
+        ));
+    }
+
+    #[test]
+    fn rejects_checks_that_declare_both_run_and_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+    run: test -f ready
+    probe: backend-ready
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("check with run and probe should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("check `backend-ready` must not declare both `run` and `probe`")
+        );
+    }
+
+    #[test]
+    fn rejects_checks_that_declare_neither_run_nor_probe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: backend-ready
+    kind: health
+    severity: error
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("check without run or probe should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("check `backend-ready` must declare either `run` or `probe`")
+        );
+    }
+
+    #[test]
+    fn validates_runtime_and_service_probe_reuse() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+services:
+  api:
+    required: true
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5678
+    readiness:
+      from: host
+      probe: app-ready
+      retries: 3
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: app-ready
+        interval: 5s
+        retries: 12
+        start_period: 10s
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("runtime and service probes should validate");
+    }
+
+    #[test]
+    fn rejects_runtime_probe_mixed_with_inline_http_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    app-ready:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: app-ready
+        kind: http
+        listener: backend
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("runtime probe should reject inline drift");
+        let message = error.to_string();
+        assert!(
+            message.contains(
+                "task `dev` runtime readiness `probe` must not also declare `readiness.kind`"
+            )
+        );
+    }
+
+    #[test]
+    fn accepts_runtime_probe_listener_selection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    editor-ready:
+      kind: http
+      url: http://127.0.0.1:8080/
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: editor-ready
+        listener: editor
+      listeners:
+        backend:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 5678
+        editor:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 8080
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("probe-backed runtime listener selection should validate");
+    }
+
+    #[test]
+    fn rejects_runtime_probe_listener_on_non_http_runtime_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    tcpish:
+      kind: http
+      url: http://127.0.0.1:8080/
+      timeout: 10000
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        probe: tcpish
+        listener: redis
+      listeners:
+        redis:
+          protocol: tcp
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 6379
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 6379
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("probe-backed runtime listener should require an http listener");
+        assert!(
+            error.to_string().contains(
+                "task `dev` runtime readiness `probe` requires listener `redis` to use `protocol: http`"
+            )
+        );
     }
 
     #[test]
