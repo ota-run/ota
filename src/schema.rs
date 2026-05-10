@@ -129,6 +129,8 @@ pub struct Contract {
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,
     #[serde(default)]
+    pub native_prerequisites: BTreeMap<String, NativePrerequisiteSpec>,
+    #[serde(default)]
     pub env: EnvConfig,
     #[serde(default)]
     pub readiness: ContractReadinessConfig,
@@ -888,6 +890,8 @@ pub struct TaskRequirementsSpec {
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,
     #[serde(default)]
+    pub native: Vec<String>,
+    #[serde(default)]
     pub env: Vec<String>,
     #[serde(default)]
     pub checks: Vec<String>,
@@ -897,6 +901,7 @@ impl TaskRequirementsSpec {
     pub fn is_empty(&self) -> bool {
         self.runtimes.is_empty()
             && self.tools.is_empty()
+            && self.native.is_empty()
             && self.env.is_empty()
             && self.checks.is_empty()
     }
@@ -1446,6 +1451,83 @@ pub struct ToolAcquisitionSpec {
 #[serde(rename_all = "snake_case")]
 pub enum ToolAcquisitionProvider {
     Corepack,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativePrerequisiteSpec {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_required")]
+    pub required: bool,
+    #[serde(default)]
+    pub check: Option<String>,
+    #[serde(default)]
+    pub platforms: BTreeMap<String, NativePrerequisitePlatformSpec>,
+}
+
+impl NativePrerequisiteSpec {
+    pub fn active_for_os(&self, os: &str) -> bool {
+        self.platforms.is_empty() || self.platforms.contains_key(os)
+    }
+
+    pub fn platform_for_os(&self, os: &str) -> Option<&NativePrerequisitePlatformSpec> {
+        self.platforms.get(os)
+    }
+
+    pub fn check_for_os(&self, os: &str) -> Option<&str> {
+        self.platform_for_os(os)
+            .and_then(|platform| platform.check.as_deref())
+            .or(self.check.as_deref())
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativePrerequisitePlatformSpec {
+    #[serde(default)]
+    pub check: Option<String>,
+    #[serde(default)]
+    pub packages: Vec<String>,
+    #[serde(default)]
+    pub apt: Vec<String>,
+    #[serde(default)]
+    pub brew: Vec<String>,
+    #[serde(default)]
+    pub winget: Vec<String>,
+    #[serde(default)]
+    pub choco: Vec<String>,
+    #[serde(default)]
+    pub scoop: Vec<String>,
+    #[serde(default)]
+    pub xcode_clt: bool,
+    #[serde(default)]
+    pub visual_studio_build_tools: bool,
+    #[serde(default)]
+    pub install: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+impl NativePrerequisitePlatformSpec {
+    pub fn has_guidance(&self) -> bool {
+        self.xcode_clt
+            || self.visual_studio_build_tools
+            || self
+                .install
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            || self
+                .note
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            || !self.packages.is_empty()
+            || !self.apt.is_empty()
+            || !self.brew.is_empty()
+            || !self.winget.is_empty()
+            || !self.choco.is_empty()
+            || !self.scoop.is_empty()
+    }
 }
 
 fn default_required() -> bool {

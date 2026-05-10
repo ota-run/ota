@@ -103,6 +103,7 @@ pub fn validate_contract_with_path(
         value.version()
     });
     validate_tool_details(&contract.tools, &mut errors);
+    validate_native_prerequisites(contract, &mut errors);
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
     validate_readiness(contract, &mut errors);
@@ -1008,6 +1009,175 @@ fn validate_tool_details(
                     "tool `{name}` acquisition `version` must be a shell-safe Corepack version token"
                 )));
             }
+        }
+    }
+}
+
+fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (name, prerequisite) in &contract.native_prerequisites {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`native_prerequisites` must not declare an empty prerequisite name",
+            ));
+        }
+        if prerequisite
+            .description
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` must not declare an empty `description`"
+            )));
+        }
+        if prerequisite.platforms.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` must declare at least one platform guidance entry"
+            )));
+        }
+        if let Some(check_name) = prerequisite.check.as_deref() {
+            validate_native_prerequisite_check_reference(name, None, check_name, contract, errors);
+        }
+
+        validate_platform_keys(
+            "native prerequisite",
+            name,
+            prerequisite.platforms.keys(),
+            errors,
+        );
+        for (platform, platform_detail) in &prerequisite.platforms {
+            if !platform_detail.has_guidance() {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` must declare install guidance"
+                )));
+            }
+            if let Some(check_name) = platform_detail.check.as_deref() {
+                validate_native_prerequisite_check_reference(
+                    name,
+                    Some(platform),
+                    check_name,
+                    contract,
+                    errors,
+                );
+            } else if prerequisite.check.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` must declare a `check` because no top-level check is declared"
+                )));
+            }
+            validate_native_prerequisite_values(
+                name,
+                platform,
+                "packages",
+                &platform_detail.packages,
+                errors,
+            );
+            validate_native_prerequisite_values(
+                name,
+                platform,
+                "apt",
+                &platform_detail.apt,
+                errors,
+            );
+            validate_native_prerequisite_values(
+                name,
+                platform,
+                "brew",
+                &platform_detail.brew,
+                errors,
+            );
+            validate_native_prerequisite_values(
+                name,
+                platform,
+                "winget",
+                &platform_detail.winget,
+                errors,
+            );
+            validate_native_prerequisite_values(
+                name,
+                platform,
+                "choco",
+                &platform_detail.choco,
+                errors,
+            );
+            validate_native_prerequisite_values(
+                name,
+                platform,
+                "scoop",
+                &platform_detail.scoop,
+                errors,
+            );
+            if platform_detail
+                .install
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` must not declare an empty `install`"
+                )));
+            }
+            if platform_detail
+                .note
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` must not declare an empty `note`"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_native_prerequisite_check_reference(
+    name: &str,
+    platform: Option<&str>,
+    check_name: &str,
+    contract: &Contract,
+    errors: &mut Vec<ValidationError>,
+) {
+    let location = platform
+        .map(|platform| format!(" platform `{platform}`"))
+        .unwrap_or_default();
+    if check_name.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "native prerequisite `{name}`{location} must declare a non-empty `check`"
+        )));
+        return;
+    }
+
+    let Some(check) = contract
+        .checks
+        .iter()
+        .find(|check| check.name == check_name)
+    else {
+        errors.push(ValidationError::new(format!(
+            "native prerequisite `{name}`{location} references unknown check `{check_name}`"
+        )));
+        return;
+    };
+    if check.kind != CheckKind::Precondition {
+        errors.push(ValidationError::new(format!(
+            "native prerequisite `{name}`{location} references non-precondition check `{check_name}`"
+        )));
+    }
+}
+
+fn validate_native_prerequisite_values(
+    name: &str,
+    platform: &str,
+    field: &str,
+    values: &[String],
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        if value.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` must not declare an empty `{field}` entry"
+            )));
+        } else if !seen.insert(value.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` must not declare duplicate `{field}` entry `{value}`"
+            )));
         }
     }
 }
@@ -4454,6 +4624,20 @@ fn validate_task_requirement_references(
         if !contract.env.contains_key(env_name) {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` references unknown environment requirement `{env_name}` in `requirements.env`"
+            )));
+        }
+    }
+
+    for native_name in &task.requirements.native {
+        if native_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` must not declare an empty `requirements.native` entry"
+            )));
+            continue;
+        }
+        if !contract.native_prerequisites.contains_key(native_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` references unknown native prerequisite `{native_name}` in `requirements.native`"
             )));
         }
     }
@@ -14658,6 +14842,145 @@ tools:
                 )
             }),
             "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_task_scoped_native_prerequisite() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    description: Native compiler toolchain for packages with native addons
+    check: node-native-build-tools-present
+    platforms:
+      linux:
+        apt:
+          - build-essential
+          - python3
+      macos:
+        xcode_clt: true
+      windows:
+        visual_studio_build_tools: true
+checks:
+  - name: node-native-build-tools-present
+    kind: precondition
+    severity: error
+    run: node-gyp --version
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("native prerequisite should validate");
+    }
+
+    #[test]
+    fn accepts_platform_specific_native_prerequisite_checks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    description: Native compiler toolchain for packages with native addons
+    platforms:
+      linux:
+        check: node-native-build-tools-linux
+        apt:
+          - build-essential
+      macos:
+        check: node-native-build-tools-macos
+        xcode_clt: true
+checks:
+  - name: node-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: cc --version
+  - name: node-native-build-tools-macos
+    kind: precondition
+    severity: error
+    run: xcode-select -p
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("platform-specific native prerequisite checks should validate");
+    }
+
+    #[test]
+    fn rejects_native_prerequisite_without_platform_guidance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    check: node-native-build-tools-present
+checks:
+  - name: node-native-build-tools-present
+    kind: precondition
+    severity: error
+    run: cc --version
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(
+            errors.errors().iter().any(|error| error.to_string().contains(
+                "native prerequisite `node-native-build-tools` must declare at least one platform guidance entry",
+            )),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_task_scoped_unknown_native_prerequisite() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(
+            errors.errors().iter().any(|error| {
+                error.to_string().contains(
+                    "task `setup` references unknown native prerequisite `node-native-build-tools` in `requirements.native`",
+                )
+            }),
+            "{errors:?}"
         );
     }
 

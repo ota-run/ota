@@ -426,7 +426,8 @@ fn explain_action_priority(group: &DoctorFindingGroup<'_>) -> usize {
         match group.kind {
             DoctorFindingGroupKind::ToolingVersion
             | DoctorFindingGroupKind::ExecutionBackend
-            | DoctorFindingGroupKind::AdapterBootstrap => 3,
+            | DoctorFindingGroupKind::AdapterBootstrap
+            | DoctorFindingGroupKind::NativePrerequisite => 3,
             DoctorFindingGroupKind::ServiceHealth => 4,
             DoctorFindingGroupKind::CheckFailure => 5,
             DoctorFindingGroupKind::ContractDrift => 6,

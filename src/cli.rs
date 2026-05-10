@@ -5702,7 +5702,7 @@ mod tests {
 
     #[cfg(windows)]
     fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
-        let path = bin_dir.join(name);
+        let path = bin_dir.join(format!("{name}.cmd"));
         fs::write(&path, body).expect("write fake command");
         path
     }
@@ -30955,6 +30955,44 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("run `uv python install 3.12.4` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_probes_pwsh_runtime_from_contract() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: pwsh-demo
+runtimes:
+  pwsh: "7.4.3"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let pwsh_body = if cfg!(windows) {
+            "@echo off\r\necho PowerShell 7.4.3\r\n"
+        } else {
+            "#!/bin/sh\necho 'PowerShell 7.4.3'\n"
+        };
+        write_fake_command(&bin_dir, "pwsh", pwsh_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("READY"));
+        assert!(!stdout.contains("Runtime probe failed: pwsh"));
+        assert!(!stdout.contains("Runtime probe failed: powershell"));
+        assert!(!stdout.contains("powershell --version"));
     }
 
     #[test]

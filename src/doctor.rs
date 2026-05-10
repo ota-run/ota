@@ -211,6 +211,7 @@ fn execution_context_for_backend<'a>(
 #[derive(Debug, Default, Clone)]
 struct ScopedPreconditionSelection {
     requirement_surface: RequirementSurface,
+    native_names: BTreeSet<String>,
     env_names: BTreeSet<String>,
     env_scoped: bool,
 }
@@ -249,6 +250,9 @@ fn scoped_precondition_selection(
                 .env_names
                 .extend(task.requirements.env.iter().cloned());
         }
+        selection
+            .native_names
+            .extend(task.requirements.native.iter().cloned());
         if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
             && let Some(context) = contract
                 .execution
@@ -1256,6 +1260,12 @@ impl Finding {
             "Missing tool activation provider: corepack" => "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
             s if s.starts_with("Tool probe failed: ") => "OTA_TOOL_PROBE_FAILED",
             s if s.starts_with("Unparseable version for tool: ") => "OTA_TOOL_VERSION_UNPARSEABLE",
+            s if s.starts_with("Native prerequisite missing: ") => {
+                "OTA_NATIVE_PREREQUISITE_MISSING"
+            }
+            s if s.starts_with("Native prerequisite timed out: ") => {
+                "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
+            }
             s if s.starts_with("Container apt cannot install pinned package version: ") => {
                 "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             }
@@ -1364,7 +1374,9 @@ impl Finding {
             | "OTA_TOOL_MISSING"
             | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
             | "OTA_TOOL_PROBE_FAILED"
-            | "OTA_TOOL_VERSION_UNPARSEABLE" => "environment",
+            | "OTA_TOOL_VERSION_UNPARSEABLE"
+            | "OTA_NATIVE_PREREQUISITE_MISSING"
+            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => "environment",
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
@@ -1416,7 +1428,9 @@ impl Finding {
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING"
             | "OTA_TOOL_PROBE_FAILED"
-            | "OTA_TOOL_VERSION_UNPARSEABLE" => {
+            | "OTA_TOOL_VERSION_UNPARSEABLE"
+            | "OTA_NATIVE_PREREQUISITE_MISSING"
+            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
                 if finding_targets_container_image(&self.why) {
                     "container_target"
                 } else if finding_targets_remote_backend(&self.why) {
@@ -1606,6 +1620,13 @@ impl Finding {
                 },
                 finding_probe_command(&self.why).unwrap_or_default(),
                 finding_probe_path(&self.why).unwrap_or_default(),
+            ),
+            "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => (
+                "the selected native prerequisite check did not pass".to_string(),
+                "the selected native prerequisite check passes".to_string(),
+                "host".to_string(),
+                String::new(),
+                String::new(),
             ),
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE" => (
                 "the configured container apt sources do not provide the pinned package version"
@@ -1900,6 +1921,8 @@ impl Finding {
             | "OTA_TOOL_MISSING"
             | "OTA_TOOL_PROBE_FAILED"
             | "OTA_TOOL_VERSION_UNPARSEABLE"
+            | "OTA_NATIVE_PREREQUISITE_MISSING"
+            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
             | "OTA_CHECK_FAILED"
             | "OTA_CHECK_TIMED_OUT"
             | "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(FindingProvenanceContext {
@@ -2344,6 +2367,15 @@ fn diagnose_contract_with_scope(
                 &provisioning_actions,
                 &mut findings,
             );
+            if mode == DoctorMode::Native {
+                diagnose_native_prerequisites(
+                    contract,
+                    contract_path,
+                    &precondition_selection.native_names,
+                    policy_target_os_for_mode(mode),
+                    &mut findings,
+                );
+            }
             runtime_probe_started || tool_probe_started
         };
         if mode == DoctorMode::Native && contract_has_remote_execution_context(contract) {
@@ -3976,6 +4008,175 @@ fn diagnose_tools(
         );
     }
     container_probe_started
+}
+
+fn diagnose_native_prerequisites(
+    contract: &Contract,
+    contract_path: &Path,
+    native_names: &BTreeSet<String>,
+    target_os: &str,
+    findings: &mut Vec<Finding>,
+) {
+    if native_names.is_empty() {
+        return;
+    }
+
+    let working_dir = contract_working_dir(contract_path);
+    for name in native_names {
+        let Some(prerequisite) = contract.native_prerequisites.get(name) else {
+            continue;
+        };
+        if !prerequisite.active_for_os(target_os) {
+            continue;
+        }
+        let Some(check_name) = prerequisite.check_for_os(target_os) else {
+            continue;
+        };
+        let Some(check) = contract
+            .checks
+            .iter()
+            .find(|check| check.name == check_name)
+        else {
+            continue;
+        };
+
+        match run_declared_check(contract, contract_path, check, working_dir) {
+            CheckStatus::Passed => {}
+            CheckStatus::Failed => findings.push(native_prerequisite_finding(
+                name,
+                prerequisite,
+                check_name,
+                target_os,
+                false,
+                None,
+            )),
+            CheckStatus::TimedOut(timeout) => findings.push(native_prerequisite_finding(
+                name,
+                prerequisite,
+                check_name,
+                target_os,
+                true,
+                Some(timeout),
+            )),
+        }
+    }
+}
+
+fn native_prerequisite_finding(
+    name: &str,
+    prerequisite: &crate::schema::NativePrerequisiteSpec,
+    check_name: &str,
+    target_os: &str,
+    timed_out: bool,
+    timeout: Option<u64>,
+) -> Finding {
+    let summary = if timed_out {
+        format!("Native prerequisite timed out: {name}")
+    } else {
+        format!("Native prerequisite missing: {name}")
+    };
+    let check_context = if let Some(timeout) = timeout {
+        format!("check `{check_name}` did not finish within {timeout}ms")
+    } else {
+        format!("check `{check_name}` did not pass")
+    };
+    let description = prerequisite
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("a selected workflow/task requires native OS tooling");
+    Finding {
+        severity: if prerequisite.required {
+            FindingSeverity::Error
+        } else {
+            FindingSeverity::Warn
+        },
+        summary,
+        why: format!(
+            "{description}; {check_context} on {target_os}, so ota cannot prove the native prerequisite is available"
+        ),
+        next: native_prerequisite_next(name, prerequisite, target_os),
+    }
+}
+
+fn native_prerequisite_next(
+    name: &str,
+    prerequisite: &crate::schema::NativePrerequisiteSpec,
+    target_os: &str,
+) -> String {
+    let Some(platform) = prerequisite.platform_for_os(target_os) else {
+        return format!(
+            "install or repair native prerequisite `{name}` for {target_os}, then rerun `ota doctor`"
+        );
+    };
+
+    if let Some(command) = platform
+        .install
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return format!("run `{command}` and rerun `ota doctor`");
+    }
+
+    let mut suggestions = Vec::new();
+    if platform.xcode_clt {
+        suggestions.push(String::from("run `xcode-select --install`"));
+    }
+    if platform.visual_studio_build_tools {
+        suggestions.push(String::from("install Visual Studio Build Tools"));
+    }
+    if !platform.apt.is_empty() {
+        suggestions.push(format!(
+            "install apt packages: `{}`",
+            platform.apt.join(" ")
+        ));
+    }
+    if !platform.brew.is_empty() {
+        suggestions.push(format!(
+            "install Homebrew packages: `{}`",
+            platform.brew.join(" ")
+        ));
+    }
+    if !platform.winget.is_empty() {
+        suggestions.push(format!(
+            "install winget packages: `{}`",
+            platform.winget.join(" ")
+        ));
+    }
+    if !platform.choco.is_empty() {
+        suggestions.push(format!(
+            "install Chocolatey packages: `{}`",
+            platform.choco.join(" ")
+        ));
+    }
+    if !platform.scoop.is_empty() {
+        suggestions.push(format!(
+            "install Scoop packages: `{}`",
+            platform.scoop.join(" ")
+        ));
+    }
+    if !platform.packages.is_empty() {
+        suggestions.push(format!(
+            "install packages: `{}`",
+            platform.packages.join(" ")
+        ));
+    }
+    if let Some(note) = platform
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        suggestions.push(note.to_string());
+    }
+
+    if suggestions.is_empty() {
+        format!("install or repair native prerequisite `{name}` and rerun `ota doctor`")
+    } else {
+        format!("{}; then rerun `ota doctor`", suggestions.join("; "))
+    }
 }
 
 fn runtime_provider_hint<'a>(requirement: &'a RuntimeRequirement, os: &str) -> Option<&'a str> {
@@ -10322,6 +10523,81 @@ workflows:
                 .iter()
                 .all(|finding| { !finding.summary.contains("contributor-precondition") }),
             "{full_report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_preconditions_surface_selected_native_prerequisites() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    description: Native compiler toolchain for packages with native addons
+    platforms:
+      linux:
+        check: node-native-build-tools-linux
+        apt:
+          - build-essential
+          - python3
+      macos:
+        check: node-native-build-tools-macos
+        xcode_clt: true
+      windows:
+        check: node-native-build-tools-windows
+        visual_studio_build_tools: true
+checks:
+  - name: node-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: __ota_missing_native_build_tools__
+  - name: node-native-build-tools-macos
+    kind: precondition
+    severity: error
+    run: __ota_missing_native_build_tools__
+  - name: node-native-build-tools-windows
+    kind: precondition
+    severity: error
+    run: __ota_missing_native_build_tools__
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("app"),
+        );
+
+        assert!(!report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary
+                    == "Native prerequisite missing: node-native-build-tools"),
+            "{report:?}"
+        );
+        assert!(
+            report.findings.iter().all(|finding| !finding
+                .summary
+                .starts_with("Check failed: node-native-build-tools-")),
+            "{report:?}"
         );
     }
 
