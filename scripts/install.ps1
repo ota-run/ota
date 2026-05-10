@@ -28,7 +28,25 @@ param(
     [switch]$FromRelease
 )
 
-irm https://dist.ota.run/bootstrap.ps1 -OutFile bootstrap.ps1
+$bootstrapUrl = if ($env:OTA_BOOTSTRAP_URL) { $env:OTA_BOOTSTRAP_URL } else { "https://dist.ota.run/bootstrap.ps1" }
+$bootstrapPath = $null
+$localBootstrapPath = $null
+$downloadBootstrap = $false
+
+if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $localBootstrapPath = Join-Path $PSScriptRoot "bootstrap.ps1"
+}
+
+if ($localBootstrapPath -and (Test-Path -LiteralPath $localBootstrapPath -PathType Leaf)) {
+  $bootstrapPath = $localBootstrapPath
+  Write-Output "Info: using local bootstrap from ${bootstrapPath}."
+} else {
+  $downloadBootstrap = $true
+  $bootstrapPath = Join-Path ([System.IO.Path]::GetTempPath()) ("ota-bootstrap-" + [Guid]::NewGuid().ToString("N") + ".ps1")
+  Write-Output "Info: downloading bootstrap from ${bootstrapUrl}."
+  irm $bootstrapUrl -OutFile $bootstrapPath
+}
+
 $bootstrapArgs = @()
 if ($FromSource.IsPresent)
 {
@@ -43,4 +61,11 @@ elseif ($FromRelease.IsPresent)
     $bootstrapArgs += "-FromRelease"
 }
 
-powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 @bootstrapArgs
+try {
+    powershell -ExecutionPolicy Bypass -File $bootstrapPath @bootstrapArgs
+}
+finally {
+    if ($downloadBootstrap -and (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $bootstrapPath -Force
+    }
+}

@@ -23900,6 +23900,29 @@ tasks:
     }
 
     #[test]
+    fn install_powershell_downloads_bootstrap_to_temp_path() {
+        let script = fs::read_to_string("scripts/install.ps1").expect("read install.ps1");
+
+        assert!(
+            script.contains("[string]::IsNullOrWhiteSpace($PSScriptRoot)"),
+            "{script}"
+        );
+        assert!(
+            script.contains("[System.IO.Path]::GetTempPath()"),
+            "{script}"
+        );
+        assert!(
+            script.contains("\"ota-bootstrap-\" + [Guid]::NewGuid().ToString(\"N\") + \".ps1\""),
+            "{script}"
+        );
+        assert!(
+            !script.contains("Join-Path (Get-Location) \"bootstrap.ps1\""),
+            "{script}"
+        );
+        assert!(script.contains("Remove-Item -LiteralPath $bootstrapPath -Force"), "{script}");
+    }
+
+    #[test]
     fn install_sh_uses_zip_release_asset_for_windows_targets() {
         let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
 
@@ -26166,10 +26189,35 @@ edition = "2024"
         assert!(stdout.contains("Contract\nversion: 1"));
         assert!(stdout.contains("Annotations:"));
         assert!(stdout.contains("Field: "));
+        assert!(stdout.contains("Type: "));
         assert!(stdout.contains("Value: "));
         assert!(stdout.contains("Source: "));
+        assert!(stdout.contains("Signal: "));
         assert!(stdout.contains("Confidence: "));
         assert!(!stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn detect_dry_run_annotations_include_task_agent_metadata() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Field: tasks.test.run"));
+        assert!(stdout.contains("Type: task"));
+        assert!(stdout.contains("Signal: config"));
+        assert!(stdout.contains("Agent Safe: yes"));
+        assert!(stdout.contains("Agent Signal: verification_candidate"));
     }
 
     #[test]
@@ -26192,6 +26240,8 @@ edition = "2024"
         assert_eq!(json["written"], false);
         assert_eq!(json["config"]["project"]["name"], "ota-web");
         assert_eq!(json["inferred"][0]["field"], "project.name");
+        assert_eq!(json["inferred"][0]["type"], "project");
+        assert_eq!(json["inferred"][0]["signal"], "config");
     }
 
     #[test]

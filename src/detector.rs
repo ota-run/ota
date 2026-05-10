@@ -42,9 +42,35 @@ pub enum Confidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Inference {
     pub field: String,
+    #[serde(rename = "type")]
+    pub field_type: &'static str,
     pub value: String,
     pub source: String,
+    pub signal: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_safe: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_signal: Option<&'static str>,
     pub confidence: Confidence,
+}
+
+impl Inference {
+    pub fn new(field: String, value: String, source: String, confidence: Confidence) -> Self {
+        let field_type = inference_type_for_field(&field);
+        let signal = inference_signal_for_source(&source);
+        let agent_safe = inference_agent_safe_for_field(&field, &value);
+        let agent_signal = inference_agent_signal_for_field(&field, &value);
+        Self {
+            field,
+            field_type,
+            value,
+            source,
+            signal,
+            agent_safe,
+            agent_signal,
+            confidence,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
@@ -3967,14 +3993,78 @@ impl DetectBuilder {
     fn record(&mut self, field: String, value: String, source: String, confidence: Confidence) {
         self.inferences.insert(
             field.clone(),
-            Inference {
-                field,
-                value,
-                source,
-                confidence,
-            },
+            Inference::new(field, value, source, confidence),
         );
     }
+}
+
+fn inference_type_for_field(field: &str) -> &'static str {
+    match field.split('.').next().unwrap_or_default() {
+        "project" => "project",
+        "runtimes" => "runtime",
+        "tools" => "tool",
+        "env" => "env",
+        "services" => "service",
+        "checks" => "check",
+        "tasks" => "task",
+        "agent" => "agent",
+        _ => "field",
+    }
+}
+
+fn inference_signal_for_source(source: &str) -> &'static str {
+    if source.ends_with("-script") || source.ends_with(".sh") || source.ends_with(".ps1") {
+        "script"
+    } else if source == "directory-name" {
+        "convention"
+    } else if source.starts_with("ota.init#") {
+        "template"
+    } else if source.ends_with(".lock")
+        || source.ends_with(".lockb")
+        || matches!(
+            source,
+            "pnpm-lock.yaml" | "yarn.lock" | "package-lock.json" | "npm-shrinkwrap.json"
+        )
+    {
+        "lockfile"
+    } else if source.contains('#') {
+        "config"
+    } else {
+        "file"
+    }
+}
+
+fn inference_task_name(field: &str) -> Option<&str> {
+    let mut segments = field.split('.');
+    match (segments.next(), segments.next()) {
+        (Some("tasks"), Some(task_name)) if !task_name.is_empty() => Some(task_name),
+        _ => None,
+    }
+}
+
+fn inference_agent_safe_for_field(field: &str, value: &str) -> Option<&'static str> {
+    let task_name = inference_task_name(field)?;
+    if field.ends_with(".safe_for_agent") {
+        return Some(if value == "true" { "yes" } else { "no" });
+    }
+    if is_verifier_task_name(task_name) {
+        return Some("yes");
+    }
+    Some("unknown")
+}
+
+fn inference_agent_signal_for_field(field: &str, value: &str) -> Option<&'static str> {
+    let task_name = inference_task_name(field)?;
+    if field.ends_with(".safe_for_agent") && value == "true" {
+        return Some("verification_candidate");
+    }
+    if is_verifier_task_name(task_name) {
+        return Some("verification_candidate");
+    }
+    if task_name.eq_ignore_ascii_case("setup") {
+        return Some("bootstrap_candidate");
+    }
+    None
 }
 
 fn source_priority(field: &str, source: &str) -> u8 {

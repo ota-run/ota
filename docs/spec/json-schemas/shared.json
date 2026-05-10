@@ -90,9 +90,13 @@
       "required": ["field", "value", "source", "confidence"],
       "properties": {
         "field": { "type": "string" },
+        "type": { "type": "string" },
         "value": { "type": "string" },
         "source": { "type": "string" },
-        "confidence": { "enum": ["low", "medium", "high"] }
+        "signal": { "type": "string" },
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "agent_safe": { "enum": ["yes", "no", "unknown"] },
+        "agent_signal": { "type": "string" }
       }
     },
     "contractFieldProvenance": {

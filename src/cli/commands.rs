@@ -37514,18 +37514,18 @@ tasks:
                 ..DetectContract::default()
             },
             inferences: vec![
-                Inference {
-                    field: String::from("tasks.setup.run"),
-                    value: String::from("npm install"),
-                    source: String::from("package.json#scripts.setup"),
-                    confidence: Confidence::High,
-                },
-                Inference {
-                    field: String::from("tasks.setup.internal"),
-                    value: String::from("true"),
-                    source: String::from("package.json#scripts.setup"),
-                    confidence: Confidence::High,
-                },
+                Inference::new(
+                    String::from("tasks.setup.run"),
+                    String::from("npm install"),
+                    String::from("package.json#scripts.setup"),
+                    Confidence::High,
+                ),
+                Inference::new(
+                    String::from("tasks.setup.internal"),
+                    String::from("true"),
+                    String::from("package.json#scripts.setup"),
+                    Confidence::High,
+                ),
             ],
         };
 
@@ -37586,12 +37586,12 @@ tasks:
                 tasks,
                 ..DetectContract::default()
             },
-            inferences: vec![Inference {
-                field: String::from("tasks.setup.run"),
-                value: String::from("npm install"),
-                source: String::from("package.json#scripts.setup"),
-                confidence: Confidence::High,
-            }],
+            inferences: vec![Inference::new(
+                String::from("tasks.setup.run"),
+                String::from("npm install"),
+                String::from("package.json#scripts.setup"),
+                Confidence::High,
+            )],
         };
 
         let apply = vec![String::from("tasks.setup.internal")];
@@ -37643,18 +37643,18 @@ env:
                 ..DetectContract::default()
             },
             inferences: vec![
-                Inference {
-                    field: String::from("env.sources.0.kind"),
-                    value: String::from("dotenv"),
-                    source: String::from(".env.local"),
-                    confidence: Confidence::High,
-                },
-                Inference {
-                    field: String::from("env.sources.0.path"),
-                    value: String::from(".env.local"),
-                    source: String::from(".env.local"),
-                    confidence: Confidence::High,
-                },
+                Inference::new(
+                    String::from("env.sources.0.kind"),
+                    String::from("dotenv"),
+                    String::from(".env.local"),
+                    Confidence::High,
+                ),
+                Inference::new(
+                    String::from("env.sources.0.path"),
+                    String::from(".env.local"),
+                    String::from(".env.local"),
+                    Confidence::High,
+                ),
             ],
         };
 
@@ -64174,12 +64174,28 @@ fn render_inference_section<'a>(
             paint_key("Field:"),
             inference.field
         ));
+        output.push_str(&format!("\n  {} {}", paint_key("Type:"), inference.field_type));
         output.push_str(&format!("\n  {} {}", paint_key("Value:"), inference.value));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Source:"),
             inference.source
         ));
+        output.push_str(&format!("\n  {} {}", paint_key("Signal:"), inference.signal));
+        if let Some(agent_safe) = inference.agent_safe {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Agent Safe:"),
+                agent_safe
+            ));
+        }
+        if let Some(agent_signal) = inference.agent_signal {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Agent Signal:"),
+                agent_signal
+            ));
+        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Confidence:"),

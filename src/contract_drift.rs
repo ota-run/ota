@@ -875,12 +875,12 @@ env:
             },
             ..DetectContract::default()
         };
-        let inferences = vec![Inference {
-            field: String::from("env.sources.0.kind"),
-            value: String::from("json"),
-            source: String::from("appsettings.json"),
-            confidence: Confidence::High,
-        }];
+        let inferences = vec![Inference::new(
+            String::from("env.sources.0.kind"),
+            String::from("json"),
+            String::from("appsettings.json"),
+            Confidence::High,
+        )];
 
         let changes = collect_detect_changes(&existing, &detected, &inferences);
         assert_eq!(changes.len(), 1);
