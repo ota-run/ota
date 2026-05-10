@@ -110,6 +110,9 @@ tasks:
     script: |
       pnpm install
       pnpm exec prisma generate
+    requirements:
+      checks:
+        - node-installed
     safe_for_agent: true
   setup:container:
     context: app
@@ -166,6 +169,13 @@ tasks:
         - 127.0.0.1
         - --port
         - "3000"
+    requirements:
+      runtimes:
+        node: "22"
+      tools:
+        npx: "*"
+      checks:
+        - node-installed
     depends_on:
       - setup
     runtime:
@@ -182,6 +192,9 @@ tasks:
       volumes:
         - name: full_contract_docs
           target: /var/lib/full-contract
+    requirements:
+      tools:
+        docker: "*"
     runtime:
       kind: service
       surfaces:
