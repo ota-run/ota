@@ -26,12 +26,22 @@
 
 ## Unreleased
 
+- added first-class tool acquisition metadata under `tools.<name>.acquisition`, with
+  Corepack-managed activation as the first shipped provider: selected workflow/task requirement
+  surfaces can now declare `pnpm` truth once, `ota doctor` now explains missing or mismatched
+  Corepack-managed tools through the selected prerequisite path instead of repo-global guesswork,
+  and `ota up` can activate those selected tools before setup without pulling unrelated quickstart
+  or Docker prerequisites into the same lane
 - added task-scoped prerequisite surfaces under `tasks.<name>.requirements`: workflows can now
   scope runtime, tool, env, and precondition-check diagnosis to the selected setup/run dependency
   closure instead of treating every front door in a multi-path repo as repo-global truth; `ota doctor`
   and `ota up` now honor that selected closure directly, `ota check` additively includes explicit
   task-scoped prerequisite checks when declared, and the flagship plus `n8n` case-study contracts
   now demonstrate contributor, quickstart, and packaged-runtime prerequisite scoping explicitly
+- fixed scoped prerequisite diagnosis so runtime probes no longer short-circuit selected tool
+  findings: native/container `ota doctor` now always diagnoses both runtime and tool surfaces for
+  the selected workflow/task closure, and remote prerequisite diagnosis now honors the same scoped
+  task requirement surface instead of falling back to unrelated repo-global truth
 - tightened the workflow prerequisite boundary so an explicitly selected workflow without
   `setup.task` no longer inherits legacy `tasks.setup`, and selected task paths with scoped
   requirements no longer run unrelated top-level precondition checks unless those checks are

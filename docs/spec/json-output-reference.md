@@ -2598,6 +2598,18 @@ Optional fields:
 - `exit_code`: present when a child command failure is reported
 - `members`: present on monorepo-root aggregate output with grouped member readiness results
 
+Phase values:
+
+- `preconditions`: prerequisite diagnosis blocked before provisioning or setup
+- `provisioning`: policy-backed provisioning failed before setup
+- `activation`: selected prerequisite activation (for example Corepack-managed tool activation)
+  failed before setup
+- `services`: required service start or readiness failed
+- `setup`: setup task execution failed
+- `run`: selected workflow run task execution failed
+- `post-up diagnosis`: setup and service orchestration completed, but final readiness was still not
+  satisfied
+
 Example service-start failure:
 
 ```json

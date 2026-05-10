@@ -988,7 +988,37 @@ fn validate_tool_details(
                 )));
             }
         }
+
+        if let Some(acquisition) = detail.acquisition.as_ref() {
+            if acquisition.package.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition must not declare an empty `package`"
+                )));
+            } else if !is_shell_safe_corepack_token(&acquisition.package) {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `package` must be a shell-safe Corepack package token"
+                )));
+            }
+            if acquisition.version.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition must not declare an empty `version`"
+                )));
+            } else if !is_shell_safe_corepack_token(&acquisition.version) {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `version` must be a shell-safe Corepack version token"
+                )));
+            }
+        }
     }
+}
+
+fn is_shell_safe_corepack_token(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed == value
+        && trimmed.chars().all(|ch| {
+            ch.is_ascii_alphanumeric() || matches!(ch, '@' | '/' | '.' | '_' | '-' | '+' | '~')
+        })
 }
 
 fn validate_only_on(
@@ -14505,6 +14535,129 @@ tools:
         assert_eq!(
             errors.errors()[0].to_string(),
             "tool `pwsh` must not declare an empty `only_on` list"
+        );
+    }
+
+    #[test]
+    fn accepts_tool_acquisition_metadata() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pnpm:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      tools:
+        pnpm: ">=10.22.0"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("tool acquisition metadata should validate");
+    }
+
+    #[test]
+    fn rejects_tool_acquisition_with_empty_package() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pnpm:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: "   "
+      version: "10.22.0"
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "tool `pnpm` acquisition must not declare an empty `package`"
+        );
+    }
+
+    #[test]
+    fn rejects_tool_acquisition_with_empty_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pnpm:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: ""
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "tool `pnpm` acquisition must not declare an empty `version`"
+        );
+    }
+
+    #[test]
+    fn rejects_tool_acquisition_with_shell_unsafe_tokens() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pnpm:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: "pnpm;echo bad"
+      version: "10.22.0 && echo bad"
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| {
+                message.contains(
+                    "tool `pnpm` acquisition `package` must be a shell-safe Corepack package token",
+                )
+            }),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| {
+                message.contains(
+                    "tool `pnpm` acquisition `version` must be a shell-safe Corepack version token",
+                )
+            }),
+            "{messages:?}"
         );
     }
 

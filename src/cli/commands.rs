@@ -57,7 +57,7 @@ use crate::doctor::{
     diagnose_contract_with_mode_and_lifecycle_for_workflow, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow, diagnose_service,
     diagnose_services_only_for_workflow, finding_targets_container_image,
-    finding_targets_remote_backend, provisioning_installability_finding,
+    finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::execution::{
     container_engine_candidates, container_engine_candidates_from_backend,
@@ -141,8 +141,8 @@ use crate::schema::{
     TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
     TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, format_memory_size_bytes,
-    parse_memory_size_bytes,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
+    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
 };
 use crate::update;
 use crate::validator::{
@@ -36322,7 +36322,8 @@ mod tests {
         simulate_run_interrupt_for_test,
     };
     use crate::schema::{
-        Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, parse_memory_size_bytes,
+        Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, ToolAcquisitionProvider,
+        ToolAcquisitionSpec, parse_memory_size_bytes,
     };
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use crate::validator::{ContractAdvisory, TaskExecutionBoundary};
@@ -39974,6 +39975,188 @@ tasks:
                 .plan
                 .skipped
                 .contains(&String::from("skip `npm`; already satisfies the contract"))
+        );
+    }
+
+    #[test]
+    fn up_activation_actions_are_scoped_to_selected_workflow_requirements() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  pnpm:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      tools:
+        pnpm: ">=10.22.0"
+  docker:run:
+    launch:
+      kind: container
+      image: ghcr.io/example/app:latest
+    requirements:
+      tools:
+        docker: "*"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+  docker:
+    run:
+      task: docker:run
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing tool: pnpm"),
+                    why: String::from(
+                        "pnpm is declared in the contract but is not available on PATH",
+                    ),
+                    next: String::from(
+                        "run `corepack enable && corepack prepare pnpm@10.22.0 --activate` and rerun `ota doctor`",
+                    ),
+                },
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Missing tool: docker"),
+                    why: String::from(
+                        "docker is declared in the contract but is not available on PATH",
+                    ),
+                    next: String::from("install docker and rerun `ota doctor`"),
+                },
+            ],
+        };
+
+        let contributor_actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            &preflight,
+        );
+        assert_eq!(contributor_actions.len(), 1);
+        assert_eq!(contributor_actions[0].tool_name, "pnpm");
+
+        let docker_actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("docker"),
+            &preflight,
+        );
+        assert!(docker_actions.is_empty());
+    }
+
+    #[test]
+    fn up_preview_renders_activation_actions() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  pnpm:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      tools:
+        pnpm: ">=10.22.0"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from("pnpm is declared in the contract but is not available on PATH"),
+                next: String::from(
+                    "run `corepack enable && corepack prepare pnpm@10.22.0 --activate` and rerun `ota doctor`",
+                ),
+            }],
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            &preflight,
+        );
+
+        assert!(preview.plan.actions.contains(&String::from(
+            "activate tool `pnpm` via `corepack` (`pnpm@10.22.0`)"
+        )));
+    }
+
+    #[test]
+    fn corepack_activation_missing_provider_returns_failed_activation_result() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let acquisition = ToolAcquisitionSpec {
+            provider: ToolAcquisitionProvider::Corepack,
+            package: String::from("pnpm"),
+            version: String::from("10.22.0"),
+        };
+        let outcome = super::run_corepack_activation_action(
+            &acquisition,
+            fixture.path(),
+            RepoExecutionMode::Capture,
+        )
+        .expect("activation runner should convert missing provider into a command result");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 127);
+        assert!(
+            outcome
+                .stderr
+                .contains("failed to execute `corepack enable`")
         );
     }
 
@@ -59061,29 +59244,20 @@ fn selected_workflow_task_requirement_surface(
     workflow_name: Option<&str>,
 ) -> Option<RequirementSurface> {
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
-    if task_names.is_empty() {
-        return None;
-    }
+    let mut surface = contract.task_requirement_surface(task_names)?;
 
-    let mut surface = RequirementSurface {
-        runtimes: contract.runtimes.clone(),
-        tools: contract.tools.clone(),
-    };
-
-    for task_name in task_names {
-        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        if !contract.tasks.contains_key(task_name.as_str()) {
             continue;
-        };
-        surface.merge(&task.scoped_requirement_surface());
-
+        }
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
         if let Some(context_name) = effective.context_name
             && let Some((_, context)) = named_execution_context(contract, context_name)
         {
-            surface
-                .runtimes
-                .extend(context.requirements.runtimes.clone());
-            surface.tools.extend(context.requirements.tools.clone());
+            surface.merge(&RequirementSurface {
+                runtimes: context.requirements.runtimes.clone(),
+                tools: context.requirements.tools.clone(),
+            });
         }
     }
 
@@ -59150,6 +59324,97 @@ fn selected_up_provisioning_actions(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RequirementActivationAction {
+    tool_name: String,
+    acquisition: ToolAcquisitionSpec,
+}
+
+fn requirement_surface_activation_actions(
+    requirement_surface: &RequirementSurface,
+) -> Vec<RequirementActivationAction> {
+    requirement_surface
+        .tools
+        .iter()
+        .filter_map(|(name, requirement)| {
+            requirement
+                .acquisition()
+                .cloned()
+                .map(|acquisition| RequirementActivationAction {
+                    tool_name: name.clone(),
+                    acquisition,
+                })
+        })
+        .collect()
+}
+
+fn activation_action_command(action: &RequirementActivationAction) -> String {
+    match action.acquisition.provider {
+        ToolAcquisitionProvider::Corepack => format!(
+            "corepack enable && corepack prepare {}@{} --activate",
+            action.acquisition.package, action.acquisition.version
+        ),
+    }
+}
+
+fn activation_action_key(action: &RequirementActivationAction) -> String {
+    format!("tool:{}", action.tool_name)
+}
+
+fn finding_targets_activation_action(
+    finding: &Finding,
+    action: &RequirementActivationAction,
+) -> bool {
+    if let Some(key) = provisionable_target_key_for_finding(finding) {
+        return key == activation_action_key(action);
+    }
+
+    match action.acquisition.provider {
+        ToolAcquisitionProvider::Corepack => {
+            finding.summary == "Missing tool activation provider: corepack"
+                && finding.why.contains(action.tool_name.as_str())
+        }
+    }
+}
+
+fn selected_up_activation_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+) -> Vec<RequirementActivationAction> {
+    if !matches!(
+        up_doctor_mode(contract, overrides, workflow_name),
+        DoctorMode::Native
+    ) {
+        return Vec::new();
+    }
+
+    let requirement_surface = up_requirement_surface(contract, overrides, workflow_name);
+    let policy_provisioned_tools =
+        selected_up_provisioning_actions(contract, overrides, workflow_name, preflight)
+            .into_iter()
+            .filter(|action| {
+                matches!(
+                    action.target_kind,
+                    crate::policy_pack::ProvisioningTargetKind::Tool
+                )
+            })
+            .map(|action| action.name)
+            .collect::<BTreeSet<_>>();
+
+    requirement_surface_activation_actions(&requirement_surface)
+        .into_iter()
+        .filter(|action| {
+            !policy_provisioned_tools.contains(action.tool_name.as_str())
+                && preflight
+                    .findings
+                    .iter()
+                    .any(|finding| finding_targets_activation_action(finding, action))
+        })
+        .collect()
 }
 
 fn finding_targets_provisioning_action(
@@ -59232,6 +59497,15 @@ fn render_up_preview_skip_action(action: &crate::policy_pack::ProvisioningAction
         "skip `{}`; already satisfies the contract",
         action.display_name()
     )
+}
+
+fn render_up_preview_activation_action(action: &RequirementActivationAction) -> String {
+    match action.acquisition.provider {
+        ToolAcquisitionProvider::Corepack => format!(
+            "activate tool `{}` via `corepack` (`{}@{}`)",
+            action.tool_name, action.acquisition.package, action.acquisition.version
+        ),
+    }
 }
 
 fn append_up_preview_service_actions_for_workflow(
@@ -59354,6 +59628,8 @@ fn build_up_preview(
     let mut skipped = Vec::new();
     let selected_actions =
         selected_up_provisioning_actions(contract, overrides, workflow_name, preflight);
+    let activation_actions =
+        selected_up_activation_actions(contract, overrides, workflow_name, preflight);
 
     if let Some(provisioning) = preflight.provisioning.as_ref() {
         for action in &provisioning.request.actions {
@@ -59363,6 +59639,10 @@ fn build_up_preview(
                 skipped.push(render_up_preview_skip_action(action));
             }
         }
+    }
+
+    for action in &activation_actions {
+        actions.push(render_up_preview_activation_action(action));
     }
 
     append_up_preview_service_actions_for_workflow(contract, workflow_name, &mut actions);
@@ -59604,6 +59884,130 @@ fn resolve_up_workloads(
     }
 
     workloads
+}
+
+fn activation_failure_finding(action: &RequirementActivationAction, exit_code: i32) -> Finding {
+    match action.acquisition.provider {
+        ToolAcquisitionProvider::Corepack => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Requirement activation failed: {}", action.tool_name),
+            why: format!(
+                "ota could not activate `{}` through Corepack; `{}` exited with code {exit_code}",
+                action.tool_name,
+                activation_action_command(action)
+            ),
+            next: format!(
+                "run `{}` directly, repair the activation path, and rerun `ota up`",
+                activation_action_command(action)
+            ),
+        },
+    }
+}
+
+fn run_activation_action(
+    action: &RequirementActivationAction,
+    working_dir: &Path,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, String> {
+    match action.acquisition.provider {
+        ToolAcquisitionProvider::Corepack => {
+            run_corepack_activation_action(&action.acquisition, working_dir, mode)
+        }
+    }
+}
+
+fn run_corepack_activation_action(
+    acquisition: &ToolAcquisitionSpec,
+    working_dir: &Path,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, String> {
+    let enable = run_process_command(
+        "corepack",
+        &["enable"],
+        working_dir,
+        mode,
+        "Enabling Corepack",
+    );
+    if enable.exit_code != 0 {
+        return Ok(enable);
+    }
+
+    let package_spec = format!("{}@{}", acquisition.package, acquisition.version);
+    let prepare = run_process_command(
+        "corepack",
+        &["prepare", package_spec.as_str(), "--activate"],
+        working_dir,
+        mode,
+        "Activating prerequisite",
+    );
+
+    Ok(CommandRunResult {
+        exit_code: prepare.exit_code,
+        stdout: format!("{}{}", enable.stdout, prepare.stdout),
+        stderr: format!("{}{}", enable.stderr, prepare.stderr),
+        target: None,
+        runtime: None,
+    })
+}
+
+fn run_process_command(
+    program: &str,
+    args: &[&str],
+    working_dir: &Path,
+    mode: RepoExecutionMode,
+    loader_label: &str,
+) -> CommandRunResult {
+    let program_path = resolve_command_path(program).unwrap_or_else(|| PathBuf::from(program));
+    let mut command = Command::new(program_path);
+    command.args(args).current_dir(working_dir);
+    let command_label = command_label(program, args);
+
+    match mode {
+        RepoExecutionMode::Capture => match command.output() {
+            Ok(output) => CommandRunResult {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: None,
+                runtime: None,
+            },
+            Err(error) => command_spawn_failure_result(&command_label, error),
+        },
+        RepoExecutionMode::Stream => {
+            match run_streaming_command_with_loader(&mut command, loader_label) {
+                Ok(exit_code) => CommandRunResult {
+                    exit_code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    target: None,
+                    runtime: None,
+                },
+                Err(error) => command_spawn_failure_result(&command_label, error),
+            }
+        }
+    }
+}
+
+fn command_label(program: &str, args: &[&str]) -> String {
+    std::iter::once(program)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn command_spawn_failure_result(command_label: &str, error: io::Error) -> CommandRunResult {
+    let exit_code = if error.kind() == io::ErrorKind::NotFound {
+        127
+    } else {
+        1
+    };
+    CommandRunResult {
+        exit_code,
+        stdout: String::new(),
+        stderr: format!("failed to execute `{command_label}`: {error}\n"),
+        target: None,
+        runtime: None,
+    }
 }
 
 fn remote_up_blocker_finding(
@@ -60279,6 +60683,75 @@ fn execute_repo_up(
                     ));
             }
         }
+    }
+
+    let activation_actions =
+        selected_up_activation_actions(contract, overrides, workflow_name, &preflight);
+    if !activation_actions.is_empty() {
+        for action in &activation_actions {
+            match run_activation_action(action, execution_dir, mode) {
+                Ok(outcome) if outcome.exit_code == 0 => {
+                    if capture_phase_output {
+                        stdout.push_str(&outcome.stdout);
+                        stderr.push_str(&outcome.stderr);
+                    }
+                }
+                Ok(outcome) => {
+                    if capture_phase_output {
+                        stdout.push_str(&outcome.stdout);
+                        stderr.push_str(&outcome.stderr);
+                    }
+                    let finding = activation_failure_finding(action, outcome.exit_code);
+                    let report = DoctorReport {
+                        ok: false,
+                        provisioning: preflight.provisioning.clone(),
+                        adapter_bootstrap: preflight.adapter_bootstrap.clone(),
+                        execution_target: preflight.execution_target.clone(),
+                        findings: vec![finding.clone()],
+                    };
+                    return Ok(RepoUpResult {
+                        ok: false,
+                        status: "ACTIVATION FAILED",
+                        phase: "activation",
+                        preview: None,
+                        receipt: repo_execution_receipt(
+                            resolved_path,
+                            contract,
+                            doctor_report_execution_context(
+                                contract,
+                                resolved_path,
+                                doctor_mode,
+                                overrides.lifecycle,
+                                &report,
+                            ),
+                            "ACTIVATION FAILED",
+                            "activation",
+                            None,
+                            None,
+                            &report.findings,
+                            Some(outcome.exit_code),
+                            Some(finding.next.clone()),
+                        ),
+                        report,
+                        service: None,
+                        service_command: None,
+                        task: None,
+                        task_command: None,
+                        exit_code: Some(outcome.exit_code),
+                        stdout,
+                        stderr,
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        preflight = diagnose_preconditions_with_mode_for_workflow(
+            contract,
+            resolved_path,
+            doctor_mode,
+            workflow_name,
+        );
     }
 
     if !preflight.ok && setup_task.is_none() {
