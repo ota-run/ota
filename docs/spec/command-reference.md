@@ -728,6 +728,7 @@ Create or refine the `setup` task and its pre-setup service phase for `ota up`.
 ```bash
 ota assist wire-setup --run "<command>" [PATH]
 ota assist wire-setup --script "<body>" [PATH]
+ota assist wire-setup --copy-from <source> --copy-to <target> [PATH]
 ota assist wire-setup --run "<command>" --service <name> [--service <name> ...] [PATH]
 ota assist wire-setup --member api --run "<command>" --write [PATH]
 ota assist wire-setup --json --script "<body>" [PATH]
@@ -740,7 +741,8 @@ Current behavior:
 
 - defaults to preview mode and shows assumptions, the exact `tasks.setup` block, and the next validation commands
 - `--write` applies the proposed setup mutation and revalidates the updated contract before returning success
-- `--run` and `--script` set the setup body explicitly; a new setup task requires one of them
+- `--run`, `--script`, and `--copy-from <source> --copy-to <target>` set the setup body explicitly; a new setup task requires one of them
+- `--copy-from` / `--copy-to` writes a cross-platform `action.kind: copy_if_missing` setup task for file-template setup such as `.env.example` to `.env`
 - `--service <name>` sets `setup.requires_services` in the provided order as the pre-setup service phase
 - `--clear-services` removes `setup.requires_services`
 - `--internal true|false` refines `tasks.setup.internal` directly
@@ -753,6 +755,7 @@ Examples:
 
 ```bash
 ota assist wire-setup --run "npm install" --service postgres
+ota assist wire-setup --copy-from .env.example --copy-to .env --write
 ota assist wire-setup --script "cargo fetch\ncargo build" --json
 ota assist wire-setup --member api --run "npm install" --service postgres --write
 ```

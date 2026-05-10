@@ -39,6 +39,8 @@
           "properties": {
             "run": { "type": "string" },
             "script": { "type": "string" },
+            "copy_from": { "type": "string" },
+            "copy_to": { "type": "string" },
             "services": { "type": "string" },
             "clear_services": { "const": "true" },
             "internal": { "enum": ["true", "false"] }

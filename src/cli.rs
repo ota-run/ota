@@ -789,6 +789,12 @@ enum AssistCommands {
         /// Replace the setup task body with a shell script body.
         #[arg(long, conflicts_with = "run")]
         script: Option<String>,
+        /// Replace the setup task with a cross-platform copy-if-missing action from this repo-relative source.
+        #[arg(long = "copy-from", requires = "copy_to", conflicts_with_all = ["run", "script"])]
+        copy_from: Option<String>,
+        /// Replace the setup task with a cross-platform copy-if-missing action to this repo-relative target.
+        #[arg(long = "copy-to", requires = "copy_from", conflicts_with_all = ["run", "script"])]
+        copy_to: Option<String>,
         /// Declare one service that must be ready before setup runs. Repeat to set the ordered list.
         #[arg(long = "service")]
         services: Vec<String>,
@@ -4353,6 +4359,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     member,
                     run,
                     script,
+                    copy_from,
+                    copy_to,
                     services,
                     clear_services,
                     internal,
@@ -4364,6 +4372,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member.as_deref(),
             run.as_deref(),
             script.as_deref(),
+            copy_from.as_deref(),
+            copy_to.as_deref(),
             &services,
             clear_services,
             internal,
@@ -19512,6 +19522,67 @@ tasks:
         assert!(stdout.contains("name: ota-web"));
         assert!(stdout.contains("tools.pnpm"));
         assert!(!fixture.file_path().exists());
+    }
+
+    #[test]
+    fn init_detected_starter_uses_copy_action_for_env_template_setup() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".env.example", "API_URL=http://localhost:3000\n");
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "node",
+            "--package-manager",
+            "pnpm",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("env:"));
+        assert!(stdout.contains("path: .env"));
+        assert!(stdout.contains("setup:env:"));
+        assert!(stdout.contains("kind: copy_if_missing"));
+        assert!(stdout.contains("from: .env.example"));
+        assert!(stdout.contains("to: .env"));
+        assert!(stdout.contains("depends_on:"));
+        assert!(stdout.contains("- setup:env"));
+        assert!(stdout.contains("kind: file"));
+        assert!(stdout.contains("path: .env.example"));
+    }
+
+    #[test]
+    fn init_detected_starter_can_create_setup_from_env_template_only() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".env.example", "API_URL=http://localhost:3000\n");
+
+        let output = run_with(["ota", "init", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("setup:"));
+        assert!(stdout.contains("kind: copy_if_missing"));
+        assert!(stdout.contains("from: .env.example"));
+        assert!(stdout.contains("to: .env"));
+        assert!(!stdout.contains("setup:env:"));
     }
 
     #[test]
@@ -38179,6 +38250,77 @@ project:
     }
 
     #[test]
+    fn assist_wire_setup_can_author_copy_if_missing_setup_action() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--json",
+            "--copy-from",
+            ".env.example",
+            "--copy-to",
+            ".env",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["inputs"]["copy_from"], ".env.example");
+        assert_eq!(json["inputs"]["copy_to"], ".env");
+        assert_eq!(
+            json["changes"][0]["after"]["action"],
+            serde_json::json!({
+                "kind": "copy_if_missing",
+                "from": ".env.example",
+                "to": ".env"
+            })
+        );
+        assert!(json["next"].as_str().unwrap().contains("--copy-from"));
+    }
+
+    #[test]
+    fn assist_wire_setup_replaces_existing_setup_action_with_run_cleanly() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  setup:
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "wire-setup",
+            "--json",
+            "--run",
+            "npm install",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["changes"][0]["after"]["run"], "npm install");
+        assert!(json["changes"][0]["after"].get("action").is_none());
+    }
+
+    #[test]
     fn assist_wire_setup_refuses_new_setup_without_body() {
         let fixture = ContractFixture::new(
             r#"
@@ -38193,8 +38335,9 @@ project:
         assert_eq!(output.exit_code, 1, "{output:?}");
         let stderr =
             normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
-        assert!(stderr.contains("needs an explicit `--run` or `--script` body"));
+        assert!(stderr.contains("needs an explicit `--run`, `--script`, or copy action body"));
         assert!(stderr.contains("--run '<command>'"));
+        assert!(stderr.contains("--copy-from <source> --copy-to <target>"));
     }
 
     #[test]

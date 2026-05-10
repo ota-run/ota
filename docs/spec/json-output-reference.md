@@ -18,6 +18,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/validate.json](json-schemas/validate.json)
 - [json-schemas/env.json](json-schemas/env.json)
 - [json-schemas/execution.json](json-schemas/execution.json)
+- [json-schemas/execution-topology.json](json-schemas/execution-topology.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
 - [json-schemas/assist-declare-service.json](json-schemas/assist-declare-service.json)
@@ -1070,8 +1071,8 @@ Failure:
   "subject": {
     "task": "setup"
   },
-  "why": "creating `tasks.setup` needs an explicit `--run` or `--script` body",
-  "next": "rerun with `--run '<command>'` or `--script '<body>'` to declare the setup task"
+  "why": "creating `tasks.setup` needs an explicit `--run`, `--script`, or copy action body",
+  "next": "rerun with `--run '<command>'`, `--script '<body>'`, or `--copy-from <source> --copy-to <target>` to declare the setup task"
 }
 ```
 

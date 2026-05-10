@@ -218,6 +218,12 @@ Setup wiring preview:
 ota assist wire-setup --run "npm install" --service postgres
 ```
 
+File-template setup preview:
+
+```bash
+ota assist wire-setup --copy-from .env.example --copy-to .env
+```
+
 Setup wiring apply:
 
 ```bash

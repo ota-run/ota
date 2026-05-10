@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- split and published the dedicated `ota execution topology --json` schema, expanded
+  `ota assist wire-setup` so it can author `action.kind: copy_if_missing` setup tasks directly,
+  taught starter init/detect to attach detected env-template copy actions to setup, and added
+  first-class Windows native prerequisite activation guidance for Visual Studio Developer Shell
+  workflows
 - added first-class file checks and native setup actions: contracts can now use `kind: file`
   checks for repo-relative file/directory state and `action.kind: copy_if_missing` for
   cross-platform template materialization instead of POSIX `test` / `cp` snippets; `ota doctor`,

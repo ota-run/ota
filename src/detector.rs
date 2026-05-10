@@ -30,7 +30,7 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
-use crate::schema::{EnvConfig, EnvSource, EnvSourceKind};
+use crate::schema::{EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -216,7 +216,12 @@ pub struct DetectProject {
 pub struct DetectTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub run: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<TaskActionSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -242,13 +247,19 @@ pub struct DetectCheck {
     pub name: String,
     pub kind: DetectCheckKind,
     pub severity: DetectCheckSeverity,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub run: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expect: Option<FileCheckExpectation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DetectCheckKind {
     Precondition,
+    File,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -428,6 +439,8 @@ impl DetectReport {
                             DetectTask {
                                 description,
                                 run: inference.value.clone(),
+                                action: None,
+                                depends_on: Vec::new(),
                                 notes,
                                 internal: setup_task_is_internal(task_name),
                                 safe_for_agent: false,
@@ -3996,6 +4009,8 @@ impl DetectBuilder {
                 DetectTask {
                     description,
                     run: run.clone(),
+                    action: None,
+                    depends_on: Vec::new(),
                     notes,
                     internal,
                     safe_for_agent: false,

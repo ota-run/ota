@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/execution-topology.json",
+  "title": "ota execution topology --json",
+  "$defs": {
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "depends_on", "requires_services", "after_success", "after_failure", "after_always", "safe_for_agent"],
+      "properties": {
+        "name": { "type": "string" },
+        "context": { "type": "string" },
+        "default_mode": { "enum": ["native", "container", "remote"] },
+        "description": { "type": "string" },
+        "notes": { "type": "string" },
+        "category": { "type": "string" },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "inputs": { "type": "object", "additionalProperties": true },
+        "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
+        "run": { "type": "string" },
+        "script": { "type": "string" },
+        "launch": { "$ref": "./tasks.json#/$defs/taskLaunch" },
+        "action": { "$ref": "./tasks.json#/$defs/taskAction" },
+        "selected_variant_os": { "type": "string" },
+        "depends_on": { "type": "array", "items": { "type": "string" } },
+        "requires_services": { "type": "array", "items": { "type": "string" } },
+        "after_success": { "type": "array", "items": { "type": "string" } },
+        "after_failure": { "type": "array", "items": { "type": "string" } },
+        "after_always": { "type": "array", "items": { "type": "string" } },
+        "safe_for_agent": { "type": "boolean" },
+        "internal": { "type": "boolean" },
+        "variants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["os", "kind"],
+            "properties": {
+              "os": { "type": "string" },
+              "kind": { "enum": ["run", "script"] },
+              "run": { "type": "string" },
+              "script": { "type": "string" }
+            }
+          }
+        },
+        "modes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode", "has_runtime"],
+            "properties": {
+              "mode": { "enum": ["native", "container", "remote"] },
+              "context": { "type": "string" },
+              "lifecycle": { "enum": ["persistent", "ephemeral"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
+              "run": { "type": "string" },
+              "script": { "type": "string" },
+              "launch": { "$ref": "./tasks.json#/$defs/taskLaunch" },
+              "has_runtime": { "type": "boolean" }
+            }
+          }
+        },
+        "runtime": { "$ref": "#/$defs/runtime" },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/target" } }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["service"] },
+        "backend_binding": { "type": "string" },
+        "readiness": { "$ref": "#/$defs/readiness" },
+        "attached_surfaces": { "type": "array", "items": { "type": "string" } },
+        "surface_attachments": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/surfaceAttachment" }
+        },
+        "listeners": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/listener" }
+        }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["http", "tcp", "probe"] },
+        "probe": { "type": "string" },
+        "listener": { "type": "string" },
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "success": { "$ref": "#/$defs/readinessSuccess" },
+        "body": { "$ref": "#/$defs/readinessBody" },
+        "interval": { "type": "string" },
+        "timeout": { "type": "string" },
+        "retries": { "type": "integer" },
+        "start_period": { "type": "string" }
+      }
+    },
+    "readinessSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "readinessBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contains"],
+      "properties": { "contains": { "type": "string" } }
+    },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "port"],
+      "properties": {
+        "kind": { "enum": ["http", "tcp"] },
+        "port": { "type": "integer" },
+        "label": { "type": "string" },
+        "purpose": { "type": "string" },
+        "visibility": { "type": "string" },
+        "path": { "type": "string" },
+        "readiness": { "$ref": "#/$defs/readiness" }
+      }
+    },
+    "surfaceAttachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uses_defaults"],
+      "properties": {
+        "uses_defaults": { "type": "boolean" },
+        "bind": { "$ref": "#/$defs/surfaceBindOverride" },
+        "project": { "$ref": "#/$defs/surfaceProjectionOverride" }
+      }
+    },
+    "surfaceBindOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "type": "string" },
+        "port_mode": { "type": "string" },
+        "port_value": { "type": "integer" }
+      }
+    },
+    "surfaceProjectionOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "$ref": "#/$defs/surfaceHostProjectionOverride" }
+      }
+    },
+    "surfaceHostProjectionOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "type": "string" },
+        "port_mode": { "type": "string" },
+        "port_value": { "type": "integer" },
+        "primary": { "type": "boolean" },
+        "path": { "type": "string" }
+      }
+    },
+    "listener": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "bind_address", "bind_port_mode"],
+      "properties": {
+        "protocol": { "enum": ["http", "tcp"] },
+        "bind_address": { "type": "string" },
+        "bind_port_mode": { "type": "string" },
+        "bind_port_value": { "type": "integer" },
+        "host_projection": { "$ref": "#/$defs/hostProjection" }
+      }
+    },
+    "hostProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "port_mode", "primary"],
+      "properties": {
+        "address": { "type": "string" },
+        "port_mode": { "type": "string" },
+        "port_value": { "type": "integer" },
+        "primary": { "type": "boolean" },
+        "path": { "type": "string" }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["http", "tcp"] },
+        "url": { "type": "string" },
+        "target": { "$ref": "#/$defs/probeTarget" },
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "success": { "$ref": "#/$defs/readinessSuccess" },
+        "body": { "$ref": "#/$defs/readinessBody" },
+        "timeout_ms": { "type": "integer" }
+      }
+    },
+    "probeTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "enum": ["task", "service", "surface"] },
+        "name": { "type": "string" },
+        "listener": { "type": "string" },
+        "address_view": { "type": "string" },
+        "observer": { "$ref": "#/$defs/probeObserver" },
+        "resolution_plane": { "type": "string" },
+        "endpoint": { "type": "string" }
+      }
+    },
+    "probeObserver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["host", "task"] },
+        "task": { "type": "string" },
+        "backend": { "type": "string" }
+      }
+    },
+    "sharedBackend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "scope", "backend", "lifecycle"],
+      "properties": {
+        "name": { "type": "string" },
+        "scope": { "type": "string" },
+        "backend": { "type": "string" },
+        "lifecycle": { "type": "string" },
+        "context": { "type": "string" },
+        "fulfillment": { "type": "string" },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "profile": { "type": "string" },
+            "image_alias": { "type": "string" },
+            "image": { "type": "string" },
+            "source": { "type": "string" }
+          }
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "activation_mode"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["service", "url"] },
+        "override_input": { "type": "string" },
+        "url": { "type": "string" },
+        "activation_mode": { "type": "string" },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["task", "address_view"],
+          "properties": {
+            "member": { "type": "string" },
+            "task": { "type": "string" },
+            "listener": { "type": "string" },
+            "address_view": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "contract", "contract_identity"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "contract": { "type": "string" },
+        "member": { "type": "string" },
+        "contract_identity": {
+          "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
+        },
+        "declared_execution": { "$ref": "./doctor.json#/properties/execution" },
+        "shared_backends": { "type": "array", "items": { "$ref": "#/$defs/sharedBackend" } },
+        "readiness_probes": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/probe" }
+        },
+        "surfaces": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/surface" }
+        },
+        "services": {
+          "type": "array",
+          "items": { "$ref": "./services.json#/oneOf/0/properties/services/items" }
+        },
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "errors": { "type": "array", "items": { "type": "string" } },
+        "error": { "type": "string" }
+      }
+    }
+  ]
+}

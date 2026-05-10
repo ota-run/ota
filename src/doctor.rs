@@ -4150,6 +4150,16 @@ fn native_prerequisite_next(
     if platform.visual_studio_build_tools {
         suggestions.push(String::from("install Visual Studio Build Tools"));
     }
+    if let Some(activation) = platform.activation.as_ref() {
+        match activation.kind {
+            crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell => {
+                let arch = activation.arch.as_deref().unwrap_or("x64");
+                suggestions.push(format!(
+                    "activate the Visual Studio Developer shell for `{arch}` before running native checks"
+                ));
+            }
+        }
+    }
     if !platform.apt.is_empty() {
         suggestions.push(format!(
             "install apt packages: `{}`",

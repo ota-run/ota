@@ -738,6 +738,11 @@ native_prerequisites:
       windows:
         check: node-native-build-tools-windows
         visual_studio_build_tools: true
+        winget:
+          - Microsoft.VisualStudio.2022.BuildTools
+        activation:
+          kind: visual_studio_dev_shell
+          arch: x64
 
 checks:
   - name: node-native-build-tools-linux
@@ -768,7 +773,9 @@ Rules:
   `platforms.<os>.check` must reference a declared `kind: precondition` check
 - `platforms` may use `linux`, `macos`, and `windows`
 - platform entries may declare `apt`, `brew`, `winget`, `choco`, `scoop`, generic `packages`,
-  `xcode_clt`, `visual_studio_build_tools`, `install`, or `note` guidance
+  `xcode_clt`, `visual_studio_build_tools`, `activation`, `install`, or `note` guidance
+- `activation.kind: visual_studio_dev_shell` is the Windows MSVC activation hint for checks
+  that require `cl`/MSVC tools from a Visual Studio Developer shell; `arch` defaults to `x64`
 - Ota only evaluates native prerequisites selected by `tasks.<name>.requirements.native`
 - native prerequisite diagnosis is non-mutating; use policy-backed provisioning for tools or
   runtimes Ota is allowed to install
