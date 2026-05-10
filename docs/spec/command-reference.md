@@ -1139,6 +1139,9 @@ ota doctor --member api --member web --json [PATH]
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path
+- when a selected task declares `requirements.native`, doctor runs the selected platform
+  precondition check and reports an OS-specific native prerequisite finding instead of a vague
+  shell-check failure
 - probe-backed checks and workflow readiness probes execute directly inside ota; they do not depend
   on repo-local helper commands such as `curl` or `node`
 - checks required execution backends for the selected `--mode` and resolved contexts
@@ -1520,6 +1523,8 @@ Current behavior:
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
   activation lane before setup when it is safe and selected; Corepack-managed `pnpm` is the first
   shipped path
+- when policy-backed provisioning is selected for a tool that also has an acquisition path, `ota up
+  --dry-run` names the provisioning action and explicitly marks the Corepack activation as skipped
 - when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
 - when blocking preconditions fail and the selected workflow declares a setup task, ota runs that setup phase early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host

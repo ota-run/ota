@@ -710,6 +710,69 @@ Root fields act as the default values, and the matching `platforms.<os>` entry o
 `acquisition` is attached to tool truth, while `tasks.<name>.requirements.tools` selects when that
 tool actually applies.
 
+## `native_prerequisites`
+
+Optional.
+
+Use `native_prerequisites` for OS-native build-tool bundles that are not language runtimes or CLI
+tools. This is the right fit for prerequisites such as Linux compiler packages, macOS Xcode Command
+Line Tools, or Windows Visual Studio Build Tools. Ota diagnoses these through the selected
+platform precondition check and gives OS-specific install guidance; it does not silently install
+host build tools.
+
+Example:
+
+```yaml
+native_prerequisites:
+  node-native-build-tools:
+    description: Native compiler toolchain for packages with native addons
+    platforms:
+      linux:
+        check: node-native-build-tools-linux
+        apt:
+          - build-essential
+          - python3
+      macos:
+        check: node-native-build-tools-macos
+        xcode_clt: true
+      windows:
+        check: node-native-build-tools-windows
+        visual_studio_build_tools: true
+
+checks:
+  - name: node-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && python3 --version"
+  - name: node-native-build-tools-macos
+    kind: precondition
+    severity: error
+    run: sh -c "xcode-select -p && python3 --version"
+  - name: node-native-build-tools-windows
+    kind: precondition
+    severity: error
+    run: cmd /C "where cl && py --version"
+
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+```
+
+Rules:
+
+- each native prerequisite must declare at least one `platforms.<os>` guidance entry
+- `native_prerequisites.<name>.check` may provide a shared fallback check; otherwise each
+  `platforms.<os>.check` must reference a declared `kind: precondition` check
+- `platforms` may use `linux`, `macos`, and `windows`
+- platform entries may declare `apt`, `brew`, `winget`, `choco`, `scoop`, generic `packages`,
+  `xcode_clt`, `visual_studio_build_tools`, `install`, or `note` guidance
+- Ota only evaluates native prerequisites selected by `tasks.<name>.requirements.native`
+- native prerequisite diagnosis is non-mutating; use policy-backed provisioning for tools or
+  runtimes Ota is allowed to install
+
 ## `env`
 
 Optional.
@@ -1147,6 +1210,7 @@ Fields:
 
 - `requirements.runtimes`: optional runtime requirements that apply only to this task path
 - `requirements.tools`: optional tool requirements that apply only to this task path
+- `requirements.native`: optional native prerequisite names from top-level `native_prerequisites`
 - `requirements.env`: optional list of names from top-level `env.vars`
 - `requirements.checks`: optional list of names from top-level `checks`
 
@@ -1156,6 +1220,8 @@ Fields:
   repo-global
 - use `tasks.<name>.requirements` when a prerequisite belongs only to one contributor, quickstart,
   or packaged-runtime path
+- use `requirements.native` when a task needs host-native build tools but Ota should diagnose and
+  guide instead of silently installing OS packages
 - workflow-aware readiness commands evaluate the selected workflow's `setup.task` / `run.task`
   dependency closure and merge those task-scoped requirements before diagnosing preconditions
 - an explicitly selected workflow with no `setup.task` has no setup prerequisite phase; legacy

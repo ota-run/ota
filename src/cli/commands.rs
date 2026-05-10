@@ -32957,6 +32957,7 @@ enum DoctorFindingGroupKind {
     ToolingVersion,
     AdapterBootstrap,
     EnvironmentValue,
+    NativePrerequisite,
     ContractDrift,
     PolicySurface,
     ServiceHealth,
@@ -33055,6 +33056,9 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
         | "OTA_TOOL_MISSING"
         | "OTA_TOOL_PROBE_FAILED"
         | "OTA_TOOL_VERSION_UNPARSEABLE" => String::from("tooling-version"),
+        "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+            String::from("native-prerequisite")
+        }
         _ if summary.starts_with("Adapter bootstrap failed: ") => String::from("adapter-bootstrap"),
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
@@ -33114,6 +33118,9 @@ fn doctor_finding_action_key(finding: &Finding) -> String {
         | "OTA_TOOL_MISSING"
         | "OTA_TOOL_PROBE_FAILED"
         | "OTA_TOOL_VERSION_UNPARSEABLE" => String::from("tooling-version"),
+        "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+            String::from("native-prerequisite")
+        }
         _ if summary.starts_with("Adapter bootstrap failed: ") => String::from("adapter-bootstrap"),
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
@@ -33165,6 +33172,9 @@ fn doctor_finding_group_kind(finding: &Finding) -> DoctorFindingGroupKind {
         | "OTA_TOOL_MISSING"
         | "OTA_TOOL_PROBE_FAILED"
         | "OTA_TOOL_VERSION_UNPARSEABLE" => DoctorFindingGroupKind::ToolingVersion,
+        "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+            DoctorFindingGroupKind::NativePrerequisite
+        }
         _ if summary.starts_with("Adapter bootstrap failed: ") => {
             DoctorFindingGroupKind::AdapterBootstrap
         }
@@ -33346,6 +33356,7 @@ fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Findin
             String::from("Fix invalid environment values")
         }
         DoctorFindingGroupKind::EnvironmentValue => String::from("Fix environment values"),
+        DoctorFindingGroupKind::NativePrerequisite => String::from("Install native prerequisites"),
         DoctorFindingGroupKind::ContractDrift => String::from("Review contract drift"),
         DoctorFindingGroupKind::PolicySurface => String::from("Review active policy surfaces"),
         DoctorFindingGroupKind::ServiceHealth => String::from("Fix service readiness"),
@@ -33393,6 +33404,9 @@ fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]
         }
         DoctorFindingGroupKind::EnvironmentValue => {
             String::from("one or more environment values do not match the contract")
+        }
+        DoctorFindingGroupKind::NativePrerequisite => {
+            String::from("one or more selected workflow tasks need host-native prerequisites")
         }
         DoctorFindingGroupKind::ContractDrift => {
             String::from("repo signals no longer match the declared contract")
@@ -33478,6 +33492,12 @@ fn doctor_finding_group_next(
         DoctorFindingGroupKind::EnvironmentValue => String::from(
             "run `ota env` to inspect the current precedence, fix the listed environment values, then rerun `ota doctor`",
         ),
+        DoctorFindingGroupKind::NativePrerequisite => findings
+            .first()
+            .map(|finding| compact_backticked_paths(&finding.next))
+            .unwrap_or_else(|| {
+                String::from("install the native prerequisites, then rerun `ota doctor`")
+            }),
         DoctorFindingGroupKind::ContractDrift => String::from(
             "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
         ),
@@ -33670,6 +33690,7 @@ fn doctor_finding_group_item_text(
             finding_diagnosis_text(&finding.summary, &display_why, container_image.as_deref())
         }
         DoctorFindingGroupKind::EnvironmentValue
+        | DoctorFindingGroupKind::NativePrerequisite
         | DoctorFindingGroupKind::ServiceHealth
         | DoctorFindingGroupKind::CheckFailure
         | DoctorFindingGroupKind::ExecutionBackend
@@ -36282,7 +36303,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::env;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
@@ -36338,6 +36359,14 @@ mod tests {
             perms.set_mode(0o755);
         }
         fs::set_permissions(path, perms).unwrap();
+    }
+
+    fn fake_command_path(bin_dir: &Path, name: &str) -> PathBuf {
+        if cfg!(windows) {
+            bin_dir.join(format!("{name}.cmd"))
+        } else {
+            bin_dir.join(name)
+        }
     }
 
     fn make_bootstrap_shims(dir: &Path) {
@@ -40121,6 +40150,85 @@ workflows:
     }
 
     #[test]
+    fn up_preview_explains_policy_provisioning_skips_corepack_activation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  pnpm:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      tools:
+        pnpm: ">=10.22.0"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(crate::doctor::ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("pnpm"),
+                        requested_version: String::from(">=10.22.0"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(String::from("pnpm")),
+                        source: String::from("brew"),
+                        source_config: None,
+                        approved_version: Some(String::from("10.22.0")),
+                        policy_match: None,
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from("pnpm is declared in the contract but is not available on PATH"),
+                next: String::from("run `brew install pnpm` and rerun `ota doctor`"),
+            }],
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            &preflight,
+        );
+
+        assert!(
+            preview
+                .plan
+                .actions
+                .iter()
+                .any(|action| { action.contains("provision `pnpm` `>=10.22.0` via `brew`") })
+        );
+        assert!(preview.plan.skipped.contains(&String::from(
+            "skip Corepack activation for `pnpm`; policy provisioning is selected for this tool"
+        )));
+    }
+
+    #[test]
     fn corepack_activation_missing_provider_returns_failed_activation_result() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -40157,6 +40265,61 @@ workflows:
             outcome
                 .stderr
                 .contains("failed to execute `corepack enable`")
+        );
+    }
+
+    #[test]
+    fn corepack_activation_invokes_provider_with_explicit_args() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.path().join("corepack.log");
+        let corepack_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho %*>>\"{}\"\r\nexit /b 0\r\n",
+                log_path.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                log_path.display()
+            )
+        };
+        write_executable_script(&fake_command_path(&bin_dir, "corepack"), &corepack_body);
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let acquisition = ToolAcquisitionSpec {
+            provider: ToolAcquisitionProvider::Corepack,
+            package: String::from("pnpm"),
+            version: String::from("10.22.0"),
+        };
+        let outcome = super::run_corepack_activation_action(
+            &acquisition,
+            fixture.path(),
+            RepoExecutionMode::Capture,
+        )
+        .expect("activation runner should produce a command result");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let log = fs::read_to_string(log_path).unwrap();
+        assert!(log.lines().any(|line| line == "enable"), "{log}");
+        assert!(
+            log.lines()
+                .any(|line| line == "prepare pnpm@10.22.0 --activate"),
+            "{log}"
         );
     }
 
@@ -59394,16 +59557,7 @@ fn selected_up_activation_actions(
 
     let requirement_surface = up_requirement_surface(contract, overrides, workflow_name);
     let policy_provisioned_tools =
-        selected_up_provisioning_actions(contract, overrides, workflow_name, preflight)
-            .into_iter()
-            .filter(|action| {
-                matches!(
-                    action.target_kind,
-                    crate::policy_pack::ProvisioningTargetKind::Tool
-                )
-            })
-            .map(|action| action.name)
-            .collect::<BTreeSet<_>>();
+        selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
     requirement_surface_activation_actions(&requirement_surface)
         .into_iter()
@@ -59414,6 +59568,24 @@ fn selected_up_activation_actions(
                     .iter()
                     .any(|finding| finding_targets_activation_action(finding, action))
         })
+        .collect()
+}
+
+fn selected_up_policy_provisioned_tool_names(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+) -> BTreeSet<String> {
+    selected_up_provisioning_actions(contract, overrides, workflow_name, preflight)
+        .into_iter()
+        .filter(|action| {
+            matches!(
+                action.target_kind,
+                crate::policy_pack::ProvisioningTargetKind::Tool
+            )
+        })
+        .map(|action| action.name)
         .collect()
 }
 
@@ -59504,6 +59676,15 @@ fn render_up_preview_activation_action(action: &RequirementActivationAction) -> 
         ToolAcquisitionProvider::Corepack => format!(
             "activate tool `{}` via `corepack` (`{}@{}`)",
             action.tool_name, action.acquisition.package, action.acquisition.version
+        ),
+    }
+}
+
+fn render_up_preview_skipped_activation_action(action: &RequirementActivationAction) -> String {
+    match action.acquisition.provider {
+        ToolAcquisitionProvider::Corepack => format!(
+            "skip Corepack activation for `{}`; policy provisioning is selected for this tool",
+            action.tool_name
         ),
     }
 }
@@ -59630,6 +59811,8 @@ fn build_up_preview(
         selected_up_provisioning_actions(contract, overrides, workflow_name, preflight);
     let activation_actions =
         selected_up_activation_actions(contract, overrides, workflow_name, preflight);
+    let policy_provisioned_tools =
+        selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
     if let Some(provisioning) = preflight.provisioning.as_ref() {
         for action in &provisioning.request.actions {
@@ -59643,6 +59826,15 @@ fn build_up_preview(
 
     for action in &activation_actions {
         actions.push(render_up_preview_activation_action(action));
+    }
+    for action in requirement_surface_activation_actions(&up_requirement_surface(
+        contract,
+        overrides,
+        workflow_name,
+    )) {
+        if policy_provisioned_tools.contains(action.tool_name.as_str()) {
+            skipped.push(render_up_preview_skipped_activation_action(&action));
+        }
     }
 
     append_up_preview_service_actions_for_workflow(contract, workflow_name, &mut actions);
@@ -60008,6 +60200,16 @@ fn command_spawn_failure_result(command_label: &str, error: io::Error) -> Comman
         target: None,
         runtime: None,
     }
+}
+
+fn has_native_prerequisite_blocker(report: &DoctorReport) -> bool {
+    report.findings.iter().any(|finding| {
+        finding.severity == FindingSeverity::Error
+            && matches!(
+                finding.code(),
+                "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
+            )
+    })
 }
 
 fn remote_up_blocker_finding(
@@ -60752,6 +60954,44 @@ fn execute_repo_up(
             doctor_mode,
             workflow_name,
         );
+    }
+
+    if has_native_prerequisite_blocker(&preflight) {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            preview: None,
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &preflight,
+                ),
+                "NOT READY",
+                "preconditions",
+                None,
+                None,
+                &preflight.findings,
+                None,
+                preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+            ),
+            report: preflight,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
     }
 
     if !preflight.ok && setup_task.is_none() {
