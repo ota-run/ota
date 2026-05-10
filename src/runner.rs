@@ -655,6 +655,8 @@ pub enum RunError {
         #[source]
         source: std::io::Error,
     },
+    #[error("file action for task `{task}` failed: {message}")]
+    FileActionFailed { task: String, message: String },
     #[error("task `{task}` requires `execution.backends.container.image` for container execution")]
     MissingContainerImage { task: String },
     #[error("task `{task}` requires an explicit `execution.lifecycle` for container execution")]
@@ -3609,6 +3611,9 @@ enum PreparedTaskExecution {
     LaunchContainer {
         launch: crate::schema::TaskContainerLaunchSpec,
     },
+    FileAction {
+        action: crate::schema::TaskActionSpec,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -5146,25 +5151,31 @@ fn execute_task_with_hooks(
             &backend_fulfillment_preparation.source_managed_actions,
         );
     }
-    let prepared_execution = match execution.launch() {
-        Some(crate::schema::TaskLaunchSpec::Command(command)) => {
-            if let Some(command) = shell_command {
-                PreparedTaskExecution::Shell { command }
-            } else {
-                PreparedTaskExecution::NativeCommand {
-                    exe: command.exe.clone(),
-                    args: command.args.clone(),
+    let prepared_execution = if let Some(action) = execution.action() {
+        PreparedTaskExecution::FileAction {
+            action: action.clone(),
+        }
+    } else {
+        match execution.launch() {
+            Some(crate::schema::TaskLaunchSpec::Command(command)) => {
+                if let Some(command) = shell_command {
+                    PreparedTaskExecution::Shell { command }
+                } else {
+                    PreparedTaskExecution::NativeCommand {
+                        exe: command.exe.clone(),
+                        args: command.args.clone(),
+                    }
                 }
             }
-        }
-        Some(crate::schema::TaskLaunchSpec::Container(container)) => {
-            PreparedTaskExecution::LaunchContainer {
-                launch: container.clone(),
+            Some(crate::schema::TaskLaunchSpec::Container(container)) => {
+                PreparedTaskExecution::LaunchContainer {
+                    launch: container.clone(),
+                }
             }
+            None => PreparedTaskExecution::Shell {
+                command: shell_command.expect("shell execution should provide a command"),
+            },
         }
-        None => PreparedTaskExecution::Shell {
-            command: shell_command.expect("shell execution should provide a command"),
-        },
     };
     let command_output = execute_task_command(
         Some(contract),
@@ -5723,6 +5734,9 @@ fn execute_task_command(
             host_port_override,
             mode,
         ),
+        (ResolvedExecutionBackend::Native { .. }, PreparedTaskExecution::FileAction { action }) => {
+            execute_native_file_action_task(task_name, action, working_dir)
+        }
         (_, PreparedTaskExecution::Shell { command, .. }) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
                 let mut resolved_env = env_overrides.clone();
@@ -5818,6 +5832,68 @@ fn execute_task_command(
         _ => Err(RunError::InvalidTaskExecution {
             task: task_name.to_string(),
         }),
+    }
+}
+
+fn execute_native_file_action_task(
+    task_name: &str,
+    action: &crate::schema::TaskActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    match action {
+        crate::schema::TaskActionSpec::CopyIfMissing(copy) => {
+            let from = working_dir.join(copy.from.trim());
+            let to = working_dir.join(copy.to.trim());
+            if to.exists() {
+                return Ok(file_action_output(format!(
+                    "`{}` already exists; no copy needed\n",
+                    copy.to.trim()
+                )));
+            }
+            if !from.is_file() {
+                return Err(RunError::FileActionFailed {
+                    task: task_name.to_string(),
+                    message: format!("source `{}` is not a file", copy.from.trim()),
+                });
+            }
+            if let Some(parent) = to.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
+                    task: task_name.to_string(),
+                    message: format!(
+                        "could not create parent directory for `{}`: {source}",
+                        copy.to.trim()
+                    ),
+                })?;
+            }
+            std::fs::copy(&from, &to).map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not copy `{}` to `{}`: {source}",
+                    copy.from.trim(),
+                    copy.to.trim()
+                ),
+            })?;
+            Ok(file_action_output(format!(
+                "copied `{}` to `{}`\n",
+                copy.from.trim(),
+                copy.to.trim()
+            )))
+        }
+    }
+}
+
+fn file_action_output(stdout: String) -> TaskCommandOutput {
+    TaskCommandOutput {
+        exit_code: 0,
+        stdout,
+        stderr: String::new(),
+        target: None,
+        runtime: None,
+        service_termination: None,
+        execution_note: None,
+        interrupted: false,
     }
 }
 
@@ -40547,6 +40623,73 @@ exec /bin/sh -lc "$1"
 "#,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn copy_if_missing_action_copies_file_once() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+"#,
+        );
+        fixture.write(".env.example", "TOKEN=example\n");
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
+            .expect("copy action should run");
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap(),
+            "TOKEN=example\n"
+        );
+        assert!(
+            first
+                .stdout
+                .contains("copied `.env.example` to `.env.local`")
+        );
+
+        fixture.write(".env.local", "TOKEN=custom\n");
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
+            .expect("existing destination should be left alone");
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap(),
+            "TOKEN=custom\n"
+        );
+        assert!(second.stdout.contains("already exists; no copy needed"));
+    }
+
+    #[test]
+    fn copy_if_missing_action_fails_when_source_is_missing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+"#,
+        );
+
+        let error = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
+            .expect_err("missing source should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("source `.env.example` is not a file"),
+            "{error}"
+        );
     }
 
     struct ContractFixture {

@@ -8632,6 +8632,7 @@ fn build_assist_add_task_proposal(
         run: None,
         script: None,
         launch: None,
+        action: None,
         requirements: crate::schema::TaskRequirementsSpec::default(),
         depends_on: Vec::new(),
         requires_services: Vec::new(),
@@ -23123,6 +23124,9 @@ pub fn workspace_tasks(
                                 launch: crate::output::summarize_task_launch_owned(
                                     execution.launch(),
                                 ),
+                                action: crate::output::summarize_task_action_owned(
+                                    execution.action(),
+                                ),
                                 depends_on: filter_relationships(&task.depends_on),
                                 requires_services: task.requires_services.clone(),
                                 after_success: filter_relationships(&task.after_success),
@@ -30031,6 +30035,7 @@ fn render_tasks_text(
                     .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
             })
             .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
+            .or_else(|| task.action.as_ref().map(render_task_action_text))
             .unwrap_or_else(|| String::from("-"));
 
         output.push_str(&format!("\n\n{} {}", list_bullet(), paint(task.name, "1")));
@@ -30076,6 +30081,13 @@ fn render_tasks_text(
                 "\n  {} {}",
                 paint_key("Launch:"),
                 render_task_launch_text(launch)
+            ));
+        }
+        if let Some(action) = task.action.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Action:"),
+                render_task_action_text(action)
             ));
         }
         output.push_str(&format!(
@@ -30180,6 +30192,17 @@ fn render_task_launch_text(launch: &crate::output::TaskLaunchSummary<'_>) -> Str
             }
             parts.join(" ")
         }
+        _ => String::from("-"),
+    }
+}
+
+fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> String {
+    match action.kind {
+        "copy_if_missing" => format!(
+            "copy `{}` to `{}` if missing",
+            action.from.unwrap_or("-"),
+            action.to.unwrap_or("-")
+        ),
         _ => String::from("-"),
     }
 }
@@ -33087,11 +33110,11 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
             "service-health-unverifiable-{}",
             doctor_group_slug(doctor_finding_subject(finding))
         ),
-        "OTA_CHECK_FAILED" => format!(
+        "OTA_CHECK_FAILED" | "OTA_FILE_CHECK_FAILED" => format!(
             "check-failed-{}",
             doctor_group_slug(doctor_finding_subject(finding))
         ),
-        "OTA_CHECK_TIMED_OUT" => format!(
+        "OTA_CHECK_TIMED_OUT" | "OTA_FILE_CHECK_TIMED_OUT" => format!(
             "check-timeout-{}",
             doctor_group_slug(doctor_finding_subject(finding))
         ),
@@ -33149,11 +33172,11 @@ fn doctor_finding_action_key(finding: &Finding) -> String {
             "service-health-unverifiable-{}",
             doctor_group_slug(doctor_finding_subject(finding))
         ),
-        "OTA_CHECK_FAILED" => format!(
+        "OTA_CHECK_FAILED" | "OTA_FILE_CHECK_FAILED" => format!(
             "check-failed-{}",
             doctor_group_slug(doctor_finding_subject(finding))
         ),
-        "OTA_CHECK_TIMED_OUT" => format!(
+        "OTA_CHECK_TIMED_OUT" | "OTA_FILE_CHECK_TIMED_OUT" => format!(
             "check-timeout-{}",
             doctor_group_slug(doctor_finding_subject(finding))
         ),
@@ -33188,7 +33211,10 @@ fn doctor_finding_group_kind(finding: &Finding) -> DoctorFindingGroupKind {
         "OTA_SERVICE_CHECK_FAILED" | "OTA_SERVICE_CHECK_TIMED_OUT" | "OTA_SERVICE_UNVERIFIABLE" => {
             DoctorFindingGroupKind::ServiceHealth
         }
-        "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => DoctorFindingGroupKind::CheckFailure,
+        "OTA_CHECK_FAILED"
+        | "OTA_CHECK_TIMED_OUT"
+        | "OTA_FILE_CHECK_FAILED"
+        | "OTA_FILE_CHECK_TIMED_OUT" => DoctorFindingGroupKind::CheckFailure,
         "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
             DoctorFindingGroupKind::ExecutionBackend
         }
@@ -36677,6 +36703,7 @@ tasks:
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
             launch: None,
+            action: None,
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -36742,6 +36769,7 @@ tasks:
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
             launch: None,
+            action: None,
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -36806,6 +36834,7 @@ tasks:
             run: Some("pnpm dev"),
             script: None,
             launch: None,
+            action: None,
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -37107,6 +37136,7 @@ workflows:
                     remove: false,
                     volumes: Vec::new(),
                 }),
+                action: None,
                 selected_variant_os: None,
                 depends_on: Vec::new(),
                 requires_services: Vec::new(),
@@ -37182,6 +37212,7 @@ workflows:
                         remove: false,
                         volumes: Vec::new(),
                     }),
+                    action: None,
                     depends_on: Vec::new(),
                     requires_services: Vec::new(),
                     after_success: Vec::new(),

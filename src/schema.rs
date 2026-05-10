@@ -2361,6 +2361,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
     #[serde(default)]
+    pub action: Option<TaskActionSpec>,
+    #[serde(default)]
     pub requirements: TaskRequirementsSpec,
     #[serde(default)]
     pub depends_on: Vec<String>,
@@ -2390,10 +2392,12 @@ impl TaskSpec {
             self.run.as_ref(),
             self.script.as_ref(),
             self.launch.as_ref(),
+            self.action.as_ref(),
         ) {
-            (Some(_), None, None) => Some("run"),
-            (None, Some(_), None) => Some("script"),
-            (None, None, Some(launch)) => Some(launch.kind_str()),
+            (Some(_), None, None, None) => Some("run"),
+            (None, Some(_), None, None) => Some("script"),
+            (None, None, Some(launch), None) => Some(launch.kind_str()),
+            (None, None, None, Some(action)) => Some(action.kind_str()),
             _ => None,
         }
     }
@@ -2403,9 +2407,10 @@ impl TaskSpec {
             self.run.as_deref(),
             self.script.as_deref(),
             self.launch.as_ref(),
+            self.action.as_ref(),
         ) {
-            (Some(run), None, None) => Some(run),
-            (None, Some(script), None) => Some(script),
+            (Some(run), None, None, None) => Some(run),
+            (None, Some(script), None, None) => Some(script),
             _ => None,
         }
     }
@@ -2420,6 +2425,7 @@ impl TaskSpec {
                     kind: self.default_execution_kind()?,
                     body: self.default_execution_body(),
                     launch: self.launch.as_ref(),
+                    action: self.action.as_ref(),
                     os: None,
                 })
             })
@@ -2736,6 +2742,7 @@ impl TaskModeBranchSpec {
             kind: self.execution_kind()?,
             body: self.execution_body(),
             launch: self.launch.as_ref(),
+            action: None,
             os: None,
         })
     }
@@ -2817,6 +2824,35 @@ pub struct TaskContainerLaunchVolumeSpec {
 
 fn is_default_task_container_launch_volume_kind(kind: &TaskContainerLaunchVolumeKind) -> bool {
     *kind == TaskContainerLaunchVolumeKind::Named
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskActionSpec {
+    CopyIfMissing(TaskCopyIfMissingActionSpec),
+}
+
+impl TaskActionSpec {
+    pub const fn kind_str(&self) -> &'static str {
+        match self {
+            Self::CopyIfMissing(_) => "copy_if_missing",
+        }
+    }
+
+    pub fn preview(&self) -> String {
+        match self {
+            Self::CopyIfMissing(action) => {
+                format!("copy `{}` to `{}` if missing", action.from, action.to)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCopyIfMissingActionSpec {
+    pub from: String,
+    pub to: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -3357,6 +3393,7 @@ impl TaskVariantSpec {
             kind: self.execution_kind()?,
             body: self.execution_body(),
             launch: None,
+            action: None,
             os: self.when.os.as_deref(),
         })
     }
@@ -3380,6 +3417,7 @@ pub struct TaskExecution<'a> {
     pub kind: &'static str,
     pub body: Option<&'a str>,
     pub launch: Option<&'a TaskLaunchSpec>,
+    pub action: Option<&'a TaskActionSpec>,
     pub os: Option<&'a str>,
 }
 
@@ -3392,10 +3430,15 @@ impl<'a> TaskExecution<'a> {
         self.launch
     }
 
+    pub fn action(&self) -> Option<&'a TaskActionSpec> {
+        self.action
+    }
+
     pub fn preview(&self) -> String {
         self.body
             .map(ToOwned::to_owned)
             .or_else(|| self.launch.map(TaskLaunchSpec::preview))
+            .or_else(|| self.action.map(TaskActionSpec::preview))
             .unwrap_or_else(|| String::from("-"))
     }
 }
@@ -3421,6 +3464,10 @@ pub struct CheckSpec {
     #[serde(default)]
     pub probe: Option<String>,
     #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub expect: Option<FileCheckExpectation>,
+    #[serde(default)]
     pub timeout: Option<u64>,
 }
 
@@ -3429,6 +3476,16 @@ pub struct CheckSpec {
 pub enum CheckKind {
     Precondition,
     Health,
+    File,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FileCheckExpectation {
+    Exists,
+    File,
+    Directory,
+    Missing,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

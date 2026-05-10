@@ -215,7 +215,7 @@ ota assist declare-readiness --task dev --json
 Setup wiring preview:
 
 ```bash
-ota assist wire-setup --run "test -f .env.local || cp .env.example .env.local" --service postgres
+ota assist wire-setup --run "npm install" --service postgres
 ```
 
 Setup wiring apply:

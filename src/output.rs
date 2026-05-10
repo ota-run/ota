@@ -1180,6 +1180,8 @@ pub struct WorkspaceTaskSummary {
     pub script: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<WorkspaceTaskLaunchSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<WorkspaceTaskActionSummary>,
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
     pub after_success: Vec<String>,
@@ -1239,6 +1241,15 @@ pub struct WorkspaceTaskLaunchVolumeSummary {
     pub kind: &'static str,
     pub source: String,
     pub target: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct WorkspaceTaskActionSummary {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2703,6 +2714,8 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<TaskActionSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_variant_os: Option<&'a str>,
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
@@ -2747,6 +2760,7 @@ impl<'a> TaskSummary<'a> {
                 .then(|| resolved_execution.shell_body())
                 .flatten(),
             launch: summarize_task_launch(resolved_execution.launch()),
+            action: summarize_task_action(resolved_execution.action()),
             selected_variant_os: resolved_execution.os,
             depends_on: task.depends_on.clone(),
             requires_services: task.requires_services.clone(),
@@ -2867,6 +2881,15 @@ pub struct TaskLaunchVolumeSummary<'a> {
     pub target: &'a str,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskActionSummary<'a> {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<&'a str>,
+}
+
 fn summarize_task_launch<'a>(
     launch: Option<&'a crate::schema::TaskLaunchSpec>,
 ) -> Option<TaskLaunchSummary<'a>> {
@@ -2904,6 +2927,18 @@ fn summarize_task_launch<'a>(
     }
 }
 
+fn summarize_task_action<'a>(
+    action: Option<&'a crate::schema::TaskActionSpec>,
+) -> Option<TaskActionSummary<'a>> {
+    match action? {
+        crate::schema::TaskActionSpec::CopyIfMissing(copy) => Some(TaskActionSummary {
+            kind: "copy_if_missing",
+            from: Some(copy.from.as_str()),
+            to: Some(copy.to.as_str()),
+        }),
+    }
+}
+
 pub fn summarize_task_launch_owned(
     launch: Option<&crate::schema::TaskLaunchSpec>,
 ) -> Option<WorkspaceTaskLaunchSummary> {
@@ -2937,6 +2972,18 @@ pub fn summarize_task_launch_owned(
                     target: volume.target.clone(),
                 })
                 .collect(),
+        }),
+    }
+}
+
+pub fn summarize_task_action_owned(
+    action: Option<&crate::schema::TaskActionSpec>,
+) -> Option<WorkspaceTaskActionSummary> {
+    match action? {
+        crate::schema::TaskActionSpec::CopyIfMissing(copy) => Some(WorkspaceTaskActionSummary {
+            kind: "copy_if_missing",
+            from: Some(copy.from.clone()),
+            to: Some(copy.to.clone()),
         }),
     }
 }

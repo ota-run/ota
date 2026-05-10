@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added first-class file checks and native setup actions: contracts can now use `kind: file`
+  checks for repo-relative file/directory state and `action.kind: copy_if_missing` for
+  cross-platform template materialization instead of POSIX `test` / `cp` snippets; `ota doctor`,
+  `ota run`, `ota tasks --json`, workspace task inventory, schemas, and docs now expose the new
+  action/check surface
 - added first-class tool acquisition metadata under `tools.<name>.acquisition`, with
   Corepack-managed activation as the first shipped provider: selected workflow/task requirement
   surfaces can now declare `pnpm` truth once, `ota doctor` now explains missing or mismatched

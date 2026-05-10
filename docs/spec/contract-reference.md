@@ -751,7 +751,7 @@ checks:
   - name: node-native-build-tools-windows
     kind: precondition
     severity: error
-    run: cmd /C "where cl && py --version"
+    run: powershell -NoProfile -ExecutionPolicy Bypass -Command "$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'; if (!(Test-Path $vswhere)) { exit 1 }; & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; if ($LASTEXITCODE -ne 0) { exit 1 }; py --version"
 
 tasks:
   setup:
@@ -1159,6 +1159,7 @@ Fields:
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
 - `launch`: optional structured launch source for inspectable command or packaged container starts
+- `action`: optional first-class native setup action for small cross-platform repo-file mutations
 - `requirements`: optional task-scoped prerequisite surface for this executable path
 - `execution`: optional mode-aware execution branches for one task intent
 - `runtime`: optional long-running workload shape for endpoint-bearing tasks
@@ -1206,6 +1207,17 @@ Fields:
   - `launch.volumes[].name` or `launch.volumes[].source`: required source identifier
   - `launch.volumes[].target`: required container path
 
+`action` fields:
+
+- `action.kind`: required action kind; currently `copy_if_missing`
+- `action.kind: copy_if_missing`
+  - `action.from`: required repo-relative source file
+  - `action.to`: required repo-relative destination file
+
+Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
+`.env.example` without depending on POSIX `test` / `cp` or PowerShell conditionals. The action is
+idempotent: if `to` already exists, Ota leaves it untouched.
+
 `requirements` fields:
 
 - `requirements.runtimes`: optional runtime requirements that apply only to this task path
@@ -1226,7 +1238,8 @@ Fields:
   dependency closure and merge those task-scoped requirements before diagnosing preconditions
 - an explicitly selected workflow with no `setup.task` has no setup prerequisite phase; legacy
   `tasks.setup` fallback is reserved for the unselected default compatibility path
-- `requirements.checks` must reference top-level checks declared with `kind: precondition`
+- `requirements.checks` must reference top-level checks declared with `kind: precondition` or
+  `kind: file`
 - when the selected workflow task closure declares any task-scoped requirements, unreferenced
   top-level precondition checks are treated as reusable definitions rather than global gates for
   that path; reference a check from `requirements.checks` when that task path needs it
@@ -1239,10 +1252,13 @@ Fields:
   - `run`
   - `script`
   - `launch`
+  - `action`
 - `run` stays the simple shell shorthand
 - `script` stays the multiline shell escape hatch
 - `launch` is for structured, inspectable starts that Ota should render and reason about without
   hiding everything inside one shell string
+- `action` is for small built-in setup mutations that should stay deterministic and
+  cross-platform instead of becoming shell-specific snippets
 - `launch.kind: command` reuses existing task env, input, receipt, dependency, and agent-safety
   behavior
 - `launch.kind: container` is a task launch source, not an execution context
@@ -1858,7 +1874,8 @@ Current execution model:
 - hook tasks run in declared order
 - tasks marked `internal: true` (commonly `setup`) remain normal graph nodes for `depends_on` and hooks, still run when referenced directly, and are hidden from default `ota tasks` output unless `--all` is requested
 - hook failures affect the final task result for the parent task
-- richer non-shell executors are intentionally out of V1 scope
+- richer non-shell execution remains intentionally narrow; use `launch` for packaged starts and
+  `action` for first-class setup mutations Ota can make cross-platform
 - reusable probes are now shipped through top-level `readiness.probes`, `checks[].probe`, `workflows.<name>.readiness.probes`, and runtime/service readiness `probe` references
 - use task names to describe intent: `setup`, `dev`, `dev_clean`, `test`, `lint`
 
@@ -2034,23 +2051,32 @@ checks:
     kind: health
     severity: error
     probe: backend-ready
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
 ```
 
 Fields:
 
 - `name`: required, non-empty string
-- `kind`: `precondition` or `health`
+- `kind`: `precondition`, `health`, or `file`
 - `severity`: `error`, `warn`, or `info`
 - `run`: optional shell command when the check is command-backed
 - `probe`: optional probe reference when the check is probe-backed
+- `path`: optional repo-relative path when the check is file-backed
+- `expect`: required for `kind: file`; one of `exists`, `file`, `directory`, or `missing`
 - `timeout`: optional integer in milliseconds
 
 Current behavior:
 
 - `up` uses preconditions before setup
 - `doctor` runs configured checks and reports findings by severity
-- checks must declare exactly one of `run` or `probe`
+- checks must declare exactly one of `run`, `probe`, or `path`
 - `checks[].probe` must reference a named `readiness.probes.<name>` declaration
+- file checks use the repo filesystem directly and do not invoke a shell; prefer them over
+  `run: test -d ...` or other OS-specific shell checks for file and directory state
 - probe-backed checks use the check timeout when one is declared, otherwise they inherit the probe
   timeout
 - when `timeout` is set, `doctor` fails the check if it does not finish within the configured millisecond budget

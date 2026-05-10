@@ -1020,7 +1020,7 @@ Success:
     "task": "setup"
   },
   "inputs": {
-    "run": "test -f .env.local || cp .env.example .env.local",
+    "run": "npm install",
     "services": "postgres"
   },
   "assumptions": [
@@ -1037,7 +1037,7 @@ Success:
       "after": {
         "category": "setup",
         "internal": true,
-        "run": "test -f .env.local || cp .env.example .env.local",
+        "run": "npm install",
         "requires_services": ["postgres"]
       }
     }
@@ -1048,7 +1048,7 @@ Success:
     "ota up --dry-run /abs/path/to/ota.yaml",
     "ota doctor /abs/path/to/ota.yaml"
   ],
-  "next": "rerun with `ota assist wire-setup --run 'test -f .env.local || cp .env.example .env.local' --service postgres --write /abs/path/to/ota.yaml` to apply this setup change"
+  "next": "rerun with `ota assist wire-setup --run 'npm install' --service postgres --write /abs/path/to/ota.yaml` to apply this setup change"
 }
 ```
 
@@ -1198,8 +1198,12 @@ Success:
       "name": "setup",
       "description": "Prepare the repo",
       "notes": "Use this after cloning the repo.\n",
-      "kind": "script",
-      "script": "printf ready > prepared.txt\n",
+      "kind": "copy_if_missing",
+      "action": {
+        "kind": "copy_if_missing",
+        "from": ".env.example",
+        "to": ".env.local"
+      },
       "env": {
         "JAVA_HOME": "/opt/jdk-21"
       },
@@ -2025,11 +2029,25 @@ selected workflow name as additive `workflow`.
       "depends_on": ["db"],
       "tasks": [
         {
+          "name": "env-local",
+          "description": "Create a local env overlay when missing.",
+          "kind": "copy_if_missing",
+          "action": {
+            "kind": "copy_if_missing",
+            "from": ".env.example",
+            "to": ".env.local"
+          },
+          "depends_on": [],
+          "after_success": [],
+          "after_failure": [],
+          "after_always": []
+        },
+        {
           "name": "setup",
           "description": "Install repo dependencies.",
           "kind": "run",
           "run": "pnpm install",
-          "depends_on": [],
+          "depends_on": ["env-local"],
           "after_success": ["verify-lockfile"],
           "after_failure": [],
           "after_always": ["cleanup-temp"]
@@ -2058,6 +2076,8 @@ Non-acquired repos keep `acquired: false` and `tasks: []`. Each task report can 
 `requires_services`, `after_success`, `after_failure`, and `after_always` so automation can see
 the same service and post-outcome task graph that `ota run` executes. Structured task launch is
 additive through `tasks[*].launch` when the repo task uses command or packaged-container launch.
+Structured task actions are additive through `tasks[*].action` when the repo task uses a
+first-class setup action such as `copy_if_missing`.
 When the workspace contract pins `repos.<name>.workflow`, each repo item may also include additive
 `workflow`.
 
