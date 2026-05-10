@@ -621,6 +621,24 @@ fn shared_finding_schema_includes_optional_policy_context() {
 }
 
 #[test]
+fn shared_inference_schema_includes_annotation_metadata() {
+    let schema = load_schema("docs/spec/json-schemas/shared.json");
+    let inference = &schema["$defs"]["inference"]["properties"];
+
+    assert!(inference.get("field").is_some());
+    assert!(inference.get("type").is_some());
+    assert!(inference.get("value").is_some());
+    assert!(inference.get("source").is_some());
+    assert!(inference.get("signal").is_some());
+    assert!(inference.get("confidence").is_some());
+    assert_eq!(
+        inference["agent_safe"]["enum"],
+        json!(["yes", "no", "unknown"])
+    );
+    assert!(inference.get("agent_signal").is_some());
+}
+
+#[test]
 fn init_schema_includes_optional_next_on_failures() {
     let schema = load_schema("docs/spec/json-schemas/init.json");
     let shared = load_schema("docs/spec/json-schemas/shared.json");

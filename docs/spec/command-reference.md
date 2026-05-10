@@ -1290,7 +1290,7 @@ Text output:
 - successful init writes now use explanatory `Next:` steps instead of bare commands: validate the written contract, inspect the runnable task surface, review readiness with doctor, then preview preparation with `ota up --dry-run`
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
 - `detected` mode write output explicitly calls out the write policy and any excluded low-confidence fields
-- includes inferred-field annotations with source and confidence
+- includes inferred-field annotations with field type, source, signal, confidence, and task-scoped agent metadata when applicable
 
 JSON output:
 
@@ -2114,10 +2114,12 @@ Example dry-run annotations for detected Compose services:
 ```text
 ---
 Annotations:
-- services.db.provider: docker-compose <- from docker-compose.yml#services.db [high]
-- services.db.start: docker compose up -d db <- from docker-compose.yml#services.db [medium]
-- services.db.stop: docker compose stop db <- from docker-compose.yml#services.db [medium]
-- services.db.healthcheck: pg_isready -h localhost -p 5432 <- from docker-compose.yml#services.db.healthcheck.test [medium]
+✦ Field: services.db.provider
+  Type: service
+  Value: docker-compose
+  Source: docker-compose.yml#services.db
+  Signal: config
+  Confidence: high
 ```
 
 Current precedence is conservative:

@@ -2261,8 +2261,10 @@ from the full list themselves.
   "inferred": [
     {
       "field": "project.name",
+      "type": "project",
       "value": "ota-app",
       "source": "package.json#name",
+      "signal": "config",
       "confidence": "high"
     }
   ],
@@ -2293,6 +2295,11 @@ from the full list themselves.
 
 When task inference is confident enough to write, `config.tasks.<name>.notes` may also be
 present and point at the matching `ota run <task>` command.
+
+Each `inferred[*]` entry now carries additive metadata for human and machine consumers:
+- `type` classifies the inferred contract surface (`project`, `runtime`, `tool`, `task`, etc.)
+- `signal` classifies the evidence shape (`config`, `script`, `lockfile`, `file`, `template`, `convention`)
+- task-shaped entries can also include `agent_safe` (`yes`, `no`, `unknown`) and `agent_signal` when ota can classify the task for agent workflows
 
 In dry-run preview mode, `config` matches the starter contract ota would review or write,
 including derived starter defaults such as a minimal `agent` block when ota can infer one
@@ -3309,20 +3316,26 @@ Example with inferred Docker Compose services:
   "inferred": [
     {
       "field": "services.db.provider",
+      "type": "service",
       "value": "docker-compose",
       "source": "docker-compose.yml#services.db",
+      "signal": "config",
       "confidence": "high"
     },
     {
       "field": "services.db.start",
+      "type": "service",
       "value": "docker compose up -d db",
       "source": "docker-compose.yml#services.db",
+      "signal": "config",
       "confidence": "medium"
     },
     {
       "field": "services.db.healthcheck",
+      "type": "service",
       "value": "pg_isready -h localhost -p 5432",
       "source": "docker-compose.yml#services.db.healthcheck.test",
+      "signal": "config",
       "confidence": "medium"
     }
   ]
