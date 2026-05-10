@@ -6147,16 +6147,16 @@ checks:
     severity: error
     run: echo ok
 tasks:
-	  dev:
-	    run: echo dev
-	    requirements:
-	      runtimes:
-	        node: ""
-	      tools:
-	        pnpm: ""
-	      env:
-	        - UNKNOWN_ENV
-	      checks:
+  dev:
+    run: echo dev
+    requirements:
+      runtimes:
+        node: ""
+      tools:
+        pnpm: ""
+      env:
+        - UNKNOWN_ENV
+      checks:
         - health-check
         - missing-check
 "#,
@@ -6174,22 +6174,25 @@ tasks:
         assert!(
             messages
                 .iter()
-	        .any(|message| message.contains("unknown environment requirement `UNKNOWN_ENV`")),
-	        "{messages:?}"
-	    );
+                .any(|message| message.contains("unknown environment requirement `UNKNOWN_ENV`")),
+            "{messages:?}"
+        );
         assert!(
             messages.iter().any(|message| {
-                message.contains("task `dev` runtime requirement `node` must declare a non-empty version")
+                message.contains(
+                    "task `dev` runtime requirement `node` must declare a non-empty version",
+                )
             }),
             "{messages:?}"
         );
         assert!(
             messages.iter().any(|message| {
-                message.contains("task `dev` tool requirement `pnpm` must declare a non-empty version")
+                message
+                    .contains("task `dev` tool requirement `pnpm` must declare a non-empty version")
             }),
             "{messages:?}"
         );
-	    assert!(
+        assert!(
 	        messages.iter().any(|message| message.contains("references non-precondition check `health-check`")),
 	        "{messages:?}"
         );

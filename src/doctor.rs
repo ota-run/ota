@@ -299,7 +299,8 @@ fn selected_remote_task_requirement_selection(
             continue;
         };
         let task_surface = task.scoped_requirement_surface();
-        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), Backend::Remote)
+        if let Some(context_name) =
+            task.context_for_backend(contract.execution.as_ref(), Backend::Remote)
         {
             selection
                 .by_context
