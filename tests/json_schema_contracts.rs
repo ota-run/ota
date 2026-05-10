@@ -636,16 +636,34 @@ fn shared_inference_schema_includes_annotation_metadata() {
     let inference = &schema["$defs"]["inference"]["properties"];
 
     assert!(inference.get("field").is_some());
-    assert!(inference.get("type").is_some());
+    assert_eq!(
+        inference["type"]["enum"],
+        json!([
+            "project", "runtime", "tool", "env", "service", "check", "task", "agent", "field"
+        ])
+    );
     assert!(inference.get("value").is_some());
     assert!(inference.get("source").is_some());
-    assert!(inference.get("signal").is_some());
+    assert_eq!(
+        inference["signal"]["enum"],
+        json!([
+            "config",
+            "script",
+            "lockfile",
+            "file",
+            "template",
+            "convention"
+        ])
+    );
     assert!(inference.get("confidence").is_some());
     assert_eq!(
         inference["agent_safe"]["enum"],
         json!(["yes", "no", "unknown"])
     );
-    assert!(inference.get("agent_signal").is_some());
+    assert_eq!(
+        inference["agent_signal"]["enum"],
+        json!(["verification_candidate", "bootstrap_candidate"])
+    );
 }
 
 #[test]

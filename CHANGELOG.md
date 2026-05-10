@@ -26,11 +26,19 @@
 
 ## Unreleased
 
+- hardened the Windows PowerShell installer wrapper so downloaded `bootstrap.ps1` is staged in a
+  private temp directory, cleaned up after execution, and used for normal release installs even
+  when a stale `bootstrap.ps1` happens to exist beside a downloaded `install.ps1`; repo-local
+  `-FromSource` installs still use the checked-out bootstrap, and bootstrap failures now propagate
+  the correct installer exit code
 - updated the published detect/init JSON schema contract so inferred annotations now admit the
   additive metadata Ota emits today: `type`, `signal`, and task-scoped `agent_safe` /
   `agent_signal`; schema regressions now cover the richer shared inference shape directly so
   machine consumers validating `ota detect --json` or `ota init --json` do not reject valid
   annotation output
+- tightened inferred annotation metadata into explicit machine-facing enums: detect/init now emit
+  stable enum-backed `type`, `signal`, `agent_safe`, and `agent_signal` values instead of free-form
+  strings, and the command/json reference pages now call out the exact shipped value sets
 - fixed PowerShell repo detection so `ota detect` / detector-led `ota init` now infer `runtimes.pwsh` for `pwsh`-based script repos instead of emitting the legacy `runtimes.powershell` key that caused `ota doctor` to probe Windows PowerShell incorrectly
 - made starter-agent inference explicit in `ota detect --dry-run` and detector-led `ota init --dry-run`: both previews now render an `Agent boundary` outcome (`Inferred`, `Partially inferred`, or `Omitted`) so repos without a safe inferred task see why the starter omits `agent` instead of having to reverse-engineer that omission from the YAML preview
 - added first-class task launch sources: tasks can now declare structured `launch` in addition to
@@ -39,6 +47,11 @@
   `runtime.surfaces` as the canonical publication truth; `ota tasks`, `ota workflows`,
   `ota execution topology`, workspace task inventory output, receipts, and JSON surfaces now carry
   launch details additively instead of forcing common runtime front doors into opaque shell strings
+- hardened container launch execution for production use: named launch containers are replaced
+  only when Ota ownership labels prove they belong to the current repo/task, attached container
+  launches now observe readiness while the packaged service is still running, service launch
+  lifecycle semantics are documented as persistent/Ota-managed for this slice, and the published
+  execution/workspace JSON schemas now admit workflow/task launch summaries emitted by the CLI
 - extended reusable runtime surfaces additively: surfaces now support optional UX metadata
   (`label`, `purpose`, `visibility`), `kind: https` now maps cleanly onto the existing HTTPS
   listener/readiness model, and `ota execution topology --json` now exposes additive
@@ -469,7 +482,7 @@
 - added a post-release GitHub Actions job that auto-generates Discord `#releases` messages from published GitHub release metadata and posts them via `DISCORD_RELEASE_WEBHOOK_URL`, removing the need to maintain per-tag Discord note files.
 - made `ota self-update` always force published release installation instead of switching to a local source build when run inside the ota repo, changed update notices to use cached release results so they stay fast without dropping slow network checks, taught stale no-update caches to refresh synchronously so the first command after a new release can still surface the notice, hardened the Windows deferred self-update helper to keep retrying replacement after process exit, and switched Unix release installs to staged renames instead of direct live-binary overwrites.
 - kept the background update-notice foreground wait budget small and consistent across platforms so successful commands stay responsive, and shortened the transient update-check failure cooldown to one hour everywhere instead of leaving Unix-like systems silent for a full day.
-- made Windows `ota uninstall` report a pending, unverified removal state instead of implying the running binary was already deleted, and extended the detached delete helper to keep retrying after the current process exits.
+- made Windows `ota uninstall` report a clear scheduled-success state instead of a scary pending/unverified message, and moved the deferred remover into a temp helper script that keeps retrying after the current process exits, removes empty install directories when possible, and cleans itself up.
 - expanded the explicit starter-pack catalog from `node|python|java-maven|java-gradle` to `node|python|go|rust|java-maven|java-gradle`, adding conventional Go and Rust starter contracts through `ota init --pack ...`.
 - upgraded `ota init --packs --json` so each catalog entry now carries the exact pack-selection `command` plus a safe dry-run `next` command, making the starter-pack catalog a more complete product surface for automation and docs generation.
 - clarified the `ota init` command reference by separating detector-led and pack-led starter paths in the detailed docs without promoting `--pack` to a separate command surface.

@@ -2297,9 +2297,9 @@ When task inference is confident enough to write, `config.tasks.<name>.notes` ma
 present and point at the matching `ota run <task>` command.
 
 Each `inferred[*]` entry now carries additive metadata for human and machine consumers:
-- `type` classifies the inferred contract surface (`project`, `runtime`, `tool`, `task`, etc.)
-- `signal` classifies the evidence shape (`config`, `script`, `lockfile`, `file`, `template`, `convention`)
-- task-shaped entries can also include `agent_safe` (`yes`, `no`, `unknown`) and `agent_signal` when ota can classify the task for agent workflows
+- `type` is one of `project`, `runtime`, `tool`, `env`, `service`, `check`, `task`, `agent`, or `field`
+- `signal` is one of `config`, `script`, `lockfile`, `file`, `template`, or `convention`
+- task-shaped entries can also include `agent_safe` (`yes`, `no`, `unknown`) and `agent_signal` (`verification_candidate` or `bootstrap_candidate`) when ota can classify the task for agent workflows
 
 In dry-run preview mode, `config` matches the starter contract ota would review or write,
 including derived starter defaults such as a minimal `agent` block when ota can infer one

@@ -1901,13 +1901,13 @@ ota uninstall
 Current behavior:
 
 - removes the installed ota binary from the current machine
-- on Windows, schedules best-effort removal of the running executable after the current process exits and reports the result as pending until deletion can actually happen
+- on Windows, schedules removal of the running executable through a detached helper because the live `ota.exe` cannot delete itself while it is executing
 - on Unix-like systems, removes the current executable directly when possible
 - does not touch repo state, contracts, or workspace state
 
 Text output:
 
-- success: `removed ota from <path>` or `pending ota removal from <path> after the current process exits; removal is not yet verified`
+- success: `removed ota from <path>` or `scheduled ota removal from <path>; Windows will delete the running executable after this command exits. Open a new terminal to verify \`ota\` is gone.`
 - already removed: `ota was already removed from <path>`
 
 Use this when you want to remove ota from the machine itself, not when you want to clean a repo.
@@ -2121,6 +2121,12 @@ Annotations:
   Signal: config
   Confidence: high
 ```
+
+Annotation metadata stays additive but stable:
+
+- `Type:` currently renders one of `project`, `runtime`, `tool`, `env`, `service`, `check`, `task`, `agent`, or `field`
+- `Signal:` currently renders one of `config`, `script`, `lockfile`, `file`, `template`, or `convention`
+- task-shaped annotations can also include `Agent Safe:` (`yes`, `no`, `unknown`) and `Agent Signal:` (`verification_candidate`, `bootstrap_candidate`)
 
 Current precedence is conservative:
 

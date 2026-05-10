@@ -90,13 +90,17 @@
       "required": ["field", "value", "source", "confidence"],
       "properties": {
         "field": { "type": "string" },
-        "type": { "type": "string" },
+        "type": {
+          "enum": ["project", "runtime", "tool", "env", "service", "check", "task", "agent", "field"]
+        },
         "value": { "type": "string" },
         "source": { "type": "string" },
-        "signal": { "type": "string" },
+        "signal": {
+          "enum": ["config", "script", "lockfile", "file", "template", "convention"]
+        },
         "confidence": { "enum": ["low", "medium", "high"] },
         "agent_safe": { "enum": ["yes", "no", "unknown"] },
-        "agent_signal": { "type": "string" }
+        "agent_signal": { "enum": ["verification_candidate", "bootstrap_candidate"] }
       }
     },
     "contractFieldProvenance": {
