@@ -171,6 +171,49 @@ fn execution_schema_includes_resolved_and_declared_execution_fields() {
 }
 
 #[test]
+fn execution_topology_schema_covers_declared_graph_fields() {
+    let schema = load_schema("docs/spec/json-schemas/execution-topology.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let task = &schema["$defs"]["task"]["properties"];
+    let runtime = &schema["$defs"]["runtime"]["properties"];
+    let probe = &schema["$defs"]["probe"]["properties"];
+    let surface = &schema["$defs"]["surface"]["properties"];
+    let task_kind_enum = task["kind"]["enum"].as_array().expect("task kind enum");
+
+    assert!(success.get("contract_identity").is_some());
+    assert!(success.get("declared_execution").is_some());
+    assert!(success.get("shared_backends").is_some());
+    assert!(success.get("readiness_probes").is_some());
+    assert!(success.get("surfaces").is_some());
+    assert!(success.get("services").is_some());
+    assert!(success.get("tasks").is_some());
+    assert!(task.get("runtime").is_some());
+    assert!(task.get("targets").is_some());
+    assert!(task.get("launch").is_some());
+    assert!(task.get("action").is_some());
+    assert!(task.get("variants").is_some());
+    assert!(task.get("modes").is_some());
+    assert_eq!(
+        task["launch"]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/taskLaunch")
+    );
+    assert_eq!(
+        task["action"]["$ref"],
+        serde_json::json!("./tasks.json#/$defs/taskAction")
+    );
+    assert!(runtime.get("attached_surfaces").is_some());
+    assert!(runtime.get("surface_attachments").is_some());
+    assert!(runtime.get("listeners").is_some());
+    assert!(probe.get("target").is_some());
+    assert!(surface.get("readiness").is_some());
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "copy_if_missing")
+    );
+}
+
+#[test]
 fn workspace_execution_schema_reports_per_repo_resolved_and_declared_fields() {
     let schema = load_schema("docs/spec/json-schemas/workspace-execution.json");
     let properties = &schema["properties"];
@@ -351,6 +394,8 @@ fn assist_wire_setup_schema_covers_preview_and_failure_contract() {
     assert_eq!(subject["task"]["const"], json!("setup"));
     assert!(inputs.get("run").is_some());
     assert!(inputs.get("script").is_some());
+    assert!(inputs.get("copy_from").is_some());
+    assert!(inputs.get("copy_to").is_some());
     assert!(inputs.get("services").is_some());
     assert!(inputs.get("clear_services").is_some());
     assert!(inputs.get("internal").is_some());

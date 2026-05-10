@@ -1105,6 +1105,27 @@ fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<Validatio
                 &platform_detail.scoop,
                 errors,
             );
+            if let Some(activation) = platform_detail.activation.as_ref()
+                && activation
+                    .arch
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation arch must not be empty"
+                )));
+            }
+            if let Some(activation) = platform_detail.activation.as_ref()
+                && matches!(
+                    activation.kind,
+                    crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell
+                )
+                && platform != "windows"
+            {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation `visual_studio_dev_shell` is only supported on `windows`"
+                )));
+            }
             if platform_detail
                 .install
                 .as_deref()
@@ -15073,6 +15094,9 @@ native_prerequisites:
         xcode_clt: true
       windows:
         visual_studio_build_tools: true
+        activation:
+          kind: visual_studio_dev_shell
+          arch: x64
 checks:
   - name: node-native-build-tools-present
     kind: precondition
@@ -15089,6 +15113,49 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("native prerequisite should validate");
+    }
+
+    #[test]
+    fn rejects_visual_studio_activation_outside_windows_native_prerequisite() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    description: Native compiler toolchain for packages with native addons
+    check: node-native-build-tools-present
+    platforms:
+      linux:
+        apt:
+          - build-essential
+        activation:
+          kind: visual_studio_dev_shell
+checks:
+  - name: node-native-build-tools-present
+    kind: precondition
+    severity: error
+    run: node-gyp --version
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("Visual Studio activation should be Windows-only");
+        assert!(
+            errors.errors().iter().any(|error| error
+                .to_string()
+                .contains("activation `visual_studio_dev_shell` is only supported on `windows`")),
+            "{errors:?}"
+        );
     }
 
     #[test]

@@ -408,6 +408,7 @@ Purpose:
 Behavior:
 
 - may create or adjust `tasks.setup`
+- may create a cross-platform `action.kind: copy_if_missing` setup task for file-template setup
 - may populate `setup.requires_services`
 - must respect the shipped phased `ota up` model:
   - pre-setup services come only from `setup.requires_services`

@@ -32,7 +32,8 @@ use crate::detector::{
 };
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
-    AgentInferredBoundaryConfig, EnvSource, EnvSourceKind,
+    AgentInferredBoundaryConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec,
+    TaskCopyIfMissingActionSpec,
 };
 
 const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
@@ -589,6 +590,7 @@ fn inferred_init_env_sources(root: &Path) -> Vec<EnvSource> {
 }
 
 pub(super) fn apply_starter_contract_defaults(contract: &mut DetectContract, root: &Path) {
+    add_detected_env_copy_setup(contract, root);
     mark_setup_task_internal(contract);
     if contract.project.is_none()
         && let Some(name) = directory_name_for_root(root)
@@ -642,6 +644,7 @@ pub(super) fn apply_detected_starter_contract_defaults(
     contract: &mut DetectContract,
     report: &DetectReport,
 ) {
+    add_detected_env_copy_setup(contract, &report.root);
     mark_setup_task_internal(contract);
     if contract.project.is_none()
         && let Some(name) = directory_name_for_root(&report.root)
@@ -661,6 +664,79 @@ pub(super) fn mark_setup_task_internal(contract: &mut DetectContract) {
     if let Some(task) = contract.tasks.get_mut("setup") {
         task.internal = true;
     }
+}
+
+fn add_detected_env_copy_setup(contract: &mut DetectContract, root: &Path) {
+    let Some((task_name, from, to)) = env_copy_candidate(root) else {
+        return;
+    };
+    let copy_task_name = if contract.tasks.contains_key("setup") {
+        if contract.tasks.contains_key(task_name) {
+            return;
+        }
+        let Some(setup) = contract.tasks.get_mut("setup") else {
+            return;
+        };
+        if setup.depends_on.iter().any(|dep| dep == task_name) {
+            return;
+        }
+        setup.depends_on.push(task_name.to_string());
+        task_name
+    } else {
+        "setup"
+    };
+    if !contract
+        .env
+        .sources
+        .iter()
+        .any(|source| source.kind == EnvSourceKind::Dotenv && source.path == to)
+    {
+        contract.env.sources.push(EnvSource {
+            kind: EnvSourceKind::Dotenv,
+            path: to.to_string(),
+            must_exist: false,
+        });
+    }
+    contract.tasks.insert(
+        copy_task_name.to_string(),
+        DetectTask {
+            description: Some(format!("Create `{to}` from `{from}` when it is missing.")),
+            run: String::new(),
+            action: Some(TaskActionSpec::CopyIfMissing(TaskCopyIfMissingActionSpec {
+                from: from.to_string(),
+                to: to.to_string(),
+            })),
+            depends_on: Vec::new(),
+            notes: Some(format!(
+                "Run `ota run {copy_task_name}` to materialize the local environment file without overwriting existing values."
+            )),
+            internal: true,
+            safe_for_agent: true,
+        },
+    );
+    if !contract
+        .checks
+        .iter()
+        .any(|check| check.name == "env-template-present")
+    {
+        contract.checks.push(DetectCheck {
+            name: String::from("env-template-present"),
+            kind: DetectCheckKind::File,
+            severity: DetectCheckSeverity::Info,
+            run: String::new(),
+            path: Some(from.to_string()),
+            expect: Some(FileCheckExpectation::File),
+        });
+    }
+}
+
+fn env_copy_candidate(root: &Path) -> Option<(&'static str, &'static str, &'static str)> {
+    [
+        ("setup:env-local", ".env.local.example", ".env.local"),
+        ("setup:env", ".env.example", ".env"),
+    ]
+    .into_iter()
+    .find(|(_, from, to)| root.join(from).is_file() && !root.join(to).exists())
 }
 
 fn starter_agent_bootstrap() -> AgentBootstrapConfig {
@@ -1904,6 +1980,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("node --version"),
+                path: None,
+                expect: None,
             });
             contract.tasks.insert(
                 String::from("setup"),
@@ -1942,6 +2020,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("python --version"),
+                path: None,
+                expect: None,
             });
             contract.tasks.insert(
                 String::from("setup"),
@@ -1978,6 +2058,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("go version"),
+                path: None,
+                expect: None,
             });
             contract.tasks.insert(
                 String::from("setup"),
@@ -2016,6 +2098,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("rustc --version"),
+                path: None,
+                expect: None,
             });
             contract.tasks.insert(
                 String::from("setup"),
@@ -2054,6 +2138,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("dotnet --version"),
+                path: None,
+                expect: None,
             });
             contract.tasks.insert(
                 String::from("setup"),
@@ -2092,12 +2178,16 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("php --version"),
+                path: None,
+                expect: None,
             });
             contract.checks.push(DetectCheck {
                 name: String::from("composer-installed"),
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("composer --version"),
+                path: None,
+                expect: None,
             });
             contract.tasks.insert(
                 String::from("setup"),
@@ -2128,6 +2218,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("java --version"),
+                path: None,
+                expect: None,
             });
             if !uses_wrapper {
                 contract
@@ -2138,6 +2230,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     kind: DetectCheckKind::Precondition,
                     severity: DetectCheckSeverity::Error,
                     run: String::from("mvn --version"),
+                    path: None,
+                    expect: None,
                 });
             }
             contract.tasks.insert(
@@ -2187,6 +2281,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("java --version"),
+                path: None,
+                expect: None,
             });
             if !uses_wrapper {
                 contract
@@ -2197,6 +2293,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     kind: DetectCheckKind::Precondition,
                     severity: DetectCheckSeverity::Error,
                     run: String::from("gradle --version"),
+                    path: None,
+                    expect: None,
                 });
             }
             contract.tasks.insert(
@@ -2253,6 +2351,8 @@ fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectT
     DetectTask {
         description,
         run: String::from(run),
+        action: None,
+        depends_on: Vec::new(),
         notes: Some(notes),
         internal: task_name == "setup",
         safe_for_agent: false,
@@ -2294,6 +2394,8 @@ mod tests {
             DetectTask {
                 description: None,
                 run: String::from("echo setup"),
+                action: None,
+                depends_on: Vec::new(),
                 notes: None,
                 internal: false,
                 safe_for_agent: false,
@@ -2413,6 +2515,8 @@ mod tests {
             DetectTask {
                 description: None,
                 run: String::from("nimble test"),
+                action: None,
+                depends_on: Vec::new(),
                 notes: None,
                 internal: false,
                 safe_for_agent: false,

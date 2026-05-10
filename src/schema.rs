@@ -1504,6 +1504,8 @@ pub struct NativePrerequisitePlatformSpec {
     #[serde(default)]
     pub visual_studio_build_tools: bool,
     #[serde(default)]
+    pub activation: Option<NativePrerequisiteActivationSpec>,
+    #[serde(default)]
     pub install: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
@@ -1513,6 +1515,7 @@ impl NativePrerequisitePlatformSpec {
     pub fn has_guidance(&self) -> bool {
         self.xcode_clt
             || self.visual_studio_build_tools
+            || self.activation.is_some()
             || self
                 .install
                 .as_deref()
@@ -1528,6 +1531,20 @@ impl NativePrerequisitePlatformSpec {
             || !self.choco.is_empty()
             || !self.scoop.is_empty()
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct NativePrerequisiteActivationSpec {
+    pub kind: NativePrerequisiteActivationKind,
+    #[serde(default)]
+    pub arch: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NativePrerequisiteActivationKind {
+    VisualStudioDevShell,
 }
 
 fn default_required() -> bool {
@@ -3479,7 +3496,7 @@ pub enum CheckKind {
     File,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FileCheckExpectation {
     Exists,

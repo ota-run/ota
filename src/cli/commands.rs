@@ -3928,6 +3928,8 @@ struct AssistSetupProposal {
     write_value: YamlValue,
     body_input_kind: Option<&'static str>,
     body_input: Option<String>,
+    copy_from: Option<String>,
+    copy_to: Option<String>,
     services_mode: AssistSetupServicesMode,
     internal_input: Option<bool>,
 }
@@ -3943,6 +3945,12 @@ impl AssistSetupProposal {
         let mut inputs = BTreeMap::new();
         if let (Some(kind), Some(body)) = (self.body_input_kind, self.body_input.as_ref()) {
             inputs.insert(kind, body.clone());
+        }
+        if let Some(copy_from) = self.copy_from.as_ref() {
+            inputs.insert("copy_from", copy_from.clone());
+        }
+        if let Some(copy_to) = self.copy_to.as_ref() {
+            inputs.insert("copy_to", copy_to.clone());
         }
         match &self.services_mode {
             AssistSetupServicesMode::Preserve => {}
@@ -3974,6 +3982,12 @@ impl AssistSetupProposal {
         }
         if let (Some(kind), Some(body)) = (self.body_input_kind, self.body_input.as_ref()) {
             command.push_str(&format!(" --{kind} {}", shell_quote(body)));
+        }
+        if let Some(copy_from) = self.copy_from.as_ref() {
+            command.push_str(&format!(" --copy-from {}", shell_quote(copy_from)));
+        }
+        if let Some(copy_to) = self.copy_to.as_ref() {
+            command.push_str(&format!(" --copy-to {}", shell_quote(copy_to)));
         }
         match &self.services_mode {
             AssistSetupServicesMode::Preserve => {}
@@ -5583,6 +5597,8 @@ pub fn assist_wire_setup(
     member: Option<&str>,
     run: Option<&str>,
     script: Option<&str>,
+    copy_from: Option<&str>,
+    copy_to: Option<&str>,
     services: &[String],
     clear_services: bool,
     internal: Option<bool>,
@@ -5624,6 +5640,12 @@ pub fn assist_wire_setup(
     }
     if let Some(script) = script {
         debug_lines.push(format!("DEBUG script={script}"));
+    }
+    if let Some(copy_from) = copy_from {
+        debug_lines.push(format!("DEBUG copy_from={copy_from}"));
+    }
+    if let Some(copy_to) = copy_to {
+        debug_lines.push(format!("DEBUG copy_to={copy_to}"));
     }
     if !services.is_empty() {
         debug_lines.push(format!("DEBUG services={}", services.join(",")));
@@ -5798,6 +5820,8 @@ pub fn assist_wire_setup(
                     member.is_some(),
                     run,
                     script,
+                    copy_from,
+                    copy_to,
                     services,
                     clear_services,
                     internal,
@@ -9300,22 +9324,36 @@ fn build_assist_setup_proposal(
     member_mode: bool,
     run: Option<&str>,
     script: Option<&str>,
+    copy_from: Option<&str>,
+    copy_to: Option<&str>,
     services: &[String],
     clear_services: bool,
     internal: Option<bool>,
 ) -> Result<AssistSetupProposal, (String, String)> {
     let existing = existing_setup;
-    if existing.is_none() && run.is_none() && script.is_none() {
+    let copy_requested = copy_from.is_some() || copy_to.is_some();
+    if copy_requested && (copy_from.is_none() || copy_to.is_none()) {
         return Err((
-            String::from("creating `tasks.setup` needs an explicit `--run` or `--script` body"),
+            String::from("copy-if-missing setup needs both `--copy-from` and `--copy-to`"),
             String::from(
-                "rerun with `--run '<command>'` or `--script '<body>'` to declare the setup task",
+                "rerun with `--copy-from <source>` and `--copy-to <target>` to declare the setup action",
+            ),
+        ));
+    }
+    if existing.is_none() && run.is_none() && script.is_none() && !copy_requested {
+        return Err((
+            String::from(
+                "creating `tasks.setup` needs an explicit `--run`, `--script`, or copy action body",
+            ),
+            String::from(
+                "rerun with `--run '<command>'`, `--script '<body>'`, or `--copy-from <source> --copy-to <target>` to declare the setup task",
             ),
         ));
     }
 
     if run.is_none()
         && script.is_none()
+        && !copy_requested
         && services.is_empty()
         && !clear_services
         && internal.is_none()
@@ -9323,7 +9361,7 @@ fn build_assist_setup_proposal(
         return Err((
             String::from("no setup change was requested"),
             String::from(
-                "rerun with `--run`, `--script`, `--service`, `--clear-services`, or `--internal`",
+                "rerun with `--run`, `--script`, `--copy-from`/`--copy-to`, `--service`, `--clear-services`, or `--internal`",
             ),
         ));
     }
@@ -9382,6 +9420,11 @@ fn build_assist_setup_proposal(
             _ => unreachable!(),
         });
     }
+    if let (Some(copy_from), Some(copy_to)) = (copy_from, copy_to) {
+        assumptions.push(format!(
+            "setup will use the cross-platform `copy_if_missing` action from `{copy_from}` to `{copy_to}`"
+        ));
+    }
     match &services_mode {
         AssistSetupServicesMode::Preserve => {}
         AssistSetupServicesMode::Set(services) => assumptions.push(format!(
@@ -9424,21 +9467,79 @@ fn build_assist_setup_proposal(
     if let Some(run) = run {
         after_mapping.insert(string_key("run"), YamlValue::String(run.to_string()));
         after_mapping.remove(string_key("script"));
+        after_mapping.remove(string_key("launch"));
+        after_mapping.remove(string_key("action"));
         write_mapping.insert(string_key("run"), YamlValue::String(run.to_string()));
         if existing.is_some_and(|task| task.script.is_some()) {
             write_mapping.insert(string_key("script"), YamlValue::Null);
         } else {
             write_mapping.remove(string_key("script"));
         }
+        if existing.is_some_and(|task| task.launch.is_some()) {
+            write_mapping.insert(string_key("launch"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("launch"));
+        }
+        if existing.is_some_and(|task| task.action.is_some()) {
+            write_mapping.insert(string_key("action"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("action"));
+        }
     }
     if let Some(script) = script {
         after_mapping.insert(string_key("script"), YamlValue::String(script.to_string()));
         after_mapping.remove(string_key("run"));
+        after_mapping.remove(string_key("launch"));
+        after_mapping.remove(string_key("action"));
         write_mapping.insert(string_key("script"), YamlValue::String(script.to_string()));
         if existing.is_some_and(|task| task.run.is_some()) {
             write_mapping.insert(string_key("run"), YamlValue::Null);
         } else {
             write_mapping.remove(string_key("run"));
+        }
+        if existing.is_some_and(|task| task.launch.is_some()) {
+            write_mapping.insert(string_key("launch"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("launch"));
+        }
+        if existing.is_some_and(|task| task.action.is_some()) {
+            write_mapping.insert(string_key("action"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("action"));
+        }
+    }
+    if let (Some(copy_from), Some(copy_to)) = (copy_from, copy_to) {
+        let action_value = serde_yaml::to_value(crate::schema::TaskActionSpec::CopyIfMissing(
+            crate::schema::TaskCopyIfMissingActionSpec {
+                from: copy_from.to_string(),
+                to: copy_to.to_string(),
+            },
+        ))
+        .map_err(|error| {
+            (
+                format!("failed to encode copy-if-missing action: {error}"),
+                String::from("adjust the copy action inputs, then rerun the assist command"),
+            )
+        })?;
+        after_mapping.insert(string_key("action"), action_value.clone());
+        after_mapping.remove(string_key("run"));
+        after_mapping.remove(string_key("script"));
+        after_mapping.remove(string_key("launch"));
+        write_mapping.insert(string_key("action"), action_value);
+        if existing.is_some_and(|task| task.run.is_some()) {
+            write_mapping.insert(string_key("run"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("run"));
+        }
+        if existing.is_some_and(|task| task.script.is_some()) {
+            write_mapping.insert(string_key("script"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("script"));
+        }
+        if existing.is_some_and(|task| task.launch.is_some()) {
+            write_mapping.insert(string_key("launch"), YamlValue::Null);
+        } else {
+            write_mapping.remove(string_key("launch"));
         }
     }
     match &services_mode {
@@ -9506,6 +9607,8 @@ fn build_assist_setup_proposal(
         write_value: YamlValue::Mapping(write_mapping),
         body_input_kind,
         body_input,
+        copy_from: copy_from.map(str::to_string),
+        copy_to: copy_to.map(str::to_string),
         services_mode,
         internal_input: internal,
     })
@@ -37575,6 +37678,8 @@ tasks:
             DetectTask {
                 description: None,
                 run: String::from("npm install"),
+                action: None,
+                depends_on: Vec::new(),
                 notes: None,
                 internal: true,
                 safe_for_agent: false,
@@ -37648,6 +37753,8 @@ tasks:
             DetectTask {
                 description: None,
                 run: String::from("npm install"),
+                action: None,
+                depends_on: Vec::new(),
                 notes: None,
                 internal: true,
                 safe_for_agent: false,
