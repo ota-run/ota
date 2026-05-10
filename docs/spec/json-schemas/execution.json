@@ -70,6 +70,101 @@
           "items": { "type": "string" }
         }
       }
+    },
+    "executionContainer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image"],
+      "properties": {
+        "image": { "type": "string" }
+      }
+    },
+    "executionRemote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {
+        "provider": { "type": "string" },
+        "target": { "type": "string" },
+        "cwd": { "type": "string" }
+      }
+    },
+    "executionBackends": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "container": { "$ref": "#/$defs/executionContainer" },
+        "remote": { "$ref": "#/$defs/executionRemote" }
+      }
+    },
+    "executionEnv": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "required", "source"],
+      "properties": {
+        "name": { "type": "string" },
+        "required": { "type": "boolean" },
+        "default": { "type": "string" },
+        "policy": { "type": "string" },
+        "source": { "type": "string" },
+        "allowed": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "executionContextAttachments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compose": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "isolated_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "isolated_effective_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "executionContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "backend"],
+      "properties": {
+        "name": { "type": "string" },
+        "backend": { "enum": ["native", "container", "remote"] },
+        "lifecycle": { "enum": ["persistent", "ephemeral"] },
+        "container": { "$ref": "#/$defs/executionContainer" },
+        "remote": { "$ref": "#/$defs/executionRemote" },
+        "attachments": { "$ref": "#/$defs/executionContextAttachments" }
+      }
+    },
+    "declaredExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_context": { "type": "string" },
+        "preferred": { "enum": ["native", "container", "remote"] },
+        "supported": {
+          "type": "array",
+          "items": { "enum": ["native", "container", "remote"] }
+        },
+        "lifecycle": { "enum": ["persistent", "ephemeral"] },
+        "backends": { "$ref": "#/$defs/executionBackends" },
+        "contexts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/executionContext" }
+        },
+        "env": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/executionEnv" }
+        }
+      }
     }
   },
   "oneOf": [
@@ -87,9 +182,7 @@
         "contract_identity": {
           "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
         },
-        "declared_execution": {
-          "$ref": "./doctor.json#/properties/execution"
-        },
+        "declared_execution": { "$ref": "#/$defs/declaredExecution" },
         "resolved": {
           "type": "object",
           "additionalProperties": false,

@@ -1995,6 +1995,30 @@ pub struct UpStatus<'a> {
     pub exit_code: Option<i32>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ProofRuntimeArtifacts<'a> {
+    pub topology: &'a str,
+    pub doctor: &'a str,
+    pub up_log: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProofRuntimeStatus<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<&'a str>,
+    pub phase: &'a str,
+    pub summary: DoctorSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<ProofRuntimeArtifacts<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UpPreviewExecution {
     pub backend: String,

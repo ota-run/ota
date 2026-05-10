@@ -19,6 +19,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/env.json](json-schemas/env.json)
 - [json-schemas/execution.json](json-schemas/execution.json)
 - [json-schemas/execution-topology.json](json-schemas/execution-topology.json)
+- [json-schemas/proof-runtime.json](json-schemas/proof-runtime.json)
+- [json-schemas/services.json](json-schemas/services.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/assist-declare-readiness.json](json-schemas/assist-declare-readiness.json)
 - [json-schemas/assist-declare-service.json](json-schemas/assist-declare-service.json)
@@ -62,6 +64,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
 - use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything, including reusable readiness probes, reusable runtime surfaces, structured task launch sources, normalized listeners, and attached surface names
+- use `ota proof runtime --json` when you want one thin clean-machine runtime-proof wrapper that captures the canonical topology, doctor, and up artifacts for a selected runtime path
+- use `ota services --json` when you want the declared managed-service inventory, including manager shape, readiness declaration, endpoint projections, and dependencies
 - use `ota assist declare-readiness --json` when you want a deterministic readiness proposal or apply result without scraping review text
 - use `ota assist declare-service --json` when you want a deterministic managed-service proposal or apply result without scraping review text
 - use `ota assist bind-task --json` when you want a deterministic target-binding proposal or apply result without scraping review text
@@ -93,6 +97,8 @@ human text output:
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `surfaces`, `services`, and `tasks`
+- `ota proof runtime --json`: use `mode`, `workflow`, `phase`, `summary`, and `artifacts`; inspect the referenced `doctor.json` and `topology.json` artifacts instead of expecting the proof wrapper to duplicate those payloads
+- `ota services --json`: use `services`, grouped `members` when present, and nested `manager`, `readiness`, `endpoints`, and `depends_on`
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
 - `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist bind-task --json`: use `mode`, `subject.task`, `subject.target`, `inputs`, `changes`, `validation`, and `next`
@@ -514,6 +520,133 @@ Success:
           }
         }
       ]
+    }
+  ]
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "errors": ["..."]
+}
+```
+
+## `ota proof runtime --json`
+
+Runtime proof stays intentionally thin. It proves one selected runtime path and captures the real
+declared artifacts that remain canonical:
+
+- `topology.json` from `ota execution topology --json`
+- `doctor.json` from `ota doctor --json`
+- `up.log` from the repo-level runtime-preparation lane
+
+Notes:
+
+- `mode` is always `runtime-proof`
+- `workflow` is present when the proof targeted one explicit or effective workflow
+- `phase` stays machine-stable and uses the underlying proof phase keys such as `preconditions`,
+  `provisioning`, `activation`, `setup`, `run`, `services`, `post-up diagnosis`, and `cleanup`
+- `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
+- `artifacts` points at the captured canonical payloads; machine consumers should inspect those
+  files directly when they need the full topology or doctor surface
+- cleanup failures are reported through top-level `error` and `next` without duplicating the doctor
+  findings stream
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "runtime-proof",
+  "workflow": "app",
+  "phase": "post-up diagnosis",
+  "summary": {
+    "verdict": "ready",
+    "agent_verdict": "ready",
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0
+  },
+  "artifacts": {
+    "topology": "./.ota/proof/app/topology.json",
+    "doctor": "./.ota/proof/app/doctor.json",
+    "up_log": "./.ota/proof/app/up.log"
+  }
+}
+```
+
+Blocked:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "runtime-proof",
+  "workflow": "docker",
+  "phase": "services",
+  "summary": {
+    "verdict": "not_ready",
+    "agent_verdict": "ready",
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "primary_blocker": {
+      "severity": "error",
+      "summary": "Service readiness failed: backend",
+      "why": "readiness probe did not report success before timeout",
+      "next": "inspect `./.ota/proof/docker/up.log`, then rerun `ota doctor --workflow docker .`"
+    }
+  },
+  "artifacts": {
+    "topology": "./.ota/proof/docker/topology.json",
+    "doctor": "./.ota/proof/docker/doctor.json",
+    "up_log": "./.ota/proof/docker/up.log"
+  }
+}
+```
+
+## `ota services --json`
+
+Services inspection stays read-only. It reports the declared managed-service inventory without
+starting or probing those services.
+
+Notes:
+
+- top-level `services` lists declared repo services in deterministic order
+- `members` is present when a monorepo root request includes grouped member service summaries
+- each service can expose `producer`, `manager`, legacy `provider`, `start`, `stop`,
+  `healthcheck`, structured `readiness`, projected `endpoints`, `depends_on`, and `timeout`
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "services": [
+    {
+      "name": "postgres",
+      "required": true,
+      "manager": {
+        "kind": "compose",
+        "name": "local",
+        "file": "compose.yaml",
+        "service": "postgres"
+      },
+      "healthcheck": "pg_isready -h 127.0.0.1 -p 5432",
+      "endpoints": {
+        "host": {
+          "address": "127.0.0.1",
+          "port": 5432
+        }
+      },
+      "depends_on": [],
+      "timeout": 30
     }
   ]
 }

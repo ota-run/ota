@@ -67,6 +67,9 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     );
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("requires_services").is_some());
+    assert!(task_properties.get("after_success").is_some());
+    assert!(task_properties.get("after_failure").is_some());
+    assert!(task_properties.get("after_always").is_some());
     assert!(task_properties.get("variants").is_some());
     assert!(task_properties.get("default_mode").is_some());
     assert!(task_properties.get("modes").is_some());
@@ -89,10 +92,63 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "container"));
     assert!(member_task_properties.get("requires_services").is_some());
+    assert!(member_task_properties.get("after_success").is_some());
+    assert!(member_task_properties.get("after_failure").is_some());
+    assert!(member_task_properties.get("after_always").is_some());
     assert!(member_task_properties.get("default_mode").is_some());
     assert!(member_task_properties.get("modes").is_some());
     assert!(member_task_properties.get("launch").is_some());
     assert!(member_task_properties.get("action").is_some());
+}
+
+#[test]
+fn services_schema_covers_published_service_summary_fields() {
+    let schema = load_schema("docs/spec/json-schemas/services.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let service = &schema["$defs"]["serviceSummary"]["properties"];
+    let readiness = &schema["$defs"]["serviceReadiness"]["properties"];
+    let producer = &schema["$defs"]["serviceProducer"]["properties"];
+    let manager = &schema["$defs"]["serviceManager"]["properties"];
+    let endpoint = &schema["$defs"]["serviceEndpoint"]["properties"];
+
+    assert!(success.get("services").is_some());
+    assert!(success.get("members").is_some());
+    assert!(service.get("producer").is_some());
+    assert!(service.get("manager").is_some());
+    assert!(service.get("provider").is_some());
+    assert!(service.get("start").is_some());
+    assert!(service.get("stop").is_some());
+    assert!(service.get("healthcheck").is_some());
+    assert!(service.get("readiness").is_some());
+    assert!(service.get("endpoints").is_some());
+    assert!(service.get("depends_on").is_some());
+    assert!(service.get("timeout").is_some());
+    assert!(producer.get("repo").is_some());
+    assert!(producer.get("task").is_some());
+    assert!(producer.get("address_view").is_some());
+    assert!(manager.get("kind").is_some());
+    assert!(endpoint.get("address").is_some());
+    assert!(endpoint.get("port").is_some());
+    assert!(readiness.get("probe").is_some());
+    assert!(readiness.get("success").is_some());
+    assert!(readiness.get("body").is_some());
+}
+
+#[test]
+fn proof_runtime_schema_covers_summary_and_artifact_fields() {
+    let schema = load_schema("docs/spec/json-schemas/proof-runtime.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let artifacts = &success["artifacts"]["properties"];
+
+    assert!(success.get("mode").is_some());
+    assert!(success.get("workflow").is_some());
+    assert!(success.get("phase").is_some());
+    assert!(success.get("summary").is_some());
+    assert!(success.get("artifacts").is_some());
+    assert!(success.get("next").is_some());
+    assert!(artifacts.get("topology").is_some());
+    assert!(artifacts.get("doctor").is_some());
+    assert!(artifacts.get("up_log").is_some());
 }
 
 #[test]
@@ -145,6 +201,9 @@ fn doctor_schema_includes_agent_summary() {
 fn execution_schema_includes_resolved_and_declared_execution_fields() {
     let schema = load_schema("docs/spec/json-schemas/execution.json");
     let success = &schema["oneOf"][0]["properties"];
+    let declared_execution = &schema["$defs"]["declaredExecution"]["properties"];
+    let declared_execution_context = &schema["$defs"]["executionContext"]["properties"];
+    let declared_execution_env = &schema["$defs"]["executionEnv"]["properties"];
     let resolved = &success["resolved"]["properties"];
     let overrides = &success["overrides"]["properties"];
     let workflow = &schema["$defs"]["workflowSummary"]["properties"];
@@ -160,8 +219,12 @@ fn execution_schema_includes_resolved_and_declared_execution_fields() {
     assert!(success.get("declared_execution").is_some());
     assert_eq!(
         success["declared_execution"]["$ref"],
-        serde_json::json!("./doctor.json#/properties/execution")
+        serde_json::json!("#/$defs/declaredExecution")
     );
+    assert!(declared_execution.get("default_context").is_some());
+    assert!(declared_execution.get("contexts").is_some());
+    assert!(declared_execution_context.get("attachments").is_some());
+    assert!(declared_execution_env.get("source").is_some());
     assert!(resolved.get("backend").is_some());
     assert!(resolved.get("backend_source").is_some());
     assert!(resolved.get("engine_candidates").is_some());
@@ -187,6 +250,14 @@ fn execution_topology_schema_covers_declared_graph_fields() {
     assert!(success.get("surfaces").is_some());
     assert!(success.get("services").is_some());
     assert!(success.get("tasks").is_some());
+    assert_eq!(
+        success["declared_execution"]["$ref"],
+        serde_json::json!("./execution.json#/$defs/declaredExecution")
+    );
+    assert_eq!(
+        success["services"]["items"]["$ref"],
+        serde_json::json!("./services.json#/oneOf/0/properties/services/items")
+    );
     assert!(task.get("runtime").is_some());
     assert!(task.get("targets").is_some());
     assert!(task.get("launch").is_some());
@@ -232,7 +303,7 @@ fn workspace_execution_schema_reports_per_repo_resolved_and_declared_fields() {
     assert!(repo.get("contract_identity").is_some());
     assert_eq!(
         repo["declared_execution"]["$ref"],
-        serde_json::json!("./workspace-doctor.json#/properties/repos/items/properties/execution")
+        serde_json::json!("./execution.json#/$defs/declaredExecution")
     );
     assert_eq!(
         repo["resolved"]["$ref"],

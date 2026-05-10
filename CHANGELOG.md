@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added `ota proof runtime` as the native runtime-proof surface: ota can now validate one
+  selected runtime path, capture the canonical `execution topology`, `doctor`, and `up` artifacts
+  under `.ota/proof/`, and tear the runtime back down without repo-local glue scripts
+- extended Ota-owned repo artifact hygiene to cover `.ota/proof/` alongside `.ota/state/` and
+  `.ota/receipts/`, so doctor warnings, doctor fixes, and starter gitignore writes stay aligned
 - split and published the dedicated `ota execution topology --json` schema, expanded
   `ota assist wire-setup` so it can author `action.kind: copy_if_missing` setup tasks directly,
   taught starter init/detect to attach detected env-template copy actions to setup, and added

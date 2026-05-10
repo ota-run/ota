@@ -50,9 +50,9 @@ use crate::contract_drift::{
 };
 use crate::detector::{Confidence, DetectContract, DetectReport, Inference, detect_repo};
 use crate::doctor::{
-    DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_RECEIPTS_GITIGNORE_ENTRY,
-    OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY, command_available, command_version,
-    diagnose_checks_only_for_workflow, diagnose_contract,
+    DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_PROOF_GITIGNORE_ENTRY,
+    OTA_RECEIPTS_GITIGNORE_ENTRY, OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY,
+    command_available, command_version, diagnose_checks_only_for_workflow, diagnose_contract,
     diagnose_contract_with_mode_and_lifecycle,
     diagnose_contract_with_mode_and_lifecycle_for_workflow, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow, diagnose_service,
@@ -86,20 +86,20 @@ use crate::output::{
     InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
     InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberWorkflowsSuccess,
     OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
-    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
-    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceReadinessSummary,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    ProofRuntimeArtifacts, ProofRuntimeStatus, ReceiptDiffBaseline, ReceiptDiffComparison,
+    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
+    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
+    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
+    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
+    TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
+    ValidateFailure, ValidateSuccess, ValidateSummary, WorkflowSummary, WorkflowsFailure,
+    WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
     WorkspaceTaskLaunchSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
     WorkspaceUpSuccess,
 };
@@ -1685,6 +1685,343 @@ pub fn execution_topology(
                     member,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn proof_runtime(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => {
+                        missing_repo_contract_command_output("PROOF", "ota proof runtime", &error)
+                            .unwrap_or_else(|| CommandOutput::failure(error.to_string()))
+                    }
+                    OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &unresolved_contract_target_path(path, file_override),
+                        errors: Vec::new(),
+                        error: Some(error.to_string()),
+                        warnings: Vec::new(),
+                    })),
+                },
+                debug,
+                vec![String::from("DEBUG command=proof runtime")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=proof runtime"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(workflow_name) = workflow_name {
+        debug_lines.push(format!("DEBUG workflow={workflow_name}"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "PROOF",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from(
+                        "`ota proof runtime` verifies repo runtime paths from a repo contract such as `ota.yaml`",
+                    ),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota proof runtime", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let workflow_summary = match resolve_selected_workflow_summary(
+                    &target.contract,
+                    &target.contract_path,
+                    workflow_name,
+                ) {
+                    Ok(summary) => summary,
+                    Err(error) => return CommandOutput::failure_with_code(error, 2),
+                };
+                let effective_workflow_name =
+                    workflow_summary.as_ref().map(|workflow| workflow.name);
+                let artifact_dir = proof_runtime_artifact_dir(
+                    contract_working_dir(&target.contract_path),
+                    member,
+                    effective_workflow_name,
+                );
+                if let Err(error) = fs::create_dir_all(&artifact_dir) {
+                    return CommandOutput::failure(command_message_failure_text(
+                        "PROOF",
+                        &text_path_display,
+                        "Artifact directory could not be created",
+                        &format!(
+                            "failed to create `{}`: {error}",
+                            compact_path(&artifact_dir, ".")
+                        ),
+                        &[],
+                    ));
+                }
+
+                let topology_artifact_path = artifact_dir.join("topology.json");
+                let doctor_artifact_path = artifact_dir.join("doctor.json");
+                let up_log_artifact_path = artifact_dir.join("up.log");
+                let topology_artifact_display = compact_path(&topology_artifact_path, ".");
+                let doctor_artifact_display = compact_path(&doctor_artifact_path, ".");
+                let up_log_artifact_display = compact_path(&up_log_artifact_path, ".");
+
+                let topology_output = execution_topology(
+                    Some(resolved_path.as_path()),
+                    file_override,
+                    member,
+                    OutputFormat::Json,
+                    false,
+                );
+                if topology_output.exit_code != 0 {
+                    return topology_output;
+                }
+                if let Err(error) =
+                    write_proof_artifact(&topology_artifact_path, &topology_output.stdout)
+                {
+                    return CommandOutput::failure(error);
+                }
+
+                let repo_up_result = match execute_repo_up(
+                    &target.contract,
+                    &target.contract_path,
+                    overrides,
+                    workflow_name,
+                    None,
+                    false,
+                    RepoExecutionMode::Capture,
+                ) {
+                    Ok(result) => result,
+                    Err(error) => return CommandOutput::failure(error),
+                };
+                let proof_summary = doctor_summary(
+                    &repo_up_result.report,
+                    crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
+                );
+                let proof_phase = repo_up_result.phase;
+                let proof_ok = repo_up_result.ok;
+                let up_log_contents =
+                    phase_output_text(&repo_up_result.stdout, &repo_up_result.stderr);
+                let up_output = render_up_result(
+                    &path_display,
+                    &text_path_display,
+                    repo_up_result,
+                    OutputFormat::Text,
+                    false,
+                );
+                let up_log_contents = up_log_contents.unwrap_or_else(|| up_output.stdout.clone());
+                if let Err(error) = write_proof_artifact(&up_log_artifact_path, &up_log_contents) {
+                    return CommandOutput::failure(error);
+                }
+
+                let member_args = member.into_iter().map(str::to_string).collect::<Vec<_>>();
+                let doctor_output = doctor(
+                    Some(resolved_path.as_path()),
+                    file_override,
+                    &member_args,
+                    workflow_name,
+                    false,
+                    false,
+                    overrides,
+                    OutputFormat::Json,
+                    false,
+                );
+                if doctor_output.stdout.trim().is_empty() {
+                    return CommandOutput::failure(command_message_failure_text(
+                        "PROOF",
+                        &text_path_display,
+                        "Doctor artifact could not be captured",
+                        "ota did not produce `doctor --json` output for this proof",
+                        &[],
+                    ));
+                }
+                if let Err(error) =
+                    write_proof_artifact(&doctor_artifact_path, &doctor_output.stdout)
+                {
+                    return CommandOutput::failure(error);
+                }
+
+                let cleanup_error = clean_execution_report(&target.contract, &target.contract_path)
+                    .err()
+                    .map(|error| error.to_string());
+                let cleanup_next = cleanup_error.as_ref().map(|_| {
+                    format!(
+                        "run `{}` to remove the remaining runtime state, then rerun proof",
+                        command_for_repo_contract_target("ota clean", &target.contract_path)
+                    )
+                });
+                let status = proof_runtime_status_word(
+                    proof_summary.verdict,
+                    proof_phase,
+                    cleanup_error.is_some(),
+                );
+                let json_phase = if cleanup_error.is_some() {
+                    "cleanup"
+                } else {
+                    proof_phase
+                };
+                let text_phase = if cleanup_error.is_some() {
+                    "cleanup"
+                } else {
+                    proof_runtime_phase_label(proof_phase)
+                };
+                let ok = proof_ok
+                    && proof_summary.verdict == DoctorVerdict::Ready
+                    && cleanup_error.is_none();
+
+                match format {
+                    OutputFormat::Text => CommandOutput {
+                        stdout: render_proof_runtime_text(
+                            &text_path_display,
+                            effective_workflow_name,
+                            &target.contract_path,
+                            text_phase,
+                            status,
+                            &proof_summary,
+                            &topology_artifact_display,
+                            &doctor_artifact_display,
+                            &up_log_artifact_display,
+                            cleanup_error.as_deref(),
+                            cleanup_next.as_deref(),
+                        ),
+                        stderr: None,
+                        exit_code: if ok { 0 } else { 1 },
+                    },
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&ProofRuntimeStatus {
+                            ok,
+                            path: &path_display,
+                            mode: "runtime-proof",
+                            workflow: effective_workflow_name,
+                            phase: json_phase,
+                            summary: proof_summary,
+                            artifacts: Some(ProofRuntimeArtifacts {
+                                topology: &topology_artifact_display,
+                                doctor: &doctor_artifact_display,
+                                up_log: &up_log_artifact_display,
+                            }),
+                            error: cleanup_error.as_deref(),
+                            next: cleanup_next.as_deref(),
+                        }),
+                        stderr: None,
+                        exit_code: if ok { 0 } else { 1 },
+                    },
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "PROOF",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota proof runtime",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                    warnings: Vec::new(),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "PROOF",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    "ota proof runtime",
+                                    &resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                    warnings: Vec::new(),
                 })),
             },
         },
@@ -13494,11 +13831,18 @@ fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
     })
 }
 
+fn gitignore_has_ota_proof_entry(contents: &str) -> bool {
+    contents
+        .lines()
+        .any(|line| matches!(line.trim(), ".ota/proof/" | ".ota/proof" | ".ota/proof/*"))
+}
+
 fn ota_artifact_gitignore_block(contents: Option<&str>) -> Option<String> {
     let missing_state = contents.is_none_or(|contents| !gitignore_has_ota_state_entry(contents));
     let missing_receipts =
         contents.is_none_or(|contents| !gitignore_has_ota_receipts_entry(contents));
-    if !missing_state && !missing_receipts {
+    let missing_proof = contents.is_none_or(|contents| !gitignore_has_ota_proof_entry(contents));
+    if !missing_state && !missing_receipts && !missing_proof {
         return None;
     }
 
@@ -13518,6 +13862,10 @@ fn ota_artifact_gitignore_block(contents: Option<&str>) -> Option<String> {
     }
     if missing_receipts {
         block.push_str(OTA_RECEIPTS_GITIGNORE_ENTRY);
+        block.push('\n');
+    }
+    if missing_proof {
+        block.push_str(OTA_PROOF_GITIGNORE_ENTRY);
         block.push('\n');
     }
     Some(block)
@@ -55626,6 +55974,231 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
         "UP SUMMARY",
     ));
     append_receipt_next_block(&mut stdout, &result.receipt);
+    stdout
+}
+
+fn write_proof_artifact(path: &Path, content: &str) -> Result<(), String> {
+    fs::write(path, content).map_err(|error| {
+        format!(
+            "failed to write proof artifact `{}`: {error}",
+            compact_path(path, ".")
+        )
+    })
+}
+
+fn proof_runtime_artifact_dir(
+    repo_root: &Path,
+    member: Option<&str>,
+    workflow: Option<&str>,
+) -> PathBuf {
+    let mut dir = repo_root.join(".ota").join("proof");
+    if let Some(member) = member {
+        dir.push(proof_runtime_artifact_segment(member));
+    }
+    dir.push(proof_runtime_artifact_segment(
+        workflow.unwrap_or("default-task-path"),
+    ));
+    dir
+}
+
+fn proof_runtime_artifact_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    if out.is_empty() {
+        String::from("default")
+    } else {
+        out
+    }
+}
+
+fn proof_runtime_status_word(
+    verdict: DoctorVerdict,
+    phase: &str,
+    cleanup_failed: bool,
+) -> &'static str {
+    if cleanup_failed {
+        return "BLOCKED";
+    }
+    match verdict {
+        DoctorVerdict::Ready => "READY",
+        DoctorVerdict::Risky => "NOT READY",
+        DoctorVerdict::NotReady => {
+            if phase == "preconditions" {
+                "NOT READY"
+            } else {
+                "BLOCKED"
+            }
+        }
+        DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => "BLOCKED",
+    }
+}
+
+fn proof_runtime_phase_label(phase: &str) -> &str {
+    match phase {
+        "services" => "service readiness",
+        "run" => "task run",
+        other => other,
+    }
+}
+
+fn proof_runtime_command_for_repo(
+    command: &str,
+    workflow: Option<&str>,
+    extra: Option<&str>,
+    contract_path: &Path,
+) -> String {
+    let mut full = command.to_string();
+    if let Some(workflow) = workflow {
+        full.push_str(" --workflow ");
+        full.push_str(workflow);
+    }
+    if let Some(extra) = extra {
+        full.push(' ');
+        full.push_str(extra);
+    }
+    let repo_root = contract_working_dir(contract_path);
+    let repo_display = compact_repo_path(repo_root);
+    format!("{full} {repo_display}")
+}
+
+fn render_proof_runtime_text(
+    path: &str,
+    workflow: Option<&str>,
+    contract_path: &Path,
+    phase: &str,
+    status: &str,
+    summary: &DoctorSummary,
+    topology_artifact: &str,
+    doctor_artifact: &str,
+    up_log_artifact: &str,
+    cleanup_error: Option<&str>,
+    cleanup_next: Option<&str>,
+) -> String {
+    let mut stdout = format_command_header("PROOF", path);
+    stdout.push_str(&format!(
+        "\n\n{} {}",
+        paint_key("Workflow:"),
+        workflow.unwrap_or("default task path")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Mode:"),
+        paint_mode_value("runtime-proof")
+    ));
+
+    if status == "READY" {
+        stdout.push_str(&format!(
+            "\n\n{} {}",
+            info_bullet(),
+            paint_section_title("Steps")
+        ));
+        for step in [
+            "validate contract".to_string(),
+            "capture execution topology".to_string(),
+            format!(
+                "run {}",
+                paint_backticked_code(&proof_runtime_command_for_repo(
+                    "ota up",
+                    workflow,
+                    Some("--stream"),
+                    contract_path,
+                ))
+            ),
+            format!(
+                "wait for {} to report ready",
+                paint_backticked_code(&proof_runtime_command_for_repo(
+                    "ota doctor",
+                    workflow,
+                    Some("--json"),
+                    contract_path,
+                ))
+            ),
+            "capture proof artifacts".to_string(),
+            "clean up runtime".to_string(),
+        ] {
+            stdout.push_str(&format!("\n  {} {}", next_bullet(), step));
+        }
+        stdout.push_str(&format!("\n\n{}", render_status_line(status)));
+    } else {
+        stdout.push_str(&format!("\n\n{}", render_status_line(status)));
+        stdout.push_str(&format!("\n{} {phase}", paint_key("Phase:")));
+        stdout.push('\n');
+        if let Some(cleanup_error) = cleanup_error {
+            stdout.push_str(&format!(
+                "\n{}  {}\n{} {}\n{} {}",
+                render_severity(FindingSeverity::Error),
+                render_finding_summary_with_count(
+                    FindingSeverity::Error,
+                    "Runtime cleanup failed",
+                    1,
+                ),
+                finding_detail_key(FindingSeverity::Error, "Why:"),
+                cleanup_error,
+                finding_detail_key(FindingSeverity::Error, "Next:"),
+                render_backticked_text(
+                    cleanup_next.unwrap_or(
+                        "run `ota clean`, inspect the remaining runtime state, then rerun proof"
+                    ),
+                    None,
+                )
+            ));
+        } else if let Some(primary) = summary.primary_blocker.as_ref() {
+            stdout.push_str(&format!(
+                "\n{}  {}\n{} {}\n{} {}",
+                render_severity(primary.severity),
+                render_finding_summary_with_count(primary.severity, &primary.summary, 1),
+                finding_detail_key(primary.severity, "Why:"),
+                render_backticked_text(&primary.why, None),
+                finding_detail_key(primary.severity, "Next:"),
+                render_backticked_text(&primary.next, None)
+            ));
+        }
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{} {}",
+        info_bullet(),
+        paint_section_title("Artifacts")
+    ));
+    stdout.push_str(&format!(
+        "\n  {} {} {}",
+        next_bullet(),
+        paint_key("Topology:"),
+        paint_backticked_code(topology_artifact)
+    ));
+    stdout.push_str(&format!(
+        "\n  {} {} {}",
+        next_bullet(),
+        paint_key("Doctor:"),
+        paint_backticked_code(doctor_artifact)
+    ));
+    stdout.push_str(&format!(
+        "\n  {} {} {}",
+        next_bullet(),
+        paint_key("Up log:"),
+        paint_backticked_code(up_log_artifact)
+    ));
+
+    if status == "READY" {
+        stdout.push_str(&format!("\n\n{}", paint_next_key()));
+        stdout.push_str(&format!(
+            "\n  {} inspect {} for the canonical readiness verdict",
+            next_bullet(),
+            paint_backticked_code("doctor.json")
+        ));
+        stdout.push_str(&format!(
+            "\n  {} inspect {} when startup behavior needs review",
+            next_bullet(),
+            paint_backticked_code("up.log")
+        ));
+    }
+
     stdout
 }
 

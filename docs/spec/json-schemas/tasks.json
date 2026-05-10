@@ -118,6 +118,18 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
+              "after_success": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "after_failure": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "after_always": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
               "safe_for_agent": { "type": "boolean" },
               "internal": { "type": "boolean" },
               "variants": {
@@ -226,6 +238,18 @@
                       "items": { "type": "string" }
                     },
                     "requires_services": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "after_success": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "after_failure": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "after_always": {
                       "type": "array",
                       "items": { "type": "string" }
                     },
