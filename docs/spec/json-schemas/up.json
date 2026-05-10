@@ -214,7 +214,7 @@
         "dry_run": { "type": "boolean" },
         "status": { "type": "string" },
         "phase": {
-          "enum": ["preconditions", "services", "setup", "post-up diagnosis"]
+          "enum": ["preconditions", "provisioning", "activation", "services", "setup", "run", "post-up diagnosis"]
         },
         "findings": {
           "type": "array",

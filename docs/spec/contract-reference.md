@@ -78,7 +78,12 @@ extensions:
 runtimes:
   node: "22"
 tools:
-  pnpm: "10"
+  pnpm:
+    version: "10"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.0.0"
 env:
   vars:
     OTA_ENV:
@@ -671,6 +676,10 @@ Detailed form:
 tools:
   pnpm:
     version: "10"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.0.0"
   pwsh:
     version: "7.6.0"
     only_on:
@@ -685,12 +694,21 @@ Rules:
 - `only_on`, when set, scopes the tool to `linux`, `macos`, or `windows`
 - `platforms` may override `version` per OS using `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
+- `acquisition` optionally declares how ota can activate or provision the tool safely when a
+  selected task/workflow requires it
+- `acquisition.provider`: first supported value is `corepack`
+- `acquisition.package`: required package name the provider activates
+- `acquisition.version`: required activation version ota should request from that provider
+- Corepack `package` and `version` values must be shell-safe tokens; use package names like `pnpm`
+  and activation versions like `10.22.0`
 - some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
 - workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
 
 Use `only_on` to scope where a tool is required, and use `platforms` only when values change on a matching OS.
 `required: false` keeps the tool active but downgrades missing/version mismatch findings to warnings.
 Root fields act as the default values, and the matching `platforms.<os>` entry overrides them for that OS.
+`acquisition` is attached to tool truth, while `tasks.<name>.requirements.tools` selects when that
+tool actually applies.
 
 ## `env`
 

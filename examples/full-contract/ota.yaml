@@ -56,6 +56,10 @@ runtimes:
 tools:
   pnpm:
     version: "10"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.0.0"
   uv: "0.6.0"
   pwsh:
     version: "7.6.0"
@@ -111,6 +115,8 @@ tasks:
       pnpm install
       pnpm exec prisma generate
     requirements:
+      tools:
+        pnpm: "10"
       checks:
         - node-installed
     safe_for_agent: true
@@ -126,6 +132,9 @@ tasks:
     description: Start the local development server on the host
     category: dev
     run: pnpm dev --host 127.0.0.1 --port 3000
+    requirements:
+      tools:
+        pnpm: "10"
     depends_on:
       - setup
     runtime:
@@ -217,6 +226,9 @@ tasks:
     description: Run the validation suite
     category: test
     run: pnpm test
+    requirements:
+      tools:
+        pnpm: "10"
     depends_on:
       - setup
     safe_for_agent: true

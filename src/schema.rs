@@ -861,8 +861,22 @@ impl RequirementSurface {
     }
 
     pub fn merge(&mut self, other: &RequirementSurface) {
-        self.runtimes.extend(other.runtimes.clone());
-        self.tools.extend(other.tools.clone());
+        for (name, requirement) in &other.runtimes {
+            let merged = self
+                .runtimes
+                .get(name)
+                .map(|base| base.merged_with_overlay(requirement))
+                .unwrap_or_else(|| requirement.clone());
+            self.runtimes.insert(name.clone(), merged);
+        }
+        for (name, requirement) in &other.tools {
+            let merged = self
+                .tools
+                .get(name)
+                .map(|base| base.merged_with_overlay(requirement))
+                .unwrap_or_else(|| requirement.clone());
+            self.tools.insert(name.clone(), merged);
+        }
     }
 }
 
@@ -889,6 +903,83 @@ impl TaskRequirementsSpec {
 }
 
 impl Contract {
+    pub fn selected_workflow_task_requirement_surface(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Option<RequirementSurface> {
+        self.task_requirement_surface(self.selected_workflow_task_closure_names(workflow_name))
+    }
+
+    pub fn task_requirement_surface(
+        &self,
+        task_names: impl IntoIterator<Item = String>,
+    ) -> Option<RequirementSurface> {
+        let mut surface = RequirementSurface::default();
+        let mut saw_task = false;
+        let mut scoped_runtimes = false;
+        let mut scoped_tools = false;
+
+        for task_name in task_names {
+            let Some(task) = self.tasks.get(task_name.as_str()) else {
+                continue;
+            };
+            saw_task = true;
+            if !task.requirements.runtimes.is_empty() {
+                scoped_runtimes = true;
+            }
+            if !task.requirements.tools.is_empty() {
+                scoped_tools = true;
+            }
+            for (name, requirement) in &task.requirements.runtimes {
+                surface.runtimes.insert(
+                    name.clone(),
+                    self.resolve_scoped_runtime_requirement(name, requirement),
+                );
+            }
+            for (name, requirement) in &task.requirements.tools {
+                surface.tools.insert(
+                    name.clone(),
+                    self.resolve_scoped_tool_requirement(name, requirement),
+                );
+            }
+        }
+
+        if !saw_task {
+            return None;
+        }
+
+        if !scoped_runtimes {
+            surface.runtimes = self.runtimes.clone();
+        }
+        if !scoped_tools {
+            surface.tools = self.tools.clone();
+        }
+
+        Some(surface)
+    }
+
+    pub(crate) fn resolve_scoped_runtime_requirement(
+        &self,
+        name: &str,
+        requirement: &RuntimeRequirement,
+    ) -> RuntimeRequirement {
+        self.runtimes
+            .get(name)
+            .map(|base| base.merged_with_overlay(requirement))
+            .unwrap_or_else(|| requirement.clone())
+    }
+
+    pub(crate) fn resolve_scoped_tool_requirement(
+        &self,
+        name: &str,
+        requirement: &ToolRequirement,
+    ) -> ToolRequirement {
+        self.tools
+            .get(name)
+            .map(|base| base.merged_with_overlay(requirement))
+            .unwrap_or_else(|| requirement.clone())
+    }
+
     pub fn all_requirement_surface(&self) -> RequirementSurface {
         let mut surface = RequirementSurface {
             runtimes: self.runtimes.clone(),
@@ -1186,6 +1277,35 @@ impl RuntimeRequirement {
                 .or(detail.distribution.as_deref()),
         }
     }
+
+    pub fn merged_with_overlay(&self, overlay: &RuntimeRequirement) -> RuntimeRequirement {
+        match (self, overlay) {
+            (Self::Detailed(base), Self::Simple(version)) => Self::Detailed(RuntimeDetail {
+                version: version.clone(),
+                required: base.required,
+                only_on: base.only_on.clone(),
+                provider: base.provider.clone(),
+                distribution: base.distribution.clone(),
+                platforms: base.platforms.clone(),
+            }),
+            (Self::Detailed(base), Self::Detailed(overlay)) => {
+                let mut platforms = base.platforms.clone();
+                platforms.extend(overlay.platforms.clone());
+                Self::Detailed(RuntimeDetail {
+                    version: overlay.version.clone(),
+                    required: overlay.required,
+                    only_on: overlay.only_on.clone().or_else(|| base.only_on.clone()),
+                    provider: overlay.provider.clone().or_else(|| base.provider.clone()),
+                    distribution: overlay
+                        .distribution
+                        .clone()
+                        .or_else(|| base.distribution.clone()),
+                    platforms,
+                })
+            }
+            _ => overlay.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1257,6 +1377,40 @@ impl ToolRequirement {
             Self::Detailed(detail) => self.active_for_os(os) && detail.required,
         }
     }
+
+    pub fn acquisition(&self) -> Option<&ToolAcquisitionSpec> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Detailed(detail) => detail.acquisition.as_ref(),
+        }
+    }
+
+    pub fn merged_with_overlay(&self, overlay: &ToolRequirement) -> ToolRequirement {
+        match (self, overlay) {
+            (Self::Detailed(base), Self::Simple(version)) => Self::Detailed(ToolDetail {
+                version: version.clone(),
+                required: base.required,
+                only_on: base.only_on.clone(),
+                platforms: base.platforms.clone(),
+                acquisition: base.acquisition.clone(),
+            }),
+            (Self::Detailed(base), Self::Detailed(overlay)) => {
+                let mut platforms = base.platforms.clone();
+                platforms.extend(overlay.platforms.clone());
+                Self::Detailed(ToolDetail {
+                    version: overlay.version.clone(),
+                    required: overlay.required,
+                    only_on: overlay.only_on.clone().or_else(|| base.only_on.clone()),
+                    platforms,
+                    acquisition: overlay
+                        .acquisition
+                        .clone()
+                        .or_else(|| base.acquisition.clone()),
+                })
+            }
+            _ => overlay.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1269,6 +1423,8 @@ pub struct ToolDetail {
     pub only_on: Option<Vec<String>>,
     #[serde(default)]
     pub platforms: BTreeMap<String, ToolPlatformDetail>,
+    #[serde(default)]
+    pub acquisition: Option<ToolAcquisitionSpec>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -1276,6 +1432,20 @@ pub struct ToolDetail {
 pub struct ToolPlatformDetail {
     #[serde(default)]
     pub version: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolAcquisitionSpec {
+    pub provider: ToolAcquisitionProvider,
+    pub package: String,
+    pub version: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolAcquisitionProvider {
+    Corepack,
 }
 
 fn default_required() -> bool {

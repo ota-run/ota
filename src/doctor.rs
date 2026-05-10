@@ -66,7 +66,8 @@ use crate::runner::{
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     ReadinessProbeSpec, RequirementSurface, RuntimeRequirement, ServiceProducerSpec,
-    ServiceReadinessSpec, ServiceSpec, ToolRequirement,
+    ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider, ToolAcquisitionSpec,
+    ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, collect_contract_advisories};
@@ -229,10 +230,9 @@ fn scoped_precondition_selection(
     }
 
     let mut selection = ScopedPreconditionSelection {
-        requirement_surface: RequirementSurface {
-            runtimes: contract.runtimes.clone(),
-            tools: contract.tools.clone(),
-        },
+        requirement_surface: contract
+            .selected_workflow_task_requirement_surface(workflow_name)
+            .unwrap_or_default(),
         ..ScopedPreconditionSelection::default()
     };
 
@@ -255,14 +255,10 @@ fn scoped_precondition_selection(
                 .as_ref()
                 .and_then(|execution| execution.contexts.get(context_name))
         {
-            selection
-                .requirement_surface
-                .runtimes
-                .extend(context.requirements.runtimes.clone());
-            selection
-                .requirement_surface
-                .tools
-                .extend(context.requirements.tools.clone());
+            selection.requirement_surface.merge(&RequirementSurface {
+                runtimes: context.requirements.runtimes.clone(),
+                tools: context.requirements.tools.clone(),
+            });
         }
     }
 
@@ -293,29 +289,106 @@ fn selected_remote_task_requirement_selection(
         return None;
     }
 
-    let mut selection = RemoteTaskRequirementSelection::default();
+    #[derive(Debug, Default, Clone)]
+    struct Entry {
+        surface: RequirementSurface,
+        scoped_runtimes: bool,
+        scoped_tools: bool,
+    }
+
+    let mut by_context = BTreeMap::<String, Entry>::new();
+    let mut fallback = Entry::default();
+    let mut fallback_used = false;
+    let mut saw_task = false;
     for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        let task_surface = task.scoped_requirement_surface();
-        if let Some(context_name) =
+        saw_task = true;
+        let target = if let Some(context_name) =
             task.context_for_backend(contract.execution.as_ref(), Backend::Remote)
         {
-            selection
-                .by_context
-                .entry(context_name.to_string())
-                .or_default()
-                .merge(&task_surface);
+            by_context.entry(context_name.to_string()).or_default()
         } else {
-            selection
-                .fallback
-                .get_or_insert_with(RequirementSurface::default)
-                .merge(&task_surface);
+            fallback_used = true;
+            &mut fallback
+        };
+        if !task.requirements.runtimes.is_empty() {
+            target.scoped_runtimes = true;
+        }
+        if !task.requirements.tools.is_empty() {
+            target.scoped_tools = true;
+        }
+        for (name, requirement) in &task.requirements.runtimes {
+            target.surface.runtimes.insert(
+                name.clone(),
+                contract.resolve_scoped_runtime_requirement(name, requirement),
+            );
+        }
+        for (name, requirement) in &task.requirements.tools {
+            target.surface.tools.insert(
+                name.clone(),
+                contract.resolve_scoped_tool_requirement(name, requirement),
+            );
         }
     }
 
-    Some(selection)
+    if !saw_task {
+        return None;
+    }
+
+    let finalize_entry = |entry: Entry| -> RequirementSurface {
+        let mut surface = entry.surface;
+        if !entry.scoped_runtimes {
+            surface.runtimes = contract.runtimes.clone();
+        }
+        if !entry.scoped_tools {
+            surface.tools = contract.tools.clone();
+        }
+        surface
+    };
+
+    let by_context = by_context
+        .into_iter()
+        .map(|(name, entry)| (name, finalize_entry(entry)))
+        .collect();
+    let fallback = fallback_used.then(|| finalize_entry(fallback));
+
+    Some(RemoteTaskRequirementSelection {
+        by_context,
+        fallback,
+    })
+}
+
+fn corepack_activation_command(acquisition: &ToolAcquisitionSpec) -> String {
+    format!(
+        "corepack enable && corepack prepare {}@{} --activate",
+        acquisition.package, acquisition.version
+    )
+}
+
+fn exact_tooling_remediation(
+    target_kind: ProvisioningTargetKind,
+    name: &str,
+    requirement: &str,
+    provider_hint: Option<&str>,
+    acquisition: Option<&ToolAcquisitionSpec>,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
+) -> Option<String> {
+    if let Some(acquisition) = acquisition
+        && matches!(acquisition.provider, ToolAcquisitionProvider::Corepack)
+    {
+        return Some(corepack_activation_command(acquisition));
+    }
+    exact_tooling_remediation_fallback(
+        target_kind,
+        name,
+        requirement,
+        provider_hint,
+        contract_path,
+        provisioning_actions,
+    )
 }
 
 fn remote_os_probe_command() -> &'static str {
@@ -473,19 +546,17 @@ fn remote_doctor_probe_contexts(
                 continue;
             }
         };
-        let mut requirement_surface = RequirementSurface {
-            runtimes: contract.runtimes.clone(),
-            tools: contract.tools.clone(),
-        };
-        if let Some(selected_task_surface) = selected_task_surface {
-            requirement_surface.merge(selected_task_surface);
-        }
-        requirement_surface
-            .runtimes
-            .extend(context.requirements.runtimes.clone());
-        requirement_surface
-            .tools
-            .extend(context.requirements.tools.clone());
+        let mut requirement_surface =
+            selected_task_surface
+                .cloned()
+                .unwrap_or_else(|| RequirementSurface {
+                    runtimes: contract.runtimes.clone(),
+                    tools: contract.tools.clone(),
+                });
+        requirement_surface.merge(&RequirementSurface {
+            runtimes: context.requirements.runtimes.clone(),
+            tools: context.requirements.tools.clone(),
+        });
         let provisioning_actions = loaded_policy
             .map(|loaded| {
                 loaded
@@ -561,17 +632,14 @@ fn remote_doctor_probe_contexts(
             return probes;
         }
     };
-    let requirement_surface = RequirementSurface {
-        runtimes: contract.runtimes.clone(),
-        tools: contract.tools.clone(),
-    };
-    let mut requirement_surface = requirement_surface;
-    if let Some(surface) = selected_task_requirements
+    let requirement_surface = selected_task_requirements
         .as_ref()
         .and_then(|selection| selection.fallback.as_ref())
-    {
-        requirement_surface.merge(surface);
-    }
+        .cloned()
+        .unwrap_or_else(|| RequirementSurface {
+            runtimes: contract.runtimes.clone(),
+            tools: contract.tools.clone(),
+        });
     let provisioning_actions = loaded_policy
         .map(|loaded| {
             loaded
@@ -1185,6 +1253,7 @@ impl Finding {
             }
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
+            "Missing tool activation provider: corepack" => "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
             s if s.starts_with("Tool probe failed: ") => "OTA_TOOL_PROBE_FAILED",
             s if s.starts_with("Unparseable version for tool: ") => "OTA_TOOL_VERSION_UNPARSEABLE",
             s if s.starts_with("Container apt cannot install pinned package version: ") => {
@@ -1293,6 +1362,7 @@ impl Finding {
             | "OTA_RUNTIME_VERSION_UNPARSEABLE"
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING"
+            | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
             | "OTA_TOOL_PROBE_FAILED"
             | "OTA_TOOL_VERSION_UNPARSEABLE" => "environment",
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
@@ -2248,7 +2318,7 @@ fn diagnose_contract_with_scope(
             );
             false
         } else {
-            diagnose_runtimes(
+            let runtime_probe_started = diagnose_runtimes(
                 &requirement_surface.runtimes,
                 policy_target_os_for_mode(mode),
                 contract_path,
@@ -2260,7 +2330,8 @@ fn diagnose_contract_with_scope(
                 None,
                 &provisioning_actions,
                 &mut findings,
-            ) || diagnose_tools(
+            );
+            let tool_probe_started = diagnose_tools(
                 &requirement_surface.tools,
                 policy_target_os_for_mode(mode),
                 contract_path,
@@ -2272,7 +2343,8 @@ fn diagnose_contract_with_scope(
                 None,
                 &provisioning_actions,
                 &mut findings,
-            )
+            );
+            runtime_probe_started || tool_probe_started
         };
         if mode == DoctorMode::Native && contract_has_remote_execution_context(contract) {
             findings.push(remote_mode_scope_note_finding());
@@ -3843,6 +3915,7 @@ fn diagnose_runtimes(
             requirement.version_for_os(target_os),
             required,
             runtime_provider_hint(requirement, target_os),
+            None,
             mode,
             selected_lifecycle,
             container_probe,
@@ -3889,6 +3962,7 @@ fn diagnose_tools(
             requirement.version_for_os(target_os),
             required,
             None,
+            requirement.acquisition(),
             mode,
             selected_lifecycle,
             container_probe,
@@ -4424,7 +4498,7 @@ enum ToolVersionsManager {
     Mise,
 }
 
-fn exact_tooling_remediation(
+fn exact_tooling_remediation_fallback(
     target_kind: ProvisioningTargetKind,
     name: &str,
     requirement: &str,
@@ -4703,6 +4777,7 @@ fn diagnose_command_version(
     requirement: &str,
     required: bool,
     provider_hint: Option<&str>,
+    tool_acquisition: Option<&ToolAcquisitionSpec>,
     mode: DoctorMode,
     selected_lifecycle: Option<Lifecycle>,
     container_probe: Option<&ContainerProbeContext>,
@@ -4725,6 +4800,7 @@ fn diagnose_command_version(
             display_name,
             requirement,
             provider_hint,
+            tool_acquisition,
             contract_path,
             provisioning_actions,
         )
@@ -4763,6 +4839,11 @@ fn diagnose_command_version(
     let finding_display_name = remote_context_name
         .map(|context_name| format!("{display_name} (context {context_name})"))
         .unwrap_or_else(|| display_name.to_string());
+    let acquisition_provider_missing = matches!(mode, DoctorMode::Native)
+        && tool_acquisition.is_some_and(|acquisition| {
+            matches!(acquisition.provider, ToolAcquisitionProvider::Corepack)
+                && !command_available("corepack")
+        });
     let actual = if let Some(probe) = version_probe.as_ref() {
         match &probe.outcome {
             CommandVersionProbeOutcome::Version(actual) => Some(actual.clone()),
@@ -4773,6 +4854,24 @@ fn diagnose_command_version(
     };
 
     let Some(actual) = actual else {
+        if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
+            findings.push(Finding {
+                severity: if required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: String::from("Missing tool activation provider: corepack"),
+                why: format!(
+                    "{display_name} is required by the selected workflow/task prerequisites, but the contract acquires it through Corepack and `corepack` is not available on PATH"
+                ),
+                next: format!(
+                    "install a Node distribution that provides `corepack`, then run `{}` and rerun `{rerun_doctor}`",
+                    corepack_activation_command(acquisition)
+                ),
+            });
+            return probe_started;
+        }
         if let Some(probe) = version_probe.as_ref() {
             match &probe.outcome {
                 CommandVersionProbeOutcome::Missing => {}
@@ -5147,6 +5246,25 @@ fn diagnose_command_version(
             &target,
             &rerun_doctor,
         ));
+        return probe_started;
+    }
+
+    if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
+        findings.push(Finding {
+            severity: if required {
+                FindingSeverity::Error
+            } else {
+                FindingSeverity::Warn
+            },
+            summary: String::from("Missing tool activation provider: corepack"),
+            why: format!(
+                "{display_name} is required by the selected workflow/task prerequisites, but the contract upgrades it through Corepack and `corepack` is not available on PATH"
+            ),
+            next: format!(
+                "install a Node distribution that provides `corepack`, then run `{}` and rerun `{rerun_doctor}`",
+                corepack_activation_command(acquisition)
+            ),
+        });
         return probe_started;
     }
 
@@ -6599,7 +6717,7 @@ fn version_command_at_path(path: &Path, name: &str) -> Command {
     command
 }
 
-fn resolve_command_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_command_path(name: &str) -> Option<PathBuf> {
     if looks_like_command_path(name) {
         return command_path_candidates(Path::new(name))
             .into_iter()
@@ -8047,6 +8165,13 @@ tasks:
 version: 1
 project:
   name: ota
+tools:
+  pnpm:
+    version: "10"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.22.0"
 execution:
   contexts:
     contributor-remote:
@@ -8104,6 +8229,190 @@ workflows:
         assert!(instant_surface.tools.contains_key("npx"));
         assert!(!instant_surface.tools.contains_key("pnpm"));
         assert!(selection.fallback.is_none());
+    }
+
+    #[test]
+    fn doctor_surfaces_corepack_activation_for_selected_workflow_tools() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "node.cmd" } else { "node" },
+            if cfg!(windows) {
+                "@echo off\r\necho v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v24.0.0'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) {
+                "corepack.cmd"
+            } else {
+                "corepack"
+            },
+            if cfg!(windows) {
+                "@echo off\r\necho corepack 0.31.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'corepack 0.31.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pnpmx:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      runtimes:
+        node: ">=24"
+      tools:
+        pnpmx: ">=10.22.0"
+  docker:run:
+    launch:
+      kind: container
+      image: ghcr.io/example/app:latest
+    requirements:
+      tools:
+        docker: "*"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+  docker:
+    run:
+      task: docker:run
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("contributor"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report.findings.iter().any(|finding| {
+                finding.summary.contains("pnpmx")
+                    && finding
+                        .next
+                        .contains("corepack enable && corepack prepare pnpm@10.22.0 --activate")
+            }),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.summary.contains("docker")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn doctor_blocks_on_missing_corepack_for_selected_workflow_tools() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "node.cmd" } else { "node" },
+            if cfg!(windows) {
+                "@echo off\r\necho v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v24.0.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pnpmx:
+    version: ">=10.22.0"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      tools:
+        pnpmx: ">=10.22.0"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("contributor"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Missing tool activation provider: corepack")
+            .expect("corepack blocker should be surfaced");
+        assert!(finding.why.contains("pnpmx"));
+        assert!(
+            finding
+                .next
+                .contains("corepack prepare pnpm@10.22.0 --activate")
+        );
     }
 
     #[test]

@@ -1136,6 +1136,9 @@ ota doctor --member api --member web --json [PATH]
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, doctor
   scopes runtime, tool, env, and precondition-check diagnosis to that setup/run dependency path
   instead of treating unrelated task-specific prerequisites as repo-global truth
+- when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
+  activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
+  `pnpm` is the first shipped provider path
 - probe-backed checks and workflow readiness probes execute directly inside ota; they do not depend
   on repo-local helper commands such as `curl` or `node`
 - checks required execution backends for the selected `--mode` and resolved contexts
@@ -1514,6 +1517,9 @@ Current behavior:
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`
   evaluates and provisions that merged prerequisite surface before setup instead of unrelated
   task-local quickstart or packaged-runtime requirements elsewhere in the repo
+- when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
+  activation lane before setup when it is safe and selected; Corepack-managed `pnpm` is the first
+  shipped path
 - when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
 - when blocking preconditions fail and the selected workflow declares a setup task, ota runs that setup phase early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
@@ -1536,7 +1542,8 @@ Current behavior:
 - reruns readiness diagnosis
 - still runs service start commands, service healthchecks, and diagnosis on the host today
 - returns `READY` or `NOT READY`
-- reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-up diagnosis`
+- reports the phase where execution stopped: `preconditions`, `provisioning`, `activation`,
+  `services`, `setup`, `run`, or `post-up diagnosis`
 - reports `provisioning` when early setup ran but the repo is still not ready
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
