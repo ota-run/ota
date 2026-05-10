@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -39,18 +40,130 @@ pub enum Confidence {
     High,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InferenceFieldType {
+    Project,
+    Runtime,
+    Tool,
+    Env,
+    Service,
+    Check,
+    Task,
+    Agent,
+    Field,
+}
+
+impl InferenceFieldType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::Runtime => "runtime",
+            Self::Tool => "tool",
+            Self::Env => "env",
+            Self::Service => "service",
+            Self::Check => "check",
+            Self::Task => "task",
+            Self::Agent => "agent",
+            Self::Field => "field",
+        }
+    }
+}
+
+impl fmt::Display for InferenceFieldType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InferenceSignal {
+    Config,
+    Script,
+    Lockfile,
+    File,
+    Template,
+    Convention,
+}
+
+impl InferenceSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Config => "config",
+            Self::Script => "script",
+            Self::Lockfile => "lockfile",
+            Self::File => "file",
+            Self::Template => "template",
+            Self::Convention => "convention",
+        }
+    }
+}
+
+impl fmt::Display for InferenceSignal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InferenceAgentSafe {
+    Yes,
+    No,
+    Unknown,
+}
+
+impl InferenceAgentSafe {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Yes => "yes",
+            Self::No => "no",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for InferenceAgentSafe {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceAgentSignal {
+    VerificationCandidate,
+    BootstrapCandidate,
+}
+
+impl InferenceAgentSignal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::VerificationCandidate => "verification_candidate",
+            Self::BootstrapCandidate => "bootstrap_candidate",
+        }
+    }
+}
+
+impl fmt::Display for InferenceAgentSignal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Inference {
     pub field: String,
     #[serde(rename = "type")]
-    pub field_type: &'static str,
+    pub field_type: InferenceFieldType,
     pub value: String,
     pub source: String,
-    pub signal: &'static str,
+    pub signal: InferenceSignal,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_safe: Option<&'static str>,
+    pub agent_safe: Option<InferenceAgentSafe>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_signal: Option<&'static str>,
+    pub agent_signal: Option<InferenceAgentSignal>,
     pub confidence: Confidence,
 }
 
@@ -3998,27 +4111,27 @@ impl DetectBuilder {
     }
 }
 
-fn inference_type_for_field(field: &str) -> &'static str {
+fn inference_type_for_field(field: &str) -> InferenceFieldType {
     match field.split('.').next().unwrap_or_default() {
-        "project" => "project",
-        "runtimes" => "runtime",
-        "tools" => "tool",
-        "env" => "env",
-        "services" => "service",
-        "checks" => "check",
-        "tasks" => "task",
-        "agent" => "agent",
-        _ => "field",
+        "project" => InferenceFieldType::Project,
+        "runtimes" => InferenceFieldType::Runtime,
+        "tools" => InferenceFieldType::Tool,
+        "env" => InferenceFieldType::Env,
+        "services" => InferenceFieldType::Service,
+        "checks" => InferenceFieldType::Check,
+        "tasks" => InferenceFieldType::Task,
+        "agent" => InferenceFieldType::Agent,
+        _ => InferenceFieldType::Field,
     }
 }
 
-fn inference_signal_for_source(source: &str) -> &'static str {
+fn inference_signal_for_source(source: &str) -> InferenceSignal {
     if source.ends_with("-script") || source.ends_with(".sh") || source.ends_with(".ps1") {
-        "script"
+        InferenceSignal::Script
     } else if source == "directory-name" {
-        "convention"
+        InferenceSignal::Convention
     } else if source.starts_with("ota.init#") {
-        "template"
+        InferenceSignal::Template
     } else if source.ends_with(".lock")
         || source.ends_with(".lockb")
         || matches!(
@@ -4026,11 +4139,11 @@ fn inference_signal_for_source(source: &str) -> &'static str {
             "pnpm-lock.yaml" | "yarn.lock" | "package-lock.json" | "npm-shrinkwrap.json"
         )
     {
-        "lockfile"
+        InferenceSignal::Lockfile
     } else if source.contains('#') {
-        "config"
+        InferenceSignal::Config
     } else {
-        "file"
+        InferenceSignal::File
     }
 }
 
@@ -4042,27 +4155,31 @@ fn inference_task_name(field: &str) -> Option<&str> {
     }
 }
 
-fn inference_agent_safe_for_field(field: &str, value: &str) -> Option<&'static str> {
+fn inference_agent_safe_for_field(field: &str, value: &str) -> Option<InferenceAgentSafe> {
     let task_name = inference_task_name(field)?;
     if field.ends_with(".safe_for_agent") {
-        return Some(if value == "true" { "yes" } else { "no" });
+        return Some(if value == "true" {
+            InferenceAgentSafe::Yes
+        } else {
+            InferenceAgentSafe::No
+        });
     }
     if is_verifier_task_name(task_name) {
-        return Some("yes");
+        return Some(InferenceAgentSafe::Yes);
     }
-    Some("unknown")
+    Some(InferenceAgentSafe::Unknown)
 }
 
-fn inference_agent_signal_for_field(field: &str, value: &str) -> Option<&'static str> {
+fn inference_agent_signal_for_field(field: &str, value: &str) -> Option<InferenceAgentSignal> {
     let task_name = inference_task_name(field)?;
     if field.ends_with(".safe_for_agent") && value == "true" {
-        return Some("verification_candidate");
+        return Some(InferenceAgentSignal::VerificationCandidate);
     }
     if is_verifier_task_name(task_name) {
-        return Some("verification_candidate");
+        return Some(InferenceAgentSignal::VerificationCandidate);
     }
     if task_name.eq_ignore_ascii_case("setup") {
-        return Some("bootstrap_candidate");
+        return Some(InferenceAgentSignal::BootstrapCandidate);
     }
     None
 }

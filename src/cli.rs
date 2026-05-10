@@ -23914,19 +23914,47 @@ tasks:
             "{script}"
         );
         assert!(
+            script.contains("$ErrorActionPreference = \"Stop\""),
+            "{script}"
+        );
+        assert!(
             script.contains("[System.IO.Path]::GetTempPath()"),
             "{script}"
         );
         assert!(
-            script.contains("\"ota-bootstrap-\" + [Guid]::NewGuid().ToString(\"N\") + \".ps1\""),
+            script.contains("\"ota-install-\" + [Guid]::NewGuid().ToString(\"N\")"),
             "{script}"
         );
+        assert!(
+            script.contains("Join-Path $tempBootstrapDir \"bootstrap.ps1\""),
+            "{script}"
+        );
+        assert!(
+            script.contains(
+                "Invoke-WebRequest -Uri $bootstrapUrl -OutFile $bootstrapPath -ErrorAction Stop"
+            ),
+            "{script}"
+        );
+        assert!(
+            script.contains("$FromSource.IsPresent -and (Test-OtaCheckoutScriptRoot)"),
+            "{script}"
+        );
+        assert!(script.contains("Test-OtaCheckoutScriptRoot"), "{script}");
+        assert!(
+            script.contains("Split-Path -Leaf $PSScriptRoot"),
+            "{script}"
+        );
+        assert!(
+            script.contains("Select-String -Path $manifest -Pattern '^name = \"ota\"$' -Quiet"),
+            "{script}"
+        );
+        assert!(script.contains("if ($LASTEXITCODE -ne 0)"), "{script}");
         assert!(
             !script.contains("Join-Path (Get-Location) \"bootstrap.ps1\""),
             "{script}"
         );
         assert!(
-            script.contains("Remove-Item -LiteralPath $bootstrapPath -Force"),
+            script.contains("Remove-Item -LiteralPath $tempBootstrapDir -Recurse -Force"),
             "{script}"
         );
     }

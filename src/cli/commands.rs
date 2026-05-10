@@ -30,6 +30,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -14065,20 +14066,26 @@ fn render_policy_text(
 fn windows_uninstall_script(path: &Path, process_id: u32) -> String {
     let target = path.display().to_string().replace('\'', "''");
     format!(
-        "$pid = {}; $target = '{}'; while (Get-Process -Id $pid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; $attempt = 0; while ((Test-Path -LiteralPath $target) -and $attempt -lt 300) {{ try {{ Remove-Item -LiteralPath $target -Force -ErrorAction Stop }} catch {{ Start-Sleep -Milliseconds 200; $attempt++ }} }}",
+        "$parentPid = {}; $target = '{}'; $waited = 0; while ($parentPid -gt 0 -and $waited -lt 1800 -and (Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) {{ Start-Sleep -Milliseconds 200; $waited++ }}; $attempt = 0; while ((Test-Path -LiteralPath $target) -and $attempt -lt 1800) {{ try {{ Remove-Item -LiteralPath $target -Force -ErrorAction Stop; break }} catch {{ Start-Sleep -Milliseconds 200; $attempt++ }} }}; if (-not (Test-Path -LiteralPath $target)) {{ $bin = Split-Path -Parent $target; $root = Split-Path -Parent $bin; try {{ Remove-Item -LiteralPath $bin -Force -ErrorAction SilentlyContinue }} catch {{}}; try {{ if ((Test-Path -LiteralPath $root) -and -not (Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {{ Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue }} }} catch {{}}; try {{ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue }} catch {{}}; exit 0 }}; try {{ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue }} catch {{}}; exit 1",
         process_id, target
     )
 }
 
-fn render_windows_uninstall_pending(path: &Path) -> String {
+fn render_windows_uninstall_scheduled(path: &Path) -> String {
     format!(
-        "pending ota removal from {} after the current process exits; removal is not yet verified",
+        "scheduled ota removal from {}; Windows will delete the running executable after this command exits. Open a new terminal to verify `ota` is gone.",
         path.display()
     )
 }
 
 fn spawn_windows_uninstall(path: &Path) -> Result<(), String> {
     let script = windows_uninstall_script(path, std::process::id());
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let helper = env::temp_dir().join(format!("ota-uninstall-{}-{nonce}.ps1", std::process::id()));
+    fs::write(&helper, script).map_err(|error| error.to_string())?;
 
     let launch = |program: &str| {
         let mut command = Command::new(program);
@@ -14086,11 +14093,12 @@ fn spawn_windows_uninstall(path: &Path) -> Result<(), String> {
             .args([
                 "-NoLogo",
                 "-NoProfile",
+                "-NonInteractive",
                 "-ExecutionPolicy",
                 "Bypass",
-                "-Command",
-                &script,
             ])
+            .arg("-File")
+            .arg(&helper)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -14101,9 +14109,15 @@ fn spawn_windows_uninstall(path: &Path) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => match launch("powershell") {
             Ok(_) => Ok(()),
-            Err(error) => Err(error.to_string()),
+            Err(error) => {
+                let _ = fs::remove_file(&helper);
+                Err(error.to_string())
+            }
         },
-        Err(error) => Err(error.to_string()),
+        Err(error) => {
+            let _ = fs::remove_file(&helper);
+            Err(error.to_string())
+        }
     }
 }
 
@@ -14679,7 +14693,7 @@ pub fn uninstall(debug: bool) -> CommandOutput {
 
     let output = if cfg!(windows) {
         match spawn_windows_uninstall(&binary) {
-            Ok(()) => CommandOutput::success(render_windows_uninstall_pending(&binary)),
+            Ok(()) => CommandOutput::success(render_windows_uninstall_scheduled(&binary)),
             Err(error) => CommandOutput::failure(format!(
                 "failed to schedule ota removal from {}: {error}",
                 binary.display()
@@ -36280,7 +36294,7 @@ mod tests {
         render_detect_comparison_section, render_env_text, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_tasks_text,
         render_tasks_use_text, render_up_result, render_up_section_from_parts,
-        render_validate_success_output, render_windows_uninstall_pending, run_execution_receipt,
+        render_validate_success_output, render_windows_uninstall_scheduled, run_execution_receipt,
         run_execution_receipt_with_shared, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
         windows_uninstall_script, workspace_refresh_command, write_detected_merge,
     };
@@ -37311,13 +37325,13 @@ tasks:
     }
 
     #[test]
-    fn windows_uninstall_pending_message_is_explicitly_unverified() {
+    fn windows_uninstall_scheduled_message_explains_windows_self_removal() {
         let path = Path::new(r"C:\Users\someone\AppData\Local\ota\bin\ota.exe");
-        let message = render_windows_uninstall_pending(path);
+        let message = render_windows_uninstall_scheduled(path);
 
-        assert!(message.contains("pending ota removal from"));
-        assert!(message.contains("after the current process exits"));
-        assert!(message.contains("not yet verified"));
+        assert!(message.contains("scheduled ota removal from"));
+        assert!(message.contains("Windows will delete the running executable"));
+        assert!(message.contains("Open a new terminal"));
     }
 
     #[test]
@@ -37327,11 +37341,12 @@ tasks:
             4242,
         );
 
-        assert!(script.contains("$pid = 4242"));
-        assert!(script.contains("Get-Process -Id $pid -ErrorAction SilentlyContinue"));
+        assert!(script.contains("$parentPid = 4242"));
+        assert!(script.contains("Get-Process -Id $parentPid -ErrorAction SilentlyContinue"));
         assert!(script.contains("$attempt = 0"));
-        assert!(script.contains("$attempt -lt 300"));
+        assert!(script.contains("$attempt -lt 1800"));
         assert!(script.contains("Remove-Item -LiteralPath $target -Force -ErrorAction Stop"));
+        assert!(script.contains("Remove-Item -LiteralPath $MyInvocation.MyCommand.Path"));
     }
 
     #[test]

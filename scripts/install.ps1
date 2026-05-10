@@ -28,23 +28,46 @@ param(
     [switch]$FromRelease
 )
 
+$ErrorActionPreference = "Stop"
+
 $bootstrapUrl = if ($env:OTA_BOOTSTRAP_URL) { $env:OTA_BOOTSTRAP_URL } else { "https://dist.ota.run/bootstrap.ps1" }
 $bootstrapPath = $null
 $localBootstrapPath = $null
 $downloadBootstrap = $false
+$tempBootstrapDir = $null
+
+function Test-OtaCheckoutScriptRoot {
+    if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        return $false
+    }
+
+    if ((Split-Path -Leaf $PSScriptRoot) -ne "scripts") {
+        return $false
+    }
+
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    $manifest = Join-Path $repoRoot "Cargo.toml"
+    if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+        return $false
+    }
+
+    return [bool](Select-String -Path $manifest -Pattern '^name = "ota"$' -Quiet)
+}
 
 if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
     $localBootstrapPath = Join-Path $PSScriptRoot "bootstrap.ps1"
 }
 
-if ($localBootstrapPath -and (Test-Path -LiteralPath $localBootstrapPath -PathType Leaf)) {
+if ($FromSource.IsPresent -and (Test-OtaCheckoutScriptRoot) -and $localBootstrapPath -and (Test-Path -LiteralPath $localBootstrapPath -PathType Leaf)) {
   $bootstrapPath = $localBootstrapPath
   Write-Output "Info: using local bootstrap from ${bootstrapPath}."
 } else {
   $downloadBootstrap = $true
-  $bootstrapPath = Join-Path ([System.IO.Path]::GetTempPath()) ("ota-bootstrap-" + [Guid]::NewGuid().ToString("N") + ".ps1")
+  $tempBootstrapDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ota-install-" + [Guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Force -Path $tempBootstrapDir | Out-Null
+  $bootstrapPath = Join-Path $tempBootstrapDir "bootstrap.ps1"
   Write-Output "Info: downloading bootstrap from ${bootstrapUrl}."
-  irm $bootstrapUrl -OutFile $bootstrapPath
+  Invoke-WebRequest -Uri $bootstrapUrl -OutFile $bootstrapPath -ErrorAction Stop | Out-Null
 }
 
 $bootstrapArgs = @()
@@ -62,10 +85,14 @@ elseif ($FromRelease.IsPresent)
 }
 
 try {
-    powershell -ExecutionPolicy Bypass -File $bootstrapPath @bootstrapArgs
+    $powershellExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { "pwsh" } else { "powershell" }
+    & $powershellExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $bootstrapPath @bootstrapArgs
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
 }
 finally {
-    if ($downloadBootstrap -and (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) {
-        Remove-Item -LiteralPath $bootstrapPath -Force
+    if ($downloadBootstrap -and $tempBootstrapDir -and (Test-Path -LiteralPath $tempBootstrapDir)) {
+        Remove-Item -LiteralPath $tempBootstrapDir -Recurse -Force
     }
 }
