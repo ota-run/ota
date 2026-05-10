@@ -888,7 +888,7 @@ impl AptProvisioningBackend {
                 ProvisioningExecutionTarget::Container { .. } => (
                     String::from("sh"),
                     vec![
-                        String::from("-lc"),
+                        String::from("-c"),
                         format!(
                             "apt-get {} update >/dev/null && apt-get {} install -y {install_target}",
                             Self::apt_options(),
@@ -924,7 +924,7 @@ impl AptProvisioningBackend {
             | ProvisioningExecutionTarget::Container { .. }
             | ProvisioningExecutionTarget::Remote { .. } => (
                 String::from("sh"),
-                vec![String::from("-lc"), shell_script],
+                vec![String::from("-c"), shell_script],
                 format!("apt-get install -y {install_target} using source_config.sources_list"),
             ),
         }
@@ -942,7 +942,7 @@ impl AptProvisioningBackend {
             );
             return (
                 String::from("sh"),
-                vec![String::from("-lc"), shell_script],
+                vec![String::from("-c"), shell_script],
                 format!("apt-get install -s -y {install_target}"),
             );
         }
@@ -955,7 +955,7 @@ impl AptProvisioningBackend {
         );
         (
             String::from("sh"),
-            vec![String::from("-lc"), shell_script],
+            vec![String::from("-c"), shell_script],
             format!("apt-get install -s -y {install_target} using source_config.sources_list"),
         )
     }

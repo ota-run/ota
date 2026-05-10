@@ -7894,7 +7894,14 @@ target="$1"
 shift
 [ -n "$target" ] || exit 1
 [ "$#" -ge 1 ] || exit 1
-exec /bin/sh -lc "$*"
+cmd="$*"
+case "$cmd" in
+  "sh -lc "*)
+    eval "remote_script=${cmd#sh -lc }"
+    exec /bin/sh -c "$remote_script"
+    ;;
+esac
+exec /bin/sh -c "$cmd"
 "#,
         );
 
@@ -8055,7 +8062,14 @@ target="$1"
 shift
 [ -n "$target" ] || exit 1
 [ "$#" -ge 1 ] || exit 1
-exec /bin/sh -lc "$*"
+cmd="$*"
+case "$cmd" in
+  "sh -lc "*)
+    eval "remote_script=${cmd#sh -lc }"
+    exec /bin/sh -c "$remote_script"
+    ;;
+esac
+exec /bin/sh -c "$cmd"
 "#,
         );
 
@@ -8145,7 +8159,14 @@ target="$1"
 shift
 [ -n "$target" ] || exit 1
 [ "$#" -ge 1 ] || exit 1
-exec /bin/sh -lc "$*"
+cmd="$*"
+case "$cmd" in
+  "sh -lc "*)
+    eval "remote_script=${cmd#sh -lc }"
+    exec /bin/sh -c "$remote_script"
+    ;;
+esac
+exec /bin/sh -c "$cmd"
 "#,
         );
 
@@ -8258,7 +8279,14 @@ target="$1"
 shift
 [ -n "$target" ] || exit 1
 [ "$#" -ge 1 ] || exit 1
-exec /bin/sh -lc "$*"
+cmd="$*"
+case "$cmd" in
+  "sh -lc "*)
+    eval "remote_script=${cmd#sh -lc }"
+    exec /bin/sh -c "$remote_script"
+    ;;
+esac
+exec /bin/sh -c "$cmd"
 "#,
         );
 

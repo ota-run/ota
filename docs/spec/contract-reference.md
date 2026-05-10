@@ -1118,7 +1118,8 @@ Fields:
   - `launch.engine`: optional engine override; defaults to `docker`
   - `launch.args`: optional container command arguments
   - `launch.name`: optional stable container name
-  - `launch.remove`: optional boolean; not valid for service runtimes in this slice
+  - `launch.remove`: reserved for future non-service container launches; omit it for service
+    runtimes in this slice
   - `launch.volumes`: optional named-volume mounts
   - `launch.volumes[].name` or `launch.volumes[].source`: required source identifier
   - `launch.volumes[].target`: required container path
@@ -1138,6 +1139,12 @@ Fields:
 - `launch.kind: container` is a task launch source, not an execution context
 - service tasks that use `launch.kind: container` still treat `runtime.surfaces` as the canonical
   public endpoint truth; launch must not create a competing published-port contract
+- container launch service tasks are persistent Ota-managed services in this slice; Ota may replace
+  an existing named launch container only when its ownership labels prove it belongs to the same
+  repo and task family
+- packaged containers must attach surfaces with container-safe publication overrides when the
+  default loopback bind is not valid, for example `bind.address: 0.0.0.0` plus a loopback host
+  projection
 
 Examples:
 

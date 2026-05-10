@@ -64174,20 +64174,24 @@ fn render_inference_section<'a>(
             paint_key("Field:"),
             inference.field
         ));
-        output.push_str(&format!("\n  {} {}", paint_key("Type:"), inference.field_type));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Type:"),
+            inference.field_type
+        ));
         output.push_str(&format!("\n  {} {}", paint_key("Value:"), inference.value));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Source:"),
             inference.source
         ));
-        output.push_str(&format!("\n  {} {}", paint_key("Signal:"), inference.signal));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Signal:"),
+            inference.signal
+        ));
         if let Some(agent_safe) = inference.agent_safe {
-            output.push_str(&format!(
-                "\n  {} {}",
-                paint_key("Agent Safe:"),
-                agent_safe
-            ));
+            output.push_str(&format!("\n  {} {}", paint_key("Agent Safe:"), agent_safe));
         }
         if let Some(agent_signal) = inference.agent_signal {
             output.push_str(&format!(

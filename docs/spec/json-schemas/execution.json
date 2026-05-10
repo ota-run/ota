@@ -2,6 +2,76 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dist.ota.run/spec/json-schemas/latest/execution.json",
   "title": "ota execution plan --json",
+  "$defs": {
+    "taskLaunchVolume": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "target"],
+      "properties": {
+        "kind": { "enum": ["named"] },
+        "source": { "type": "string" },
+        "target": { "type": "string" }
+      }
+    },
+    "taskLaunch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["command", "container"] },
+        "exe": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "image": { "type": "string" },
+        "engine": { "type": "string" },
+        "name": { "type": "string" },
+        "remove": { "type": "boolean" },
+        "volumes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskLaunchVolume" }
+        }
+      }
+    },
+    "workflowSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "intent": { "type": "string" },
+        "description": { "type": "string" },
+        "setup_task": { "type": "string" },
+        "run_task": { "type": "string" },
+        "run_task_launch": { "$ref": "#/$defs/taskLaunch" },
+        "required_services": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readiness_checks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readiness_probes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readiness_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "exposes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "expose_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
   "oneOf": [
     {
       "type": "object",
@@ -12,6 +82,8 @@
         "path": { "type": "string" },
         "contract": { "type": "string" },
         "member": { "type": "string" },
+        "workflow": { "$ref": "#/$defs/workflowSummary" },
+        "task": { "type": "string" },
         "contract_identity": {
           "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
         },

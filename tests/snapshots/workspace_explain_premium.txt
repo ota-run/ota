@@ -14,9 +14,8 @@ Contract: ./apps/web/ota.yaml
 
 Plan
  1. No tasks defined in contract (1)
-  Why:
-    » without at least one task, `ota run <task> ./apps/web/ota.yaml` cannot execute a repo entrypoint and the readiness contract is not
-      operational for humans or agents
+  Why: without at least one task, `ota run <task> ./apps/web/ota.yaml` cannot execute a repo entrypoint and the readiness contract is not
+       operational for humans or agents
   Provenance: repo contract
   Next:
     run `ota detect --dry-run ./apps/web`

@@ -132,8 +132,16 @@ fn execution_schema_includes_resolved_and_declared_execution_fields() {
     let success = &schema["oneOf"][0]["properties"];
     let resolved = &success["resolved"]["properties"];
     let overrides = &success["overrides"]["properties"];
+    let workflow = &schema["$defs"]["workflowSummary"]["properties"];
 
     assert!(success.get("contract_identity").is_some());
+    assert!(success.get("workflow").is_some());
+    assert!(success.get("task").is_some());
+    assert!(workflow.get("run_task_launch").is_some());
+    assert_eq!(
+        workflow["run_task_launch"]["$ref"],
+        serde_json::json!("#/$defs/taskLaunch")
+    );
     assert!(success.get("declared_execution").is_some());
     assert_eq!(
         success["declared_execution"]["$ref"],
@@ -161,6 +169,8 @@ fn workspace_execution_schema_reports_per_repo_resolved_and_declared_fields() {
     assert!(summary.get("repo_count").is_some());
     assert!(summary.get("resolved_count").is_some());
     assert!(summary.get("required_unresolved_count").is_some());
+    assert!(repo.get("workflow").is_some());
+    assert!(repo.get("task").is_some());
     assert!(repo.get("contract_identity").is_some());
     assert_eq!(
         repo["declared_execution"]["$ref"],
