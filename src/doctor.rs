@@ -2884,12 +2884,12 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
     let skipped = skipped.join(", ");
     Finding {
         severity: FindingSeverity::Info,
-        summary: String::from("Host-bound readiness checks are not evaluated in container mode"),
+        summary: String::from("Container readiness does not include host-only checks"),
         why: format!(
-            "container mode checks the execution image; {skipped} {verb} host-bound and would mix contexts"
+            "container mode validated the selected execution image and container execution path; {skipped} {verb} host-bound and would mix contexts"
         ),
         next: String::from(
-            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
+            "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
         ),
     }
 }

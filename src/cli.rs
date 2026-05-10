@@ -15093,14 +15093,16 @@ tasks:
         );
         assert_eq!(
             doctor_json["summary"]["primary_blocker"]["summary"],
-            "Host-bound readiness checks are not evaluated in container mode"
+            "Container readiness does not include host-only checks"
         );
         let next = doctor_json["summary"]["primary_blocker"]["next"]
             .as_str()
             .expect("primary blocker next should be present");
         assert!(next.starts_with("use `ota doctor --mode "));
-        assert!(next.contains(" for host readiness, or `ota up --mode container"));
-        assert!(next.ends_with(" for container execution readiness"));
+        assert!(next.contains(
+            " for host readiness, or run declared tasks with `ota run <task> --mode container`"
+        ));
+        assert!(next.ends_with("through the validated container path"));
         assert_eq!(doctor_json["execution"]["preferred"], "container");
         assert_eq!(doctor_json["execution"]["supported"][0], "native");
         assert_eq!(doctor_json["execution"]["supported"][1], "container");
@@ -15116,19 +15118,23 @@ tasks:
             .as_str()
             .expect("group action_next should be present");
         assert!(group_next.starts_with("use `ota doctor --mode "));
-        assert!(group_next.contains(" for host readiness, or `ota up --mode container"));
-        assert!(group_next.ends_with(" for container execution readiness"));
+        assert!(group_next.contains(
+            " for host readiness, or run declared tasks with `ota run <task> --mode container`"
+        ));
+        assert!(group_next.ends_with("through the validated container path"));
         assert_eq!(
             doctor_json["findings"][0]["summary"],
-            "Host-bound readiness checks are not evaluated in container mode"
+            "Container readiness does not include host-only checks"
         );
         assert_eq!(doctor_json["findings"][0]["severity"], "info");
         let next_finding = doctor_json["findings"][0]["next"]
             .as_str()
             .expect("finding next should be present");
         assert!(next_finding.starts_with("use `ota doctor --mode "));
-        assert!(next_finding.contains(" for host readiness, or `ota up --mode container"));
-        assert!(next_finding.ends_with(" for container execution readiness"));
+        assert!(next_finding.contains(
+            " for host readiness, or run declared tasks with `ota run <task> --mode container`"
+        ));
+        assert!(next_finding.ends_with("through the validated container path"));
     }
 
     #[test]
@@ -31175,10 +31181,12 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Host-bound readiness checks are not evaluated in container mode"));
+        assert!(text.contains("Container readiness does not include host-only checks"));
         assert!(text.contains(
-            "Why: container mode checks the execution image; env requirements, checks, legacy service healthchecks remain host-bound and would mix contexts"
+            "Why: container mode validated the selected execution image and container execution path"
         ));
+        assert!(text.contains("env requirements, checks"));
+        assert!(text.contains("legacy service healthchecks remain host-bound"));
         assert!(!text.contains("execution image;\n  env requirements"));
         assert!(!text.contains("Version mismatch for runtime: node"));
         assert!(!text.contains("Missing environment variable: OTA_CONTAINER_MODE_REQUIRED"));

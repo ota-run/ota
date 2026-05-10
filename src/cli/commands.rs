@@ -34008,16 +34008,18 @@ fn rewrite_doctor_mode_command(
     let Some(command) = doctor_selected_command(doctor_mode, doctor_lifecycle) else {
         return next.to_string();
     };
-    [
-        "ota doctor --mode container",
-        "ota doctor --mode remote",
-        "ota doctor --mode native",
-        "ota doctor",
-    ]
-    .into_iter()
-    .fold(next.to_string(), |rewritten, source| {
-        rewritten.replace(&format!("`{source}`"), &format!("`{command}`"))
-    })
+    let mut sources = vec!["ota doctor"];
+    match doctor_mode {
+        Some(DoctorMode::Container) => sources.push("ota doctor --mode container"),
+        Some(DoctorMode::Remote) => sources.push("ota doctor --mode remote"),
+        Some(DoctorMode::Native) => sources.push("ota doctor --mode native"),
+        None => {}
+    }
+    sources
+        .into_iter()
+        .fold(next.to_string(), |rewritten, source| {
+            rewritten.replace(&format!("`{source}`"), &format!("`{command}`"))
+        })
 }
 
 fn rewrite_repo_scoped_command_targets(next: &str, contract_path: &Path) -> String {
@@ -39803,13 +39805,13 @@ tasks:
                     Finding {
                         severity: FindingSeverity::Info,
                         summary: String::from(
-                            "Host-bound readiness checks are not evaluated in container mode",
+                            "Container readiness does not include host-only checks",
                         ),
                         why: String::from(
-                            "container mode checks the execution image; legacy service healthchecks remain host-bound and would mix contexts",
+                            "container mode validated the selected execution image and container execution path; legacy service healthchecks remain host-bound and would mix contexts",
                         ),
                         next: String::from(
-                            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
+                            "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
                         ),
                     },
                     Finding {
@@ -39849,13 +39851,26 @@ tasks:
         assert!(text.contains("Next:"));
         assert!(text.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
         assert!(text.contains("Additional context:"));
-        assert!(text.contains("host-bound readiness checks are skipped in container mode"));
+        assert!(text.contains("container readiness does not include host-only checks"));
         assert!(
             text.contains("an active policy pack still governs version and provisioning rules")
         );
         assert!(!text.contains("Policy-backed version rules are declared"));
         assert!(!text.contains("Review active policy surfaces"));
         assert!(!text.contains("Target:"));
+    }
+
+    #[test]
+    fn rewrite_doctor_mode_command_preserves_explicit_native_guidance_when_selected_mode_is_container()
+     {
+        let rewritten = super::rewrite_doctor_mode_command(
+            "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+            Some(DoctorMode::Container),
+            Some(Lifecycle::Ephemeral),
+        );
+
+        assert!(rewritten.contains("`ota doctor --mode native`"));
+        assert!(rewritten.contains("`ota run <task> --mode container`"));
     }
 
     #[test]
@@ -48281,14 +48296,12 @@ execution:
             execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Info,
-                summary: String::from(
-                    "Host-bound readiness checks are not evaluated in container mode",
-                ),
+                summary: String::from("Container readiness does not include host-only checks"),
                 why: String::from(
-                    "container mode checks the execution image; legacy service healthchecks remain host-bound and would mix contexts",
+                    "container mode validated the selected execution image and container execution path; legacy service healthchecks remain host-bound and would mix contexts",
                 ),
                 next: String::from(
-                    "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
+                    "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
                 ),
             }],
         };
@@ -48776,14 +48789,12 @@ policies:
                 });
                 findings.push(Finding {
                     severity: FindingSeverity::Info,
-                    summary: String::from(
-                        "Host-bound readiness checks are not evaluated in container mode",
-                    ),
+                    summary: String::from("Container readiness does not include host-only checks"),
                     why: String::from(
-                        "container mode checks the execution image; legacy service healthchecks remain host-bound and would mix contexts",
+                        "container mode validated the selected execution image and container execution path; legacy service healthchecks remain host-bound and would mix contexts",
                     ),
                     next: String::from(
-                        "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
+                        "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
                     ),
                 });
                 findings
@@ -48898,8 +48909,10 @@ checks:
             Some("ghcr.io/ota/dev:latest")
         );
         assert!(result.receipt.target.is_none());
-        assert!(result.report.findings.iter().any(|finding| finding.summary
-            == "Host-bound readiness checks are not evaluated in container mode"));
+        assert!(
+            result.report.findings.iter().any(|finding| finding.summary
+                == "Container readiness does not include host-only checks")
+        );
         assert!(
             !result
                 .report
@@ -55934,11 +55947,12 @@ fn render_up_blocked_provisioning_section(
 fn blocked_provisioning_context_lines(findings: &[Finding]) -> Vec<String> {
     let mut lines = Vec::new();
 
-    if findings.iter().any(|finding| {
-        finding.summary == "Host-bound readiness checks are not evaluated in container mode"
-    }) {
+    if findings
+        .iter()
+        .any(|finding| finding.summary == "Container readiness does not include host-only checks")
+    {
         lines.push(String::from(
-            "host-bound readiness checks are skipped in container mode",
+            "container readiness excludes host-only checks",
         ));
     }
 
@@ -59031,9 +59045,10 @@ fn doctor_report_execution_context(
 }
 
 fn contract_container_host_bound_scope_note_present(report: &DoctorReport) -> bool {
-    report.findings.iter().any(|finding| {
-        finding.summary == "Host-bound readiness checks are not evaluated in container mode"
-    })
+    report
+        .findings
+        .iter()
+        .any(|finding| finding.summary == "Container readiness does not include host-only checks")
 }
 
 fn provisioning_phase_execution_context(

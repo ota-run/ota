@@ -15188,7 +15188,7 @@ fn execute_ephemeral_container_task_command(
         .arg("--entrypoint")
         .arg("sh")
         .arg("-v")
-        .arg(format!("{}:/workspace", workspace_mount_source.display()))
+        .arg(container_workspace_mount_arg(&workspace_mount_source))
         .arg("-w")
         .arg("/workspace");
     if let Some(network) = compose_networks.first() {
@@ -15654,7 +15654,7 @@ fn create_idle_ephemeral_container(
         .arg("--entrypoint")
         .arg("sh")
         .arg("-v")
-        .arg(format!("{}:/workspace", workspace_mount_source.display()))
+        .arg(container_workspace_mount_arg(&workspace_mount_source))
         .arg("-w")
         .arg("/workspace");
     if let Some(network) = compose_networks.first() {
@@ -16614,7 +16614,7 @@ fn create_persistent_container(
         "--entrypoint".to_string(),
         "sh".to_string(),
         "-v".to_string(),
-        format!("{}:/workspace", workspace_mount_source.display()),
+        container_workspace_mount_arg(&workspace_mount_source),
         "-w".to_string(),
         "/workspace".to_string(),
     ];
@@ -18645,6 +18645,30 @@ fn container_workspace_mount_source(working_dir: &Path) -> PathBuf {
                 .unwrap_or_else(|_| working_dir.to_path_buf())
         }
     })
+}
+
+fn container_workspace_mount_arg(workspace_mount_source: &Path) -> String {
+    format!(
+        "{}:/workspace",
+        container_workspace_mount_source_display(workspace_mount_source)
+    )
+}
+
+#[cfg(not(windows))]
+fn container_workspace_mount_source_display(workspace_mount_source: &Path) -> String {
+    workspace_mount_source.display().to_string()
+}
+
+#[cfg(windows)]
+fn container_workspace_mount_source_display(workspace_mount_source: &Path) -> String {
+    let display = workspace_mount_source.display().to_string();
+    if let Some(stripped) = display.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{stripped}");
+    }
+    if let Some(stripped) = display.strip_prefix(r"\\?\") {
+        return stripped.to_string();
+    }
+    display
 }
 
 fn repo_ota_dir(working_dir: &Path) -> PathBuf {
@@ -36642,6 +36666,24 @@ tasks:
                 .lines()
                 .any(|line| line == format!("{}:/workspace", repo_dir.display())),
             "{mounts}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn container_workspace_mount_source_display_strips_verbatim_disk_prefix() {
+        assert_eq!(
+            container_workspace_mount_source_display(Path::new(r"\\?\C:\Users\bobai\repo")),
+            r"C:\Users\bobai\repo"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn container_workspace_mount_source_display_strips_verbatim_unc_prefix() {
+        assert_eq!(
+            container_workspace_mount_source_display(Path::new(r"\\?\UNC\fileserver\share\repo")),
+            r"\\fileserver\share\repo"
         );
     }
 
