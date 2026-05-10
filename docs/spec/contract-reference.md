@@ -1078,6 +1078,7 @@ Fields:
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
 - `launch`: optional structured launch source for inspectable command or packaged container starts
+- `requirements`: optional task-scoped prerequisite surface for this executable path
 - `execution`: optional mode-aware execution branches for one task intent
 - `runtime`: optional long-running workload shape for endpoint-bearing tasks
 - `variants`: optional list of conditional task executions
@@ -1123,6 +1124,30 @@ Fields:
   - `launch.volumes`: optional named-volume mounts
   - `launch.volumes[].name` or `launch.volumes[].source`: required source identifier
   - `launch.volumes[].target`: required container path
+
+`requirements` fields:
+
+- `requirements.runtimes`: optional runtime requirements that apply only to this task path
+- `requirements.tools`: optional tool requirements that apply only to this task path
+- `requirements.env`: optional list of names from top-level `env.vars`
+- `requirements.checks`: optional list of names from top-level `checks`
+
+`requirements` rules:
+
+- use top-level `runtimes`, `tools`, and required `env.vars` only when the prerequisite is truly
+  repo-global
+- use `tasks.<name>.requirements` when a prerequisite belongs only to one contributor, quickstart,
+  or packaged-runtime path
+- workflow-aware readiness commands evaluate the selected workflow's `setup.task` / `run.task`
+  dependency closure and merge those task-scoped requirements before diagnosing preconditions
+- an explicitly selected workflow with no `setup.task` has no setup prerequisite phase; legacy
+  `tasks.setup` fallback is reserved for the unselected default compatibility path
+- `requirements.checks` must reference top-level checks declared with `kind: precondition`
+- when the selected workflow task closure declares any task-scoped requirements, unreferenced
+  top-level precondition checks are treated as reusable definitions rather than global gates for
+  that path; reference a check from `requirements.checks` when that task path needs it
+- `requirements.env` must reference declared top-level `env.vars` names; it does not create new env
+  requirements inline
 
 `launch` rules:
 
@@ -1229,10 +1254,15 @@ Surface attachment rules:
 - `runtime.surfaces` supports two attachment forms:
   - list form like `runtime.surfaces: [backend]` for default publication
   - object form like `runtime.surfaces.backend` for attachment overrides
+- `runtime.surfaces.<name>` still refers to the declared top-level reusable `surfaces.<name>`;
+  object form means "attach that surface with publication overrides for this runtime", not
+  "redefine the surface"
 - `runtime.surfaces.<name>` attachment overrides are publication-only:
   - `bind`
   - `project`
   - `project.host.primary`
+- `bind` is where the workload listens inside its execution context
+- `project.host` is the host-facing projected endpoint ota reports, checks, and exposes
 - each attached surface normalizes into the same runtime listener model used by explicit
   `runtime.listeners`
 - topology JSON now also exposes additive `runtime.surface_attachments.<name>` intent alongside the
@@ -1901,7 +1931,8 @@ Current behavior:
 - `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness
-- `tasks.setup` remains the compatibility fallback when no workflow setup task is declared
+- `tasks.setup` remains the compatibility fallback for the unselected default path; `ota up
+  --workflow <name>` does not invent a setup phase when that workflow omits `setup.task`
 - `agent.default_task` and `agent.entrypoint` remain agent-facing hints, but the default workflow is now the canonical repo operational path
 
 ## `checks`

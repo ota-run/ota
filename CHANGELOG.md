@@ -26,6 +26,20 @@
 
 ## Unreleased
 
+- added task-scoped prerequisite surfaces under `tasks.<name>.requirements`: workflows can now
+  scope runtime, tool, env, and precondition-check diagnosis to the selected setup/run dependency
+  closure instead of treating every front door in a multi-path repo as repo-global truth; `ota doctor`
+  and `ota up` now honor that selected closure directly, `ota check` additively includes explicit
+  task-scoped prerequisite checks when declared, and the flagship plus `n8n` case-study contracts
+  now demonstrate contributor, quickstart, and packaged-runtime prerequisite scoping explicitly
+- tightened the workflow prerequisite boundary so an explicitly selected workflow without
+  `setup.task` no longer inherits legacy `tasks.setup`, and selected task paths with scoped
+  requirements no longer run unrelated top-level precondition checks unless those checks are
+  referenced from `requirements.checks`
+- clarified the reusable surfaces docs so object-form attachment overrides now say explicitly that
+  `runtime.surfaces.<name>` still references the declared top-level reusable surface, while
+  `bind` means the runtime-local listener and `project.host` means the host-facing projected
+  endpoint ota reports, checks, and exposes
 - hardened the Windows PowerShell installer wrapper so downloaded `bootstrap.ps1` is staged in a
   private temp directory, cleaned up after execution, and used for normal release installs even
   when a stale `bootstrap.ps1` happens to exist beside a downloaded `install.ps1`; repo-local

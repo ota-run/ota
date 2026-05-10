@@ -191,7 +191,15 @@ impl Contract {
     }
 
     pub fn selected_setup_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
-        self.selected_workflow(workflow_name)
+        if let Some(name) = workflow_name {
+            return self
+                .workflow(name)
+                .and_then(|workflow| workflow.setup.as_ref())
+                .map(|phase| phase.task.as_str())
+                .filter(|task| !task.trim().is_empty());
+        }
+
+        self.default_workflow()
             .and_then(|(_, workflow)| workflow.setup.as_ref())
             .map(|phase| phase.task.as_str())
             .filter(|task| !task.trim().is_empty())
@@ -218,6 +226,52 @@ impl Contract {
                     })
                 })?
             })
+    }
+
+    pub fn task_dependency_closure_names(
+        &self,
+        roots: impl IntoIterator<Item = String>,
+    ) -> Vec<String> {
+        let mut ordered = Vec::new();
+        let mut visited = BTreeSet::new();
+        for root in roots {
+            self.collect_task_dependency_closure(root.as_str(), &mut visited, &mut ordered);
+        }
+        ordered
+    }
+
+    pub fn selected_workflow_task_closure_names(&self, workflow_name: Option<&str>) -> Vec<String> {
+        let mut roots = Vec::new();
+        if let Some(setup) = self.selected_setup_task_name_for(workflow_name) {
+            roots.push(setup.to_string());
+        }
+        if let Some(run) = self.selected_run_task_name_for(workflow_name)
+            && !roots.iter().any(|name| name == run)
+        {
+            roots.push(run.to_string());
+        }
+        self.task_dependency_closure_names(roots)
+    }
+
+    fn collect_task_dependency_closure(
+        &self,
+        name: &str,
+        visited: &mut BTreeSet<String>,
+        ordered: &mut Vec<String>,
+    ) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+
+        let Some(task) = self.tasks.get(name) else {
+            return;
+        };
+
+        for dependency in &task.depends_on {
+            self.collect_task_dependency_closure(dependency, visited, ordered);
+        }
+
+        ordered.push(name.to_string());
     }
 }
 
@@ -809,6 +863,28 @@ impl RequirementSurface {
     pub fn merge(&mut self, other: &RequirementSurface) {
         self.runtimes.extend(other.runtimes.clone());
         self.tools.extend(other.tools.clone());
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRequirementsSpec {
+    #[serde(default)]
+    pub runtimes: BTreeMap<String, RuntimeRequirement>,
+    #[serde(default)]
+    pub tools: BTreeMap<String, ToolRequirement>,
+    #[serde(default)]
+    pub env: Vec<String>,
+    #[serde(default)]
+    pub checks: Vec<String>,
+}
+
+impl TaskRequirementsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.runtimes.is_empty()
+            && self.tools.is_empty()
+            && self.env.is_empty()
+            && self.checks.is_empty()
     }
 }
 
@@ -2033,6 +2109,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
     #[serde(default)]
+    pub requirements: TaskRequirementsSpec,
+    #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub requires_services: Vec<String>,
@@ -2302,6 +2380,13 @@ impl TaskSpec {
 
     pub fn declares_surface(&self, name: &str) -> bool {
         self.declared_surface_names().contains(name)
+    }
+
+    pub fn scoped_requirement_surface(&self) -> RequirementSurface {
+        RequirementSurface {
+            runtimes: self.requirements.runtimes.clone(),
+            tools: self.requirements.tools.clone(),
+        }
     }
 }
 
@@ -3310,6 +3395,67 @@ agent:
         .unwrap();
 
         assert_eq!(contract.selected_run_task_name_for(None), Some("agent-dev"));
+    }
+
+    #[test]
+    fn selected_setup_task_respects_explicit_workflow_without_setup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+  quickstart:
+    run: npx ota
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: quickstart
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(contract.selected_setup_task_name_for(None), Some("setup"));
+        assert_eq!(
+            contract.selected_setup_task_name_for(Some("app")),
+            Some("setup")
+        );
+        assert_eq!(contract.selected_setup_task_name_for(Some("instant")), None);
+        assert_eq!(
+            contract.selected_workflow_task_closure_names(Some("instant")),
+            vec![String::from("quickstart")]
+        );
+    }
+
+    #[test]
+    fn selected_setup_task_uses_legacy_setup_fallback_without_workflows() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(contract.selected_setup_task_name_for(None), Some("setup"));
+        assert_eq!(
+            contract.selected_workflow_task_closure_names(None),
+            vec![String::from("setup")]
+        );
     }
 
     #[test]

@@ -28,12 +28,12 @@ use crate::execution::{
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::schema::{
-    Backend, ContainerBackend, Contract, EnvConfig, ExecutionContext, ExecutionSharedBackend,
-    ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope, ExtensionKind, Lifecycle,
-    RuntimeRequirement, ServiceProducerSpec, ServiceSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetServiceRefSpec, TaskTargetSpec, parse_memory_size_bytes,
+    Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
+    ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
+    ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
+    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, parse_memory_size_bytes,
     parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::workspace::load_contract_for_workspace_repo_ref;
@@ -1538,6 +1538,7 @@ fn validate_tasks(
                 errors,
             );
         }
+        validate_task_requirement_references(contract, name, task, errors);
     }
 
     validate_shared_local_backend_bindings(contract, errors);
@@ -4392,6 +4393,68 @@ fn validate_task_service_reference(
     }
 }
 
+fn validate_task_requirement_references(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_named_versions(
+        &format!("task `{task_name}` runtime requirement"),
+        &task.requirements.runtimes,
+        errors,
+        |value| value.version(),
+    );
+    validate_runtime_details(&task.requirements.runtimes, errors);
+    validate_named_versions(
+        &format!("task `{task_name}` tool requirement"),
+        &task.requirements.tools,
+        errors,
+        |value| value.version(),
+    );
+    validate_tool_details(&task.requirements.tools, errors);
+
+    for env_name in &task.requirements.env {
+        if env_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` must not declare an empty `requirements.env` entry"
+            )));
+            continue;
+        }
+        if !contract.env.contains_key(env_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` references unknown environment requirement `{env_name}` in `requirements.env`"
+            )));
+        }
+    }
+
+    for check_name in &task.requirements.checks {
+        if check_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` must not declare an empty `requirements.checks` entry"
+            )));
+            continue;
+        }
+
+        let Some(check) = contract
+            .checks
+            .iter()
+            .find(|check| check.name == *check_name)
+        else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` references unknown check `{check_name}` in `requirements.checks`"
+            )));
+            continue;
+        };
+
+        if check.kind != CheckKind::Precondition {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` references non-precondition check `{check_name}` in `requirements.checks`"
+            )));
+        }
+    }
+}
+
 fn is_task_input_name(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
@@ -6068,6 +6131,74 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_task_requirement_refs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: health-check
+    kind: health
+    severity: error
+    run: echo ok
+tasks:
+	  dev:
+	    run: echo dev
+	    requirements:
+	      runtimes:
+	        node: ""
+	      tools:
+	        pnpm: ""
+	      env:
+	        - UNKNOWN_ENV
+	      checks:
+        - health-check
+        - missing-check
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("unknown requirement refs should fail validation");
+        let messages = errors
+            .errors()
+            .iter()
+            .map(|error| error.message.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            messages
+                .iter()
+	        .any(|message| message.contains("unknown environment requirement `UNKNOWN_ENV`")),
+	        "{messages:?}"
+	    );
+        assert!(
+            messages.iter().any(|message| {
+                message.contains("task `dev` runtime requirement `node` must declare a non-empty version")
+            }),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| {
+                message.contains("task `dev` tool requirement `pnpm` must declare a non-empty version")
+            }),
+            "{messages:?}"
+        );
+	    assert!(
+	        messages.iter().any(|message| message.contains("references non-precondition check `health-check`")),
+	        "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("references unknown check `missing-check`")),
+            "{messages:?}"
+        );
     }
 
     #[test]

@@ -207,8 +207,114 @@ fn execution_context_for_backend<'a>(
         .or_else(|| first_execution_context_for_backend(contract, backend))
 }
 
-fn precondition_requirement_surface(contract: &Contract, mode: DoctorMode) -> RequirementSurface {
-    contract.requirement_surface_for_backend(backend_for_mode(mode))
+#[derive(Debug, Default, Clone)]
+struct ScopedPreconditionSelection {
+    requirement_surface: RequirementSurface,
+    env_names: BTreeSet<String>,
+    env_scoped: bool,
+}
+
+fn scoped_precondition_selection(
+    contract: &Contract,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+) -> ScopedPreconditionSelection {
+    let backend = backend_for_mode(mode);
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        return ScopedPreconditionSelection {
+            requirement_surface: contract.requirement_surface_for_backend(backend),
+            ..ScopedPreconditionSelection::default()
+        };
+    }
+
+    let mut selection = ScopedPreconditionSelection {
+        requirement_surface: RequirementSurface {
+            runtimes: contract.runtimes.clone(),
+            tools: contract.tools.clone(),
+        },
+        ..ScopedPreconditionSelection::default()
+    };
+
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        selection
+            .requirement_surface
+            .merge(&task.scoped_requirement_surface());
+        if !task.requirements.env.is_empty() {
+            selection.env_scoped = true;
+            selection
+                .env_names
+                .extend(task.requirements.env.iter().cloned());
+        }
+        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
+            && let Some(context) = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get(context_name))
+        {
+            selection
+                .requirement_surface
+                .runtimes
+                .extend(context.requirements.runtimes.clone());
+            selection
+                .requirement_surface
+                .tools
+                .extend(context.requirements.tools.clone());
+        }
+    }
+
+    selection
+}
+
+#[cfg(test)]
+fn precondition_requirement_surface(
+    contract: &Contract,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+) -> RequirementSurface {
+    scoped_precondition_selection(contract, mode, workflow_name).requirement_surface
+}
+
+#[derive(Debug, Clone, Default)]
+struct RemoteTaskRequirementSelection {
+    by_context: BTreeMap<String, RequirementSurface>,
+    fallback: Option<RequirementSurface>,
+}
+
+fn selected_remote_task_requirement_selection(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Option<RemoteTaskRequirementSelection> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        return None;
+    }
+
+    let mut selection = RemoteTaskRequirementSelection::default();
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let task_surface = task.scoped_requirement_surface();
+        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), Backend::Remote)
+        {
+            selection
+                .by_context
+                .entry(context_name.to_string())
+                .or_default()
+                .merge(&task_surface);
+        } else {
+            selection
+                .fallback
+                .get_or_insert_with(RequirementSurface::default)
+                .merge(&task_surface);
+        }
+    }
+
+    Some(selection)
 }
 
 fn remote_os_probe_command() -> &'static str {
@@ -321,6 +427,7 @@ fn remote_doctor_probe_contexts(
     contract: &Contract,
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
+    workflow_name: Option<&str>,
     findings: &mut Vec<Finding>,
 ) -> Vec<RemoteProbeContext> {
     let mut probes = Vec::new();
@@ -328,12 +435,22 @@ fn remote_doctor_probe_contexts(
         return probes;
     };
     let working_dir = contract_working_dir(contract_path);
+    let selected_task_requirements =
+        selected_remote_task_requirement_selection(contract, workflow_name);
 
     for (name, context) in execution
         .contexts
         .iter()
         .filter(|(_, context)| context.backend == Backend::Remote)
     {
+        let selected_task_surface = if let Some(selection) = selected_task_requirements.as_ref() {
+            let Some(surface) = selection.by_context.get(name.as_str()) else {
+                continue;
+            };
+            Some(surface)
+        } else {
+            None
+        };
         let backend = match resolve_context_execution_backend(contract, name) {
             Ok(backend) => backend,
             Err(error) => {
@@ -359,6 +476,9 @@ fn remote_doctor_probe_contexts(
             runtimes: contract.runtimes.clone(),
             tools: contract.tools.clone(),
         };
+        if let Some(selected_task_surface) = selected_task_surface {
+            requirement_surface.merge(selected_task_surface);
+        }
         requirement_surface
             .runtimes
             .extend(context.requirements.runtimes.clone());
@@ -385,6 +505,13 @@ fn remote_doctor_probe_contexts(
     }
 
     if !probes.is_empty() {
+        return probes;
+    }
+
+    if selected_task_requirements
+        .as_ref()
+        .is_some_and(|selection| !selection.by_context.is_empty() && selection.fallback.is_none())
+    {
         return probes;
     }
 
@@ -437,6 +564,13 @@ fn remote_doctor_probe_contexts(
         runtimes: contract.runtimes.clone(),
         tools: contract.tools.clone(),
     };
+    let mut requirement_surface = requirement_surface;
+    if let Some(surface) = selected_task_requirements
+        .as_ref()
+        .and_then(|selection| selection.fallback.as_ref())
+    {
+        requirement_surface.merge(surface);
+    }
     let provisioning_actions = loaded_policy
         .map(|loaded| {
             loaded
@@ -1900,13 +2034,22 @@ pub fn diagnose_preconditions_with_mode(
     contract_path: &Path,
     mode: DoctorMode,
 ) -> DoctorReport {
+    diagnose_preconditions_with_mode_for_workflow(contract, contract_path, mode, None)
+}
+
+pub fn diagnose_preconditions_with_mode_for_workflow(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
         contract_path,
         DoctorScope::Preconditions,
         mode,
         None,
-        None,
+        workflow_name,
     )
 }
 
@@ -1998,7 +2141,8 @@ fn diagnose_contract_with_scope(
     let mut adapter_bootstrap = None;
     let mut execution_target = None;
     let selected_lifecycle = doctor_selected_lifecycle(mode, lifecycle_override);
-    let requirement_surface = precondition_requirement_surface(contract, mode);
+    let precondition_selection = scoped_precondition_selection(contract, mode, workflow_name);
+    let requirement_surface = precondition_selection.requirement_surface.clone();
     let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         match load_org_policy_pack_auto_details(contract_path) {
             Ok(policy) => policy,
@@ -2042,6 +2186,9 @@ fn diagnose_contract_with_scope(
                     .as_ref()
                     .map(|loaded| loaded.pack.env_values()),
                 &declared_env_sources,
+                precondition_selection
+                    .env_scoped
+                    .then_some(&precondition_selection.env_names),
                 &mut findings,
             );
         } else if mode == DoctorMode::Container
@@ -2059,6 +2206,7 @@ fn diagnose_contract_with_scope(
                     contract,
                     contract_path,
                     loaded_policy.as_ref(),
+                    workflow_name,
                     &mut findings,
                 );
                 for remote_probe in &remote_probe_contexts {
@@ -2100,9 +2248,7 @@ fn diagnose_contract_with_scope(
             false
         } else {
             diagnose_runtimes(
-                &contract
-                    .requirement_surface_for_backend(backend_for_mode(mode))
-                    .runtimes,
+                &requirement_surface.runtimes,
                 policy_target_os_for_mode(mode),
                 contract_path,
                 loaded_policy.as_ref(),
@@ -2114,9 +2260,7 @@ fn diagnose_contract_with_scope(
                 &provisioning_actions,
                 &mut findings,
             ) || diagnose_tools(
-                &contract
-                    .requirement_surface_for_backend(backend_for_mode(mode))
-                    .tools,
+                &requirement_surface.tools,
                 policy_target_os_for_mode(mode),
                 contract_path,
                 loaded_policy.as_ref(),
@@ -3618,9 +3762,15 @@ fn diagnose_env(
     contract: &Contract,
     policy_env: Option<&BTreeMap<String, String>>,
     declared_sources: &[LoadedDeclaredEnvSource],
+    selected_env_names: Option<&BTreeSet<String>>,
     findings: &mut Vec<Finding>,
 ) {
     for (name, requirement) in &contract.env {
+        if let Some(selected_env_names) = selected_env_names
+            && !selected_env_names.contains(name)
+        {
+            continue;
+        }
         let value = policy_env
             .and_then(|values| values.get(name))
             .cloned()
@@ -5425,18 +5575,52 @@ fn diagnose_checks(
 ) {
     let working_dir = contract_working_dir(contract_path);
     let selected_checks = selected_workflow_check_names(contract, workflow_name, scope);
+    let selected_precondition_checks =
+        selected_task_requirement_check_names(contract, workflow_name);
     let selected_probes = selected_workflow_probe_names(contract, workflow_name, scope);
     let selected_surfaces = selected_workflow_surface_names(contract, workflow_name, scope);
     let mut probes_executed_via_checks = BTreeSet::new();
 
     for check in &contract.checks {
+        let is_selected_precondition = selected_precondition_checks
+            .as_ref()
+            .is_some_and(|selected| selected.contains(check.name.as_str()));
+
         if scope == DoctorScope::Preconditions && check.kind != CheckKind::Precondition {
             continue;
         }
-        if let Some(selected) = selected_checks.as_ref()
-            && !selected.contains(check.name.as_str())
-        {
-            continue;
+        if scope == DoctorScope::Preconditions {
+            if let Some(selected) = selected_precondition_checks.as_ref()
+                && !selected.contains(check.name.as_str())
+            {
+                continue;
+            }
+        } else if scope == DoctorScope::ChecksOnly {
+            if is_selected_precondition {
+                // Explicit task-scoped prerequisite checks participate in `ota check` for the
+                // selected workflow without changing legacy check selection when none are declared.
+            } else {
+                if check.kind == CheckKind::Precondition {
+                    continue;
+                }
+                if let Some(selected) = selected_checks.as_ref()
+                    && !selected.contains(check.name.as_str())
+                {
+                    continue;
+                }
+            }
+        } else {
+            if check.kind == CheckKind::Precondition {
+                if let Some(selected) = selected_precondition_checks.as_ref()
+                    && !selected.contains(check.name.as_str())
+                {
+                    continue;
+                }
+            } else if let Some(selected) = selected_checks.as_ref()
+                && !selected.contains(check.name.as_str())
+            {
+                continue;
+            }
         }
 
         if let Some(probe_name) = check.probe.as_deref() {
@@ -5653,6 +5837,25 @@ fn selected_workflow_check_names<'a>(
             .map(|check| check.as_str())
             .collect(),
     )
+}
+
+fn selected_task_requirement_check_names(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Option<BTreeSet<String>> {
+    let mut scoped = false;
+    let mut selected = BTreeSet::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        if !task.requirements.is_empty() {
+            scoped = true;
+        }
+        selected.extend(task.requirements.checks.iter().cloned());
+    }
+
+    (scoped || !selected.is_empty()).then_some(selected)
 }
 
 fn selected_workflow_probe_names<'a>(
@@ -7817,7 +8020,8 @@ tasks:
         )
         .unwrap();
 
-        let surface = super::precondition_requirement_surface(&contract, DoctorMode::Container);
+        let surface =
+            super::precondition_requirement_surface(&contract, DoctorMode::Container, None);
         assert_eq!(
             surface
                 .runtimes
@@ -7832,6 +8036,73 @@ tasks:
                 .map(|requirement| requirement.version().to_string()),
             Some(String::from("10"))
         );
+    }
+
+    #[test]
+    fn remote_task_requirement_selection_follows_selected_workflow_contexts() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    contributor-remote:
+      backend: remote
+      remote:
+        provider: ssh
+        target: contributor.example
+    instant-remote:
+      backend: remote
+      remote:
+        provider: ssh
+        target: instant.example
+tasks:
+  setup:
+    context: contributor-remote
+    run: pnpm install
+    requirements:
+      tools:
+        pnpm: "10"
+  contributor:
+    context: contributor-remote
+    run: pnpm dev
+    depends_on:
+      - setup
+  instant:
+    context: instant-remote
+    run: npx ota-demo
+    requirements:
+      tools:
+        npx: "*"
+workflows:
+  default: contributor
+  contributor:
+    run:
+      task: contributor
+  instant:
+    run:
+      task: instant
+"#,
+        )
+        .unwrap();
+
+        let selection =
+            super::selected_remote_task_requirement_selection(&contract, Some("instant"))
+                .expect("selected workflow should produce remote task requirements");
+
+        assert_eq!(
+            selection.by_context.keys().cloned().collect::<Vec<_>>(),
+            vec![String::from("instant-remote")]
+        );
+        let instant_surface = selection
+            .by_context
+            .get("instant-remote")
+            .expect("instant context should be selected");
+        assert!(instant_surface.tools.contains_key("npx"));
+        assert!(!instant_surface.tools.contains_key("pnpm"));
+        assert!(selection.fallback.is_none());
     }
 
     #[test]
@@ -9521,6 +9792,268 @@ workflows:
 
         assert!(report.ok, "{report:?}");
         assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn workflow_preconditions_follow_selected_task_closure_requirements() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    CONTRIBUTOR_ONLY:
+      required: true
+    DOCKER_ONLY:
+      required: true
+checks:
+  - name: contributor-precondition
+    kind: precondition
+    severity: error
+    run: __ota_missing_contributor_check__
+  - name: docker-precondition
+    kind: precondition
+    severity: error
+    run: echo docker-ready
+tasks:
+  setup:
+    run: echo setup
+    requirements:
+      tools:
+        contributor-setup-tool: "*"
+      checks:
+        - contributor-precondition
+  install:
+    run: echo install
+    requirements:
+      tools:
+        contributor-only-tool: "*"
+      env:
+        - CONTRIBUTOR_ONLY
+      checks:
+        - contributor-precondition
+  contributor:
+    run: echo contributor
+    depends_on:
+      - install
+  docker:run:
+    run: echo docker
+    requirements:
+      tools:
+        docker-only-tool: "*"
+      env:
+        - DOCKER_ONLY
+      checks:
+        - docker-precondition
+workflows:
+  default: contributor
+  contributor:
+    run:
+      task: contributor
+  docker:
+    run:
+      task: docker:run
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("docker"),
+        );
+
+        assert!(!report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing environment variable: DOCKER_ONLY"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing tool: docker-only-tool"),
+            "{report:?}"
+        );
+        assert!(
+            report.findings.iter().all(|finding| {
+                !finding.summary.contains("CONTRIBUTOR_ONLY")
+                    && !finding.summary.contains("contributor-setup-tool")
+                    && !finding.summary.contains("contributor-only-tool")
+                    && !finding.summary.contains("contributor-precondition")
+            }),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_checks_include_explicit_task_precondition_checks_only() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: contributor-precondition
+    kind: precondition
+    severity: error
+    run: __ota_missing_contributor_check__
+  - name: docker-precondition
+    kind: precondition
+    severity: error
+    run: echo docker-ready
+tasks:
+  contributor:
+    run: echo contributor
+    requirements:
+      checks:
+        - contributor-precondition
+  docker:run:
+    run: echo docker
+    requirements:
+      checks:
+        - docker-precondition
+workflows:
+  default: contributor
+  contributor:
+    run:
+      task: contributor
+  docker:
+    run:
+      task: docker:run
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("docker"),
+        );
+
+        assert!(report.ok, "{report:?}");
+        assert!(
+            report.findings.iter().all(|finding| {
+                !finding.summary.contains("contributor-precondition")
+                    && !finding.summary.contains("docker-precondition")
+            }),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_preconditions_with_scoped_requirements_do_not_run_unreferenced_global_checks() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: contributor-precondition
+    kind: precondition
+    severity: error
+    run: __ota_missing_contributor_check__
+tasks:
+  setup:
+    run: echo setup
+    requirements:
+      checks:
+        - contributor-precondition
+  docker:run:
+    run: echo docker
+    requirements:
+      tools:
+        docker: "*"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+  docker:
+    run:
+      task: docker:run
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("docker"),
+        );
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| { !finding.summary.contains("contributor-precondition") }),
+            "{report:?}"
+        );
+
+        let full_report = super::diagnose_contract_with_mode_and_lifecycle_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            None,
+            Some("docker"),
+        );
+        assert!(
+            full_report
+                .findings
+                .iter()
+                .all(|finding| { !finding.summary.contains("contributor-precondition") }),
+            "{full_report:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_preconditions_still_run_without_task_scoped_requirements() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: global-precondition
+    kind: precondition
+    severity: error
+    run: __ota_missing_global_check__
+tasks:
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("app"),
+        );
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary.contains("global-precondition")),
+            "{report:?}"
+        );
     }
 
     #[test]

@@ -55,7 +55,7 @@ use crate::doctor::{
     diagnose_checks_only_for_workflow, diagnose_contract,
     diagnose_contract_with_mode_and_lifecycle,
     diagnose_contract_with_mode_and_lifecycle_for_workflow, diagnose_policy_review,
-    diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
+    diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow, diagnose_service,
     diagnose_services_only_for_workflow, finding_targets_container_image,
     finding_targets_remote_backend, provisioning_installability_finding,
 };
@@ -8632,6 +8632,7 @@ fn build_assist_add_task_proposal(
         run: None,
         script: None,
         launch: None,
+        requirements: crate::schema::TaskRequirementsSpec::default(),
         depends_on: Vec::new(),
         requires_services: Vec::new(),
         runtime: None,
@@ -59054,18 +59055,28 @@ fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> S
     )
 }
 
-fn up_requirement_surface(
+fn selected_workflow_task_requirement_surface(
     contract: &Contract,
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
-) -> RequirementSurface {
+) -> Option<RequirementSurface> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        return None;
+    }
+
     let mut surface = RequirementSurface {
         runtimes: contract.runtimes.clone(),
         tools: contract.tools.clone(),
     };
 
-    if let Some(task_name) = selected_up_primary_task_name(contract, workflow_name) {
-        let effective = effective_task_execution(contract, task_name, overrides);
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        surface.merge(&task.scoped_requirement_surface());
+
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
         if let Some(context_name) = effective.context_name
             && let Some((_, context)) = named_execution_context(contract, context_name)
         {
@@ -59073,12 +59084,27 @@ fn up_requirement_surface(
                 .runtimes
                 .extend(context.requirements.runtimes.clone());
             surface.tools.extend(context.requirements.tools.clone());
-            return surface;
         }
-        surface.merge(&contract.context_requirement_surface_for_backend(effective.backend));
+    }
+
+    Some(surface)
+}
+
+fn up_requirement_surface(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> RequirementSurface {
+    if let Some(surface) =
+        selected_workflow_task_requirement_surface(contract, overrides, workflow_name)
+    {
         return surface;
     }
 
+    let mut surface = RequirementSurface {
+        runtimes: contract.runtimes.clone(),
+        tools: contract.tools.clone(),
+    };
     let (backend, _) = effective_execution(contract, overrides);
     surface.merge(&contract.context_requirement_surface_for_backend(backend));
     surface
@@ -59781,7 +59807,12 @@ fn execute_repo_up(
     }
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let execution_dir = contract_working_dir(resolved_path);
-    let mut preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+    let mut preflight = diagnose_preconditions_with_mode_for_workflow(
+        contract,
+        resolved_path,
+        doctor_mode,
+        workflow_name,
+    );
     if dry_run {
         let preview = build_up_preview(
             contract,
@@ -59877,7 +59908,12 @@ fn execute_repo_up(
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
                 }
-                preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+                preflight = diagnose_preconditions_with_mode_for_workflow(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    workflow_name,
+                );
             }
             Err(ProvisioningBackendError::DiagnosedCommandFailed {
                 stdout: backend_stdout,
@@ -60092,10 +60128,11 @@ fn execute_repo_up(
                                 stdout.push_str(&outcome.stdout);
                                 stderr.push_str(&outcome.stderr);
                             }
-                            preflight = diagnose_preconditions_with_mode(
+                            preflight = diagnose_preconditions_with_mode_for_workflow(
                                 contract,
                                 resolved_path,
                                 doctor_mode,
+                                workflow_name,
                             );
                         }
                         Err(ProvisioningBackendError::DiagnosedCommandFailed {
@@ -60357,8 +60394,12 @@ fn execute_repo_up(
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
                 if !preflight.ok {
-                    let refreshed =
-                        diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+                    let refreshed = diagnose_preconditions_with_mode_for_workflow(
+                        contract,
+                        resolved_path,
+                        doctor_mode,
+                        workflow_name,
+                    );
                     if !refreshed.ok {
                         return Ok(RepoUpResult {
                             ok: false,

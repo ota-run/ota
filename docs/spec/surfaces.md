@@ -198,6 +198,13 @@ projection are not always the same endpoint.
 The attachment owns only publication shape.
 It does not redefine what the `site` surface means.
 
+Read the object form like this:
+
+- `runtime.surfaces.site` still refers to the declared top-level reusable `surfaces.site`
+- object form means "attach that reusable surface with publication overrides for this runtime"
+- `bind` means where the workload listens inside its own runtime context
+- `project.host` means the host-facing projected endpoint ota reports, checks, and exposes
+
 Attachment behavior:
 
 - each attached surface normalizes into the existing runtime listener model internally

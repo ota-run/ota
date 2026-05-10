@@ -1133,6 +1133,9 @@ ota doctor --member api --member web --json [PATH]
 - missing-file precondition failures now point to `ota up` / `ota run setup` when `tasks.setup` already exists, or to `ota assist wire-setup` when the repo still needs a contract-first setup path
 - when a contract has no tasks, doctor now keeps that path preview-first too: it suggests `ota detect --dry-run` before any detect write, while still offering `ota assist add-task` when the right fix is clearly one explicit task
 - checks configured env requirements, declared checks, and service healthchecks in native mode
+- when the selected or default workflow task closure declares `tasks.<name>.requirements`, doctor
+  scopes runtime, tool, env, and precondition-check diagnosis to that setup/run dependency path
+  instead of treating unrelated task-specific prerequisites as repo-global truth
 - probe-backed checks and workflow readiness probes execute directly inside ota; they do not depend
   on repo-local helper commands such as `curl` or `node`
 - checks required execution backends for the selected `--mode` and resolved contexts
@@ -1378,6 +1381,9 @@ Current behavior:
 - repeated `--member` values run checks for those members in the provided order
 - when the selected workflow declares explicit readiness checks or probes, runs that workflow
   readiness surface
+- when the selected or default workflow task closure declares explicit
+  `tasks.<name>.requirements.checks`, `ota check` also runs those prerequisite checks without
+  broadening into runtime, tool, or env diagnosis
 - otherwise runs the repo-wide configured checks surface
 - command-backed checks keep their existing shell execution model
 - probe-backed checks and workflow readiness probes run the named `readiness.probes` target
@@ -1505,6 +1511,9 @@ Current behavior:
 - repeated `--member` values prepare those members in the provided order
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
+- when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`
+  evaluates and provisions that merged prerequisite surface before setup instead of unrelated
+  task-local quickstart or packaged-runtime requirements elsewhere in the repo
 - when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
 - when blocking preconditions fail and the selected workflow declares a setup task, ota runs that setup phase early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
