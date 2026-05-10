@@ -51,7 +51,7 @@ pub(crate) use commands::parse_container_host_port_conflict;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  compare exact starter text   ota detect --contract .\n  review starter write path    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  inspect declared workflows   ota workflows\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
+    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  compare exact starter text   ota detect --contract .\n  review starter write path    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  inspect declared workflows   ota workflows\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  prove one runtime path       ota proof runtime\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -163,6 +163,12 @@ enum Commands {
     Execution {
         #[command(subcommand)]
         command: ExecutionCommands,
+    },
+    #[command(display_order = 11)]
+    /// Prove that one runtime path can become ready and capture the canonical artifacts.
+    Proof {
+        #[command(subcommand)]
+        command: ProofCommands,
     },
     #[command(display_order = 5)]
     /// Propose reviewed contract mutations from bounded Ota intents.
@@ -692,6 +698,45 @@ enum ExecutionCommands {
         /// Inspect one merged monorepo member contract declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum ProofCommands {
+    /// Validate one selected runtime path, capture execution artifacts, and verify readiness.
+    Runtime {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Override the execution mode for this proof.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Shorthand for `--mode native`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "container", "remote"])]
+        native: bool,
+        /// Shorthand for `--mode container`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "remote"])]
+        container: bool,
+        /// Shorthand for `--mode remote`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["backend", "native", "container"])]
+        remote: bool,
+        /// Override the execution lifecycle for this proof.
+        #[arg(long, value_enum)]
+        lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle persistent`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "ephemeral"])]
+        persistent: bool,
+        /// Shorthand for `--lifecycle ephemeral`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
+        ephemeral: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        member: Option<String>,
+        /// Prove one declared repo workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -3282,6 +3327,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
             | Commands::Workflows { .. }
             | Commands::Clean { .. }
             | Commands::Services { .. }
+            | Commands::Proof { .. }
             | Commands::Up { stream: false, .. }
             | Commands::Doctor { .. }
             | Commands::Check { .. }
@@ -3361,6 +3407,7 @@ fn maybe_append_update_notice_with_timeout(
 fn command_spinner_label(command: &Commands) -> Option<&'static str> {
     match command {
         Commands::Up { .. } => Some("Preparing environment..."),
+        Commands::Proof { .. } => Some("Proving runtime..."),
         Commands::Workspace {
             command: WorkspaceCommands::Up { .. },
         } => Some("Preparing workspace..."),
@@ -4163,6 +4210,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Tasks { json: true, .. }
             | Commands::Workflows { json: true, .. }
             | Commands::Services { json: true, .. }
+            | Commands::Proof {
+                command: ProofCommands::Runtime { json: true, .. },
+            }
             | Commands::Assist {
                 command: AssistCommands::DeclareReadiness { json: true, .. },
             }
@@ -4286,6 +4336,36 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Proof {
+            command:
+                ProofCommands::Runtime {
+                    json,
+                    backend,
+                    native,
+                    container,
+                    remote,
+                    lifecycle,
+                    persistent,
+                    ephemeral,
+                    member,
+                    workflow,
+                    path,
+                },
+        } => commands::proof_runtime(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            workflow.as_deref(),
+            ExecutionOverrides {
+                backend: resolve_run_backend_override(backend, native, container, remote),
+                lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
             format_from_json(json),
             debug,
         ),
@@ -5269,6 +5349,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             "rerun `ota assist normalize --task <name> --into setup` when one existing setup-like task should move into the canonical `tasks.setup` slot"
         }
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
+        Commands::Proof { .. } => {
+            "run `ota doctor` to inspect blockers first, or rerun `ota proof runtime` with one explicit workflow"
+        }
         Commands::Execution { .. } => {
             "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
         }
@@ -5477,6 +5560,9 @@ fn command_requests_json(command: &Commands) -> bool {
             command: AssistCommands::Normalize { json, .. },
         }
         | Commands::Env { json, .. }
+        | Commands::Proof {
+            command: ProofCommands::Runtime { json, .. },
+        }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
         | Commands::Diff { json, .. }
@@ -5562,6 +5648,9 @@ fn command_where_label(command: &Commands) -> &'static str {
             command: AssistCommands::Normalize { .. },
         } => "ota assist normalize",
         Commands::Env { .. } => "ota env",
+        Commands::Proof { command } => match command {
+            ProofCommands::Runtime { .. } => "ota proof runtime",
+        },
         Commands::Execution { command } => match command {
             ExecutionCommands::Plan { .. } => "ota execution plan",
             ExecutionCommands::Topology { .. } => "ota execution topology",
@@ -15174,6 +15263,25 @@ tasks:
     }
 
     #[test]
+    fn proof_runtime_uses_command_spinner() {
+        assert!(super::command_supports_spinner(&super::Commands::Proof {
+            command: super::ProofCommands::Runtime {
+                json: false,
+                backend: None,
+                native: false,
+                container: false,
+                remote: false,
+                lifecycle: None,
+                persistent: false,
+                ephemeral: false,
+                member: None,
+                workflow: None,
+                path: None,
+            },
+        }));
+    }
+
+    #[test]
     fn up_requests_spinner_even_when_bootstrap_plain_mode_is_true() {
         let original_plain_mode = super::commands::plain_mode();
         super::commands::set_plain_mode(true);
@@ -15244,6 +15352,28 @@ tasks:
                 },
             }),
             Some("Preparing workspace...")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_spinner_uses_proving_runtime_label() {
+        assert_eq!(
+            super::command_spinner_label(&super::Commands::Proof {
+                command: super::ProofCommands::Runtime {
+                    json: false,
+                    backend: None,
+                    native: false,
+                    container: false,
+                    remote: false,
+                    lifecycle: None,
+                    persistent: false,
+                    ephemeral: false,
+                    member: None,
+                    workflow: None,
+                    path: None,
+                },
+            }),
+            Some("Proving runtime...")
         );
     }
 
@@ -17847,6 +17977,54 @@ policies:
         }
 
         assert_eq!(super::command_where_label(&command), "ota policy review");
+    }
+
+    #[test]
+    fn proof_runtime_parses_workflow_and_mode_flags() {
+        let cli = Cli::parse_from([
+            "ota",
+            "proof",
+            "runtime",
+            "--workflow",
+            "app",
+            "--container",
+            "--persistent",
+            "./ota.yaml",
+        ]);
+        let command = cli.command;
+
+        match &command {
+            Commands::Proof {
+                command:
+                    super::ProofCommands::Runtime {
+                        json: false,
+                        backend,
+                        native,
+                        container,
+                        remote,
+                        lifecycle,
+                        persistent,
+                        ephemeral,
+                        member,
+                        workflow,
+                        path,
+                    },
+            } => {
+                assert!(backend.is_none());
+                assert!(!native);
+                assert!(*container);
+                assert!(!remote);
+                assert!(lifecycle.is_none());
+                assert!(*persistent);
+                assert!(!ephemeral);
+                assert!(member.is_none());
+                assert_eq!(workflow.as_deref(), Some("app"));
+                assert_eq!(path.as_deref(), Some(Path::new("./ota.yaml")));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+
+        assert_eq!(super::command_where_label(&command), "ota proof runtime");
     }
 
     #[test]
@@ -20625,6 +20803,7 @@ policies:
         assert!(gitignore.contains("# Ota local runtime artifacts"));
         assert!(gitignore.contains(".ota/state/"));
         assert!(gitignore.contains(".ota/receipts/"));
+        assert!(gitignore.contains(".ota/proof/"));
     }
 
     #[test]
@@ -21494,7 +21673,7 @@ name = "fastapi"
         let fixture = ContractFixture::new_dir();
         fixture.write(
             ".gitignore",
-            "node_modules/\n.ota/state/*\n.ota/receipts/*\n",
+            "node_modules/\n.ota/state/*\n.ota/receipts/*\n.ota/proof/*\n",
         );
 
         let output = run_with(["ota", "init", "--pack", "node", fixture.path()]);
@@ -21503,9 +21682,11 @@ name = "fastapi"
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(gitignore.matches(".ota/state/*").count(), 1);
         assert_eq!(gitignore.matches(".ota/receipts/*").count(), 1);
+        assert_eq!(gitignore.matches(".ota/proof/*").count(), 1);
         assert!(!gitignore.contains("# Ota local runtime artifacts"));
         assert!(!gitignore.contains(".ota/state/\n"));
         assert!(!gitignore.contains(".ota/receipts/\n"));
+        assert!(!gitignore.contains(".ota/proof/\n"));
     }
 
     #[test]
@@ -21519,7 +21700,9 @@ name = "fastapi"
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(gitignore.matches(".ota/state/*").count(), 1);
         assert_eq!(gitignore.matches(".ota/receipts/").count(), 1);
+        assert_eq!(gitignore.matches(".ota/proof/").count(), 1);
         assert!(!gitignore.contains(".ota/state/\n"));
+        assert!(!gitignore.contains(".ota/proof/\n"));
     }
 
     #[test]
@@ -27283,6 +27466,7 @@ tasks:
         assert!(gitignore.contains("# Ota local runtime artifacts"));
         assert!(gitignore.contains(".ota/state/"));
         assert!(gitignore.contains(".ota/receipts/"));
+        assert!(gitignore.contains(".ota/proof/"));
     }
 
     #[test]
@@ -27347,6 +27531,7 @@ tasks:
         assert!(stdout.contains("# Ota local runtime artifacts"));
         assert!(stdout.contains(".ota/state/"));
         assert!(stdout.contains(".ota/receipts/"));
+        assert!(stdout.contains(".ota/proof/"));
     }
 
     #[test]
@@ -27392,7 +27577,9 @@ tasks:
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(
             gitignore,
-            String::from("# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n")
+            String::from(
+                "# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n.ota/proof/\n"
+            )
         );
     }
 
@@ -27418,7 +27605,7 @@ tasks:
         assert_eq!(
             gitignore,
             String::from(
-                "node_modules/\n\n# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n"
+                "node_modules/\n\n# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n.ota/proof/\n"
             )
         );
     }
@@ -27436,13 +27623,19 @@ tasks:
 "#,
         );
         fs::create_dir_all(fixture.dir.path().join(".git")).unwrap();
-        fixture.write(".gitignore", ".ota/state/*\n.ota/receipts/*\n");
+        fixture.write(
+            ".gitignore",
+            ".ota/state/*\n.ota/receipts/*\n.ota/proof/*\n",
+        );
 
         let output = run_with(["ota", "doctor", "--fix", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
-        assert_eq!(gitignore, String::from(".ota/state/*\n.ota/receipts/*\n"));
+        assert_eq!(
+            gitignore,
+            String::from(".ota/state/*\n.ota/receipts/*\n.ota/proof/*\n")
+        );
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("no supported deterministic repo-hygiene fixes are needed"));
         assert!(!stdout.contains("preview mode: no files were modified"));
@@ -27469,7 +27662,9 @@ tasks:
         let gitignore = fs::read_to_string(fixture.dir.path().join(".gitignore")).unwrap();
         assert_eq!(gitignore.matches(".ota/receipts/*").count(), 1);
         assert_eq!(gitignore.matches(".ota/state/").count(), 1);
+        assert_eq!(gitignore.matches(".ota/proof/").count(), 1);
         assert!(!gitignore.contains(".ota/receipts/\n"));
+        assert!(!gitignore.contains(".ota/proof/\n"));
     }
 
     #[test]
@@ -27574,6 +27769,7 @@ tasks:
         assert!(!stdout.contains("Repo local Ota artifacts are not ignored by git"));
         assert!(!stdout.contains(".ota/state/"));
         assert!(!stdout.contains(".ota/receipts/"));
+        assert!(!stdout.contains(".ota/proof/"));
     }
 
     #[test]

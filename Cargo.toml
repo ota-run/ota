@@ -19,4 +19,5 @@ signal-hook = "0.3.18"
 
 [dev-dependencies]
 fs2 = "0.4.3"
+jsonschema = { version = "0.18.3", features = ["draft202012"] }
 tempfile = "3.23.0"

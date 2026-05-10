@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/proof-runtime.json",
+  "title": "ota proof runtime --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "mode", "phase", "summary"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "path": { "type": "string" },
+        "mode": { "const": "runtime-proof" },
+        "workflow": { "type": "string" },
+        "phase": { "type": "string" },
+        "summary": { "$ref": "./doctor.json#/properties/summary" },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["topology", "doctor", "up_log"],
+          "properties": {
+            "topology": { "type": "string" },
+            "doctor": { "type": "string" },
+            "up_log": { "type": "string" }
+          }
+        },
+        "error": { "type": "string" },
+        "next": { "type": "string" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "summary": {
+          "type": ["object", "null"]
+        },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "error": { "type": "string" },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

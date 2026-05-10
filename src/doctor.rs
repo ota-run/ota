@@ -4062,8 +4062,16 @@ fn diagnose_native_prerequisites(
         else {
             continue;
         };
+        let check_command =
+            native_prerequisite_check_command(prerequisite, target_os, check.run.as_deref());
 
-        match run_declared_check(contract, contract_path, check, working_dir) {
+        match run_declared_check(
+            contract,
+            contract_path,
+            check,
+            working_dir,
+            check_command.as_deref(),
+        ) {
             CheckStatus::Passed => {}
             CheckStatus::Failed => findings.push(native_prerequisite_finding(
                 name,
@@ -5980,7 +5988,7 @@ fn diagnose_checks(
             probes_executed_via_checks.insert(probe_name.to_string());
         }
 
-        match run_declared_check(contract, contract_path, check, working_dir) {
+        match run_declared_check(contract, contract_path, check, working_dir, None) {
             CheckStatus::Passed => continue,
             CheckStatus::Failed => findings.push(Finding {
                 severity: map_check_severity(check.severity),
@@ -6301,11 +6309,12 @@ fn run_declared_check(
     contract_path: &Path,
     check: &crate::schema::CheckSpec,
     working_dir: &Path,
+    command_override: Option<&str>,
 ) -> CheckStatus {
     if check.kind == crate::schema::CheckKind::File {
         return run_file_check(check, working_dir);
     }
-    if let Some(command) = check.run.as_deref() {
+    if let Some(command) = command_override.or(check.run.as_deref()) {
         return run_check(command, working_dir, check.timeout);
     }
     if let Some(probe_name) = check.probe.as_deref()
@@ -6314,6 +6323,43 @@ fn run_declared_check(
         return run_named_probe(contract, contract_path, probe_name, check.timeout);
     }
     CheckStatus::Failed
+}
+
+fn native_prerequisite_check_command(
+    prerequisite: &crate::schema::NativePrerequisiteSpec,
+    target_os: &str,
+    command: Option<&str>,
+) -> Option<String> {
+    let command = command?;
+    let platform = prerequisite.platform_for_os(target_os)?;
+    let activation = platform.activation.as_ref()?;
+    match activation.kind {
+        crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell
+            if target_os == "windows" =>
+        {
+            Some(visual_studio_dev_shell_command(
+                command,
+                activation.arch.as_deref().unwrap_or("x64"),
+            ))
+        }
+        _ => Some(command.to_string()),
+    }
+}
+
+fn visual_studio_dev_shell_command(command: &str, arch: &str) -> String {
+    format!(
+        concat!(
+            "set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\" ",
+            "&& if not exist \"%VSWHERE%\" exit /b 1 ",
+            "&& set \"VSINSTALL=\" ",
+            "&& for /f \"usebackq delims=\" %I in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set \"VSINSTALL=%I\" ",
+            "&& if not defined VSINSTALL exit /b 1 ",
+            "&& call \"%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch={arch} >nul ",
+            "&& {command}"
+        ),
+        arch = arch,
+        command = command
+    )
 }
 
 fn run_file_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> CheckStatus {
@@ -7126,6 +7172,7 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
 pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime artifacts";
 pub(crate) const OTA_STATE_GITIGNORE_ENTRY: &str = ".ota/state/";
 pub(crate) const OTA_RECEIPTS_GITIGNORE_ENTRY: &str = ".ota/receipts/";
+pub(crate) const OTA_PROOF_GITIGNORE_ENTRY: &str = ".ota/proof/";
 
 fn gitignore_has_ota_state_entry(contents: &str) -> bool {
     contents
@@ -7142,6 +7189,12 @@ fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
     })
 }
 
+fn gitignore_has_ota_proof_entry(contents: &str) -> bool {
+    contents
+        .lines()
+        .any(|line| matches!(line.trim(), ".ota/proof/" | ".ota/proof" | ".ota/proof/*"))
+}
+
 pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, String> {
     let git_dir = root.join(".git");
     let gitignore_path = root.join(".gitignore");
@@ -7155,7 +7208,9 @@ pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, Stri
 
     let contents = fs::read_to_string(&gitignore_path)
         .map_err(|error| format!("failed to read `{}`: {}", gitignore_path.display(), error))?;
-    Ok(!(gitignore_has_ota_state_entry(&contents) && gitignore_has_ota_receipts_entry(&contents)))
+    Ok(!(gitignore_has_ota_state_entry(&contents)
+        && gitignore_has_ota_receipts_entry(&contents)
+        && gitignore_has_ota_proof_entry(&contents)))
 }
 
 pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option<Finding> {
@@ -7165,10 +7220,10 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
             severity: FindingSeverity::Warn,
             summary: String::from("Repo local Ota artifacts are not ignored by git"),
             why: String::from(
-                "`.ota/state/` and `.ota/receipts/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue and archived receipts can pollute repo diffs and diagnosis artifacts",
+                "`.ota/state/`, `.ota/receipts/`, and `.ota/proof/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue, archived receipts, and runtime proof artifacts can pollute repo diffs and diagnosis artifacts",
             ),
             next: String::from(
-                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/` and `.ota/receipts/` to `.gitignore`, or add the ignore rules manually",
+                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/`, `.ota/receipts/`, and `.ota/proof/` to `.gitignore`, or add the ignore rules manually",
             ),
         }),
         Ok(false) => None,
@@ -7176,7 +7231,7 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
             severity: FindingSeverity::Warn,
             summary: String::from("Repo `.gitignore` could not be inspected"),
             why: format!(
-                "ota could not inspect whether `.ota/state/` and `.ota/receipts/` are ignored: {error}"
+                "ota could not inspect whether `.ota/state/`, `.ota/receipts/`, and `.ota/proof/` are ignored: {error}"
             ),
             next: String::from("repair `.gitignore` readability and rerun `ota doctor`"),
         }),
@@ -10843,6 +10898,46 @@ checks:
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].summary, "Check failed: health-check");
+    }
+
+    #[test]
+    fn windows_native_prerequisite_activation_wraps_check_in_visual_studio_dev_shell() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  windows-build-tools:
+    description: Native Windows compiler toolchain
+    platforms:
+      windows:
+        check: windows-build-tools-check
+        activation:
+          kind: visual_studio_dev_shell
+          arch: x64
+checks:
+  - name: windows-build-tools-check
+    kind: precondition
+    severity: error
+    run: where cl
+"#,
+        )
+        .unwrap();
+
+        let prerequisite = contract
+            .native_prerequisites
+            .get("windows-build-tools")
+            .expect("native prerequisite");
+        let command =
+            super::native_prerequisite_check_command(prerequisite, "windows", Some("where cl"))
+                .expect("wrapped command");
+
+        assert!(command.contains("vswhere.exe"), "{command}");
+        assert!(command.contains("VsDevCmd.bat"), "{command}");
+        assert!(command.contains("-arch=x64"), "{command}");
+        assert!(command.ends_with("&& where cl"), "{command}");
     }
 
     #[test]

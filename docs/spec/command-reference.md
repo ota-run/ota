@@ -82,6 +82,7 @@ ota currently ships these commands:
 - `ota env`
 - `ota execution plan`
 - `ota execution topology`
+- `ota proof runtime`
 - `ota assist declare-readiness`
 - `ota assist declare-service`
 - `ota assist bind-task`
@@ -509,6 +510,57 @@ JSON output:
 - task runtime entries may include `backend_binding`, `readiness`, `attached_surfaces`, additive `surface_attachments`, and normalized `listeners`
 - task target entries may include `activation_mode`, `override_input`, `url`, and typed `service` references
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
+
+## `ota proof runtime`
+
+Prove that one selected runtime path can become ready, capture the canonical execution artifacts,
+and tear the runtime back down.
+
+```bash
+ota proof runtime [PATH]
+ota proof runtime --workflow app [PATH]
+ota proof runtime --mode container --persistent [PATH]
+ota proof runtime --member api --workflow backend [PATH]
+ota proof runtime --json --workflow app [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when `--member` is set, proves the merged member contract from the monorepo root
+- when `--workflow` is set, proves that selected workflow path; otherwise it uses the effective
+  default workflow or the default task path when the repo has no workflows
+- captures the canonical runtime-proof artifacts under `.ota/proof/<workflow>/` (and under the
+  selected member prefix when `--member` is set):
+  - `topology.json`
+  - `doctor.json`
+  - `up.log`
+- reuses the existing execution and diagnosis boundaries instead of inventing a parallel proof
+  implementation: the topology artifact is the same `ota execution topology --json` surface, the
+  doctor artifact is the same `ota doctor --json` surface, and the up log is the repo-level
+  preparation report for the selected path
+- uses the same backend/lifecycle override rules as `ota doctor` and `ota up`
+- attempts repo-scoped runtime cleanup after capturing artifacts so proof does not leave
+  persistent Ota-managed runtime state behind
+- surfaces cleanup failures explicitly as a proof failure instead of silently dropping them
+
+Use it when you need clean-machine proof that one declared front door actually becomes operational,
+or when you want one archiveable readiness lane for CI and case-study adoption work.
+
+Text output:
+
+- header: `PROOF <path>`
+- `Workflow` and `Mode` lines first
+- success output includes a compact `Steps` section, final `READY` line, and `Artifacts` paths
+- blocked output keeps the shared `NOT READY` / `BLOCKED` status language, shows the failing proof
+  phase, and surfaces one primary `Why` / `Next` lane without duplicating the full doctor report
+
+JSON output:
+
+- success or blocked proof output: `ok`, `path`, `mode`, optional `workflow`, `phase`, shared
+  `summary`, optional `artifacts`, and optional cleanup `error` / `next`
+- contract load or validation failures still use the standard validation failure surface instead of
+  inventing a second invalid-contract payload
 
 ## `ota assist declare-readiness`
 

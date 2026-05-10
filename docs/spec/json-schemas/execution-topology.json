@@ -292,7 +292,7 @@
         "contract_identity": {
           "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
         },
-        "declared_execution": { "$ref": "./doctor.json#/properties/execution" },
+        "declared_execution": { "$ref": "./execution.json#/$defs/declaredExecution" },
         "shared_backends": { "type": "array", "items": { "$ref": "#/$defs/sharedBackend" } },
         "readiness_probes": {
           "type": "object",

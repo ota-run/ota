@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/services.json",
+  "title": "ota services --json",
+  "$defs": {
+    "serviceProducer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "task", "address_view"],
+      "properties": {
+        "repo": { "type": "string" },
+        "task": { "type": "string" },
+        "listener": { "type": "string" },
+        "address_view": { "type": "string" }
+      }
+    },
+    "serviceManager": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string" },
+        "name": { "type": "string" },
+        "file": { "type": "string" },
+        "service": { "type": "string" }
+      }
+    },
+    "readinessSuccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "readinessBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contains"],
+      "properties": {
+        "contains": { "type": "string" }
+      }
+    },
+    "serviceReadiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from": { "type": "string" },
+        "run": { "type": "string" },
+        "probe": { "type": "string" },
+        "kind": { "type": "string" },
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "success": { "$ref": "#/$defs/readinessSuccess" },
+        "body": { "$ref": "#/$defs/readinessBody" },
+        "interval": { "type": "string" },
+        "timeout": { "type": "string" },
+        "retries": { "type": "integer" },
+        "start_period": { "type": "string" }
+      }
+    },
+    "serviceEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["address", "port"],
+      "properties": {
+        "address": { "type": "string" },
+        "port": { "type": "integer" }
+      }
+    },
+    "serviceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "required", "depends_on"],
+      "properties": {
+        "name": { "type": "string" },
+        "required": { "type": "boolean" },
+        "producer": { "$ref": "#/$defs/serviceProducer" },
+        "manager": { "$ref": "#/$defs/serviceManager" },
+        "provider": { "type": "string" },
+        "start": { "type": "string" },
+        "stop": { "type": "string" },
+        "healthcheck": { "type": "string" },
+        "readiness": { "$ref": "#/$defs/serviceReadiness" },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/serviceEndpoint" }
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "timeout": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "services"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "services": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/serviceSummary" }
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["member", "services"],
+            "properties": {
+              "member": { "type": "string" },
+              "services": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/serviceSummary" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "error": { "type": "string" }
+      }
+    }
+  ]
+}
