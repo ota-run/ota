@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed container-mode workspace mounts on Windows so Docker no longer receives verbatim
+  `\\?\\...` repo paths from canonicalized worktrees, and clarified container readiness output so
+  `ota doctor` / `ota up` now say explicitly that container validation covers the selected
+  execution image and container path while leaving host-only checks to native diagnosis
 - added `ota proof runtime` as the native runtime-proof surface: ota can now validate one
   selected runtime path, capture the canonical `execution topology`, `doctor`, and `up` artifacts
   under `.ota/proof/`, and tear the runtime back down without repo-local glue scripts
