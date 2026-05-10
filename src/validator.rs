@@ -1746,7 +1746,7 @@ fn validate_task_launch(
             }
             if container.remove && runtime.kind == TaskRuntimeKind::Service {
                 errors.push(ValidationError::new(format!(
-                    "{scope} `{task_name}` must not declare `launch.remove: true` for a service runtime"
+                    "{scope} `{task_name}` must omit `launch.remove: true`; container launch service tasks are persistent Ota-managed services in this slice"
                 )));
             }
             for volume in &container.volumes {
@@ -1774,6 +1774,12 @@ fn validate_task_launch(
                 if host.port.mode != crate::schema::TaskRuntimeHostPortMode::Fixed {
                     errors.push(ValidationError::new(format!(
                         "{scope} `{task_name}` uses `launch.kind: container`, but attached surface `{listener_name}` must project a fixed host port in this slice"
+                    )));
+                }
+                if is_loopback_only_address(listener.bind.address.trim()) {
+                    errors.push(ValidationError::new(format!(
+                        "{scope} `{task_name}` uses `launch.kind: container`, but attached surface `{listener_name}` cannot project to the host from loopback-only container bind address `{}`",
+                        listener.bind.address.trim()
                     )));
                 }
             }
@@ -9914,7 +9920,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run` or `script`"
+            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
         );
     }
 
@@ -10039,12 +10045,104 @@ tasks:
     runtime:
       kind: service
       surfaces:
-        - backend
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+              path: /
+              primary: true
 "#,
         )
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_task_launch_container_loopback_surface_publication() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  packaged:
+    launch:
+      kind: container
+      image: docker.n8n.io/n8nio/n8n
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "task `packaged` uses `launch.kind: container`, but attached surface `backend` cannot project to the host from loopback-only container bind address `127.0.0.1`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_task_launch_container_remove_for_service_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  packaged:
+    launch:
+      kind: container
+      image: docker.n8n.io/n8nio/n8n
+      remove: true
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5678
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 5678
+              path: /
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "task `packaged` must omit `launch.remove: true`; container launch service tasks are persistent Ota-managed services in this slice",
+            )
+        }));
     }
 
     #[test]

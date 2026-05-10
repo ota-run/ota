@@ -6043,6 +6043,9 @@ case "$command" in
       esac
     done
     host_dir="${workspace_mount%%:*}"
+    if [ -z "$host_dir" ]; then
+      host_dir="$PWD"
+    fi
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$host_dir" > "$state_dir/$name.path"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
@@ -6144,6 +6147,9 @@ case "$command" in
       esac
     done
     host_dir="${workspace_mount%%:*}"
+    if [ -z "$host_dir" ]; then
+      host_dir="$PWD"
+    fi
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ "$detached" = "1" ]; then
@@ -23919,7 +23925,10 @@ tasks:
             !script.contains("Join-Path (Get-Location) \"bootstrap.ps1\""),
             "{script}"
         );
-        assert!(script.contains("Remove-Item -LiteralPath $bootstrapPath -Force"), "{script}");
+        assert!(
+            script.contains("Remove-Item -LiteralPath $bootstrapPath -Force"),
+            "{script}"
+        );
     }
 
     #[test]
@@ -25543,6 +25552,12 @@ policies:
 
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.11.0\r\n"
+        } else {
+            "#!/bin/sh\necho 'v22.11.0'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
         let brew_log = fixture.dir.path().join("brew.log");
         let brew_body = if cfg!(windows) {
             format!(

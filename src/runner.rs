@@ -3714,6 +3714,7 @@ struct ActivationStartedProducerCleanup {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct ContainerTerminationState {
+    running: Option<bool>,
     exit_code: Option<i32>,
     oom_killed: Option<bool>,
 }
@@ -4721,6 +4722,7 @@ fn execute_native_container_launch_command(
 
     let mut create = Command::new(engine);
     create
+        .current_dir(working_dir)
         .arg("create")
         .arg("-i")
         .arg("--name")
@@ -4777,7 +4779,7 @@ fn execute_native_container_launch_command(
 
     let attached = !matches!(mode, TaskExecutionMode::CaptureActivation);
     let mut start = Command::new(engine);
-    start.arg("start");
+    start.current_dir(working_dir).arg("start");
     if attached {
         start.arg("-ai");
     }
@@ -4854,12 +4856,11 @@ fn execute_native_container_launch_command(
         }
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
-            let output = start
+            let child = start
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .and_then(|child| child.wait_with_output())
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
@@ -4872,6 +4873,12 @@ fn execute_native_container_launch_command(
                 None,
                 interrupt_epoch,
             );
+            let output = child
+                .wait_with_output()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
             let interrupted = interruption_observed_since(interrupt_epoch);
             let readiness_observed = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
@@ -14861,6 +14868,9 @@ fn classify_container_service_termination(
     if runtime.kind != TaskRuntimeKind::Service {
         return None;
     }
+    if termination_state.and_then(|state| state.running) == Some(true) {
+        return None;
+    }
 
     let inspected_exit_code = termination_state.and_then(|state| state.exit_code);
     let effective_exit_code = inspected_exit_code.unwrap_or(exit_code);
@@ -14999,6 +15009,7 @@ fn inspect_container_termination_state(
     let value = serde_json::from_str::<serde_json::Value>(inspect.stdout.trim()).ok()?;
     let state = value.as_object()?;
     Some(ContainerTerminationState {
+        running: state_bool_value(state, &["Running", "running"]),
         exit_code: state_i32_value(state, &["ExitCode", "exitCode", "exit_code"]),
         oom_killed: state_bool_value(state, &["OOMKilled", "oomKilled", "oom_killed"]),
     })
@@ -17199,6 +17210,27 @@ find_listener_owner_pids() {
       case " $owners " in *" $pid "*) ;; *) owners="$owners $pid" ;; esac
     done
   fi
+  if [ -z "$owners" ] && [ -r /proc/net/tcp ]; then
+    inodes=$(awk -v port="$target_hex" '
+      NR > 1 {
+        split($2, a, ":")
+        if (($4 == "0A" || $4 == "0a") && toupper(a[2]) == toupper(port)) {
+          print $10
+        }
+      }
+    ' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u)
+    for inode in $inodes; do
+      for fd in /proc/[0-9]*/fd/*; do
+        link=$(readlink "$fd" 2>/dev/null || true)
+        [ "$link" = "socket:[$inode]" ] || continue
+        pid="${fd#/proc/}"
+        pid="${pid%%/*}"
+        [ "$pid" = "$$" ] && continue
+        [ "$pid" = "1" ] && continue
+        case " $owners " in *" $pid "*) ;; *) owners="$owners $pid" ;; esac
+      done
+    done
+  fi
   printf '%s\n' "$owners"
 }
 cleanup_pidfile_owner() {
@@ -17324,7 +17356,7 @@ ports={ports}; \
 cleaned=0; \
 port_listening() {{ target=\"$1\"; awk -v port=\"$target\" 'BEGIN {{ found = 0 }} NR > 1 {{ split($2, a, \":\"); if (($4 == \"0A\" || $4 == \"0a\") && (toupper(a[2]) == toupper(port) || a[2] == port)) {{ found = 1; exit }} }} END {{ exit(found ? 0 : 1) }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; }}; \
 terminate_pid_tree() {{ pid=\"$1\"; [ -n \"$pid\" ] || return 0; [ \"$pid\" = \"$$\" ] && return 0; [ \"$pid\" = \"1\" ] && return 0; kill -0 \"$pid\" 2>/dev/null || return 0; children=$(pgrep -P \"$pid\" 2>/dev/null || true); for child in $children; do terminate_pid_tree \"$child\"; done; kill -TERM \"$pid\" 2>/dev/null || true; sleep 0.2; i=0; while kill -0 \"$pid\" 2>/dev/null && [ \"$i\" -lt 30 ]; do i=$((i + 1)); sleep 0.1; done; if kill -0 \"$pid\" 2>/dev/null; then kill -KILL \"$pid\" 2>/dev/null || true; sleep 0.5; fi; }}; \
-find_listener_owner_pids() {{ target_port=\"$1\"; owners=\"\"; if command -v ss >/dev/null 2>&1; then ss_pids=$(ss -Htnlp \"sport = :$target_port\" 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | sort -u || true); for pid in $ss_pids; do [ \"$pid\" = \"$$\" ] && continue; [ \"$pid\" = \"1\" ] && continue; case \" $owners \" in *\" $pid \"*) ;; *) owners=\"$owners $pid\" ;; esac; done; fi; if [ -z \"$owners\" ] && command -v lsof >/dev/null 2>&1; then lsof_pids=$(lsof -nP -iTCP:\"$target_port\" -sTCP:LISTEN -t 2>/dev/null || true); for pid in $lsof_pids; do [ \"$pid\" = \"$$\" ] && continue; [ \"$pid\" = \"1\" ] && continue; case \" $owners \" in *\" $pid \"*) ;; *) owners=\"$owners $pid\" ;; esac; done; fi; printf '%s\\n' \"$owners\"; }}; \
+find_listener_owner_pids() {{ target_port=\"$1\"; owners=\"\"; target_hex=$(printf '%04X' \"$target_port\"); if command -v ss >/dev/null 2>&1; then ss_pids=$(ss -Htnlp \"sport = :$target_port\" 2>/dev/null | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' | sort -u || true); for pid in $ss_pids; do [ \"$pid\" = \"$$\" ] && continue; [ \"$pid\" = \"1\" ] && continue; case \" $owners \" in *\" $pid \"*) ;; *) owners=\"$owners $pid\" ;; esac; done; fi; if [ -z \"$owners\" ] && command -v lsof >/dev/null 2>&1; then lsof_pids=$(lsof -nP -iTCP:\"$target_port\" -sTCP:LISTEN -t 2>/dev/null || true); for pid in $lsof_pids; do [ \"$pid\" = \"$$\" ] && continue; [ \"$pid\" = \"1\" ] && continue; case \" $owners \" in *\" $pid \"*) ;; *) owners=\"$owners $pid\" ;; esac; done; fi; if [ -z \"$owners\" ] && [ -r /proc/net/tcp ]; then inodes=$(awk -v port=\"$target_hex\" 'NR > 1 {{ split($2, a, \":\"); if (($4 == \"0A\" || $4 == \"0a\") && toupper(a[2]) == toupper(port)) print $10 }}' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u); for inode in $inodes; do for fd in /proc/[0-9]*/fd/*; do link=$(readlink \"$fd\" 2>/dev/null || true); [ \"$link\" = \"socket:[$inode]\" ] || continue; pid=\"${{fd#/proc/}}\"; pid=\"${{pid%%/*}}\"; [ \"$pid\" = \"$$\" ] && continue; [ \"$pid\" = \"1\" ] && continue; case \" $owners \" in *\" $pid \"*) ;; *) owners=\"$owners $pid\" ;; esac; done; done; fi; printf '%s\\n' \"$owners\"; }}; \
 cleanup_pidfile_owner() {{ [ -s \"$pidfile\" ] || return 0; read pid started < \"$pidfile\" || {{ rm -f \"$pidfile\"; return 0; }}; [ -n \"$pid\" ] || {{ rm -f \"$pidfile\"; return 0; }}; if [ -n \"$started\" ]; then current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); [ -n \"$current\" ] && [ \"$current\" = \"$started\" ] && terminate_pid_tree \"$pid\" && cleaned=1; elif kill -0 \"$pid\" 2>/dev/null; then terminate_pid_tree \"$pid\"; cleaned=1; fi; rm -f \"$pidfile\"; }}; \
 cleanup_listener_owners() {{ [ -n \"$ports\" ] || return 0; attempt=0; while [ \"$attempt\" -lt 20 ]; do for port in $ports; do owners=$(find_listener_owner_pids \"$port\"); for pid in $owners; do terminate_pid_tree \"$pid\"; cleaned=1; done; done; all_free=1; for port in $ports; do hex=$(printf '%04X' \"$port\"); if port_listening \"$hex\"; then all_free=0; break; fi; done; [ \"$all_free\" = \"1\" ] && return 0; attempt=$((attempt + 1)); sleep 0.1; done; return 1; }}; \
 cleanup_pidfile_owner; \
@@ -21243,6 +21275,7 @@ while True:
             .arg("OLD")
             .spawn()
             .expect("old producer should spawn");
+        let old_server_pid = old_server.id();
         for _ in 0..30 {
             if super::target_probe_endpoint_reachable("127.0.0.1", port) {
                 break;
@@ -21277,9 +21310,7 @@ extensions:
             kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
             rm -f "${{PWD}}/backend-provider.pid"
           fi
-          for pid in $(lsof -ti TCP:{port} -sTCP:LISTEN 2>/dev/null || true); do
-            kill "$pid" 2>/dev/null || true
-          done
+          kill {old_server_pid} 2>/dev/null || true
           printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
           ;;
         *)
@@ -21351,6 +21382,7 @@ tasks:
           mode: restart_ready
 "#,
                 server_script = server_script_quoted,
+                old_server_pid = old_server_pid,
             )
             .as_str(),
         );
@@ -21628,6 +21660,7 @@ while True:
             .arg("OLD")
             .spawn()
             .expect("old producer should spawn");
+        let old_server_pid = old_server.id();
         for _ in 0..30 {
             if super::target_probe_endpoint_reachable("127.0.0.1", port) {
                 break;
@@ -21667,9 +21700,7 @@ extensions:
             kill "$(cat "${{PWD}}/backend-provider.pid")" 2>/dev/null || true
             rm -f "${{PWD}}/backend-provider.pid"
           fi
-          for pid in $(lsof -ti TCP:{port} -sTCP:LISTEN 2>/dev/null || true); do
-            kill "$pid" 2>/dev/null || true
-          done
+          kill {old_server_pid} 2>/dev/null || true
           printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
           ;;
         *)
@@ -21734,6 +21765,7 @@ tasks:
           mode: restart_ready
 "#,
                 server_script = server_script_quoted,
+                old_server_pid = old_server_pid,
             )
             .as_str(),
         );
@@ -26969,6 +27001,195 @@ tasks:
         assert_eq!(outcome.stdout, "hello");
         assert_eq!(outcome.stderr, "error");
         assert_eq!(outcome.executed_tasks, vec![String::from("quickstart")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_activation_creates_starts_and_reports_container_launch() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    path: /
+tasks:
+  packaged:
+    env:
+      APP_MODE: demo
+    launch:
+      kind: container
+      image: ghcr.io/ota/packaged:latest
+      name: ota-packaged-test
+      args: [serve]
+      volumes:
+        - source: app_data
+          target: /data
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+              primary: true
+"#
+        ));
+        let _path_guard = install_fake_docker_on_path(fixture.dir.path());
+
+        let outcome = super::run_task_internal(
+            &fixture.contract,
+            fixture.file_path(),
+            "packaged",
+            &[],
+            ExecutionOverrides::default(),
+            None,
+            TaskExecutionMode::CaptureActivation,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.executed_tasks, vec![String::from("packaged")]);
+        assert_eq!(outcome.target.as_deref(), Some("ota-packaged-test"));
+        assert!(outcome.service_termination.is_none());
+
+        let runtime = outcome
+            .runtime
+            .expect("container launch should report runtime");
+        let backend = runtime
+            .listeners
+            .get("backend")
+            .and_then(|listener| listener.resolved.as_ref())
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("backend surface should resolve to a host endpoint");
+        assert_eq!(backend.address, "127.0.0.1");
+        assert_eq!(backend.port, port);
+        let expected_url = format!("http://127.0.0.1:{port}/");
+        assert_eq!(backend.url.as_deref(), Some(expected_url.as_str()));
+
+        let state_dir = fixture.dir.path().join("bin/docker-state");
+        let env = fs::read_to_string(state_dir.join("ota-packaged-test.env")).unwrap();
+        assert!(env.contains("APP_MODE=demo\n"), "{env}");
+        assert!(env.contains("OTA_BIND_ADDRESS=0.0.0.0\n"), "{env}");
+        assert!(env.contains(&format!("OTA_BIND_PORT={port}\n")), "{env}");
+        assert!(
+            env.contains(&format!("OTA_PUBLIC_URL=http://127.0.0.1:{port}/\n")),
+            "{env}"
+        );
+
+        let publish = fs::read_to_string(state_dir.join("ota-packaged-test.publish")).unwrap();
+        assert_eq!(publish, format!("127.0.0.1:{port}:{port}/tcp\n"));
+        let mounts = fs::read_to_string(state_dir.join("ota-packaged-test.mounts")).unwrap();
+        assert_eq!(mounts, "app_data:/data\n");
+        let labels = fs::read_to_string(state_dir.join("ota-packaged-test.labels")).unwrap();
+        assert!(labels.contains("dev.ota.managed=true\n"), "{labels}");
+        assert!(
+            labels.contains("dev.ota.lifecycle=persistent\n"),
+            "{labels}"
+        );
+        assert!(
+            labels.contains("dev.ota.persistent.family=launch:packaged\n"),
+            "{labels}"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-image.txt")).unwrap(),
+            "ghcr.io/ota/packaged:latest"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert!(log.contains("run-ephemeral\n"), "{log}");
+        assert!(log.contains("start\n"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_capture_launch_observes_readiness_before_attached_container_exits() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    path: /
+    readiness:
+      kind: http
+      path: /
+tasks:
+  packaged:
+    launch:
+      kind: container
+      image: ghcr.io/ota/packaged:latest
+      name: ota-packaged-ready-test
+      args:
+        - sh
+        - -c
+        - python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & pid=$!; sleep 1; kill "$pid"
+    runtime:
+      kind: service
+      surfaces:
+        backend:
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+              primary: true
+"#
+        ));
+        let _path_guard = install_fake_docker_on_path(fixture.dir.path());
+
+        let outcome = super::run_task_internal(
+            &fixture.contract,
+            fixture.file_path(),
+            "packaged",
+            &[],
+            ExecutionOverrides::default(),
+            None,
+            TaskExecutionMode::Capture,
+        )
+        .unwrap();
+
+        let termination = outcome
+            .service_termination
+            .as_ref()
+            .expect("attached launch should observe readiness before the service exits");
+        assert!(termination.after_readiness, "{termination:?}");
+        assert_eq!(
+            termination.cause,
+            super::ServiceTerminationCause::Exited,
+            "{termination:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -33218,6 +33439,7 @@ tasks:
             Some(&resolved_runtime),
             true,
             Some(&super::ContainerTerminationState {
+                running: Some(false),
                 exit_code: Some(0),
                 oom_killed: Some(false),
             }),
@@ -33294,6 +33516,7 @@ tasks:
             Some(&resolved_runtime),
             true,
             Some(&super::ContainerTerminationState {
+                running: Some(false),
                 exit_code: Some(1),
                 oom_killed: Some(false),
             }),
@@ -33443,6 +33666,7 @@ tasks:
             Some(&resolved_runtime),
             true,
             Some(&super::ContainerTerminationState {
+                running: Some(false),
                 exit_code: Some(130),
                 oom_killed: Some(false),
             }),
@@ -39858,6 +40082,9 @@ case "$command" in
       esac
     done
     host_dir="${workspace_mount%%:*}"
+    if [ -z "$host_dir" ]; then
+      host_dir="$PWD"
+    fi
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$host_dir" > "$state_dir/$name.path"
     printf "%s" "$mounts" > "$state_dir/$name.mounts"
@@ -39969,6 +40196,9 @@ case "$command" in
       esac
     done
     host_dir="${workspace_mount%%:*}"
+    if [ -z "$host_dir" ]; then
+      host_dir="$PWD"
+    fi
     printf "%s" "$mounts" > "$host_dir/docker-mounts.txt"
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ -n "$memory" ]; then

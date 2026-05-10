@@ -173,7 +173,6 @@ launch:
   engine: docker
   args: []
   name: n8n
-  remove: true
   volumes:
     - kind: named
       source: n8n_data
@@ -186,7 +185,8 @@ Rules:
 - `engine` defaults to `docker`
 - `volumes` is optional
 - `name` is optional
-- `remove` is optional and controls container cleanup after task exit
+- `remove` is reserved for future non-service container launches; this slice treats container
+  launch service tasks as persistent Ota-managed services
 
 ## Surface relationship
 
@@ -248,6 +248,7 @@ Container launch:
 
 - `launch.kind: container` requires a service runtime with at least one attached surface
 - attached surfaces must resolve to fixed host publication in the first slice
+- attached surfaces must not use loopback-only container bind addresses when projected to the host
 - named volume `source` and `target` must not be empty
 
 ## Output contract

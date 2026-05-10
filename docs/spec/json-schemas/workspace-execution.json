@@ -49,6 +49,8 @@
           "required": { "type": "boolean" },
           "acquired": { "type": "boolean" },
           "status": { "type": "string" },
+          "workflow": { "type": "string" },
+          "task": { "type": "string" },
           "contract_identity": {
             "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
           },

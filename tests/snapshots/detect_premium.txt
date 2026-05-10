@@ -33,24 +33,45 @@ tasks:
 
 Annotations:
 ✦ Field: project.name
+  Type: project
   Value: ota-web
   Source: package.json#name
+  Signal: config
   Confidence: high
 
 ✦ Field: runtimes.node
+  Type: runtime
   Value: 22
   Source: .nvmrc
+  Signal: file
   Confidence: high
 
 ✦ Field: tasks.dev.run
+  Type: task
   Value: pnpm dev
   Source: package.json#scripts.dev
+  Signal: config
+  Agent Safe: unknown
   Confidence: high
 
 ✦ Field: tools.pnpm
+  Type: tool
   Value: 10.1.0
   Source: package.json#packageManager
+  Signal: config
   Confidence: high
+
+Agent boundary
+➤ Omitted
+Why:
+ »  no safe task was inferred for this repo
+ »  detected task `dev` is not treated as agent-safe by default
+ »  Ota cannot prove what `pnpm dev` mutates, provisions, or starts
+
+Next:
+  » add or expose one verifier task such as `test`, `typecheck`, or `lint` when it exists
+  » declare `agent.safe_tasks` explicitly after review if needed
+  » rerun `ota detect --dry-run` to confirm the inferred agent boundary
 
 Next:
   » run `ota detect --merge --dry-run .` to review add-only changes without dropping existing fields
