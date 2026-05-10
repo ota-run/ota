@@ -21,7 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Component, Path};
 
 use crate::execution::{
     format_lifecycle, matching_declared_execution_context_name, normalize_dependency_isolated_path,
@@ -1585,39 +1585,41 @@ fn validate_tasks(
             }
         }
 
-        let has_base_fields = task.run.is_some() || task.script.is_some() || task.launch.is_some();
+        let has_base_fields = task.run.is_some()
+            || task.script.is_some()
+            || task.launch.is_some()
+            || task.action.is_some();
         let has_mode_branches = task
             .execution
             .as_ref()
             .is_some_and(|execution| execution.modes.any());
-        match (
-            task.run.as_deref(),
-            task.script.as_deref(),
-            task.launch.as_ref(),
-        ) {
-            (Some(run), None, None) if run.trim().is_empty() => errors.push(ValidationError::new(
-                format!("task `{name}` must declare a non-empty `run` command"),
-            )),
-            (None, Some(script), None) if script.trim().is_empty() => {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` must declare a non-empty `script` body"
-                )))
-            }
-            (Some(_), Some(_), None) => errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run` or `script`"
+        match (task.run.as_deref(), task.script.as_deref()) {
+            (Some(run), _) if run.trim().is_empty() => errors.push(ValidationError::new(format!(
+                "task `{name}` must declare a non-empty `run` command"
             ))),
-            (Some(_), None, Some(_)) | (None, Some(_), Some(_)) | (Some(_), Some(_), Some(_)) => {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` must declare exactly one of `run`, `script`, or `launch`"
-                )))
-            }
-            (Some(_), None, None) | (None, Some(_), None) | (None, None, Some(_)) => {}
-            (None, None, None) => {}
+            (_, Some(script)) if script.trim().is_empty() => errors.push(ValidationError::new(
+                format!("task `{name}` must declare a non-empty `script` body"),
+            )),
+            _ => {}
+        }
+        let execution_field_count = [
+            task.run.is_some(),
+            task.script.is_some(),
+            task.launch.is_some(),
+            task.action.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        if execution_field_count > 1 {
+            errors.push(ValidationError::new(format!(
+                "task `{name}` must declare exactly one of `run`, `script`, `launch`, or `action`"
+            )));
         }
 
         if !has_base_fields && task.variants.is_empty() && !has_mode_branches {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run`, `script`, or `launch`"
+                "task `{name}` must declare exactly one of `run`, `script`, `launch`, or `action`"
             )));
         }
         if let Some(launch) = task.launch.as_ref() {
@@ -1631,6 +1633,10 @@ fn validate_tasks(
                 backend,
                 errors,
             );
+        }
+        if let Some(action) = task.action.as_ref() {
+            let backend = task.workflow_backend(contract.execution.as_ref());
+            validate_task_action(name, action, backend, errors);
         }
         if let Some(mode_execution) = task.execution.as_ref() {
             validate_task_mode_execution(
@@ -1986,6 +1992,86 @@ fn validate_task_launch(
             }
         }
     }
+}
+
+fn validate_task_action(
+    task_name: &str,
+    action: &crate::schema::TaskActionSpec,
+    backend: Backend,
+    errors: &mut Vec<ValidationError>,
+) {
+    if backend != Backend::Native {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` uses `action`, which is only supported for native execution in this slice"
+        )));
+    }
+    match action {
+        crate::schema::TaskActionSpec::CopyIfMissing(copy) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                "action.from",
+                copy.from.as_str(),
+                errors,
+            );
+            validate_repo_relative_file_action_path(
+                task_name,
+                "action.to",
+                copy.to.as_str(),
+                errors,
+            );
+            if copy.from.trim() == copy.to.trim() && !copy.from.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action must not copy a file onto itself"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_repo_relative_file_action_path(
+    task_name: &str,
+    field: &str,
+    value: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` must declare a non-empty `{field}` path"
+        )));
+        return;
+    }
+    if !is_safe_repo_relative_file_path(trimmed) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` `{field}` must be a repo-relative path that does not escape the repo"
+        )));
+    }
+}
+
+fn is_safe_repo_relative_file_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return false;
+    }
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return false;
+    }
+    !trimmed
+        .replace('\\', "/")
+        .split('/')
+        .any(|part| part == "..")
 }
 
 fn task_declares_service_runtime(task: &TaskSpec) -> bool {
@@ -4661,9 +4747,9 @@ fn validate_task_requirement_references(
             continue;
         };
 
-        if check.kind != CheckKind::Precondition {
+        if !matches!(check.kind, CheckKind::Precondition | CheckKind::File) {
             errors.push(ValidationError::new(format!(
-                "task `{task_name}` references non-precondition check `{check_name}` in `requirements.checks`"
+                "task `{task_name}` references non-precondition/file check `{check_name}` in `requirements.checks`"
             )));
         }
     }
@@ -5285,15 +5371,47 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new("check name must not be empty"));
         }
 
-        if check.run.is_some() && check.probe.is_some() {
+        let check_target_count = [
+            check.run.is_some(),
+            check.probe.is_some(),
+            check.path.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+        if check_target_count > 1 {
             errors.push(ValidationError::new(format!(
-                "check `{}` must not declare both `run` and `probe`",
+                "check `{}` must declare only one of `run`, `probe`, or `path`",
                 check.name
             )));
         }
-        if check.run.is_none() && check.probe.is_none() {
+        if check_target_count == 0 {
             errors.push(ValidationError::new(format!(
-                "check `{}` must declare either `run` or `probe`",
+                "check `{}` must declare one of `run`, `probe`, or `path`",
+                check.name
+            )));
+        }
+        if check.kind == CheckKind::File && check.path.is_none() {
+            errors.push(ValidationError::new(format!(
+                "file check `{}` must declare `path`",
+                check.name
+            )));
+        }
+        if check.kind != CheckKind::File && check.path.is_some() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must use `kind: file` when declaring `path`",
+                check.name
+            )));
+        }
+        if check.kind == CheckKind::File && check.expect.is_none() {
+            errors.push(ValidationError::new(format!(
+                "file check `{}` must declare `expect`",
+                check.name
+            )));
+        }
+        if check.kind != CheckKind::File && check.expect.is_some() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must use `kind: file` when declaring `expect`",
                 check.name
             )));
         }
@@ -5317,6 +5435,9 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 check.name
             )));
         }
+        if let Some(path) = check.path.as_deref() {
+            validate_repo_relative_check_path(check.name.as_str(), path, errors);
+        }
         if let Some(probe_name) = check.probe.as_deref()
             && !contract.readiness.probes.contains_key(probe_name)
         {
@@ -5332,6 +5453,21 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 check.name
             )));
         }
+    }
+}
+
+fn validate_repo_relative_check_path(name: &str, value: &str, errors: &mut Vec<ValidationError>) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "file check `{name}` must declare a non-empty `path`"
+        )));
+        return;
+    }
+    if !is_safe_repo_relative_file_path(trimmed) {
+        errors.push(ValidationError::new(format!(
+            "file check `{name}` path must be repo-relative and must not escape the repo"
+        )));
     }
 }
 
@@ -6407,8 +6543,11 @@ tasks:
             "{messages:?}"
         );
         assert!(
-	        messages.iter().any(|message| message.contains("references non-precondition check `health-check`")),
-	        "{messages:?}"
+            messages
+                .iter()
+                .any(|message| message
+                    .contains("references non-precondition/file check `health-check`")),
+            "{messages:?}"
         );
         assert!(
             messages
@@ -6949,9 +7088,9 @@ checks:
         let error =
             validate_contract(&contract).expect_err("check with run and probe should be rejected");
         assert!(
-            error
-                .to_string()
-                .contains("check `backend-ready` must not declare both `run` and `probe`")
+            error.to_string().contains(
+                "check `backend-ready` must declare only one of `run`, `probe`, or `path`"
+            )
         );
     }
 
@@ -6976,7 +7115,75 @@ checks:
         assert!(
             error
                 .to_string()
-                .contains("check `backend-ready` must declare either `run` or `probe`")
+                .contains("check `backend-ready` must declare one of `run`, `probe`, or `path`")
+        );
+    }
+
+    #[test]
+    fn validates_file_checks_and_copy_if_missing_actions() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+tasks:
+  setup:env-local:
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  build:
+    run: pnpm build
+    requirements:
+      checks:
+        - workspace-dependencies-installed
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("file checks and file actions should validate");
+    }
+
+    #[test]
+    fn rejects_file_checks_and_actions_that_escape_the_repo() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: bad-file-check
+    kind: file
+    severity: error
+    path: ..\node_modules
+    expect: directory
+tasks:
+  setup:env-local:
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: C:\Users\example\.env.local
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("escaping paths should be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains("file check `bad-file-check` path must be repo-relative and must not escape the repo"),
+            "{message}"
+        );
+        assert!(
+            message.contains("task `setup:env-local` `action.to` must be a repo-relative path that does not escape the repo"),
+            "{message}"
         );
     }
 

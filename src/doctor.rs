@@ -1341,6 +1341,8 @@ impl Finding {
             }
             s if s.starts_with("Check failed: ") => "OTA_CHECK_FAILED",
             s if s.starts_with("Check timed out: ") => "OTA_CHECK_TIMED_OUT",
+            s if s.starts_with("File check failed: ") => "OTA_FILE_CHECK_FAILED",
+            s if s.starts_with("File check timed out: ") => "OTA_FILE_CHECK_TIMED_OUT",
             s if s.starts_with("Contract drift:") => "OTA_CONTRACT_DRIFT",
             s if s.starts_with("Task `") && s.contains(" mutates managed isolated path `") => {
                 "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH"
@@ -1400,7 +1402,10 @@ impl Finding {
             | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
             | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
             | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => "policy",
-            "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => "execution",
+            "OTA_CHECK_FAILED"
+            | "OTA_CHECK_TIMED_OUT"
+            | "OTA_FILE_CHECK_FAILED"
+            | "OTA_FILE_CHECK_TIMED_OUT" => "execution",
             "OTA_CONTRACT_DRIFT" => "contract",
             "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "contract",
             _ => "contract",
@@ -1413,6 +1418,8 @@ impl Finding {
             | "OTA_CONTRACT_DRIFT"
             | "OTA_CHECK_FAILED"
             | "OTA_CHECK_TIMED_OUT"
+            | "OTA_FILE_CHECK_FAILED"
+            | "OTA_FILE_CHECK_TIMED_OUT"
             | "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "repo_contract",
             "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
                 "repo_contract"
@@ -1815,6 +1822,20 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
+            "OTA_FILE_CHECK_FAILED" => (
+                "the configured file check failed".to_string(),
+                "the configured file state matches the contract".to_string(),
+                "repo filesystem".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_FILE_CHECK_TIMED_OUT" => (
+                "the configured file check timed out".to_string(),
+                "the configured file check completes within the timeout".to_string(),
+                "repo filesystem".to_string(),
+                String::new(),
+                String::new(),
+            ),
             "OTA_CONTRACT_DRIFT" => (
                 "repo signals differ from the declared contract".to_string(),
                 "repo signals match the declared contract".to_string(),
@@ -1925,6 +1946,8 @@ impl Finding {
             | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
             | "OTA_CHECK_FAILED"
             | "OTA_CHECK_TIMED_OUT"
+            | "OTA_FILE_CHECK_FAILED"
+            | "OTA_FILE_CHECK_TIMED_OUT"
             | "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(FindingProvenanceContext {
                 provenance: "repo contract",
                 provenance_key: "repo_contract",
@@ -6088,6 +6111,18 @@ fn failed_check_next(
     {
         return failed_probe_next(probe_name, probe);
     }
+    if check.kind == crate::schema::CheckKind::File {
+        let path = check.path.as_deref().unwrap_or("-");
+        if let Some(setup_task) = contract.selected_setup_task_name_for(workflow_name) {
+            return format!(
+                "run `ota up` or `ota run {setup_task}` to satisfy `{path}`, then rerun `ota doctor`"
+            );
+        }
+        return format!(
+            "satisfy file check `{}` for `{path}`, then rerun `ota doctor`",
+            check.name
+        );
+    }
 
     let Some(command) = check.run.as_deref() else {
         return format!(
@@ -6257,6 +6292,9 @@ fn run_declared_check(
     check: &crate::schema::CheckSpec,
     working_dir: &Path,
 ) -> CheckStatus {
+    if check.kind == crate::schema::CheckKind::File {
+        return run_file_check(check, working_dir);
+    }
     if let Some(command) = check.run.as_deref() {
         return run_check(command, working_dir, check.timeout);
     }
@@ -6266,6 +6304,51 @@ fn run_declared_check(
         return run_named_probe(contract, contract_path, probe_name, check.timeout);
     }
     CheckStatus::Failed
+}
+
+fn run_file_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> CheckStatus {
+    let Some(path) = check
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    else {
+        return CheckStatus::Failed;
+    };
+    let target = working_dir.join(path);
+    match check
+        .expect
+        .unwrap_or(crate::schema::FileCheckExpectation::Exists)
+    {
+        crate::schema::FileCheckExpectation::Exists => {
+            if target.exists() {
+                CheckStatus::Passed
+            } else {
+                CheckStatus::Failed
+            }
+        }
+        crate::schema::FileCheckExpectation::File => {
+            if target.is_file() {
+                CheckStatus::Passed
+            } else {
+                CheckStatus::Failed
+            }
+        }
+        crate::schema::FileCheckExpectation::Directory => {
+            if target.is_dir() {
+                CheckStatus::Passed
+            } else {
+                CheckStatus::Failed
+            }
+        }
+        crate::schema::FileCheckExpectation::Missing => {
+            if !target.exists() {
+                CheckStatus::Passed
+            } else {
+                CheckStatus::Failed
+            }
+        }
+    }
 }
 
 fn run_named_probe(
@@ -6610,7 +6693,9 @@ fn tcp_readiness_endpoint_status(
 }
 
 fn failed_check_summary(check: &crate::schema::CheckSpec) -> String {
-    if check.probe.is_some() {
+    if check.kind == crate::schema::CheckKind::File {
+        format!("File check failed: {}", check.name)
+    } else if check.probe.is_some() {
         format!("Probe check failed: {}", check.name)
     } else {
         format!("Check failed: {}", check.name)
@@ -6618,7 +6703,11 @@ fn failed_check_summary(check: &crate::schema::CheckSpec) -> String {
 }
 
 fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> String {
-    if let Some(probe_name) = check.probe.as_deref() {
+    if check.kind == crate::schema::CheckKind::File {
+        let path = check.path.as_deref().unwrap_or("-");
+        let expected = file_check_expectation_label(check.expect);
+        format!("expected `{path}` to be {expected}, but the file check did not pass")
+    } else if let Some(probe_name) = check.probe.as_deref() {
         format!(
             "the configured `{}` probe-backed check ({}) did not succeed",
             probe_name,
@@ -6630,7 +6719,9 @@ fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> St
 }
 
 fn timed_out_check_summary(check: &crate::schema::CheckSpec) -> String {
-    if check.probe.is_some() {
+    if check.kind == crate::schema::CheckKind::File {
+        format!("File check timed out: {}", check.name)
+    } else if check.probe.is_some() {
         format!("Probe check timed out: {}", check.name)
     } else {
         format!("Check timed out: {}", check.name)
@@ -6695,6 +6786,17 @@ fn timed_out_check_next(contract: &Contract, check: &crate::schema::CheckSpec) -
         "make `{}` complete faster or raise `checks.timeout` for `{}`, then rerun `ota doctor`",
         command, check.name
     )
+}
+
+fn file_check_expectation_label(
+    expect: Option<crate::schema::FileCheckExpectation>,
+) -> &'static str {
+    match expect.unwrap_or(crate::schema::FileCheckExpectation::Exists) {
+        crate::schema::FileCheckExpectation::Exists => "present",
+        crate::schema::FileCheckExpectation::File => "a file",
+        crate::schema::FileCheckExpectation::Directory => "a directory",
+        crate::schema::FileCheckExpectation::Missing => "missing",
+    }
 }
 
 fn failed_probe_next(probe_name: &str, probe: &ReadinessProbeSpec) -> String {
@@ -9680,6 +9782,74 @@ tasks:
         assert_eq!(
             report.findings[0].next,
             "run `ota up` or `ota run setup` to create `.env.local`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn file_checks_use_repo_filesystem_without_shelling_out() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("node_modules")).unwrap();
+        let contract_path = dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, &contract_path);
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn file_checks_report_missing_expected_files() {
+        let dir = TempDir::new().unwrap();
+        let contract_path = dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+tasks:
+  setup:
+    run: pnpm install
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, &contract_path);
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].summary,
+            "File check failed: workspace-dependencies-installed"
+        );
+        assert!(
+            report.findings[0]
+                .why
+                .contains("expected `node_modules` to be a directory"),
+            "{report:?}"
+        );
+        assert_eq!(
+            report.findings[0].next,
+            "run `ota up` or `ota run setup` to satisfy `node_modules`, then rerun `ota doctor`"
         );
     }
 

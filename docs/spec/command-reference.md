@@ -752,7 +752,6 @@ Current behavior:
 Examples:
 
 ```bash
-ota assist wire-setup --run "test -f .env.local || cp .env.example .env.local"
 ota assist wire-setup --run "npm install" --service postgres
 ota assist wire-setup --script "cargo fetch\ncargo build" --json
 ota assist wire-setup --member api --run "npm install" --service postgres --write

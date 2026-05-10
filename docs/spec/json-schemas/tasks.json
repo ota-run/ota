@@ -33,6 +33,16 @@
           "items": { "$ref": "#/$defs/taskLaunchVolume" }
         }
       }
+    },
+    "taskAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "from", "to"],
+      "properties": {
+        "kind": { "enum": ["copy_if_missing"] },
+        "from": { "type": "string" },
+        "to": { "type": "string" }
+      }
     }
   },
   "oneOf": [
@@ -94,10 +104,11 @@
               "description": { "type": "string" },
               "category": { "type": "string" },
               "default_mode": { "enum": ["native", "container", "remote"] },
-              "kind": { "enum": ["run", "script", "command", "container"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "launch": { "$ref": "#/$defs/taskLaunch" },
+              "action": { "$ref": "#/$defs/taskAction" },
               "selected_variant_os": { "type": "string" },
               "depends_on": {
                 "type": "array",
@@ -204,10 +215,11 @@
                     "description": { "type": "string" },
                     "category": { "type": "string" },
                     "default_mode": { "enum": ["native", "container", "remote"] },
-                    "kind": { "enum": ["run", "script", "command", "container"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "launch": { "$ref": "#/$defs/taskLaunch" },
+                    "action": { "$ref": "#/$defs/taskAction" },
                     "selected_variant_os": { "type": "string" },
                     "depends_on": {
                       "type": "array",

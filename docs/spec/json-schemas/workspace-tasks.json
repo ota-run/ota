@@ -33,6 +33,16 @@
           "items": { "$ref": "#/$defs/taskLaunchVolume" }
         }
       }
+    },
+    "taskAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "from", "to"],
+      "properties": {
+        "kind": { "enum": ["copy_if_missing"] },
+        "from": { "type": "string" },
+        "to": { "type": "string" }
+      }
     }
   },
   "type": "object",
@@ -83,11 +93,12 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },
                 "launch": { "$ref": "#/$defs/taskLaunch" },
+                "action": { "$ref": "#/$defs/taskAction" },
                 "depends_on": {
                   "type": "array",
                   "items": { "type": "string" }

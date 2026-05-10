@@ -36,6 +36,10 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
     let success = &schema["oneOf"][0]["properties"];
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
+    let task_action = &schema["$defs"]["taskAction"]["properties"];
+    let task_action_required = schema["$defs"]["taskAction"]["required"]
+        .as_array()
+        .expect("task action required fields");
     let agent_properties = &success["agent"]["properties"];
     let task_properties = &success["tasks"]["items"]["properties"];
     let member_properties = &success["members"]["items"]["properties"];
@@ -67,17 +71,28 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_properties.get("default_mode").is_some());
     assert!(task_properties.get("modes").is_some());
     assert!(task_properties.get("launch").is_some());
+    assert!(task_properties.get("action").is_some());
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
     assert!(task_launch.get("volumes").is_some());
+    assert!(task_action.get("from").is_some());
+    assert!(task_action.get("to").is_some());
+    assert!(task_action_required.iter().any(|entry| entry == "from"));
+    assert!(task_action_required.iter().any(|entry| entry == "to"));
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "copy_if_missing")
+    );
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "container"));
     assert!(member_task_properties.get("requires_services").is_some());
     assert!(member_task_properties.get("default_mode").is_some());
     assert!(member_task_properties.get("modes").is_some());
     assert!(member_task_properties.get("launch").is_some());
+    assert!(member_task_properties.get("action").is_some());
 }
 
 #[test]
@@ -841,6 +856,10 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
         .as_array()
         .expect("workspace task kind enum");
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
+    let task_action = &schema["$defs"]["taskAction"]["properties"];
+    let task_action_required = schema["$defs"]["taskAction"]["required"]
+        .as_array()
+        .expect("task action required fields");
 
     assert!(properties.get("summary").is_some());
     assert!(repo.get("acquired").is_some());
@@ -855,10 +874,20 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(task.get("after_failure").is_some());
     assert!(task.get("after_always").is_some());
     assert!(task.get("launch").is_some());
+    assert!(task.get("action").is_some());
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
+    assert!(task_action.get("from").is_some());
+    assert!(task_action.get("to").is_some());
+    assert!(task_action_required.iter().any(|entry| entry == "from"));
+    assert!(task_action_required.iter().any(|entry| entry == "to"));
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "copy_if_missing")
+    );
 }
 
 #[test]
