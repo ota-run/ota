@@ -134,10 +134,12 @@ jobs:
             exit 1
           fi
 
+          proof_root_win="$(cygpath -w "$proof_root")"
+
           (
             cd "$proof_root"
-            "$ota" run --mode container --plain setup . > run.txt 2>&1
-            "$ota" up --mode container --json . > up.json 2> up.stderr.txt
+            PATH="$proof_root_win;$PATH" "$ota" run --mode container --plain setup . > run.txt 2>&1
+            PATH="$proof_root_win;$PATH" "$ota" up --mode container --json . > up.json 2> up.stderr.txt
           )
 
           if [ ! -f "$proof_root/docker-state/workspace-mount.txt" ]; then
