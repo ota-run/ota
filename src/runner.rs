@@ -19034,7 +19034,92 @@ fn capture_visual_studio_dev_shell_env(
 
     #[cfg(windows)]
     {
-        let command = visual_studio_dev_shell_env_capture_command(arch);
+        let Some(vswhere_path) = visual_studio_vswhere_path() else {
+            return Err(RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: String::from(
+                    "Visual Studio Developer Shell activation requires `ProgramFiles(x86)` to be set",
+                ),
+            });
+        };
+        if !vswhere_path.is_file() {
+            return Err(RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: format!(
+                    "Visual Studio installer locator was not found at `{}`",
+                    vswhere_path.display()
+                ),
+            });
+        }
+
+        let vswhere_output = visual_studio_installation_path(&vswhere_path).map_err(|source| {
+            RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: format!(
+                    "failed to execute Visual Studio installer locator `{}`: {source}",
+                    vswhere_path.display()
+                ),
+            }
+        })?;
+        if !vswhere_output.status.success() {
+            let stdout = String::from_utf8_lossy(&vswhere_output.stdout)
+                .trim()
+                .to_string();
+            let stderr = String::from_utf8_lossy(&vswhere_output.stderr)
+                .trim()
+                .to_string();
+            let details = match (stdout.is_empty(), stderr.is_empty()) {
+                (false, false) => format!("{stdout}; {stderr}"),
+                (false, true) => stdout,
+                (true, false) => stderr,
+                (true, true) => format!(
+                    "Visual Studio installer locator exited with code {}",
+                    vswhere_output.status.code().unwrap_or(1)
+                ),
+            };
+            return Err(RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: format!(
+                    "Visual Studio installer locator `{}` failed: {details}",
+                    vswhere_path.display()
+                ),
+            });
+        }
+
+        let installation_path = String::from_utf8_lossy(&vswhere_output.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: format!(
+                    "Visual Studio installer locator `{}` did not return an installation path with the MSVC tools component",
+                    vswhere_path.display()
+                ),
+            })?;
+
+        let vsdevcmd_path = installation_path
+            .join("Common7")
+            .join("Tools")
+            .join("VsDevCmd.bat");
+        if !vsdevcmd_path.is_file() {
+            return Err(RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: format!(
+                    "Visual Studio Developer shell script was not found at `{}`",
+                    vsdevcmd_path.display()
+                ),
+            });
+        }
+
+        let command = visual_studio_dev_shell_batch_command(&vsdevcmd_path, arch);
         let output = Command::new("cmd")
             .args(["/d", "/s", "/c", command.as_str()])
             .current_dir(working_dir)
@@ -19043,7 +19128,8 @@ fn capture_visual_studio_dev_shell_env(
                 task: task_name.to_string(),
                 prerequisite: prerequisite_name.to_string(),
                 details: format!(
-                    "failed to execute Visual Studio Developer Shell activation: {source}"
+                    "failed to execute Visual Studio Developer shell `{}`: {source}",
+                    vsdevcmd_path.display()
                 ),
             })?;
         if !output.status.success() {
@@ -19054,7 +19140,8 @@ fn capture_visual_studio_dev_shell_env(
                 (false, true) => stdout,
                 (true, false) => stderr,
                 (true, true) => format!(
-                    "Visual Studio Developer Shell activation exited with code {}",
+                    "Visual Studio Developer shell `{}` exited with code {}",
+                    vsdevcmd_path.display(),
                     output.status.code().unwrap_or(1)
                 ),
             };
@@ -19070,8 +19157,9 @@ fn capture_visual_studio_dev_shell_env(
             return Err(RunError::NativePrerequisiteActivationFailed {
                 task: task_name.to_string(),
                 prerequisite: prerequisite_name.to_string(),
-                details: String::from(
-                    "Visual Studio Developer Shell activation did not produce any environment values",
+                details: format!(
+                    "Visual Studio Developer shell `{}` did not produce any environment values",
+                    vsdevcmd_path.display()
                 ),
             });
         }
@@ -19193,18 +19281,37 @@ fn parse_activation_env_output(
 }
 
 #[cfg(windows)]
-fn visual_studio_dev_shell_env_capture_command(arch: &str) -> String {
+fn visual_studio_vswhere_path() -> Option<PathBuf> {
+    let program_files = std::env::var_os("ProgramFiles(x86)")?;
+    Some(
+        PathBuf::from(program_files)
+            .join("Microsoft Visual Studio")
+            .join("Installer")
+            .join("vswhere.exe"),
+    )
+}
+
+#[cfg(windows)]
+fn visual_studio_installation_path(vswhere_path: &Path) -> io::Result<std::process::Output> {
+    Command::new(vswhere_path)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+}
+
+#[cfg(windows)]
+fn visual_studio_dev_shell_batch_command(vsdevcmd_path: &Path, arch: &str) -> String {
     format!(
-        concat!(
-            "set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\" ",
-            "&& if not exist \"%VSWHERE%\" exit /b 1 ",
-            "&& set \"VSINSTALL=\" ",
-            "&& for /f \"usebackq delims=\" %I in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set \"VSINSTALL=%I\" ",
-            "&& if not defined VSINSTALL exit /b 1 ",
-            "&& call \"%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch={arch} >nul ",
-            "&& set"
-        ),
-        arch = arch
+        "call \"{}\" -no_logo -arch={} >nul && set",
+        vsdevcmd_path.display(),
+        arch
     )
 }
 
@@ -19344,7 +19451,7 @@ mod tests {
     };
 
     #[cfg(windows)]
-    use super::visual_studio_dev_shell_env_capture_command;
+    use super::{visual_studio_dev_shell_batch_command, visual_studio_vswhere_path};
 
     struct PathEnvGuard(Option<std::ffi::OsString>);
 
@@ -37108,12 +37215,30 @@ tasks:
 
     #[cfg(windows)]
     #[test]
-    fn visual_studio_dev_shell_env_capture_command_sets_env_dump_tail() {
-        let command = visual_studio_dev_shell_env_capture_command("x64");
-        assert!(command.contains("vswhere.exe"), "{command}");
-        assert!(command.contains("VsDevCmd.bat"), "{command}");
+    fn visual_studio_dev_shell_batch_command_sets_env_dump_tail() {
+        let command = visual_studio_dev_shell_batch_command(
+            Path::new(r"C:\VS\Common7\Tools\VsDevCmd.bat"),
+            "x64",
+        );
         assert!(command.contains("-arch=x64"), "{command}");
         assert!(command.ends_with("&& set"), "{command}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn visual_studio_vswhere_path_uses_programfiles_x86() {
+        let _guard = env_mutex_lock();
+        unsafe {
+            env::set_var("ProgramFiles(x86)", r"C:\Program Files (x86)");
+        }
+        let path = visual_studio_vswhere_path().expect("vswhere path");
+        assert_eq!(
+            path,
+            PathBuf::from(r"C:\Program Files (x86)")
+                .join("Microsoft Visual Studio")
+                .join("Installer")
+                .join("vswhere.exe")
+        );
     }
 
     #[cfg(unix)]
