@@ -193,7 +193,6 @@ tasks:
       Use this to verify the repo against the release gate checks that run in GitHub Actions.
     category: test
     script: |
-      cargo install --path . --locked
       cargo test --test real_repo_fixtures -- --test-threads=1
       cargo test --test examples_validate -- --test-threads=1
     depends_on:
