@@ -66460,6 +66460,7 @@ fn signal_forwarding_shell_script(command: String) -> String {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 fn signal_forwarding_shell_script(command: String) -> String {
     command
 }
