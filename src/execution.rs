@@ -21,9 +21,9 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::doctor::command_available;
+use crate::doctor::{command_available, resolve_command_path};
 use crate::schema::{Backend, ContainerBackend, Contract, Execution, Lifecycle, RemoteBackend};
 
 pub(crate) const LEGACY_EXECUTION_CONTEXT_NAME: &str = "app";
@@ -196,6 +196,19 @@ pub(crate) fn available_container_engines() -> Vec<String> {
         .filter(|engine| command_available(engine))
         .map(String::from)
         .collect()
+}
+
+/// Resolves a container engine name (e.g. `"docker"`) to its full executable
+/// path using Ota's own PATH-search logic.  Falls back to the bare name so
+/// that non-Windows paths are unaffected.
+///
+/// This must be used instead of passing the bare name to `Command::new` so
+/// that availability checks and process spawning use the *same* resolved
+/// binary on every platform, including Windows / Git Bash where OS-level
+/// `CreateProcess` PATH expansion can differ from the POSIX-format `PATH` that
+/// Ota searches at availability-check time.
+pub(crate) fn resolve_engine_path(name: &str) -> PathBuf {
+    resolve_command_path(name).unwrap_or_else(|| PathBuf::from(name))
 }
 
 pub(crate) fn matching_execution_context_name<'a>(

@@ -2693,10 +2693,92 @@ tasks:
     let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
+
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout.contains("READY"));
     assert!(stdout.contains("Phase: post-setup diagnosis"));
     assert!(stdout.contains("WARN  Service healthcheck failed: redis"));
     assert!(fixture.path().join(".service-ready").exists());
     assert!(fixture.path().join("prepared.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn container_engine_resolution_uses_resolved_path_not_path_search() {
+    // Regression test: ensure that container engine invocation uses the resolved
+    // path from Ota's PATH search, not OS-level path resolution.
+    // This prevents Windows/Git Bash from finding the real docker.exe when
+    // Ota has selected a repo-local docker.cmd shim.
+    let fixture = copy_fixture_to_temp("container-provisioning-app");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("bin dir should be created");
+
+    // Install a fake docker-test shim (matching the engine name in the fixture).
+    let docker_shim = bin_dir.join("docker-test");
+    let marker_file = bin_dir.join("docker-test-invoked");
+    let marker_file_clone = marker_file.clone();
+
+    let fake_docker_script = format!(
+        r#"#!/bin/sh
+touch "{marker_file}"
+# Respond to minimal docker commands
+case "$1" in
+  info)
+    exit 0
+    ;;
+  run|create|start|exec|ps|rm|inspect|volume)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+"#,
+        marker_file = marker_file_clone.display()
+    );
+    fs::write(&docker_shim, fake_docker_script).expect("fake docker shim should be written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&docker_shim, fs::Permissions::from_mode(0o755))
+            .expect("permissions should be set");
+    }
+
+    // Add a simple container task to the fixture that will invoke the engine.
+    let contract = r#"
+version: 1
+project:
+  name: container-provisioning-app
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+      engines:
+        - docker-test
+tasks:
+  test-shim:
+    run: echo "test"
+"#;
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    // Run ota with repo-local docker-test in PATH.
+    // The resolved engine should be the fake shim, not the system docker.
+    let mut env_path = std::env::var("PATH").unwrap_or_default();
+    env_path = format!("{}:{}", bin_dir.display(), env_path);
+
+    let _output = Command::new("ota")
+        .args(&["run", "test-shim", fixture.path().to_str().unwrap()])
+        .env("PATH", &env_path)
+        .output()
+        .expect("ota run should execute");
+
+    // The marker file proves the fake docker shim was invoked, not the system docker.
+    assert!(
+        marker_file.exists(),
+        "Ota should have invoked the resolved docker-test shim, not system docker. \
+         If this test fails, it likely means container engine invocation is using OS-level \
+         path resolution instead of Ota's resolve_engine_path() function."
+    );
 }
