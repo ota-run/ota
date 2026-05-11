@@ -19011,6 +19011,15 @@ fn capture_native_activation_env(
     }
 }
 
+pub(crate) fn capture_declared_native_activation_env(
+    prerequisite_name: &str,
+    activation: &NativePrerequisiteActivationSpec,
+    working_dir: &Path,
+) -> Result<BTreeMap<String, String>, String> {
+    capture_native_activation_env("doctor", prerequisite_name, activation, working_dir)
+        .map_err(|error| error.to_string())
+}
+
 fn capture_visual_studio_dev_shell_env(
     task_name: &str,
     prerequisite_name: &str,
