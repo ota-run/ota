@@ -10694,7 +10694,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run` or `script`"
+            "task `dev` must declare exactly one of `run`, `script`, `launch`, or `action`"
         );
     }
 
@@ -10717,7 +10717,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
+            "task `dev` must declare exactly one of `run`, `script`, `launch`, or `action`"
         );
     }
 
@@ -10744,7 +10744,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
+            "task `dev` must declare exactly one of `run`, `script`, `launch`, or `action`"
         );
     }
 
@@ -10771,7 +10771,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
+            "task `dev` must declare exactly one of `run`, `script`, `launch`, or `action`"
         );
     }
 
@@ -10794,7 +10794,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, or `launch`"
+            "task `dev` must declare exactly one of `run`, `script`, `launch`, or `action`"
         );
     }
 

@@ -3,12 +3,16 @@
 ➤ BLOCKED
 
 Plan
- 1. Fix version mismatches (1)
+ 1. Fix version mismatches (2)
   Why:
     » node resolved to `24.14.1` but the
       contract requires `22`
     » ota probed `./bin/node` with
       `node --version`
+    » npm resolved to `24.14.1` but the contract
+      requires `10`
+    » ota probed `/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js` with
+      `npm --version`
   Provenance: repo contract
   Next: install compatible runtimes and tools,
         then rerun `ota doctor`
@@ -16,6 +20,6 @@ Plan
 Overview
  »  Findings: 1
  »  Actions: 1
- »  Errors: 1
+ »  Errors: 2
  »  Warnings: 0
  »  Info: 0

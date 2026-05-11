@@ -7353,9 +7353,9 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
 }
 
 pub(crate) const OTA_STATE_GITIGNORE_COMMENT: &str = "# Ota local runtime artifacts";
-pub(crate) const OTA_STATE_GITIGNORE_ENTRY: &str = ".ota/state/";
-pub(crate) const OTA_RECEIPTS_GITIGNORE_ENTRY: &str = ".ota/receipts/";
-pub(crate) const OTA_PROOF_GITIGNORE_ENTRY: &str = ".ota/proof/";
+pub(crate) const OTA_STATE_GITIGNORE_ENTRY: &str = ".ota/state/*";
+pub(crate) const OTA_RECEIPTS_GITIGNORE_ENTRY: &str = ".ota/receipts/*";
+pub(crate) const OTA_PROOF_GITIGNORE_ENTRY: &str = ".ota/proof/*";
 
 fn gitignore_has_ota_state_entry(contents: &str) -> bool {
     contents
