@@ -59,12 +59,12 @@ jobs:
           ota="$PWD/target/release/ota.exe"
           proof_root="$PWD/.ota-ci/windows-mingw-container-proof"
           rm -rf "$proof_root"
-          mkdir -p "$proof_root/fake-bin" "$proof_root/docker-state"
+          mkdir -p "$proof_root/docker-state"
 
-          cat > "$proof_root/fake-bin/docker.cmd" <<'EOF'
+          cat > "$proof_root/docker.cmd" <<'EOF'
           @echo off
           setlocal EnableExtensions EnableDelayedExpansion
-          set "STATE_DIR=%~dp0..\docker-state"
+          set "STATE_DIR=%~dp0docker-state"
           if not exist "!STATE_DIR!" mkdir "!STATE_DIR!"
 
           set "COMMAND=%~1"
@@ -134,11 +134,11 @@ jobs:
             exit 1
           fi
 
-          fake_bin_win="$(cygpath -w "$proof_root/fake-bin")"
-          proof_root_win="$(cygpath -w "$proof_root")"
-
-          PATH="$fake_bin_win;$PATH" "$ota" run --mode container --plain setup "$proof_root_win" > "$proof_root/run.txt" 2>&1
-          PATH="$fake_bin_win;$PATH" "$ota" up --mode container --json "$proof_root_win" > "$proof_root/up.json" 2> "$proof_root/up.stderr.txt"
+          (
+            cd "$proof_root"
+            "$ota" run --mode container --plain setup . > run.txt 2>&1
+            "$ota" up --mode container --json . > up.json 2> up.stderr.txt
+          )
 
           if [ ! -f "$proof_root/docker-state/workspace-mount.txt" ]; then
             echo "docker proof did not capture a workspace mount argument" >&2
