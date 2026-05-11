@@ -18677,7 +18677,7 @@ fn container_workspace_mount_source(working_dir: &Path) -> PathBuf {
     })
 }
 
-fn container_workspace_mount_arg(workspace_mount_source: &Path) -> String {
+pub(crate) fn container_workspace_mount_arg(workspace_mount_source: &Path) -> String {
     format!(
         "{}:/workspace",
         container_workspace_mount_source_display(workspace_mount_source)
@@ -18685,12 +18685,12 @@ fn container_workspace_mount_arg(workspace_mount_source: &Path) -> String {
 }
 
 #[cfg(not(windows))]
-fn container_workspace_mount_source_display(workspace_mount_source: &Path) -> String {
+pub(crate) fn container_workspace_mount_source_display(workspace_mount_source: &Path) -> String {
     workspace_mount_source.display().to_string()
 }
 
 #[cfg(windows)]
-fn container_workspace_mount_source_display(workspace_mount_source: &Path) -> String {
+pub(crate) fn container_workspace_mount_source_display(workspace_mount_source: &Path) -> String {
     let display = workspace_mount_source.display().to_string();
     if let Some(stripped) = display.strip_prefix(r"\\?\UNC\") {
         return format!(r"\\{stripped}");
@@ -19352,7 +19352,7 @@ fn write_visual_studio_dev_shell_script(
     )
 }
 
-fn parse_windows_env_block(stdout: &str) -> BTreeMap<String, String> {
+pub(crate) fn parse_windows_env_block(stdout: &str) -> BTreeMap<String, String> {
     stdout
         .lines()
         .filter_map(parse_windows_env_line)
@@ -19489,9 +19489,13 @@ mod tests {
 
     #[cfg(windows)]
     use super::{
+        container_workspace_mount_arg, container_workspace_mount_source_display,
         visual_studio_dev_shell_script_path, visual_studio_vswhere_path,
         write_visual_studio_dev_shell_script,
     };
+
+    #[cfg(windows)]
+    use std::path::PathBuf;
 
     struct PathEnvGuard(Option<std::ffi::OsString>);
 

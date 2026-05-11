@@ -36831,13 +36831,17 @@ mod tests {
 
     fn write_executable_script(path: &Path, body: &str) {
         fs::write(path, body).unwrap();
-        let mut perms = fs::metadata(path).unwrap().permissions();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(path).unwrap().permissions();
             perms.set_mode(0o755);
+            fs::set_permissions(path, perms).unwrap();
         }
-        fs::set_permissions(path, perms).unwrap();
+        #[cfg(not(unix))]
+        {
+            // On non-Unix systems, just write the file without setting permissions
+        }
     }
 
     fn fake_command_path(bin_dir: &Path, name: &str) -> PathBuf {
