@@ -7871,6 +7871,7 @@ fn ensure_target_producer_state(
                     ),
                 });
             }
+            #[cfg(unix)]
             TaskExecutionMode::CaptureActivation
         }
         ResolvedExecutionBackend::Container {
@@ -13066,10 +13067,13 @@ fn execute_native_task_command(
                         task: task_name.to_string(),
                     });
                 }
-                process = shell_command(&persistent_service_command_with_path_export(
-                    task_name, command, None,
-                ));
-                process.current_dir(working_dir).envs(env_overrides.iter());
+                #[cfg(unix)]
+                {
+                    process = shell_command(&persistent_service_command_with_path_export(
+                        task_name, command, None,
+                    ));
+                    process.current_dir(working_dir).envs(env_overrides.iter());
+                }
             }
             let mut child = process
                 .stdin(Stdio::inherit())
