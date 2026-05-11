@@ -47,8 +47,8 @@ use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
     container_engine_candidates_from_backend, context_dependency_isolation_paths, execution_image,
-    format_lifecycle, matching_execution_context_name, selected_container_engine,
-    selected_container_engine_from_backend,
+    format_lifecycle, matching_execution_context_name, resolve_engine_path,
+    selected_container_engine, selected_container_engine_from_backend,
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::policy_pack::{
@@ -2601,8 +2601,12 @@ fn signal_forwarding_shell_script(command: String) -> String {
     command
 }
 
+fn container_engine_command(engine: &str) -> Command {
+    Command::new(resolve_engine_path(engine))
+}
+
 fn ephemeral_container_stream_command(engine: &str, container_name: &str) -> Command {
-    let mut command = Command::new(engine);
+    let mut command = container_engine_command(engine);
     command.arg("start").arg("-ai").arg(container_name);
     command
 }
@@ -4737,7 +4741,7 @@ fn execute_native_container_launch_command(
         &family_token,
     )?;
 
-    let mut create = Command::new(engine);
+    let mut create = container_engine_command(engine);
     create
         .current_dir(working_dir)
         .arg("create")
@@ -4795,7 +4799,7 @@ fn execute_native_container_launch_command(
     }
 
     let attached = !matches!(mode, TaskExecutionMode::CaptureActivation);
-    let mut start = Command::new(engine);
+    let mut start = container_engine_command(engine);
     start.current_dir(working_dir).arg("start");
     if attached {
         start.arg("-ai");
@@ -15188,7 +15192,7 @@ fn execute_ephemeral_container_task_command(
     let prepared_runtime =
         resolve_container_task_runtime_from_publications(runtime, listener_publications);
     let workspace_mount_source = container_workspace_mount_source(working_dir);
-    let mut create = Command::new(engine);
+    let mut create = container_engine_command(engine);
     create
         .arg("create")
         .arg("-i")
@@ -15363,7 +15367,7 @@ fn execute_ephemeral_container_task_command(
         }
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
-            let mut container = Command::new(engine);
+            let mut container = container_engine_command(engine);
             container.arg("start").arg("-ai").arg(&container_name);
             let child = container
                 .stdin(Stdio::inherit())
@@ -15654,7 +15658,7 @@ fn create_idle_ephemeral_container(
     secret_env_names: &BTreeSet<String>,
 ) -> Result<ContainerCommandOutput, RunError> {
     let workspace_mount_source = container_workspace_mount_source(working_dir);
-    let mut create = Command::new(engine);
+    let mut create = container_engine_command(engine);
     create
         .arg("create")
         .arg("-i")
@@ -18105,7 +18109,7 @@ fn exec_persistent_container_task_command(
     mode: TaskExecutionMode,
     container_name: &str,
 ) -> Result<TaskCommandOutput, RunError> {
-    let mut container = Command::new(engine);
+    let mut container = container_engine_command(engine);
     container.arg("exec").arg("-i");
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
@@ -18240,7 +18244,7 @@ fn container_command_output(
     working_dir: Option<&Path>,
     task_name: &str,
 ) -> Result<ContainerCommandOutput, RunError> {
-    let mut container = Command::new(engine);
+    let mut container = container_engine_command(engine);
     container.args(args);
     container.stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(working_dir) = working_dir {
@@ -18264,7 +18268,7 @@ fn container_command_output_with_stdin(
     working_dir: Option<&Path>,
     task_name: &str,
 ) -> Result<ContainerCommandOutput, RunError> {
-    let mut container = Command::new(engine);
+    let mut container = container_engine_command(engine);
     container.args(args);
     container
         .stdin(Stdio::piped())

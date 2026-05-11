@@ -41,7 +41,7 @@ use serde_json::Value as JsonValue;
 
 use crate::execution::{
     container_engine_candidates, container_engine_candidates_from_backend,
-    matching_declared_execution_context_name, selected_container_engine,
+    matching_declared_execution_context_name, resolve_engine_path, selected_container_engine,
     selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
@@ -5837,7 +5837,7 @@ fn version_command_in_container(
     working_dir: &Path,
 ) -> Command {
     let container_name = crate::runner::ephemeral_container_name(working_dir, image, engine);
-    let mut command = Command::new(engine);
+    let mut command = Command::new(resolve_engine_path(engine));
     command
         .arg("run")
         .arg("--rm")
