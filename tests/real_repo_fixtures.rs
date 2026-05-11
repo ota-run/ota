@@ -390,6 +390,7 @@ repos:
     assert!(stderr.contains("[ota-stream] READY web"));
 }
 
+#[cfg(unix)]
 #[test]
 fn workspace_doctor_json_reports_repo_findings_on_real_command_path() {
     let temp = TempDir::new().expect("temp dir should be created");
@@ -439,6 +440,7 @@ repos:
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn workspace_up_json_reports_ready_repo_on_real_command_path() {
     let temp = TempDir::new().expect("temp dir should be created");
@@ -480,6 +482,7 @@ repos:
     assert_eq!(json["repos"][0]["phase"], "post-setup diagnosis");
 }
 
+#[cfg(unix)]
 #[test]
 fn workspace_refresh_pulls_updated_git_sources_on_real_command_path() {
     let temp = TempDir::new().expect("temp dir should be created");
@@ -594,6 +597,7 @@ repos:
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn workspace_diff_reports_match_and_dirty_state_on_real_command_path() {
     let temp = TempDir::new().expect("temp dir should be created");
@@ -685,6 +689,7 @@ repos:
     assert_eq!(dirty_status_json["summary"]["dirty_count"], 1);
 }
 
+#[cfg(unix)]
 #[test]
 fn workspace_receipt_reports_workspace_state_on_real_command_path() {
     let temp = TempDir::new().expect("temp dir should be created");
@@ -770,6 +775,7 @@ repos:
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn provisioning_fixture_resolves_pacman_request_on_real_command_path() {
     let fixture = copy_fixture_to_temp("pacman-probe");
@@ -792,6 +798,7 @@ fn provisioning_fixture_resolves_pacman_request_on_real_command_path() {
     assert_eq!(request.actions[1].requested_version, "2.46.0");
 }
 
+#[cfg(unix)]
 #[test]
 fn provisioning_fixture_resolves_brew_request_on_real_command_path() {
     let fixture = copy_fixture_to_temp("brew-probe");
