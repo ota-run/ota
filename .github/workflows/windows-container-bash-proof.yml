@@ -1,0 +1,170 @@
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+name: windows-container-bash-proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - ".github/workflows/windows-container-bash-proof.yml"
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - ".github/workflows/windows-container-bash-proof.yml"
+
+jobs:
+  mingw-container-path-proof:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --quiet
+
+      - name: Run Git Bash container path proof
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ota="$PWD/target/release/ota.exe"
+          proof_root="$PWD/.ota-ci/windows-mingw-container-proof"
+          rm -rf "$proof_root"
+          mkdir -p "$proof_root/fake-bin" "$proof_root/docker-state"
+
+          cat > "$proof_root/fake-bin/docker.cmd" <<'EOF'
+          @echo off
+          setlocal EnableExtensions EnableDelayedExpansion
+          set "STATE_DIR=%~dp0..\docker-state"
+          if not exist "!STATE_DIR!" mkdir "!STATE_DIR!"
+
+          set "COMMAND=%~1"
+          if /I "%COMMAND%"=="info" exit /b 0
+          if /I "%COMMAND%"=="ps" exit /b 0
+          if /I "%COMMAND%"=="inspect" exit /b 1
+          if /I "%COMMAND%"=="rm" exit /b 0
+          if /I "%COMMAND%"=="create" goto create
+          if /I "%COMMAND%"=="start" exit /b 0
+
+          echo unsupported docker command %COMMAND% 1>&2
+          exit /b 1
+
+          :create
+          set "WORKSPACE_MOUNT="
+
+          :loop
+          if "%~1"=="" goto done
+          if /I "%~1"=="-v" (
+            set "MOUNT=%~2"
+            >>"!STATE_DIR!\mounts.txt" echo(!MOUNT!
+            echo(!MOUNT! | findstr /C:":/workspace" >nul && set "WORKSPACE_MOUNT=!MOUNT!"
+            shift
+            shift
+            goto loop
+          )
+          shift
+          goto loop
+
+          :done
+          if not defined WORKSPACE_MOUNT (
+            echo missing workspace mount 1>&2
+            exit /b 1
+          )
+
+          >"!STATE_DIR!\workspace-mount.txt" echo(!WORKSPACE_MOUNT!
+          exit /b 0
+          EOF
+
+          cat > "$proof_root/ota.yaml" <<'EOF'
+          version: 1
+          project:
+            name: windows-mingw-container-proof
+            type: application
+          execution:
+            default_context: app
+            contexts:
+              app:
+                backend: container
+                lifecycle: ephemeral
+                container:
+                  image: alpine:3.20
+          tasks:
+            setup:
+              context: app
+              run: printf ready
+          workflows:
+            default: app
+            app:
+              setup:
+                task: setup
+          EOF
+
+          printf 'MSYSTEM=%s\n' "${MSYSTEM:-}" > "$proof_root/environment.txt"
+          if [ "${MSYSTEM:-}" != "MINGW64" ]; then
+            echo "expected Git Bash to report MSYSTEM=MINGW64, got '${MSYSTEM:-unset}'" >&2
+            exit 1
+          fi
+
+          fake_bin_win="$(cygpath -w "$proof_root/fake-bin")"
+          proof_root_win="$(cygpath -w "$proof_root")"
+
+          PATH="$fake_bin_win;$PATH" "$ota" run --mode container --plain setup "$proof_root_win" > "$proof_root/run.txt" 2>&1
+          PATH="$fake_bin_win;$PATH" "$ota" up --mode container --json "$proof_root_win" > "$proof_root/up.json" 2> "$proof_root/up.stderr.txt"
+
+          if [ ! -f "$proof_root/docker-state/workspace-mount.txt" ]; then
+            echo "docker proof did not capture a workspace mount argument" >&2
+            exit 1
+          fi
+
+          workspace_mount="$(tr -d '\r\n' < "$proof_root/docker-state/workspace-mount.txt")"
+          printf '%s\n' "$workspace_mount" > "$proof_root/workspace-mount.txt"
+
+          if [[ "$workspace_mount" == *'\\?\'* ]]; then
+            echo "verbatim Windows path leaked into docker mount: $workspace_mount" >&2
+            exit 1
+          fi
+
+          case "$workspace_mount" in
+            *:/workspace) ;;
+            *)
+              echo "workspace mount did not target /workspace: $workspace_mount" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-container-bash-proof-artifacts
+          path: .ota-ci/windows-mingw-container-proof
+          if-no-files-found: ignore

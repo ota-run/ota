@@ -37234,6 +37234,24 @@ tasks:
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn container_workspace_mount_arg_strips_verbatim_disk_prefix_for_docker() {
+        assert_eq!(
+            container_workspace_mount_arg(Path::new(r"\\?\C:\Users\bobai\repo")),
+            r"C:\Users\bobai\repo:/workspace"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn container_workspace_mount_arg_strips_verbatim_unc_prefix_for_docker() {
+        assert_eq!(
+            container_workspace_mount_arg(Path::new(r"\\?\UNC\fileserver\share\repo")),
+            r"\\fileserver\share\repo:/workspace"
+        );
+    }
+
     #[test]
     fn parse_windows_env_block_ignores_invalid_lines_and_internal_vars() {
         let env = parse_windows_env_block(
