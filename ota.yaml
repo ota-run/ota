@@ -63,11 +63,7 @@ tasks:
       the workspace without compiling the crate.
     category: setup
     internal: true
-    script: |
-      if command -v rustup >/dev/null 2>&1 && ! cargo fmt --version >/dev/null 2>&1; then
-        rustup component add rustfmt
-      fi
-      cargo fetch
+    run: cargo fetch && (rustup component add rustfmt 2>/dev/null || true)
     safe_for_agent: true
   build:
     description: Compile the CLI
