@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.10
+
 - hardened Windows native prerequisite activation so `visual_studio_dev_shell` now applies to the
   real native task bodies selected by `ota run` and `ota up`, `ota up --dry-run` only advertises
   that activation on native workflow paths, conflicting task-level native activations are rejected,

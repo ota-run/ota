@@ -21,6 +21,7 @@ Commands:
   services     List declared services from an Ota contract
   check        Run configured checks from an Ota contract
   env          Inspect resolved environment requirements from an Ota contract
+  proof        Prove that one runtime path can become ready and capture the canonical artifacts
   receipt      Capture a read-only repo receipt for audit and automation
   annotations  Render Ota JSON findings as CI annotations or log lines
   agents       Generate or sync AGENTS.md from an Ota contract
@@ -46,20 +47,15 @@ Options:
 Start here:
   diagnose repo readiness      ota doctor
   preview inferred contract    ota detect --dry-run .
-  compare exact starter text   ota detect --contract .
   review starter write path    ota init --dry-run
-  explain current blockers     ota explain
+  validate contract edits      ota validate
   preview repo preparation     ota up --dry-run
   prepare the repo             ota up
-  inspect runnable tasks       ota tasks --use
-  inspect declared workflows   ota workflows
-  run a declared task          ota run ci
+  run declared work            ota run ci
+  prove one runtime path       ota proof runtime
 
-More:
+Inspect:
+  inspect declared workflows   ota workflows
+  inspect runnable tasks       ota tasks --use
   inspect execution choice     ota execution plan
   inspect declared topology    ota execution topology
-  inspect env requirements     ota env
-  review policy boundary       ota policy review
-  generate agent guidance      ota agents
-  workspace readiness          ota workspace doctor .
-  enable shell completion      ota completion --setup

@@ -13579,7 +13579,6 @@ tasks:
         assert!(help.contains("--concise"));
         assert!(help.contains("--verbose"));
         assert!(help.contains("ota doctor"));
-        assert!(help.contains("ota explain"));
         assert!(help.contains("ota init --dry-run"));
         assert!(help.contains("ota detect --dry-run ."));
         assert!(help.contains("ota up --dry-run"));
@@ -27584,7 +27583,7 @@ tasks:
         assert_eq!(
             gitignore,
             String::from(
-                "# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n.ota/proof/\n"
+                "# Ota local runtime artifacts\n.ota/state/*\n.ota/receipts/*\n.ota/proof/*\n"
             )
         );
     }
@@ -27611,7 +27610,7 @@ tasks:
         assert_eq!(
             gitignore,
             String::from(
-                "node_modules/\n\n# Ota local runtime artifacts\n.ota/state/\n.ota/receipts/\n.ota/proof/\n"
+                "node_modules/\n\n# Ota local runtime artifacts\n.ota/state/*\n.ota/receipts/*\n.ota/proof/*\n"
             )
         );
     }
