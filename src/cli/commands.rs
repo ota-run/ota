@@ -40925,8 +40925,10 @@ workflows:
 
         let acquisition = ToolAcquisitionSpec {
             provider: ToolAcquisitionProvider::Corepack,
-            package: String::from("pnpm"),
-            version: String::from("10.22.0"),
+            package: Some(String::from("pnpm")),
+            version: Some(String::from("10.22.0")),
+            shell: None,
+            run: None,
         };
         let outcome = super::run_corepack_activation_action(
             &acquisition,
@@ -40978,8 +40980,10 @@ workflows:
 
         let acquisition = ToolAcquisitionSpec {
             provider: ToolAcquisitionProvider::Corepack,
-            package: String::from("pnpm"),
-            version: String::from("10.22.0"),
+            package: Some(String::from("pnpm")),
+            version: Some(String::from("10.22.0")),
+            shell: None,
+            run: None,
         };
         let outcome = super::run_corepack_activation_action(
             &acquisition,
@@ -41005,6 +41009,90 @@ workflows:
                 .any(|line| line == "prepare pnpm@10.22.0 --activate"),
             "{log}"
         );
+    }
+
+    #[test]
+    fn up_preview_renders_command_acquisition_actions() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  bun:
+    version: ">=1.2.0"
+    acquisition:
+      provider: command
+      shell: sh
+      run: curl -fsSL https://bun.sh/install | sh
+tasks:
+  setup:
+    run: bun install
+    requirements:
+      tools:
+        bun: ">=1.2.0"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: bun"),
+                why: String::from("bun is declared in the contract but is not available on PATH"),
+                next: String::from(
+                    "run `sh -lc 'curl -fsSL https://bun.sh/install | sh'` and rerun `ota doctor`",
+                ),
+            }],
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            &preflight,
+        );
+
+        assert!(
+            preview
+                .plan
+                .actions
+                .contains(&String::from("activate tool `bun` via `sh` command"))
+        );
+    }
+
+    #[test]
+    fn command_acquisition_invokes_declared_shell() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let log_path = fixture.path().join("command-acquisition.log");
+        let acquisition = ToolAcquisitionSpec {
+            provider: ToolAcquisitionProvider::Command,
+            package: None,
+            version: None,
+            shell: Some(crate::schema::NativePrerequisiteActivationShell::Sh),
+            run: Some(format!("printf '%s' activated > '{}'", log_path.display())),
+        };
+
+        let outcome = super::run_command_activation_action(
+            &acquisition,
+            fixture.path(),
+            RepoExecutionMode::Capture,
+        )
+        .expect("command acquisition should produce a command result");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(fs::read_to_string(log_path).unwrap(), "activated");
     }
 
     #[test]
@@ -60985,8 +61073,44 @@ fn activation_action_command(action: &RequirementActivationAction) -> String {
     match action.acquisition.provider {
         ToolAcquisitionProvider::Corepack => format!(
             "corepack enable && corepack prepare {}@{} --activate",
-            action.acquisition.package, action.acquisition.version
+            action
+                .acquisition
+                .package
+                .as_deref()
+                .expect("validated corepack acquisition package"),
+            action
+                .acquisition
+                .version
+                .as_deref()
+                .expect("validated corepack acquisition version")
         ),
+        ToolAcquisitionProvider::Command => {
+            let shell = action
+                .acquisition
+                .shell
+                .expect("validated command acquisition shell");
+            let run = action
+                .acquisition
+                .run
+                .as_deref()
+                .expect("validated command acquisition run");
+            match shell {
+                crate::schema::NativePrerequisiteActivationShell::Sh
+                | crate::schema::NativePrerequisiteActivationShell::Bash
+                | crate::schema::NativePrerequisiteActivationShell::Zsh => format!(
+                    "{} -lc {}",
+                    native_prerequisite_activation_shell_label(shell),
+                    shell_single_quote(run)
+                ),
+                crate::schema::NativePrerequisiteActivationShell::Pwsh => format!(
+                    "pwsh -NoProfile -NonInteractive -Command {}",
+                    shell_single_quote(run)
+                ),
+                crate::schema::NativePrerequisiteActivationShell::Cmd => {
+                    format!("cmd /d /s /c {}", shell_single_quote(run))
+                }
+            }
+        }
     }
 }
 
@@ -61005,6 +61129,18 @@ fn finding_targets_activation_action(
     match action.acquisition.provider {
         ToolAcquisitionProvider::Corepack => {
             finding.summary == "Missing tool activation provider: corepack"
+                && finding.why.contains(action.tool_name.as_str())
+        }
+        ToolAcquisitionProvider::Command => {
+            let shell = action
+                .acquisition
+                .shell
+                .expect("validated command acquisition shell");
+            finding.summary
+                == format!(
+                    "Missing tool activation provider: {}",
+                    native_prerequisite_activation_shell_label(shell)
+                )
                 && finding.why.contains(action.tool_name.as_str())
         }
     }
@@ -61301,7 +61437,26 @@ fn render_up_preview_activation_action(action: &RequirementActivationAction) -> 
     match action.acquisition.provider {
         ToolAcquisitionProvider::Corepack => format!(
             "activate tool `{}` via `corepack` (`{}@{}`)",
-            action.tool_name, action.acquisition.package, action.acquisition.version
+            action.tool_name,
+            action
+                .acquisition
+                .package
+                .as_deref()
+                .expect("validated corepack acquisition package"),
+            action
+                .acquisition
+                .version
+                .as_deref()
+                .expect("validated corepack acquisition version")
+        ),
+        ToolAcquisitionProvider::Command => format!(
+            "activate tool `{}` via `{}` command",
+            action.tool_name,
+            action
+                .acquisition
+                .shell
+                .map(native_prerequisite_activation_shell_label)
+                .unwrap_or("command")
         ),
     }
 }
@@ -61310,6 +61465,15 @@ fn render_up_preview_skipped_activation_action(action: &RequirementActivationAct
     match action.acquisition.provider {
         ToolAcquisitionProvider::Corepack => format!(
             "skip Corepack activation for `{}`; policy provisioning is selected for this tool",
+            action.tool_name
+        ),
+        ToolAcquisitionProvider::Command => format!(
+            "skip `{}` command activation for `{}`; policy provisioning is selected for this tool",
+            action
+                .acquisition
+                .shell
+                .map(native_prerequisite_activation_shell_label)
+                .unwrap_or("command"),
             action.tool_name
         ),
     }
@@ -61757,6 +61921,24 @@ fn activation_failure_finding(action: &RequirementActivationAction, exit_code: i
                 activation_action_command(action)
             ),
         },
+        ToolAcquisitionProvider::Command => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Requirement activation failed: {}", action.tool_name),
+            why: format!(
+                "ota could not activate `{}` through `{}`; `{}` exited with code {exit_code}",
+                action.tool_name,
+                action
+                    .acquisition
+                    .shell
+                    .map(native_prerequisite_activation_shell_label)
+                    .unwrap_or("command"),
+                activation_action_command(action)
+            ),
+            next: format!(
+                "run `{}` directly, repair the acquisition path, and rerun `ota up`",
+                activation_action_command(action)
+            ),
+        },
     }
 }
 
@@ -61768,6 +61950,9 @@ fn run_activation_action(
     match action.acquisition.provider {
         ToolAcquisitionProvider::Corepack => {
             run_corepack_activation_action(&action.acquisition, working_dir, mode)
+        }
+        ToolAcquisitionProvider::Command => {
+            run_command_activation_action(&action.acquisition, working_dir, mode)
         }
     }
 }
@@ -61788,7 +61973,17 @@ fn run_corepack_activation_action(
         return Ok(enable);
     }
 
-    let package_spec = format!("{}@{}", acquisition.package, acquisition.version);
+    let package_spec = format!(
+        "{}@{}",
+        acquisition
+            .package
+            .as_deref()
+            .expect("validated corepack acquisition package"),
+        acquisition
+            .version
+            .as_deref()
+            .expect("validated corepack acquisition version")
+    );
     let prepare = run_process_command(
         "corepack",
         &["prepare", package_spec.as_str(), "--activate"],
@@ -61804,6 +61999,67 @@ fn run_corepack_activation_action(
         target: None,
         runtime: None,
     })
+}
+
+fn run_command_activation_action(
+    acquisition: &ToolAcquisitionSpec,
+    working_dir: &Path,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, String> {
+    let shell = acquisition
+        .shell
+        .expect("validated command acquisition shell");
+    let run = acquisition
+        .run
+        .as_deref()
+        .expect("validated command acquisition run");
+    run_tool_acquisition_shell_command(shell, run, working_dir, mode, "Activating prerequisite")
+}
+
+fn run_tool_acquisition_shell_command(
+    shell: crate::schema::NativePrerequisiteActivationShell,
+    command: &str,
+    working_dir: &Path,
+    mode: RepoExecutionMode,
+    loader_label: &str,
+) -> Result<CommandRunResult, String> {
+    let (program, args) = match shell {
+        crate::schema::NativePrerequisiteActivationShell::Sh => {
+            ("sh", vec!["-lc".to_string(), command.to_string()])
+        }
+        crate::schema::NativePrerequisiteActivationShell::Bash => {
+            ("bash", vec!["-lc".to_string(), command.to_string()])
+        }
+        crate::schema::NativePrerequisiteActivationShell::Zsh => {
+            ("zsh", vec!["-lc".to_string(), command.to_string()])
+        }
+        crate::schema::NativePrerequisiteActivationShell::Pwsh => (
+            "pwsh",
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-Command".to_string(),
+                command.to_string(),
+            ],
+        ),
+        crate::schema::NativePrerequisiteActivationShell::Cmd => (
+            "cmd",
+            vec![
+                "/d".to_string(),
+                "/s".to_string(),
+                "/c".to_string(),
+                command.to_string(),
+            ],
+        ),
+    };
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    Ok(run_process_command(
+        program,
+        &arg_refs,
+        working_dir,
+        mode,
+        loader_label,
+    ))
 }
 
 fn run_process_command(
@@ -66191,6 +66447,11 @@ fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("cmd");
     shell.arg("/C").arg(command);
     shell
+}
+
+fn shell_single_quote(command: &str) -> String {
+    let escaped = command.replace('\'', r"'\''");
+    format!("'{}'", escaped)
 }
 
 #[cfg(unix)]

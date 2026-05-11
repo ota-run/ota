@@ -684,6 +684,12 @@ tools:
     version: "7.6.0"
     only_on:
       - windows
+  bun:
+    version: ">=1.2.0"
+    acquisition:
+      provider: command
+      shell: sh
+      run: curl -fsSL https://bun.sh/install | sh
 ```
 
 Rules:
@@ -696,11 +702,17 @@ Rules:
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
 - `acquisition` optionally declares how ota can activate or provision the tool safely when a
   selected task/workflow requires it
-- `acquisition.provider`: first supported value is `corepack`
-- `acquisition.package`: required package name the provider activates
-- `acquisition.version`: required activation version ota should request from that provider
+- `acquisition.provider`: supported values are `corepack` and `command`
+- `acquisition.package` and `acquisition.version` are required for `provider: corepack`
+- `acquisition.shell` and `acquisition.run` are required for `provider: command`
+- `provider: corepack` activates package-manager-managed tools such as `pnpm` through
+  `corepack enable && corepack prepare <package>@<version> --activate`
+- `provider: command` runs one explicit shell command as the acquisition lane for that tool; use it
+  when the repo truth is "this tool becomes available through this command", not "install it any
+  way you want"
 - Corepack `package` and `version` values must be shell-safe tokens; use package names like `pnpm`
   and activation versions like `10.22.0`
+- command acquisition `shell` may use `sh`, `bash`, `zsh`, `pwsh`, or `cmd`
 - some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
 - workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
 
@@ -708,7 +720,8 @@ Use `only_on` to scope where a tool is required, and use `platforms` only when v
 `required: false` keeps the tool active but downgrades missing/version mismatch findings to warnings.
 Root fields act as the default values, and the matching `platforms.<os>` entry overrides them for that OS.
 `acquisition` is attached to tool truth, while `tasks.<name>.requirements.tools` selects when that
-tool actually applies.
+tool actually applies. Use `tools.<name>.acquisition` for tool availability. Use
+`native_prerequisites` for OS-native build bundles such as compilers or Visual Studio Build Tools.
 
 ## `native_prerequisites`
 

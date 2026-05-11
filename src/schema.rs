@@ -1443,14 +1443,21 @@ pub struct ToolPlatformDetail {
 #[serde(deny_unknown_fields)]
 pub struct ToolAcquisitionSpec {
     pub provider: ToolAcquisitionProvider,
-    pub package: String,
-    pub version: String,
+    #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub shell: Option<NativePrerequisiteActivationShell>,
+    #[serde(default)]
+    pub run: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolAcquisitionProvider {
     Corepack,
+    Command,
 }
 
 #[derive(Debug, Deserialize, Clone)]

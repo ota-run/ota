@@ -50,11 +50,17 @@
   `ota run`, `ota tasks --json`, workspace task inventory, schemas, and docs now expose the new
   action/check surface
 - added first-class tool acquisition metadata under `tools.<name>.acquisition`, with
-  Corepack-managed activation as the first shipped provider: selected workflow/task requirement
-  surfaces can now declare `pnpm` truth once, `ota doctor` now explains missing or mismatched
-  Corepack-managed tools through the selected prerequisite path instead of repo-global guesswork,
-  and `ota up` can activate those selected tools before setup without pulling unrelated quickstart
-  or Docker prerequisites into the same lane
+  Corepack-managed and explicit shell-command activation as shipped providers: selected
+  workflow/task requirement surfaces can now declare one honest acquisition lane per tool, `ota
+  doctor` explains missing acquisition providers through the selected prerequisite path instead of
+  repo-global guesswork, and `ota up` can activate only the selected tools before setup without
+  pulling unrelated quickstart or Docker prerequisites into the same lane
+- tightened the first-run command/help/docs path so root help now privileges
+  `doctor -> detect/init -> validate -> up -> run/proof`, and the public docs/site describe the
+  same narrower adoption lane instead of leading with the broader advanced command surface
+- added a dedicated Windows native proof workflow that exercises
+  `visual_studio_dev_shell` through `ota doctor`, `ota up`, and `ota proof runtime` on a clean
+  GitHub-hosted Windows runner and uploads the proof artifacts for review
 - added task-scoped prerequisite surfaces under `tasks.<name>.requirements`: workflows can now
   scope runtime, tool, env, and precondition-check diagnosis to the selected setup/run dependency
   closure instead of treating every front door in a multi-path repo as repo-global truth; `ota doctor`

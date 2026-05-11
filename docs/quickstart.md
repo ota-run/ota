@@ -45,19 +45,19 @@ Fastest proof of value:
 
 ```bash
 ota doctor
-ota explain
+ota up --dry-run
 ota up
 ota run <task>
-ota receipt
+ota proof runtime --workflow <name>
 ```
 
 What this gives you:
 
 - `ota doctor` tells you what is broken and what to do next
-- `ota explain` turns the current findings into an ordered fix plan
+- `ota up --dry-run` shows the exact preparation lane before anything mutates
 - `ota up` prepares the repo from the contract instead of from guesswork
 - `ota run <task>` executes a declared task through the same contract
-- `ota receipt` captures the resulting repo state as a reviewable artifact
+- `ota proof runtime` proves one declared front door becomes operational and captures the same canonical artifacts ota already uses internally
 
 If you are not sure which task to run next, use:
 
@@ -80,6 +80,8 @@ Use the authoring path first:
 ota doctor
 ota detect --dry-run .
 ota init --dry-run
+ota validate
+ota up --dry-run
 ```
 
 Then choose one explicit write path:
@@ -117,9 +119,11 @@ For one repo, the repeatable local path is:
 
 ```bash
 ota doctor
+ota validate
+ota up --dry-run
 ota up
 ota run ci
-ota receipt
+ota proof runtime --workflow <name>
 ```
 
 For CI, keep the same contract boundary and archive the read-only receipt:
