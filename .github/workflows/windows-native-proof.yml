@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload proof artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-native-proof-artifacts
           path: ${{ runner.temp }}/ota-windows-native-proof
