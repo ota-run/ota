@@ -1,0 +1,141 @@
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+name: windows-native-proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "docs/spec/**"
+      - ".github/workflows/windows-native-proof.yml"
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "docs/spec/**"
+      - ".github/workflows/windows-native-proof.yml"
+
+jobs:
+  visual-studio-dev-shell-proof:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        shell: pwsh
+        run: cargo build --release --quiet
+
+      - name: Run native activation proof
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ota = Join-Path $PWD "target/release/ota.exe"
+          $proofRoot = Join-Path $env:RUNNER_TEMP "ota-windows-native-proof"
+          if (Test-Path $proofRoot) {
+            Remove-Item -Recurse -Force $proofRoot
+          }
+          New-Item -ItemType Directory -Path $proofRoot | Out-Null
+
+          @'
+          version: 1
+          project:
+            name: windows-native-proof
+            type: application
+          native_prerequisites:
+            msvc-shell:
+              platforms:
+                windows:
+                  check: msvc-shell-check
+                  visual_studio_build_tools: true
+                  activation:
+                    kind: visual_studio_dev_shell
+                    arch: x64
+          checks:
+            - name: msvc-shell-check
+              kind: precondition
+              severity: error
+              run: where cl
+          tasks:
+            setup:
+              run: where cl
+              requirements:
+                native:
+                  - msvc-shell
+          workflows:
+            default: app
+            app:
+              setup:
+                task: setup
+          '@ | Set-Content -Path (Join-Path $proofRoot "ota.yaml") -NoNewline
+
+          $doctorJson = & $ota doctor $proofRoot --json
+          if ($LASTEXITCODE -ne 0) {
+            throw "ota doctor failed on the Windows native proof fixture"
+          }
+          $doctorJson | Set-Content -Path (Join-Path $proofRoot "doctor.json") -NoNewline
+          $doctor = Get-Content (Join-Path $proofRoot "doctor.json") -Raw | ConvertFrom-Json
+          if (-not $doctor.ok) {
+            throw "doctor did not report ready on the Windows native proof fixture"
+          }
+
+          $upJson = & $ota up $proofRoot --json
+          if ($LASTEXITCODE -ne 0) {
+            throw "ota up failed on the Windows native proof fixture"
+          }
+          $upJson | Set-Content -Path (Join-Path $proofRoot "up.json") -NoNewline
+          $up = Get-Content (Join-Path $proofRoot "up.json") -Raw | ConvertFrom-Json
+          if (-not $up.ok) {
+            throw "ota up did not complete successfully on the Windows native proof fixture"
+          }
+          if (-not $up.receipt.native_prerequisites[0].activation.applied) {
+            throw "ota up receipt did not mark the native activation as applied"
+          }
+
+          $proofJson = & $ota proof runtime $proofRoot --json
+          if ($LASTEXITCODE -ne 0) {
+            throw "ota proof runtime failed on the Windows native proof fixture"
+          }
+          $proofJson | Set-Content -Path (Join-Path $proofRoot "proof.json") -NoNewline
+          $proof = Get-Content (Join-Path $proofRoot "proof.json") -Raw | ConvertFrom-Json
+          if (-not $proof.ok) {
+            throw "ota proof runtime did not complete successfully on the Windows native proof fixture"
+          }
+          if ($proof.summary.verdict -ne "ready") {
+            throw "ota proof runtime did not report a ready verdict"
+          }
+
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-proof-artifacts
+          path: ${{ runner.temp }}/ota-windows-native-proof
+          if-no-files-found: ignore

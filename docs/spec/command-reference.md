@@ -48,11 +48,12 @@ Doctor first, contract second.
 
 1. `ota doctor`
 2. if the repo does not yet have `ota.yaml`, preview with `ota detect --dry-run .`
-3. compare exact first-contract options with `ota detect --contract .` and `ota init --dry-run .`
+3. review the first write with `ota init --dry-run .`
 4. choose an explicit first write with `ota init .` or `ota detect --write .`
-5. if the repo already has `ota.yaml`, use `ota explain`
-6. if the repo already has `ota.yaml`, review changes with `ota detect --merge --dry-run .` or `ota detect --rewrite --dry-run .`
+5. `ota validate`
+6. `ota up --dry-run`
 7. `ota up`
+8. `ota run <task>` or `ota proof runtime --workflow <name>`
 
 ## Global
 
@@ -1579,14 +1580,15 @@ Current behavior:
   evaluates and provisions that merged prerequisite surface before setup instead of unrelated
   task-local quickstart or packaged-runtime requirements elsewhere in the repo
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
-  activation lane before setup when it is safe and selected; Corepack-managed `pnpm` is the first
-  shipped path
+  activation lane before setup when it is safe and selected; shipped paths now cover both
+  Corepack-managed tools and explicit shell-command acquisition
 - when the selected workflow setup or run task references `requirements.native` entries with
   `activation.kind`, ota resolves that native activation environment first; Windows
   `visual_studio_dev_shell` and generic `command` activations both apply to the affected native
   task bodies instead of assuming the current terminal was pre-activated
 - when policy-backed provisioning is selected for a tool that also has an acquisition path, `ota up
-  --dry-run` names the provisioning action and explicitly marks the Corepack activation as skipped
+  --dry-run` names the provisioning action and explicitly marks the selected acquisition activation
+  as skipped
 - when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
 - when blocking preconditions fail and the selected workflow declares a setup task, ota runs that setup phase early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host

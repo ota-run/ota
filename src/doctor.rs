@@ -65,9 +65,9 @@ use crate::runner::{
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
-    ReadinessProbeSpec, RequirementSurface, RuntimeRequirement, ServiceProducerSpec,
-    ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider, ToolAcquisitionSpec,
-    ToolRequirement,
+    NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
+    ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider,
+    ToolAcquisitionSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, collect_contract_advisories};
@@ -367,8 +367,67 @@ fn selected_remote_task_requirement_selection(
 fn corepack_activation_command(acquisition: &ToolAcquisitionSpec) -> String {
     format!(
         "corepack enable && corepack prepare {}@{} --activate",
-        acquisition.package, acquisition.version
+        acquisition
+            .package
+            .as_deref()
+            .expect("validated corepack acquisition package"),
+        acquisition
+            .version
+            .as_deref()
+            .expect("validated corepack acquisition version")
     )
+}
+
+fn tool_acquisition_shell_label(shell: NativePrerequisiteActivationShell) -> &'static str {
+    match shell {
+        NativePrerequisiteActivationShell::Sh => "sh",
+        NativePrerequisiteActivationShell::Bash => "bash",
+        NativePrerequisiteActivationShell::Zsh => "zsh",
+        NativePrerequisiteActivationShell::Pwsh => "pwsh",
+        NativePrerequisiteActivationShell::Cmd => "cmd",
+    }
+}
+
+fn tool_acquisition_command(acquisition: &ToolAcquisitionSpec) -> String {
+    match acquisition.provider {
+        ToolAcquisitionProvider::Corepack => corepack_activation_command(acquisition),
+        ToolAcquisitionProvider::Command => {
+            let shell = acquisition
+                .shell
+                .expect("validated command acquisition shell");
+            let run = acquisition
+                .run
+                .as_deref()
+                .expect("validated command acquisition run");
+            match shell {
+                NativePrerequisiteActivationShell::Sh
+                | NativePrerequisiteActivationShell::Bash
+                | NativePrerequisiteActivationShell::Zsh => format!(
+                    "{} -lc {}",
+                    tool_acquisition_shell_label(shell),
+                    shell_single_quote(run)
+                ),
+                NativePrerequisiteActivationShell::Pwsh => format!(
+                    "pwsh -NoProfile -NonInteractive -Command {}",
+                    shell_single_quote(run)
+                ),
+                NativePrerequisiteActivationShell::Cmd => {
+                    format!("cmd /d /s /c {}", shell_single_quote(run))
+                }
+            }
+        }
+    }
+}
+
+fn tool_acquisition_provider_requirement(acquisition: &ToolAcquisitionSpec) -> &'static str {
+    match acquisition.provider {
+        ToolAcquisitionProvider::Corepack => "corepack",
+        ToolAcquisitionProvider::Command => tool_acquisition_shell_label(
+            acquisition
+                .shell
+                .expect("validated command acquisition shell"),
+        ),
+    }
 }
 
 fn exact_tooling_remediation(
@@ -380,10 +439,8 @@ fn exact_tooling_remediation(
     contract_path: &Path,
     provisioning_actions: &[ProvisioningAction],
 ) -> Option<String> {
-    if let Some(acquisition) = acquisition
-        && matches!(acquisition.provider, ToolAcquisitionProvider::Corepack)
-    {
-        return Some(corepack_activation_command(acquisition));
+    if let Some(acquisition) = acquisition {
+        return Some(tool_acquisition_command(acquisition));
     }
     exact_tooling_remediation_fallback(
         target_kind,
@@ -1257,7 +1314,9 @@ impl Finding {
             }
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
-            "Missing tool activation provider: corepack" => "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
+            s if s.starts_with("Missing tool activation provider: ") => {
+                "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
+            }
             s if s.starts_with("Tool probe failed: ") => "OTA_TOOL_PROBE_FAILED",
             s if s.starts_with("Unparseable version for tool: ") => "OTA_TOOL_VERSION_UNPARSEABLE",
             s if s.starts_with("Native prerequisite missing: ") => {
@@ -5101,8 +5160,7 @@ fn diagnose_command_version(
         .unwrap_or_else(|| display_name.to_string());
     let acquisition_provider_missing = matches!(mode, DoctorMode::Native)
         && tool_acquisition.is_some_and(|acquisition| {
-            matches!(acquisition.provider, ToolAcquisitionProvider::Corepack)
-                && !command_available("corepack")
+            !command_available(tool_acquisition_provider_requirement(acquisition))
         });
     let actual = if let Some(probe) = version_probe.as_ref() {
         match &probe.outcome {
@@ -5115,19 +5173,26 @@ fn diagnose_command_version(
 
     let Some(actual) = actual else {
         if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
+            let provider_requirement = tool_acquisition_provider_requirement(acquisition);
             findings.push(Finding {
                 severity: if required {
                     FindingSeverity::Error
                 } else {
                     FindingSeverity::Warn
                 },
-                summary: String::from("Missing tool activation provider: corepack"),
+                summary: format!(
+                    "Missing tool activation provider: {provider_requirement}"
+                ),
                 why: format!(
-                    "{display_name} is required by the selected workflow/task prerequisites, but the contract acquires it through Corepack and `corepack` is not available on PATH"
+                    "{display_name} is required by the selected workflow/task prerequisites, but the contract acquires it through `{}` and `{provider_requirement}` is not available on PATH",
+                    match acquisition.provider {
+                        ToolAcquisitionProvider::Corepack => "corepack",
+                        ToolAcquisitionProvider::Command => "command activation",
+                    }
                 ),
                 next: format!(
-                    "install a Node distribution that provides `corepack`, then run `{}` and rerun `{rerun_doctor}`",
-                    corepack_activation_command(acquisition)
+                    "install `{provider_requirement}` or change the tool acquisition path, then run `{}` and rerun `{rerun_doctor}`",
+                    tool_acquisition_command(acquisition)
                 ),
             });
             return probe_started;
@@ -5510,19 +5575,24 @@ fn diagnose_command_version(
     }
 
     if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
+        let provider_requirement = tool_acquisition_provider_requirement(acquisition);
         findings.push(Finding {
             severity: if required {
                 FindingSeverity::Error
             } else {
                 FindingSeverity::Warn
             },
-            summary: String::from("Missing tool activation provider: corepack"),
+            summary: format!("Missing tool activation provider: {provider_requirement}"),
             why: format!(
-                "{display_name} is required by the selected workflow/task prerequisites, but the contract upgrades it through Corepack and `corepack` is not available on PATH"
+                "{display_name} is required by the selected workflow/task prerequisites, but the contract upgrades it through `{}` and `{provider_requirement}` is not available on PATH",
+                match acquisition.provider {
+                    ToolAcquisitionProvider::Corepack => "corepack",
+                    ToolAcquisitionProvider::Command => "command activation",
+                }
             ),
             next: format!(
-                "install a Node distribution that provides `corepack`, then run `{}` and rerun `{rerun_doctor}`",
-                corepack_activation_command(acquisition)
+                "install `{provider_requirement}` or change the tool acquisition path, then run `{}` and rerun `{rerun_doctor}`",
+                tool_acquisition_command(acquisition)
             ),
         });
         return probe_started;
@@ -8833,6 +8903,74 @@ workflows:
             finding
                 .next
                 .contains("corepack prepare pnpm@10.22.0 --activate")
+        );
+    }
+
+    #[test]
+    fn doctor_blocks_on_missing_command_acquisition_shell_for_selected_workflow_tools() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  bunx:
+    version: ">=1.2.0"
+    acquisition:
+      provider: command
+      shell: sh
+      run: curl -fsSL https://bun.sh/install | sh
+tasks:
+  setup:
+    run: bun install
+    requirements:
+      tools:
+        bunx: ">=1.2.0"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("contributor"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Missing tool activation provider: sh")
+            .expect("command acquisition shell blocker should be surfaced");
+        assert!(finding.why.contains("bunx"));
+        assert!(
+            finding
+                .next
+                .contains("sh -lc 'curl -fsSL https://bun.sh/install | sh'")
         );
     }
 

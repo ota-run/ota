@@ -51,7 +51,7 @@ pub(crate) use commands::parse_container_host_port_conflict;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  compare exact starter text   ota detect --contract .\n  review starter write path    ota init --dry-run\n  explain current blockers     ota explain\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  inspect runnable tasks       ota tasks --use\n  inspect declared workflows   ota workflows\n  run a declared task          ota run ci\n\nMore:\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology\n  prove one runtime path       ota proof runtime\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  workspace readiness          ota workspace doctor .\n  enable shell completion      ota completion --setup",
+    after_help = "\nStart here:\n  diagnose repo readiness      ota doctor\n  preview inferred contract    ota detect --dry-run .\n  review starter write path    ota init --dry-run\n  validate contract edits      ota validate\n  preview repo preparation     ota up --dry-run\n  prepare the repo             ota up\n  run declared work            ota run ci\n  prove one runtime path       ota proof runtime\n\nInspect:\n  inspect declared workflows   ota workflows\n  inspect runnable tasks       ota tasks --use\n  inspect execution choice     ota execution plan\n  inspect declared topology    ota execution topology",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -5713,7 +5713,7 @@ mod tests {
     #[cfg(unix)]
     use std::time::Instant;
 
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
     use serde_json::{Value, json};
     use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
@@ -39823,6 +39823,28 @@ repos:
         let mut expected = expected.iter().map(ToString::to_string).collect::<Vec<_>>();
         expected.sort();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn root_help_emphasizes_first_run_flow() {
+        let mut command = Cli::command();
+        let mut rendered = Vec::new();
+        command.write_long_help(&mut rendered).unwrap();
+        let stdout = String::from_utf8(rendered).unwrap();
+
+        assert!(stdout.contains("ota doctor"));
+        assert!(stdout.contains("ota detect --dry-run ."));
+        assert!(stdout.contains("ota init --dry-run"));
+        assert!(stdout.contains("ota validate"));
+        assert!(stdout.contains("ota up --dry-run"));
+        assert!(stdout.contains("ota up"));
+        assert!(stdout.contains("ota run ci"));
+        assert!(stdout.contains("ota proof runtime"));
+        assert!(!stdout.contains("ota env"));
+        assert!(!stdout.contains("ota policy review"));
+        assert!(!stdout.contains("ota agents"));
+        assert!(!stdout.contains("ota workspace doctor ."));
+        assert!(!stdout.contains("ota completion --setup"));
     }
 
     fn json_top_level_keys(output: &super::CommandOutput) -> Vec<String> {

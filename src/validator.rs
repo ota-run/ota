@@ -991,24 +991,7 @@ fn validate_tool_details(
         }
 
         if let Some(acquisition) = detail.acquisition.as_ref() {
-            if acquisition.package.trim().is_empty() {
-                errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition must not declare an empty `package`"
-                )));
-            } else if !is_shell_safe_corepack_token(&acquisition.package) {
-                errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `package` must be a shell-safe Corepack package token"
-                )));
-            }
-            if acquisition.version.trim().is_empty() {
-                errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition must not declare an empty `version`"
-                )));
-            } else if !is_shell_safe_corepack_token(&acquisition.version) {
-                errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `version` must be a shell-safe Corepack version token"
-                )));
-            }
+            validate_tool_acquisition(name, acquisition, errors);
         }
     }
 }
@@ -1195,6 +1178,105 @@ fn is_shell_safe_corepack_token(value: &str) -> bool {
         && trimmed.chars().all(|ch| {
             ch.is_ascii_alphanumeric() || matches!(ch, '@' | '/' | '.' | '_' | '-' | '+' | '~')
         })
+}
+
+fn validate_tool_acquisition(
+    name: &str,
+    acquisition: &crate::schema::ToolAcquisitionSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if acquisition
+        .package
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "tool `{name}` acquisition `package` must not be empty"
+        )));
+    }
+    if acquisition
+        .version
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "tool `{name}` acquisition `version` must not be empty"
+        )));
+    }
+    if acquisition
+        .run
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "tool `{name}` acquisition `run` must not be empty"
+        )));
+    }
+
+    match acquisition.provider {
+        crate::schema::ToolAcquisitionProvider::Corepack => {
+            let Some(package) = acquisition.package.as_deref() else {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `corepack` must declare `package`"
+                )));
+                return;
+            };
+            let Some(version) = acquisition.version.as_deref() else {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `corepack` must declare `version`"
+                )));
+                return;
+            };
+            if !is_shell_safe_corepack_token(package) {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `package` must be a shell-safe Corepack package token"
+                )));
+            }
+            if !is_shell_safe_corepack_token(version) {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `version` must be a shell-safe Corepack version token"
+                )));
+            }
+            if acquisition.shell.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `corepack` must not declare `shell`"
+                )));
+            }
+            if acquisition.run.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `corepack` must not declare `run`"
+                )));
+            }
+        }
+        crate::schema::ToolAcquisitionProvider::Command => {
+            if acquisition.package.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `command` must not declare `package`"
+                )));
+            }
+            if acquisition.version.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `command` must not declare `version`"
+                )));
+            }
+            if acquisition.shell.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `command` must declare `shell`"
+                )));
+            }
+            if acquisition
+                .run
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `command` must declare `run`"
+                )));
+            }
+        }
+    }
 }
 
 fn validate_native_prerequisite_activation(
@@ -15139,7 +15221,7 @@ tools:
         let errors = validate_contract(&contract).unwrap_err();
         assert_eq!(
             errors.errors()[0].to_string(),
-            "tool `pnpm` acquisition must not declare an empty `package`"
+            "tool `pnpm` acquisition `package` must not be empty"
         );
     }
 
@@ -15165,7 +15247,7 @@ tools:
         let errors = validate_contract(&contract).unwrap_err();
         assert_eq!(
             errors.errors()[0].to_string(),
-            "tool `pnpm` acquisition must not declare an empty `version`"
+            "tool `pnpm` acquisition `version` must not be empty"
         );
     }
 
@@ -15208,6 +15290,114 @@ tools:
                     "tool `pnpm` acquisition `version` must be a shell-safe Corepack version token",
                 )
             }),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_command_tool_acquisition_metadata() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  bun:
+    version: ">=1.2.0"
+    acquisition:
+      provider: command
+      shell: sh
+      run: curl -fsSL https://bun.sh/install | sh
+tasks:
+  setup:
+    run: bun install
+    requirements:
+      tools:
+        bun: ">=1.2.0"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("command tool acquisition metadata should validate");
+    }
+
+    #[test]
+    fn rejects_command_tool_acquisition_without_shell_and_run() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  bun:
+    version: ">=1.2.0"
+    acquisition:
+      provider: command
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "tool `bun` acquisition `command` must declare `shell`"),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "tool `bun` acquisition `command` must declare `run`"),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_command_tool_acquisition_with_corepack_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  bun:
+    version: ">=1.2.0"
+    acquisition:
+      provider: command
+      package: bun
+      version: "1.2.0"
+      shell: sh
+      run: curl -fsSL https://bun.sh/install | sh
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message
+                    == "tool `bun` acquisition `command` must not declare `package`"),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message
+                    == "tool `bun` acquisition `command` must not declare `version`"),
             "{messages:?}"
         );
     }
