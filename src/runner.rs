@@ -37,6 +37,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
+#[cfg(windows)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -19119,19 +19121,30 @@ fn capture_visual_studio_dev_shell_env(
             });
         }
 
-        let command = visual_studio_dev_shell_batch_command(&vsdevcmd_path, arch);
-        let output = Command::new("cmd")
-            .args(["/d", "/s", "/c", command.as_str()])
-            .current_dir(working_dir)
-            .output()
-            .map_err(|source| RunError::NativePrerequisiteActivationFailed {
+        let script_path = visual_studio_dev_shell_script_path();
+        write_visual_studio_dev_shell_script(&script_path, &vsdevcmd_path, arch).map_err(
+            |source| RunError::NativePrerequisiteActivationFailed {
                 task: task_name.to_string(),
                 prerequisite: prerequisite_name.to_string(),
                 details: format!(
-                    "failed to execute Visual Studio Developer shell `{}`: {source}",
-                    vsdevcmd_path.display()
+                    "failed to write Visual Studio Developer shell wrapper `{}`: {source}",
+                    script_path.display()
                 ),
-            })?;
+            },
+        )?;
+        let output = Command::new("cmd")
+            .args(["/d", "/s", "/c", script_path.to_string_lossy().as_ref()])
+            .current_dir(working_dir)
+            .output();
+        let _ = fs::remove_file(&script_path);
+        let output = output.map_err(|source| RunError::NativePrerequisiteActivationFailed {
+            task: task_name.to_string(),
+            prerequisite: prerequisite_name.to_string(),
+            details: format!(
+                "failed to execute Visual Studio Developer shell wrapper `{}`: {source}",
+                script_path.display()
+            ),
+        })?;
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -19307,11 +19320,27 @@ fn visual_studio_installation_path(vswhere_path: &Path) -> io::Result<std::proce
 }
 
 #[cfg(windows)]
-fn visual_studio_dev_shell_batch_command(vsdevcmd_path: &Path, arch: &str) -> String {
-    format!(
-        "call \"{}\" -no_logo -arch={} >nul && set",
-        vsdevcmd_path.display(),
-        arch
+fn visual_studio_dev_shell_script_path() -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    std::env::temp_dir().join(format!("ota-vsdevcmd-{}-{}.cmd", std::process::id(), nonce))
+}
+
+#[cfg(windows)]
+fn write_visual_studio_dev_shell_script(
+    script_path: &Path,
+    vsdevcmd_path: &Path,
+    arch: &str,
+) -> io::Result<()> {
+    fs::write(
+        script_path,
+        format!(
+            "@echo off\r\ncall \"{}\" -no_logo -arch={} >nul\r\nif errorlevel 1 exit /b %errorlevel%\r\nset\r\n",
+            vsdevcmd_path.display(),
+            arch
+        ),
     )
 }
 
@@ -19451,7 +19480,10 @@ mod tests {
     };
 
     #[cfg(windows)]
-    use super::{visual_studio_dev_shell_batch_command, visual_studio_vswhere_path};
+    use super::{
+        visual_studio_dev_shell_script_path, visual_studio_vswhere_path,
+        write_visual_studio_dev_shell_script,
+    };
 
     struct PathEnvGuard(Option<std::ffi::OsString>);
 
@@ -37215,13 +37247,36 @@ tasks:
 
     #[cfg(windows)]
     #[test]
-    fn visual_studio_dev_shell_batch_command_sets_env_dump_tail() {
-        let command = visual_studio_dev_shell_batch_command(
+    fn visual_studio_dev_shell_script_writes_batch_wrapper() {
+        let temp = tempdir().unwrap();
+        let script_path = temp.path().join("vsdevcmd-wrapper.cmd");
+        write_visual_studio_dev_shell_script(
+            &script_path,
             Path::new(r"C:\VS\Common7\Tools\VsDevCmd.bat"),
             "x64",
+        )
+        .unwrap();
+        let contents = fs::read_to_string(&script_path).unwrap();
+        assert!(
+            contents.contains(r#"call "C:\VS\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64 >nul"#),
+            "{contents}"
         );
-        assert!(command.contains("-arch=x64"), "{command}");
-        assert!(command.ends_with("&& set"), "{command}");
+        assert!(
+            contents.contains("if errorlevel 1 exit /b %errorlevel%"),
+            "{contents}"
+        );
+        assert!(contents.ends_with("set\r\n"), "{contents}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn visual_studio_dev_shell_script_path_uses_temp_directory() {
+        let path = visual_studio_dev_shell_script_path();
+        assert_eq!(
+            path.extension().and_then(|value| value.to_str()),
+            Some("cmd")
+        );
+        assert!(path.starts_with(std::env::temp_dir()), "{:?}", path);
     }
 
     #[cfg(windows)]
