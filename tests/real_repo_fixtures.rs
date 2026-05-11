@@ -2700,7 +2700,6 @@ tasks:
     let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout.contains("READY"));
     assert!(stdout.contains("Phase: post-setup diagnosis"));
