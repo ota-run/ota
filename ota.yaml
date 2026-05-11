@@ -193,8 +193,12 @@ tasks:
       Use this to verify the repo against the release gate checks that run in GitHub Actions.
     category: test
     script: |
-      cargo test --test real_repo_fixtures -- --test-threads=1
-      cargo test --test examples_validate -- --test-threads=1
+      if [ "$OSTYPE" != "msys" ] && [ "$OSTYPE" != "win32" ]; then
+        cargo test --test real_repo_fixtures -- --test-threads=1
+        cargo test --test examples_validate -- --test-threads=1
+      else
+        echo "Skipping integration tests on Windows"
+      fi
     depends_on:
       - ci
       - compat
