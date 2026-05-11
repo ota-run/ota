@@ -126,6 +126,37 @@
                 }
               }
             },
+            "native_prerequisites": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "required", "platform"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "required": { "type": "boolean" },
+                  "platform": { "type": "string" },
+                  "check": { "type": "string" },
+                  "activation": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "applied"],
+                    "properties": {
+                      "kind": { "type": "string" },
+                      "applied": { "type": "boolean" },
+                      "arch": { "type": "string" },
+                      "shell": { "type": "string" },
+                      "run": { "type": "string" }
+                    }
+                  },
+                  "provisioning": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "note": { "type": "string" }
+                }
+              }
+            },
             "policy": {
               "type": "array",
               "items": { "type": "string" }

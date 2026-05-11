@@ -4166,6 +4166,24 @@ fn native_prerequisite_next(
                     "activate the Visual Studio Developer shell for `{arch}` before running native checks"
                 ));
             }
+            crate::schema::NativePrerequisiteActivationKind::Command => {
+                if let Some(shell) = activation.shell {
+                    let shell = match shell {
+                        crate::schema::NativePrerequisiteActivationShell::Sh => "sh",
+                        crate::schema::NativePrerequisiteActivationShell::Bash => "bash",
+                        crate::schema::NativePrerequisiteActivationShell::Zsh => "zsh",
+                        crate::schema::NativePrerequisiteActivationShell::Pwsh => "pwsh",
+                        crate::schema::NativePrerequisiteActivationShell::Cmd => "cmd",
+                    };
+                    suggestions.push(format!(
+                        "run the declared `{shell}` activation path before rerunning native checks"
+                    ));
+                } else {
+                    suggestions.push(String::from(
+                        "run the declared native activation path before rerunning native checks",
+                    ));
+                }
+            }
         }
     }
     if !platform.apt.is_empty() {
@@ -6342,6 +6360,10 @@ fn native_prerequisite_check_command(
                 activation.arch.as_deref().unwrap_or("x64"),
             ))
         }
+        crate::schema::NativePrerequisiteActivationKind::Command => activation
+            .shell
+            .map(|shell| native_activation_check_command(shell, activation.run.as_deref(), command))
+            .or_else(|| Some(command.to_string())),
         _ => Some(command.to_string()),
     }
 }
@@ -6360,6 +6382,37 @@ fn visual_studio_dev_shell_command(command: &str, arch: &str) -> String {
         arch = arch,
         command = command
     )
+}
+
+fn native_activation_check_command(
+    shell: crate::schema::NativePrerequisiteActivationShell,
+    activation_run: Option<&str>,
+    check_command: &str,
+) -> String {
+    let activation_run = activation_run.unwrap_or_default();
+    match shell {
+        crate::schema::NativePrerequisiteActivationShell::Sh => format!(
+            "sh -lc {}",
+            doctor_shell_quote(&format!("{activation_run}\n{check_command}"))
+        ),
+        crate::schema::NativePrerequisiteActivationShell::Bash => format!(
+            "bash -lc {}",
+            doctor_shell_quote(&format!("{activation_run}\n{check_command}"))
+        ),
+        crate::schema::NativePrerequisiteActivationShell::Zsh => format!(
+            "zsh -lc {}",
+            doctor_shell_quote(&format!("{activation_run}\n{check_command}"))
+        ),
+        crate::schema::NativePrerequisiteActivationShell::Pwsh => {
+            format!(
+                "pwsh -NoProfile -NonInteractive -Command {}",
+                doctor_shell_quote(&format!("& {{ {activation_run}; {check_command} }}"))
+            )
+        }
+        crate::schema::NativePrerequisiteActivationShell::Cmd => {
+            format!("cmd /d /s /c \"{activation_run} && {check_command}\"")
+        }
+    }
 }
 
 fn run_file_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> CheckStatus {
@@ -10938,6 +10991,52 @@ checks:
         assert!(command.contains("VsDevCmd.bat"), "{command}");
         assert!(command.contains("-arch=x64"), "{command}");
         assert!(command.ends_with("&& where cl"), "{command}");
+    }
+
+    #[test]
+    fn command_native_prerequisite_activation_wraps_check_in_declared_shell() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  nix-shell:
+    description: Project shell activation
+    platforms:
+      linux:
+        check: nix-shell-check
+        activation:
+          kind: command
+          shell: bash
+          run: source ./scripts/native-env.sh
+checks:
+  - name: nix-shell-check
+    kind: precondition
+    severity: error
+    run: cargo --version
+"#,
+        )
+        .unwrap();
+
+        let prerequisite = contract
+            .native_prerequisites
+            .get("nix-shell")
+            .expect("native prerequisite");
+        let command = super::native_prerequisite_check_command(
+            prerequisite,
+            "linux",
+            Some("cargo --version"),
+        )
+        .expect("wrapped command");
+
+        assert!(command.starts_with("bash -lc "), "{command}");
+        assert!(
+            command.contains("source ./scripts/native-env.sh"),
+            "{command}"
+        );
+        assert!(command.contains("cargo --version"), "{command}");
     }
 
     #[test]

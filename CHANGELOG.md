@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- hardened Windows native prerequisite activation so `visual_studio_dev_shell` now applies to the
+  real native task bodies selected by `ota run` and `ota up`, `ota up --dry-run` only advertises
+  that activation on native workflow paths, conflicting task-level native activations are rejected,
+  and the public docs/site now describe the same execution behavior the runner uses
 - fixed container-mode workspace mounts on Windows so Docker no longer receives verbatim
   `\\?\\...` repo paths from canonicalized worktrees, and clarified container readiness output so
   `ota doctor` / `ota up` now say explicitly that container validation covers the selected

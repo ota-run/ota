@@ -1227,6 +1227,22 @@ fn receipt_schema_includes_runtime_endpoint_metadata() {
 }
 
 #[test]
+fn receipt_schema_includes_native_prerequisite_activation_metadata() {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let receipt_properties = &schema["oneOf"][0]["properties"]["receipt"]["properties"];
+    let native_prerequisites = &receipt_properties["native_prerequisites"]["items"]["properties"];
+    let activation = &native_prerequisites["activation"]["properties"];
+
+    assert!(receipt_properties.get("native_prerequisites").is_some());
+    assert!(native_prerequisites.get("provisioning").is_some());
+    assert!(native_prerequisites.get("note").is_some());
+    assert!(activation.get("kind").is_some());
+    assert!(activation.get("applied").is_some());
+    assert!(activation.get("shell").is_some());
+    assert!(activation.get("run").is_some());
+}
+
+#[test]
 fn diff_schema_includes_readiness_impact_summary() {
     let schema = load_schema("docs/spec/json-schemas/diff.json");
     let summary = &schema["properties"]["summary"]["properties"];

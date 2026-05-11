@@ -60,12 +60,13 @@ use crate::provisioning::{
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
     ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment, ExtensionKind, Lifecycle,
-    ReadinessProbeTargetKind, RemoteBackend, RuntimeRequirement, TaskModeBranchSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod,
-    TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec, ToolRequirement,
-    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
-    task_target_env_name,
+    NativePrerequisiteActivationKind, NativePrerequisiteActivationShell,
+    NativePrerequisiteActivationSpec, ReadinessProbeTargetKind, RemoteBackend, RuntimeRequirement,
+    TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol,
+    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
+    ToolRequirement, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
@@ -851,6 +852,14 @@ pub enum RunError {
         "task `{task}` uses secret environment variables that cannot be passed through remote execution: {names}"
     )]
     SecretEnvNotSupportedForRemote { task: String, names: String },
+    #[error("task `{task}` could not activate native prerequisite `{prerequisite}`: {details}")]
+    NativePrerequisiteActivationFailed {
+        task: String,
+        prerequisite: String,
+        details: String,
+    },
+    #[error("task `{task}` declares incompatible native prerequisite activations: {details}")]
+    ConflictingNativePrerequisiteActivations { task: String, details: String },
     #[error("secret environment variable `{name}` cannot define a default value")]
     SecretEnvCannotHaveDefault { name: String },
     #[error(
@@ -3705,6 +3714,7 @@ struct TaskRunState {
     interrupted: bool,
     fulfilled_backend_units: BTreeMap<String, BackendFulfillmentEvidence>,
     fulfilled_backend_source_managed_actions: BTreeMap<String, Vec<ProvisioningAction>>,
+    native_activation_env_cache: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -5102,6 +5112,15 @@ fn execute_task_with_hooks(
     }
     let env_overrides =
         resolve_task_env_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
+    let native_activation_env = task_native_activation_env(
+        contract,
+        task_name,
+        task,
+        &backend,
+        working_dir,
+        current_os,
+        state,
+    )?;
     let mut path_export = match backend {
         ResolvedExecutionBackend::Container { .. } => env_details
             .get("PATH")
@@ -5112,7 +5131,8 @@ fn execute_task_with_hooks(
     if path_export.is_some() {
         env_overrides.remove("PATH");
     }
-    let mut combined_env = env_overrides;
+    let mut combined_env = native_activation_env.unwrap_or_default();
+    combined_env.extend(env_overrides);
     combined_env.extend(input_resolution.env_overrides.clone());
     let runtime = task.service_runtime_for_backend(backend_kind);
     let mut shell_command = match execution.launch() {
@@ -18841,6 +18861,381 @@ fn repo_ownership_token_for_working_dir(
     Ok(token)
 }
 
+#[derive(Debug, Clone)]
+struct NativeTaskActivationRequest {
+    prerequisite_name: String,
+    activation: NativePrerequisiteActivationSpec,
+}
+
+fn task_native_activation_env(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+    current_os: &str,
+    state: &mut TaskRunState,
+) -> Result<Option<BTreeMap<String, String>>, RunError> {
+    if !matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return Ok(None);
+    }
+
+    let requests = collect_native_task_activation_requests(contract, task, current_os);
+    if requests.is_empty() {
+        return Ok(None);
+    }
+
+    let cache_key = native_activation_cache_key(task_name, &requests)?;
+    if let Some(cached) = state.native_activation_env_cache.get(cache_key.as_str()) {
+        return Ok(Some(cached.clone()));
+    }
+
+    let request = requests
+        .first()
+        .expect("non-empty activation request list should have a first entry");
+    let env = capture_native_activation_env(
+        task_name,
+        request.prerequisite_name.as_str(),
+        &request.activation,
+        working_dir,
+    )?;
+    state
+        .native_activation_env_cache
+        .insert(cache_key, env.clone());
+    Ok(Some(env))
+}
+
+fn collect_native_task_activation_requests(
+    contract: &Contract,
+    task: &TaskSpec,
+    current_os: &str,
+) -> Vec<NativeTaskActivationRequest> {
+    let mut requests = Vec::new();
+    let mut seen = BTreeSet::new();
+    for native_name in &task.requirements.native {
+        if !seen.insert(native_name.as_str()) {
+            continue;
+        }
+        let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+            continue;
+        };
+        let Some(platform) = prerequisite.platform_for_os(current_os) else {
+            continue;
+        };
+        let Some(activation) = platform.activation.as_ref() else {
+            continue;
+        };
+        requests.push(NativeTaskActivationRequest {
+            prerequisite_name: native_name.clone(),
+            activation: activation.clone(),
+        });
+    }
+    requests
+}
+
+fn native_activation_cache_key(
+    task_name: &str,
+    requests: &[NativeTaskActivationRequest],
+) -> Result<String, RunError> {
+    let first = requests
+        .first()
+        .expect("non-empty activation request list should have a first entry");
+    let first_key = single_native_activation_key(&first.activation);
+    let incompatible = requests
+        .iter()
+        .filter(|request| single_native_activation_key(&request.activation) != first_key)
+        .map(|request| {
+            format!(
+                "{} ({})",
+                request.prerequisite_name,
+                single_native_activation_key(&request.activation)
+            )
+        })
+        .collect::<Vec<_>>();
+    if !incompatible.is_empty() {
+        let mut entries = vec![format!("{} ({})", first.prerequisite_name, first_key)];
+        entries.extend(incompatible);
+        return Err(RunError::ConflictingNativePrerequisiteActivations {
+            task: task_name.to_string(),
+            details: entries.join(", "),
+        });
+    }
+    Ok(first_key)
+}
+
+fn single_native_activation_key(activation: &NativePrerequisiteActivationSpec) -> String {
+    match activation.kind {
+        NativePrerequisiteActivationKind::VisualStudioDevShell => format!(
+            "visual_studio_dev_shell:{}",
+            activation.arch.as_deref().unwrap_or("x64")
+        ),
+        NativePrerequisiteActivationKind::Command => format!(
+            "command:{}:{}",
+            activation
+                .shell
+                .map(native_activation_shell_label)
+                .unwrap_or("unknown"),
+            activation.run.as_deref().unwrap_or_default()
+        ),
+    }
+}
+
+fn native_activation_shell_label(shell: NativePrerequisiteActivationShell) -> &'static str {
+    match shell {
+        NativePrerequisiteActivationShell::Sh => "sh",
+        NativePrerequisiteActivationShell::Bash => "bash",
+        NativePrerequisiteActivationShell::Zsh => "zsh",
+        NativePrerequisiteActivationShell::Pwsh => "pwsh",
+        NativePrerequisiteActivationShell::Cmd => "cmd",
+    }
+}
+
+fn capture_native_activation_env(
+    task_name: &str,
+    prerequisite_name: &str,
+    activation: &NativePrerequisiteActivationSpec,
+    working_dir: &Path,
+) -> Result<BTreeMap<String, String>, RunError> {
+    match activation.kind {
+        NativePrerequisiteActivationKind::VisualStudioDevShell => {
+            capture_visual_studio_dev_shell_env(
+                task_name,
+                prerequisite_name,
+                working_dir,
+                activation.arch.as_deref().unwrap_or("x64"),
+            )
+        }
+        NativePrerequisiteActivationKind::Command => {
+            capture_command_activation_env(task_name, prerequisite_name, activation, working_dir)
+        }
+    }
+}
+
+fn capture_visual_studio_dev_shell_env(
+    task_name: &str,
+    prerequisite_name: &str,
+    working_dir: &Path,
+    arch: &str,
+) -> Result<BTreeMap<String, String>, RunError> {
+    #[cfg(not(windows))]
+    {
+        let _ = (task_name, prerequisite_name, working_dir, arch);
+        return Ok(BTreeMap::new());
+    }
+
+    #[cfg(windows)]
+    {
+        let command = visual_studio_dev_shell_env_capture_command(arch);
+        let output = Command::new("cmd")
+            .args(["/d", "/s", "/c", command.as_str()])
+            .current_dir(working_dir)
+            .output()
+            .map_err(|source| RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: format!(
+                    "failed to execute Visual Studio Developer Shell activation: {source}"
+                ),
+            })?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let details = match (stdout.is_empty(), stderr.is_empty()) {
+                (false, false) => format!("{stdout}; {stderr}"),
+                (false, true) => stdout,
+                (true, false) => stderr,
+                (true, true) => format!(
+                    "Visual Studio Developer Shell activation exited with code {}",
+                    output.status.code().unwrap_or(1)
+                ),
+            };
+            return Err(RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details,
+            });
+        }
+
+        let env = parse_windows_env_block(&String::from_utf8_lossy(&output.stdout));
+        if env.is_empty() {
+            return Err(RunError::NativePrerequisiteActivationFailed {
+                task: task_name.to_string(),
+                prerequisite: prerequisite_name.to_string(),
+                details: String::from(
+                    "Visual Studio Developer Shell activation did not produce any environment values",
+                ),
+            });
+        }
+        Ok(env)
+    }
+}
+
+fn capture_command_activation_env(
+    task_name: &str,
+    prerequisite_name: &str,
+    activation: &NativePrerequisiteActivationSpec,
+    working_dir: &Path,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let shell = activation
+        .shell
+        .expect("validated command activation shell");
+    let run = activation
+        .run
+        .as_deref()
+        .expect("validated command activation run");
+    let output = command_activation_env_output(shell, run, working_dir).map_err(|source| {
+        RunError::NativePrerequisiteActivationFailed {
+            task: task_name.to_string(),
+            prerequisite: prerequisite_name.to_string(),
+            details: format!(
+                "failed to execute `{}` native activation command: {source}",
+                native_activation_shell_label(shell)
+            ),
+        }
+    })?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let details = match (stdout.is_empty(), stderr.is_empty()) {
+            (false, false) => format!("{stdout}; {stderr}"),
+            (false, true) => stdout,
+            (true, false) => stderr,
+            (true, true) => format!(
+                "native activation command via `{}` exited with code {}",
+                native_activation_shell_label(shell),
+                output.status.code().unwrap_or(1)
+            ),
+        };
+        return Err(RunError::NativePrerequisiteActivationFailed {
+            task: task_name.to_string(),
+            prerequisite: prerequisite_name.to_string(),
+            details,
+        });
+    }
+    let env = parse_activation_env_output(shell, &output.stdout);
+    if env.is_empty() {
+        return Err(RunError::NativePrerequisiteActivationFailed {
+            task: task_name.to_string(),
+            prerequisite: prerequisite_name.to_string(),
+            details: format!(
+                "native activation command via `{}` did not produce any environment values",
+                native_activation_shell_label(shell)
+            ),
+        });
+    }
+    Ok(env)
+}
+
+fn command_activation_env_output(
+    shell: NativePrerequisiteActivationShell,
+    run: &str,
+    working_dir: &Path,
+) -> io::Result<std::process::Output> {
+    let mut command = match shell {
+        NativePrerequisiteActivationShell::Sh => {
+            let mut command = Command::new("sh");
+            command.arg("-lc").arg(format!("{run}\nenv -0"));
+            command
+        }
+        NativePrerequisiteActivationShell::Bash => {
+            let mut command = Command::new("bash");
+            command.arg("-lc").arg(format!("{run}\nenv -0"));
+            command
+        }
+        NativePrerequisiteActivationShell::Zsh => {
+            let mut command = Command::new("zsh");
+            command.arg("-lc").arg(format!("{run}\nenv -0"));
+            command
+        }
+        NativePrerequisiteActivationShell::Pwsh => {
+            let mut command = Command::new("pwsh");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                format!(
+                    "& {{ {run}; Get-ChildItem Env: | ForEach-Object {{ \"{{0}}={{1}}\" -f $_.Name, $_.Value }} }}"
+                )
+                .as_str(),
+            ]);
+            command
+        }
+        NativePrerequisiteActivationShell::Cmd => {
+            let mut command = Command::new("cmd");
+            command.args(["/d", "/s", "/c", &format!("{run} && set")]);
+            command
+        }
+    };
+    command.current_dir(working_dir).output()
+}
+
+fn parse_activation_env_output(
+    shell: NativePrerequisiteActivationShell,
+    stdout: &[u8],
+) -> BTreeMap<String, String> {
+    match shell {
+        NativePrerequisiteActivationShell::Sh
+        | NativePrerequisiteActivationShell::Bash
+        | NativePrerequisiteActivationShell::Zsh => parse_nul_env_block(stdout),
+        NativePrerequisiteActivationShell::Pwsh | NativePrerequisiteActivationShell::Cmd => {
+            parse_windows_env_block(&String::from_utf8_lossy(stdout))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn visual_studio_dev_shell_env_capture_command(arch: &str) -> String {
+    format!(
+        concat!(
+            "set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\" ",
+            "&& if not exist \"%VSWHERE%\" exit /b 1 ",
+            "&& set \"VSINSTALL=\" ",
+            "&& for /f \"usebackq delims=\" %I in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set \"VSINSTALL=%I\" ",
+            "&& if not defined VSINSTALL exit /b 1 ",
+            "&& call \"%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch={arch} >nul ",
+            "&& set"
+        ),
+        arch = arch
+    )
+}
+
+fn parse_windows_env_block(stdout: &str) -> BTreeMap<String, String> {
+    stdout
+        .lines()
+        .filter_map(parse_windows_env_line)
+        .filter(|(name, _)| name != "VSWHERE" && name != "VSINSTALL")
+        .collect()
+}
+
+fn parse_nul_env_block(stdout: &[u8]) -> BTreeMap<String, String> {
+    stdout
+        .split(|byte| *byte == b'\0')
+        .filter_map(|entry| {
+            if entry.is_empty() {
+                return None;
+            }
+            let text = String::from_utf8_lossy(entry);
+            parse_unix_env_line(&text)
+        })
+        .collect()
+}
+
+fn parse_unix_env_line(line: &str) -> Option<(String, String)> {
+    let (name, value) = line.split_once('=')?;
+    if name.is_empty() {
+        return None;
+    }
+    Some((name.to_string(), value.to_string()))
+}
+
+fn parse_windows_env_line(line: &str) -> Option<(String, String)> {
+    let (name, value) = line.split_once('=')?;
+    if name.is_empty() || name.starts_with('=') {
+        return None;
+    }
+    Some((name.to_string(), value.to_string()))
+}
+
 fn current_os() -> &'static str {
     match std::env::consts::OS {
         "macos" => "macos",
@@ -18919,16 +19314,17 @@ mod tests {
         clean_execution, clean_execution_report, container_identity_seed, contract_working_dir,
         current_os, effective_task_env_for_backend, effective_task_execution,
         ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
-        persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
-        plan_task_execution, preflight_container_host_publications,
-        prepare_container_runtime_projection, preparing_loader_label, producer_owned_service_next,
-        ready_runtime_public_endpoint_line, resolve_execution_backend,
-        resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
-        resolve_task_target_binding_url, resolve_task_target_binding_url_with_contract_path,
-        run_task, run_task_captured, run_task_captured_with_args_with_overrides,
-        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
-        run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend, shell_quote, version_matches_requirement,
+        parse_windows_env_block, persistent_cleanup_targets, persistent_container_name,
+        persistent_container_name_for_seed, plan_task_execution,
+        preflight_container_host_publications, prepare_container_runtime_projection,
+        preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
+        resolve_execution_backend, resolve_execution_backend_with_contract_path, resolve_task_env,
+        resolve_task_env_details, resolve_task_target_binding_url,
+        resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
+        run_task_captured_with_args_with_overrides, run_task_with_args,
+        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
+        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
+        shell_quote, version_matches_requirement,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -18937,6 +19333,9 @@ mod tests {
         TaskRuntimeReadinessHttpMethod, TaskRuntimeSpec, TaskTargetActivationMode,
         TaskTargetAddressView, parse_memory_size_bytes,
     };
+
+    #[cfg(windows)]
+    use super::visual_studio_dev_shell_env_capture_command;
 
     struct PathEnvGuard(Option<std::ffi::OsString>);
 
@@ -36685,6 +37084,27 @@ tasks:
             container_workspace_mount_source_display(Path::new(r"\\?\UNC\fileserver\share\repo")),
             r"\\fileserver\share\repo"
         );
+    }
+
+    #[test]
+    fn parse_windows_env_block_ignores_invalid_lines_and_internal_vars() {
+        let env = parse_windows_env_block(
+            "PATH=C:\\\\Tools\r\nVSINSTALL=C:\\\\VS\r\n=ExitCode=00000000\r\nINCLUDE=C:\\\\Include\r\ninvalid-line\r\n",
+        );
+        assert_eq!(env.get("PATH"), Some(&String::from(r"C:\\Tools")));
+        assert_eq!(env.get("INCLUDE"), Some(&String::from(r"C:\\Include")));
+        assert!(!env.contains_key("VSINSTALL"));
+        assert!(!env.contains_key("=ExitCode"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn visual_studio_dev_shell_env_capture_command_sets_env_dump_tail() {
+        let command = visual_studio_dev_shell_env_capture_command("x64");
+        assert!(command.contains("vswhere.exe"), "{command}");
+        assert!(command.contains("VsDevCmd.bat"), "{command}");
+        assert!(command.contains("-arch=x64"), "{command}");
+        assert!(command.ends_with("&& set"), "{command}");
     }
 
     #[cfg(unix)]

@@ -793,6 +793,7 @@ mod tests {
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,

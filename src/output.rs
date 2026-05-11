@@ -278,6 +278,33 @@ pub struct ExecutionReceiptEnvSource {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptNativeActivation {
+    pub kind: String,
+    pub applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptNativePrerequisite {
+    pub name: String,
+    pub required: bool,
+    pub platform: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation: Option<ExecutionReceiptNativeActivation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provisioning: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ContractIdentityProject {
     pub name: String,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
@@ -363,6 +390,8 @@ pub struct ExecutionReceipt {
     pub env: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_sources: Vec<ExecutionReceiptEnvSource>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub native_prerequisites: Vec<ExecutionReceiptNativePrerequisite>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime: Option<ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -451,6 +480,9 @@ impl Serialize for ExecutionReceipt {
         }
         if !self.env_sources.is_empty() {
             map.serialize_entry("env_sources", &self.env_sources)?;
+        }
+        if !self.native_prerequisites.is_empty() {
+            map.serialize_entry("native_prerequisites", &self.native_prerequisites)?;
         }
         if let Some(runtime) = self.runtime.as_ref() {
             map.serialize_entry("runtime", runtime)?;

@@ -38280,6 +38280,7 @@ env:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: Some(ExecutionReceiptLogs {
                 dir: String::from(".ota/state/logs/20260424-dev"),
@@ -39680,6 +39681,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -39759,6 +39761,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -39893,6 +39896,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -39981,6 +39985,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40091,6 +40096,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40164,6 +40170,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40648,6 +40655,182 @@ workflows:
         assert!(preview.plan.actions.contains(&String::from(
             "activate tool `pnpm` via `corepack` (`pnpm@10.22.0`)"
         )));
+    }
+
+    #[test]
+    fn up_preview_renders_native_activation_actions_for_selected_workflow() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      windows:
+        check: node-native-build-tools-windows
+        activation:
+          kind: visual_studio_dev_shell
+          arch: x64
+checks:
+  - name: node-native-build-tools-windows
+    kind: precondition
+    severity: error
+    run: where cl
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let actions = super::selected_up_native_activation_actions_for_os(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            "windows",
+        );
+        assert_eq!(
+            actions,
+            vec![super::NativeRequirementActivationAction {
+                prerequisite_name: String::from("node-native-build-tools"),
+                activation: crate::schema::NativePrerequisiteActivationSpec {
+                    kind: crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell,
+                    arch: Some(String::from("x64")),
+                    shell: None,
+                    run: None,
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn up_preview_skips_native_activation_actions_for_container_only_workflow() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      windows:
+        check: node-native-build-tools-windows
+        activation:
+          kind: visual_studio_dev_shell
+          arch: x64
+checks:
+  - name: node-native-build-tools-windows
+    kind: precondition
+    severity: error
+    run: where cl
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let actions = super::selected_up_native_activation_actions_for_os(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            "windows",
+        );
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn up_preview_renders_native_preparation_actions_for_missing_native_prerequisite() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      windows:
+        check: node-native-build-tools-windows
+        visual_studio_build_tools: true
+        winget: [Microsoft.VisualStudio.2022.BuildTools]
+checks:
+  - name: node-native-build-tools-windows
+    kind: precondition
+    severity: error
+    run: where cl
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Native prerequisite missing: node-native-build-tools"),
+                why: String::from("native toolchain is missing"),
+                next: String::from("install build tools"),
+            }],
+        };
+
+        let actions = super::selected_up_native_preparation_actions_for_os(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            &preflight,
+            "windows",
+        );
+
+        assert!(
+            actions.contains(&super::NativeRequirementPreparationAction {
+                prerequisite_name: String::from("node-native-build-tools"),
+                summary: String::from("install Visual Studio Build Tools"),
+            })
+        );
+        assert!(
+            actions.contains(&super::NativeRequirementPreparationAction {
+                prerequisite_name: String::from("node-native-build-tools"),
+                summary: String::from(
+                    "install winget packages: `Microsoft.VisualStudio.2022.BuildTools`",
+                ),
+            })
+        );
     }
 
     #[test]
@@ -43886,6 +44069,7 @@ execution:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45323,6 +45507,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45374,6 +45559,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45425,6 +45611,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45493,6 +45680,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -45560,6 +45748,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45661,6 +45850,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45757,6 +45947,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45862,6 +46053,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -45914,6 +46106,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -46944,6 +47137,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -47018,6 +47212,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -47078,6 +47273,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -47141,6 +47337,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -47198,6 +47395,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -47255,6 +47453,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -47317,6 +47516,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -47777,6 +47977,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -47914,6 +48115,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
@@ -48011,6 +48213,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
@@ -48269,6 +48472,316 @@ execution:
         assert!(rendered.contains("Mode:        native"));
         assert!(!rendered.contains("Image:"));
         assert!(!rendered.contains("Target:"));
+    }
+
+    #[test]
+    fn preview_receipt_keeps_native_activation_declared_but_not_applied() {
+        let (platform_name, activation_block) = match super::current_requirement_platform() {
+            "windows" => (
+                "windows",
+                "activation:\n          kind: command\n          shell: cmd\n          run: call native-env.cmd",
+            ),
+            "macos" => (
+                "macos",
+                "activation:\n          kind: command\n          shell: sh\n          run: . ./scripts/native-env.sh",
+            ),
+            _ => (
+                "linux",
+                "activation:\n          kind: command\n          shell: sh\n          run: . ./scripts/native-env.sh",
+            ),
+        };
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: target-test
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      {platform_name}:
+        {activation_block}
+tasks:
+  setup:
+    requirements:
+      native: [node-native-build-tools]
+    run: echo setup
+"#
+            ),
+        )
+        .unwrap();
+
+        let receipt = super::repo_execution_receipt(
+            Path::new("./ota.yaml"),
+            &contract,
+            super::task_phase_execution_context(
+                &contract,
+                Path::new("./ota.yaml"),
+                "setup",
+                ExecutionOverrides::default(),
+                None,
+            ),
+            "PREVIEW",
+            "preview",
+            None,
+            Some("setup"),
+            &[],
+            None,
+            None,
+        );
+
+        let activation = receipt.native_prerequisites[0]
+            .activation
+            .as_ref()
+            .expect("activation");
+        assert!(!activation.applied);
+    }
+
+    #[test]
+    fn setup_receipt_marks_native_activation_applied() {
+        let (platform_name, activation_block) = match super::current_requirement_platform() {
+            "windows" => (
+                "windows",
+                "activation:\n          kind: command\n          shell: cmd\n          run: call native-env.cmd",
+            ),
+            "macos" => (
+                "macos",
+                "activation:\n          kind: command\n          shell: sh\n          run: . ./scripts/native-env.sh",
+            ),
+            _ => (
+                "linux",
+                "activation:\n          kind: command\n          shell: sh\n          run: . ./scripts/native-env.sh",
+            ),
+        };
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: target-test
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      {platform_name}:
+        {activation_block}
+tasks:
+  setup:
+    requirements:
+      native: [node-native-build-tools]
+    run: echo setup
+"#
+            ),
+        )
+        .unwrap();
+
+        let receipt = super::repo_execution_receipt(
+            Path::new("./ota.yaml"),
+            &contract,
+            super::task_phase_execution_context(
+                &contract,
+                Path::new("./ota.yaml"),
+                "setup",
+                ExecutionOverrides::default(),
+                None,
+            ),
+            "READY",
+            "setup",
+            None,
+            Some("setup"),
+            &[],
+            Some(0),
+            None,
+        );
+
+        let activation = receipt.native_prerequisites[0]
+            .activation
+            .as_ref()
+            .expect("activation");
+        assert!(activation.applied);
+    }
+
+    #[test]
+    fn up_success_receipt_includes_selected_native_prerequisites() {
+        let (platform_name, activation_block, setup_run) = match super::current_requirement_platform(
+        ) {
+            "windows" => (
+                "windows",
+                "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
+                "cmd /d /s /c \"if not defined OTA_NATIVE_ACTIVATED exit /b 1\"",
+            ),
+            "macos" => (
+                "macos",
+                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
+                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+            ),
+            _ => (
+                "linux",
+                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
+                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+            ),
+        };
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: target-test
+native_prerequisites:
+  shell-env:
+    platforms:
+      {platform_name}:
+        check: shell-env-check
+        {activation_block}
+checks:
+  - name: shell-env-check
+    kind: precondition
+    severity: error
+    run: {setup_run}
+tasks:
+  setup:
+    run: {setup_run}
+    requirements:
+      native: [shell-env]
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#
+            ),
+        )
+        .unwrap();
+
+        let fixture = TempDir::new().expect("temp dir");
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: target-test
+native_prerequisites:
+  shell-env:
+    platforms:
+      {platform_name}:
+        check: shell-env-check
+        {activation_block}
+checks:
+  - name: shell-env-check
+    kind: precondition
+    severity: error
+    run: {setup_run}
+tasks:
+  setup:
+    run: {setup_run}
+    requirements:
+      native: [shell-env]
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#
+            ),
+        )
+        .expect("write contract");
+        let result = super::execute_repo_up(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("app"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .expect("up should execute");
+
+        assert!(result.ok, "{}", result.status);
+        assert_eq!(result.phase, "post-up diagnosis");
+        let activation = result.receipt.native_prerequisites[0]
+            .activation
+            .as_ref()
+            .expect("activation");
+        assert!(activation.applied);
+    }
+
+    #[test]
+    fn repo_readiness_receipt_includes_declared_native_prerequisites_without_applied_flag() {
+        let (platform_name, activation_block, check_run) = match super::current_requirement_platform(
+        ) {
+            "windows" => (
+                "windows",
+                "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
+                "cmd /d /s /c \"if not defined OTA_NATIVE_ACTIVATED exit /b 1\"",
+            ),
+            "macos" => (
+                "macos",
+                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
+                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+            ),
+            _ => (
+                "linux",
+                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
+                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+            ),
+        };
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: target-test
+native_prerequisites:
+  shell-env:
+    platforms:
+      {platform_name}:
+        check: shell-env-check
+        {activation_block}
+checks:
+  - name: shell-env-check
+    kind: precondition
+    severity: error
+    run: {check_run}
+tasks:
+  setup:
+    requirements:
+      native: [shell-env]
+    run: echo setup
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+        let receipt = super::repo_readiness_receipt(
+            Path::new("./ota.yaml"),
+            &contract,
+            DoctorMode::Native,
+            None,
+            &report,
+        );
+
+        let activation = receipt.native_prerequisites[0]
+            .activation
+            .as_ref()
+            .expect("activation");
+        assert!(!activation.applied);
     }
 
     #[test]
@@ -53925,6 +54438,13 @@ fn run_execution_receipt_with_shared(
     let step_count = steps.len();
     let status = aggregate_execution_summary_status(ok, &steps, &[]);
     let failure_context = execution_receipt_failure_context(executed_steps, task_name, ok);
+    let native_prerequisites = receipt_native_prerequisites(
+        contract,
+        Some(task_name),
+        backend,
+        current_requirement_platform(),
+        true,
+    );
 
     ExecutionReceipt {
         ok,
@@ -53950,6 +54470,7 @@ fn run_execution_receipt_with_shared(
             .iter()
             .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
+        native_prerequisites,
         runtime,
         logs: None,
         service_termination: None,
@@ -56828,6 +57349,61 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         }
     }
 
+    if !receipt.native_prerequisites.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Native Prerequisites")
+        ));
+        for prerequisite in &receipt.native_prerequisites {
+            stdout.push_str(&format!(
+                "\n{} {} ({})",
+                paint_key(&prerequisite.name),
+                if prerequisite.required {
+                    "required"
+                } else {
+                    "optional"
+                },
+                prerequisite.platform
+            ));
+            if let Some(check) = prerequisite.check.as_deref() {
+                stdout.push_str(&format!("\n  {} {check}", paint_key("Check:")));
+            }
+            if let Some(activation) = prerequisite.activation.as_ref() {
+                let mut activation_detail = match activation.kind.as_str() {
+                    "visual_studio_dev_shell" => String::from("Visual Studio Developer Shell"),
+                    "command" => String::from("command activation"),
+                    other => other.replace('_', " "),
+                };
+                if let Some(arch) = activation.arch.as_deref() {
+                    activation_detail.push_str(&format!(" ({arch})"));
+                }
+                if let Some(shell) = activation.shell.as_deref() {
+                    activation_detail.push_str(&format!(" via {shell}"));
+                }
+                if activation.applied {
+                    activation_detail.push_str("; applied");
+                }
+                stdout.push_str(&format!(
+                    "\n  {} {activation_detail}",
+                    paint_key("Activation:")
+                ));
+                if let Some(run) = activation.run.as_deref() {
+                    stdout.push_str(&format!(
+                        "\n  {} {}",
+                        paint_key("Command:"),
+                        paint_code(run)
+                    ));
+                }
+            }
+            for item in &prerequisite.provisioning {
+                stdout.push_str(&format!("\n  {} {item}", paint_key("Provision:")));
+            }
+            if let Some(note) = prerequisite.note.as_deref() {
+                stdout.push_str(&format!("\n  {} {note}", paint_key("Note:")));
+            }
+        }
+    }
+
     if let Some(runtime) = receipt.runtime.as_ref() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Runtime")));
         append_runtime_listener_lines(&mut stdout, runtime, "");
@@ -58523,6 +59099,143 @@ fn execution_receipt_summary(
     }
 }
 
+fn native_prerequisite_provisioning_lines(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(command) = platform
+        .install
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("run `{command}`"));
+    }
+    if platform.xcode_clt {
+        lines.push(String::from("install Xcode Command Line Tools"));
+    }
+    if platform.visual_studio_build_tools {
+        lines.push(String::from("install Visual Studio Build Tools"));
+    }
+    if !platform.apt.is_empty() {
+        lines.push(format!(
+            "install apt packages: `{}`",
+            platform.apt.join(" ")
+        ));
+    }
+    if !platform.brew.is_empty() {
+        lines.push(format!(
+            "install Homebrew packages: `{}`",
+            platform.brew.join(" ")
+        ));
+    }
+    if !platform.winget.is_empty() {
+        lines.push(format!(
+            "install winget packages: `{}`",
+            platform.winget.join(" ")
+        ));
+    }
+    if !platform.choco.is_empty() {
+        lines.push(format!(
+            "install Chocolatey packages: `{}`",
+            platform.choco.join(" ")
+        ));
+    }
+    if !platform.scoop.is_empty() {
+        lines.push(format!(
+            "install Scoop packages: `{}`",
+            platform.scoop.join(" ")
+        ));
+    }
+    if !platform.packages.is_empty() {
+        lines.push(format!(
+            "install packages: `{}`",
+            platform.packages.join(" ")
+        ));
+    }
+    lines
+}
+
+fn native_prerequisite_activation_kind_label(
+    activation: &crate::schema::NativePrerequisiteActivationSpec,
+) -> &'static str {
+    match activation.kind {
+        crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell => {
+            "visual_studio_dev_shell"
+        }
+        crate::schema::NativePrerequisiteActivationKind::Command => "command",
+    }
+}
+
+fn native_prerequisite_activation_shell_label(
+    shell: crate::schema::NativePrerequisiteActivationShell,
+) -> &'static str {
+    match shell {
+        crate::schema::NativePrerequisiteActivationShell::Sh => "sh",
+        crate::schema::NativePrerequisiteActivationShell::Bash => "bash",
+        crate::schema::NativePrerequisiteActivationShell::Zsh => "zsh",
+        crate::schema::NativePrerequisiteActivationShell::Pwsh => "pwsh",
+        crate::schema::NativePrerequisiteActivationShell::Cmd => "cmd",
+    }
+}
+
+fn receipt_native_prerequisites(
+    contract: &Contract,
+    task: Option<&str>,
+    backend: Backend,
+    current_os: &str,
+    activation_applied: bool,
+) -> Vec<crate::output::ExecutionReceiptNativePrerequisite> {
+    if backend != Backend::Native {
+        return Vec::new();
+    }
+    let Some(task_name) = task else {
+        return Vec::new();
+    };
+    let Some(task_spec) = contract.tasks.get(task_name) else {
+        return Vec::new();
+    };
+    let mut prerequisites = Vec::new();
+    let mut seen = BTreeSet::new();
+    for name in &task_spec.requirements.native {
+        if !seen.insert(name.as_str()) {
+            continue;
+        }
+        let Some(prerequisite) = contract.native_prerequisites.get(name.as_str()) else {
+            continue;
+        };
+        let Some(platform) = prerequisite.platform_for_os(current_os) else {
+            continue;
+        };
+        prerequisites.push(crate::output::ExecutionReceiptNativePrerequisite {
+            name: name.clone(),
+            required: prerequisite.required,
+            platform: current_os.to_string(),
+            check: prerequisite.check_for_os(current_os).map(str::to_string),
+            activation: platform.activation.as_ref().map(|activation| {
+                crate::output::ExecutionReceiptNativeActivation {
+                    kind: native_prerequisite_activation_kind_label(activation).to_string(),
+                    applied: activation_applied,
+                    arch: activation.arch.clone(),
+                    shell: activation
+                        .shell
+                        .map(native_prerequisite_activation_shell_label)
+                        .map(str::to_string),
+                    run: activation.run.clone(),
+                }
+            }),
+            provisioning: native_prerequisite_provisioning_lines(platform),
+            note: platform
+                .note
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        });
+    }
+    prerequisites
+}
+
 fn execution_receipt_step(
     order: usize,
     label: impl Into<String>,
@@ -58710,6 +59423,12 @@ fn repo_readiness_receipt(
             .or_else(|| report.findings.first())
             .map(|finding| rewrite_doctor_mode_command(&finding.next, Some(mode), lifecycle)),
     );
+    receipt.native_prerequisites = selected_up_receipt_native_prerequisites(
+        contract,
+        doctor_mode_execution_overrides(mode, lifecycle),
+        None,
+        false,
+    );
     receipt.blocked = report
         .findings
         .iter()
@@ -58751,6 +59470,13 @@ fn repo_execution_receipt(
     ));
     let ok = status == "READY" && exit_code.unwrap_or(0) == 0;
     let receipt_status = aggregate_execution_summary_status(ok, &steps, &[]);
+    let native_prerequisites = receipt_native_prerequisites(
+        contract,
+        task,
+        execution_backend,
+        current_requirement_platform(),
+        phase != "preview" && phase != "readiness",
+    );
 
     ExecutionReceipt {
         ok,
@@ -58776,6 +59502,7 @@ fn repo_execution_receipt(
             .iter()
             .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
+        native_prerequisites,
         runtime: None,
         logs: None,
         service_termination: None,
@@ -59448,6 +60175,7 @@ fn workspace_up_receipt(
             .map(|source| (source.name.clone(), source.value.clone()))
             .collect(),
         env_sources,
+        native_prerequisites: Vec::new(),
         runtime: None,
         logs: None,
         service_termination: None,
@@ -59527,6 +60255,7 @@ fn workspace_status_receipt(
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
+        native_prerequisites: Vec::new(),
         runtime: None,
         logs: None,
         service_termination: None,
@@ -59613,6 +60342,7 @@ fn workspace_run_receipt(
             .map(|source| (source.name.clone(), source.value.clone()))
             .collect(),
         env_sources,
+        native_prerequisites: Vec::new(),
         runtime: None,
         logs: None,
         service_termination: None,
@@ -60221,6 +60951,18 @@ struct RequirementActivationAction {
     acquisition: ToolAcquisitionSpec,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeRequirementActivationAction {
+    prerequisite_name: String,
+    activation: crate::schema::NativePrerequisiteActivationSpec,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeRequirementPreparationAction {
+    prerequisite_name: String,
+    summary: String,
+}
+
 fn requirement_surface_activation_actions(
     requirement_surface: &RequirementSurface,
 ) -> Vec<RequirementActivationAction> {
@@ -60295,6 +61037,164 @@ fn selected_up_activation_actions(
                     .any(|finding| finding_targets_activation_action(finding, action))
         })
         .collect()
+}
+
+fn current_requirement_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        other => other,
+    }
+}
+
+fn selected_up_native_activation_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> Vec<NativeRequirementActivationAction> {
+    selected_up_native_activation_actions_for_os(
+        contract,
+        overrides,
+        workflow_name,
+        current_requirement_platform(),
+    )
+}
+
+fn selected_up_receipt_native_prerequisites(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    activation_applied: bool,
+) -> Vec<crate::output::ExecutionReceiptNativePrerequisite> {
+    let current_os = current_requirement_platform();
+    let mut prerequisites = Vec::new();
+    let mut seen = BTreeSet::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        if !matches!(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            Backend::Native
+        ) {
+            continue;
+        }
+        for prerequisite in receipt_native_prerequisites(
+            contract,
+            Some(task_name.as_str()),
+            Backend::Native,
+            current_os,
+            activation_applied,
+        ) {
+            if seen.insert(prerequisite.name.clone()) {
+                prerequisites.push(prerequisite);
+            }
+        }
+    }
+    prerequisites
+}
+
+fn native_requirement_targets_missing_finding(name: &str, findings: &[Finding]) -> bool {
+    findings.iter().any(|finding| {
+        matches!(
+            finding.code(),
+            "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
+        ) && finding.summary.ends_with(name)
+    })
+}
+
+fn selected_up_native_preparation_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+) -> Vec<NativeRequirementPreparationAction> {
+    selected_up_native_preparation_actions_for_os(
+        contract,
+        overrides,
+        workflow_name,
+        preflight,
+        current_requirement_platform(),
+    )
+}
+
+fn selected_up_native_preparation_actions_for_os(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+    current_os: &str,
+) -> Vec<NativeRequirementPreparationAction> {
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        if !matches!(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            Backend::Native
+        ) {
+            continue;
+        }
+        for native_name in &task.requirements.native {
+            if !seen.insert(native_name.clone())
+                || !native_requirement_targets_missing_finding(native_name, &preflight.findings)
+            {
+                continue;
+            }
+            let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(current_os) else {
+                continue;
+            };
+            for summary in native_prerequisite_provisioning_lines(platform) {
+                actions.push(NativeRequirementPreparationAction {
+                    prerequisite_name: native_name.clone(),
+                    summary,
+                });
+            }
+        }
+    }
+    actions
+}
+
+fn selected_up_native_activation_actions_for_os(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    current_os: &str,
+) -> Vec<NativeRequirementActivationAction> {
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        if !matches!(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            Backend::Native
+        ) {
+            continue;
+        }
+        for native_name in &task.requirements.native {
+            if !seen.insert(native_name.clone()) {
+                continue;
+            }
+            let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(current_os) else {
+                continue;
+            };
+            let Some(activation) = platform.activation.as_ref() else {
+                continue;
+            };
+            actions.push(NativeRequirementActivationAction {
+                prerequisite_name: native_name.clone(),
+                activation: activation.clone(),
+            });
+        }
+    }
+    actions
 }
 
 fn selected_up_policy_provisioned_tool_names(
@@ -60413,6 +61313,36 @@ fn render_up_preview_skipped_activation_action(action: &RequirementActivationAct
             action.tool_name
         ),
     }
+}
+
+fn render_up_preview_native_activation_action(
+    action: &NativeRequirementActivationAction,
+) -> String {
+    match action.activation.kind {
+        crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell => format!(
+            "run native tasks inside `visual_studio_dev_shell` for `{}` (`{}`)",
+            action.prerequisite_name,
+            action.activation.arch.as_deref().unwrap_or("x64")
+        ),
+        crate::schema::NativePrerequisiteActivationKind::Command => format!(
+            "run native tasks with `{}` activation for `{}`",
+            action
+                .activation
+                .shell
+                .map(native_prerequisite_activation_shell_label)
+                .unwrap_or("command"),
+            action.prerequisite_name
+        ),
+    }
+}
+
+fn render_up_preview_native_preparation_action(
+    action: &NativeRequirementPreparationAction,
+) -> String {
+    format!(
+        "{} for native prerequisite `{}`",
+        action.summary, action.prerequisite_name
+    )
 }
 
 fn append_up_preview_service_actions_for_workflow(
@@ -60535,6 +61465,8 @@ fn build_up_preview(
     let mut skipped = Vec::new();
     let selected_actions =
         selected_up_provisioning_actions(contract, overrides, workflow_name, preflight);
+    let native_preparation_actions =
+        selected_up_native_preparation_actions(contract, overrides, workflow_name, preflight);
     let activation_actions =
         selected_up_activation_actions(contract, overrides, workflow_name, preflight);
     let policy_provisioned_tools =
@@ -60550,8 +61482,14 @@ fn build_up_preview(
         }
     }
 
+    for action in &native_preparation_actions {
+        actions.push(render_up_preview_native_preparation_action(action));
+    }
     for action in &activation_actions {
         actions.push(render_up_preview_activation_action(action));
+    }
+    for action in selected_up_native_activation_actions(contract, overrides, workflow_name) {
+        actions.push(render_up_preview_native_activation_action(&action));
     }
     for action in requirement_surface_activation_actions(&up_requirement_surface(
         contract,
@@ -61963,26 +62901,29 @@ fn execute_repo_up(
     let service_report =
         diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
     if !service_report.ok {
+        let mut receipt = repo_execution_receipt(
+            resolved_path,
+            contract,
+            native_phase_execution_context(),
+            "NOT READY",
+            "services",
+            None,
+            None,
+            &service_report.findings,
+            None,
+            service_report
+                .findings
+                .first()
+                .map(|finding| finding.next.clone()),
+        );
+        receipt.native_prerequisites =
+            selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",
             phase: "services",
             preview: None,
-            receipt: repo_execution_receipt(
-                resolved_path,
-                contract,
-                native_phase_execution_context(),
-                "NOT READY",
-                "services",
-                None,
-                None,
-                &service_report.findings,
-                None,
-                service_report
-                    .findings
-                    .first()
-                    .map(|finding| finding.next.clone()),
-            ),
+            receipt,
             report: service_report,
             service: None,
             service_command: None,
@@ -62025,6 +62966,8 @@ fn execute_repo_up(
         None,
         report.findings.first().map(|finding| finding.next.clone()),
     );
+    receipt.native_prerequisites =
+        selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
     receipt.workloads = workloads;
     Ok(RepoUpResult {
         ok: report.ok,
