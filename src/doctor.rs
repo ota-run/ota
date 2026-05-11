@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Component;
 use std::path::{Path, PathBuf};
@@ -56,9 +56,9 @@ use crate::provisioning::{
 use crate::runner::{
     DeclaredEnvSourceStatus, HttpReadinessRequest, HttpReadinessStatus, LoadedDeclaredEnvSource,
     ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedNamedReadinessProbeContract,
-    RunError, combine_readiness_probe_paths, host_runtime_readiness_observed,
-    http_readiness_endpoint_status, load_declared_env_sources, parse_http_probe_url,
-    resolve_context_execution_backend, resolve_declared_env_source_value,
+    RunError, capture_declared_native_activation_env, combine_readiness_probe_paths,
+    host_runtime_readiness_observed, http_readiness_endpoint_status, load_declared_env_sources,
+    parse_http_probe_url, resolve_context_execution_backend, resolve_declared_env_source_value,
     resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
     resolve_task_target_binding_url_with_contract_path, run_backend_command_captured,
     task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
@@ -4121,34 +4121,77 @@ fn diagnose_native_prerequisites(
         else {
             continue;
         };
-        let check_command =
-            native_prerequisite_check_command(prerequisite, target_os, check.run.as_deref());
-
-        match run_declared_check(
-            contract,
-            contract_path,
-            check,
-            working_dir,
-            check_command.as_deref(),
-        ) {
-            CheckStatus::Passed => {}
-            CheckStatus::Failed => findings.push(native_prerequisite_finding(
-                name,
-                prerequisite,
-                check_name,
-                target_os,
-                false,
-                None,
-            )),
-            CheckStatus::TimedOut(timeout) => findings.push(native_prerequisite_finding(
-                name,
-                prerequisite,
-                check_name,
-                target_os,
-                true,
-                Some(timeout),
-            )),
+        match run_native_prerequisite_check(prerequisite, name, target_os, check, working_dir) {
+            NativePrerequisiteCheckStatus::Passed => {}
+            NativePrerequisiteCheckStatus::Failed(details) => {
+                findings.push(native_prerequisite_finding(
+                    name,
+                    prerequisite,
+                    check_name,
+                    target_os,
+                    false,
+                    None,
+                    details.as_deref(),
+                ))
+            }
+            NativePrerequisiteCheckStatus::TimedOut(timeout) => {
+                findings.push(native_prerequisite_finding(
+                    name,
+                    prerequisite,
+                    check_name,
+                    target_os,
+                    true,
+                    Some(timeout),
+                    None,
+                ))
+            }
         }
+    }
+}
+
+fn run_native_prerequisite_check(
+    prerequisite: &crate::schema::NativePrerequisiteSpec,
+    prerequisite_name: &str,
+    target_os: &str,
+    check: &crate::schema::CheckSpec,
+    working_dir: &Path,
+) -> NativePrerequisiteCheckStatus {
+    if check.kind == crate::schema::CheckKind::File {
+        return match run_file_check(check, working_dir) {
+            CheckStatus::Passed => NativePrerequisiteCheckStatus::Passed,
+            CheckStatus::Failed => NativePrerequisiteCheckStatus::Failed(None),
+            CheckStatus::TimedOut(timeout) => NativePrerequisiteCheckStatus::TimedOut(timeout),
+        };
+    }
+
+    let Some(command) = check.run.as_deref() else {
+        return NativePrerequisiteCheckStatus::Failed(None);
+    };
+
+    let env_overrides = prerequisite
+        .platform_for_os(target_os)
+        .and_then(|platform| platform.activation.as_ref())
+        .map(|activation| {
+            capture_declared_native_activation_env(prerequisite_name, activation, working_dir)
+        });
+
+    let env_overrides = match env_overrides {
+        Some(Ok(env)) => Some(env),
+        Some(Err(error)) => {
+            return NativePrerequisiteCheckStatus::Failed(Some(format!(
+                "declared native activation failed before `{}` could run: {error}",
+                check.name
+            )));
+        }
+        None => None,
+    };
+
+    match run_check_with_env(command, working_dir, check.timeout, env_overrides.as_ref()) {
+        DetailedCheckStatus::Passed => NativePrerequisiteCheckStatus::Passed,
+        DetailedCheckStatus::Failed(details) => {
+            NativePrerequisiteCheckStatus::Failed(check_failure_details_summary(&details))
+        }
+        DetailedCheckStatus::TimedOut(timeout) => NativePrerequisiteCheckStatus::TimedOut(timeout),
     }
 }
 
@@ -4159,6 +4202,7 @@ fn native_prerequisite_finding(
     target_os: &str,
     timed_out: bool,
     timeout: Option<u64>,
+    failure_details: Option<&str>,
 ) -> Finding {
     let summary = if timed_out {
         format!("Native prerequisite timed out: {name}")
@@ -4176,6 +4220,11 @@ fn native_prerequisite_finding(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("a selected workflow/task requires native OS tooling");
+    let failure_suffix = failure_details
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" (details: {value})"))
+        .unwrap_or_default();
     Finding {
         severity: if prerequisite.required {
             FindingSeverity::Error
@@ -4184,7 +4233,7 @@ fn native_prerequisite_finding(
         },
         summary,
         why: format!(
-            "{description}; {check_context} on {target_os}, so ota cannot prove the native prerequisite is available"
+            "{description}; {check_context} on {target_os}, so ota cannot prove the native prerequisite is available{failure_suffix}"
         ),
         next: native_prerequisite_next(name, prerequisite, target_os),
     }
@@ -6392,6 +6441,24 @@ enum CheckStatus {
     TimedOut(u64),
 }
 
+enum NativePrerequisiteCheckStatus {
+    Passed,
+    Failed(Option<String>),
+    TimedOut(u64),
+}
+
+struct CheckFailureDetails {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+enum DetailedCheckStatus {
+    Passed,
+    Failed(CheckFailureDetails),
+    TimedOut(u64),
+}
+
 fn run_declared_check(
     contract: &Contract,
     contract_path: &Path,
@@ -6411,78 +6478,6 @@ fn run_declared_check(
         return run_named_probe(contract, contract_path, probe_name, check.timeout);
     }
     CheckStatus::Failed
-}
-
-fn native_prerequisite_check_command(
-    prerequisite: &crate::schema::NativePrerequisiteSpec,
-    target_os: &str,
-    command: Option<&str>,
-) -> Option<String> {
-    let command = command?;
-    let platform = prerequisite.platform_for_os(target_os)?;
-    let activation = platform.activation.as_ref()?;
-    match activation.kind {
-        crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell
-            if target_os == "windows" =>
-        {
-            Some(visual_studio_dev_shell_command(
-                command,
-                activation.arch.as_deref().unwrap_or("x64"),
-            ))
-        }
-        crate::schema::NativePrerequisiteActivationKind::Command => activation
-            .shell
-            .map(|shell| native_activation_check_command(shell, activation.run.as_deref(), command))
-            .or_else(|| Some(command.to_string())),
-        _ => Some(command.to_string()),
-    }
-}
-
-fn visual_studio_dev_shell_command(command: &str, arch: &str) -> String {
-    format!(
-        concat!(
-            "set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\" ",
-            "&& if not exist \"%VSWHERE%\" exit /b 1 ",
-            "&& set \"VSINSTALL=\" ",
-            "&& for /f \"usebackq delims=\" %I in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set \"VSINSTALL=%I\" ",
-            "&& if not defined VSINSTALL exit /b 1 ",
-            "&& call \"%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat\" -no_logo -arch={arch} >nul ",
-            "&& {command}"
-        ),
-        arch = arch,
-        command = command
-    )
-}
-
-fn native_activation_check_command(
-    shell: crate::schema::NativePrerequisiteActivationShell,
-    activation_run: Option<&str>,
-    check_command: &str,
-) -> String {
-    let activation_run = activation_run.unwrap_or_default();
-    match shell {
-        crate::schema::NativePrerequisiteActivationShell::Sh => format!(
-            "sh -lc {}",
-            doctor_shell_quote(&format!("{activation_run}\n{check_command}"))
-        ),
-        crate::schema::NativePrerequisiteActivationShell::Bash => format!(
-            "bash -lc {}",
-            doctor_shell_quote(&format!("{activation_run}\n{check_command}"))
-        ),
-        crate::schema::NativePrerequisiteActivationShell::Zsh => format!(
-            "zsh -lc {}",
-            doctor_shell_quote(&format!("{activation_run}\n{check_command}"))
-        ),
-        crate::schema::NativePrerequisiteActivationShell::Pwsh => {
-            format!(
-                "pwsh -NoProfile -NonInteractive -Command {}",
-                doctor_shell_quote(&format!("& {{ {activation_run}; {check_command} }}"))
-            )
-        }
-        crate::schema::NativePrerequisiteActivationShell::Cmd => {
-            format!("cmd /d /s /c \"{activation_run} && {check_command}\"")
-        }
-    }
 }
 
 fn run_file_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> CheckStatus {
@@ -7019,13 +7014,31 @@ fn readiness_probe_summary(probe: &ReadinessProbeSpec) -> String {
 }
 
 fn run_check(command: &str, working_dir: &Path, timeout_ms: Option<u64>) -> CheckStatus {
+    match run_check_with_env(command, working_dir, timeout_ms, None) {
+        DetailedCheckStatus::Passed => CheckStatus::Passed,
+        DetailedCheckStatus::Failed(_) => CheckStatus::Failed,
+        DetailedCheckStatus::TimedOut(timeout) => CheckStatus::TimedOut(timeout),
+    }
+}
+
+fn run_check_with_env(
+    command: &str,
+    working_dir: &Path,
+    timeout_ms: Option<u64>,
+    env_overrides: Option<&BTreeMap<String, String>>,
+) -> DetailedCheckStatus {
     let Ok(mut child) = shell_command(command)
         .current_dir(working_dir)
+        .envs(env_overrides.into_iter().flat_map(|env| env.iter()))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
     else {
-        return CheckStatus::Failed;
+        return DetailedCheckStatus::Failed(CheckFailureDetails {
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::from("failed to spawn declared check command"),
+        });
     };
 
     let spinner = CheckSpinner::start();
@@ -7035,48 +7048,95 @@ fn run_check(command: &str, working_dir: &Path, timeout_ms: Option<u64>) -> Chec
     };
     spinner.stop();
 
-    match status {
-        CheckStatus::Passed | CheckStatus::Failed | CheckStatus::TimedOut(_) => status,
-    }
+    status
 }
 
-fn wait_for_child(child: &mut std::process::Child) -> CheckStatus {
+fn wait_for_child(child: &mut std::process::Child) -> DetailedCheckStatus {
     match child.wait() {
         Ok(status) => {
+            let (stdout, stderr) = collect_child_output(child);
             if status.success() {
-                CheckStatus::Passed
+                DetailedCheckStatus::Passed
             } else {
-                CheckStatus::Failed
+                DetailedCheckStatus::Failed(CheckFailureDetails {
+                    exit_code: status.code(),
+                    stdout,
+                    stderr,
+                })
             }
         }
-        Err(_) => CheckStatus::Failed,
+        Err(error) => DetailedCheckStatus::Failed(CheckFailureDetails {
+            exit_code: None,
+            stdout: String::new(),
+            stderr: error.to_string(),
+        }),
     }
 }
 
-fn wait_for_child_with_timeout(child: &mut std::process::Child, timeout_ms: u64) -> CheckStatus {
+fn wait_for_child_with_timeout(
+    child: &mut std::process::Child,
+    timeout_ms: u64,
+) -> DetailedCheckStatus {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let (stdout, stderr) = collect_child_output(child);
                 return if status.success() {
-                    CheckStatus::Passed
+                    DetailedCheckStatus::Passed
                 } else {
-                    CheckStatus::Failed
+                    DetailedCheckStatus::Failed(CheckFailureDetails {
+                        exit_code: status.code(),
+                        stdout,
+                        stderr,
+                    })
                 };
             }
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return CheckStatus::TimedOut(timeout_ms);
+                return DetailedCheckStatus::TimedOut(timeout_ms);
             }
             Ok(None) => thread::sleep(Duration::from_millis(10)),
             Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return CheckStatus::Failed;
+                return DetailedCheckStatus::Failed(CheckFailureDetails {
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::from("failed while waiting for declared check command"),
+                });
             }
         }
     }
+}
+
+fn collect_child_output(child: &mut std::process::Child) -> (String, String) {
+    let mut stdout = String::new();
+    if let Some(mut stream) = child.stdout.take() {
+        let _ = stream.read_to_string(&mut stdout);
+    }
+
+    let mut stderr = String::new();
+    if let Some(mut stream) = child.stderr.take() {
+        let _ = stream.read_to_string(&mut stderr);
+    }
+
+    (stdout.trim().to_string(), stderr.trim().to_string())
+}
+
+fn check_failure_details_summary(details: &CheckFailureDetails) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(exit_code) = details.exit_code {
+        parts.push(format!("exit code {exit_code}"));
+    }
+    if !details.stdout.is_empty() {
+        parts.push(format!("stdout: {}", details.stdout));
+    }
+    if !details.stderr.is_empty() {
+        parts.push(format!("stderr: {}", details.stderr));
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
 }
 
 struct CheckSpinner {
@@ -11091,48 +11151,9 @@ checks:
         assert_eq!(report.findings[0].summary, "Check failed: health-check");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn windows_native_prerequisite_activation_wraps_check_in_visual_studio_dev_shell() {
-        let contract = parse_contract_str(
-            synthetic_contract_path(),
-            r#"
-version: 1
-project:
-  name: ota
-native_prerequisites:
-  windows-build-tools:
-    description: Native Windows compiler toolchain
-    platforms:
-      windows:
-        check: windows-build-tools-check
-        activation:
-          kind: visual_studio_dev_shell
-          arch: x64
-checks:
-  - name: windows-build-tools-check
-    kind: precondition
-    severity: error
-    run: where cl
-"#,
-        )
-        .unwrap();
-
-        let prerequisite = contract
-            .native_prerequisites
-            .get("windows-build-tools")
-            .expect("native prerequisite");
-        let command =
-            super::native_prerequisite_check_command(prerequisite, "windows", Some("where cl"))
-                .expect("wrapped command");
-
-        assert!(command.contains("vswhere.exe"), "{command}");
-        assert!(command.contains("VsDevCmd.bat"), "{command}");
-        assert!(command.contains("-arch=x64"), "{command}");
-        assert!(command.ends_with("&& where cl"), "{command}");
-    }
-
-    #[test]
-    fn command_native_prerequisite_activation_wraps_check_in_declared_shell() {
+    fn command_native_prerequisite_diagnosis_uses_declared_activation_env() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
@@ -11147,13 +11168,13 @@ native_prerequisites:
         check: nix-shell-check
         activation:
           kind: command
-          shell: bash
-          run: source ./scripts/native-env.sh
+          shell: sh
+          run: export OTA_NATIVE_READY=yes
 checks:
   - name: nix-shell-check
     kind: precondition
     severity: error
-    run: cargo --version
+    run: test "$OTA_NATIVE_READY" = yes
 "#,
         )
         .unwrap();
@@ -11162,19 +11183,81 @@ checks:
             .native_prerequisites
             .get("nix-shell")
             .expect("native prerequisite");
-        let command = super::native_prerequisite_check_command(
-            prerequisite,
-            "linux",
-            Some("cargo --version"),
-        )
-        .expect("wrapped command");
+        let check = contract
+            .checks
+            .iter()
+            .find(|check| check.name == "nix-shell-check")
+            .expect("declared check");
 
-        assert!(command.starts_with("bash -lc "), "{command}");
-        assert!(
-            command.contains("source ./scripts/native-env.sh"),
-            "{command}"
+        let status = super::run_native_prerequisite_check(
+            prerequisite,
+            "nix-shell",
+            "linux",
+            check,
+            Path::new("."),
         );
-        assert!(command.contains("cargo --version"), "{command}");
+
+        assert!(matches!(
+            status,
+            super::NativePrerequisiteCheckStatus::Passed
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_native_prerequisite_diagnosis_reports_activation_failure_details() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  nix-shell:
+    description: Project shell activation
+    platforms:
+      linux:
+        check: nix-shell-check
+        activation:
+          kind: command
+          shell: sh
+          run: exit 7
+checks:
+  - name: nix-shell-check
+    kind: precondition
+    severity: error
+    run: test "$OTA_NATIVE_READY" = yes
+"#,
+        )
+        .unwrap();
+
+        let prerequisite = contract
+            .native_prerequisites
+            .get("nix-shell")
+            .expect("native prerequisite");
+        let check = contract
+            .checks
+            .iter()
+            .find(|check| check.name == "nix-shell-check")
+            .expect("declared check");
+
+        let status = super::run_native_prerequisite_check(
+            prerequisite,
+            "nix-shell",
+            "linux",
+            check,
+            Path::new("."),
+        );
+
+        match status {
+            super::NativePrerequisiteCheckStatus::Failed(Some(details)) => {
+                assert!(
+                    details.contains("declared native activation failed"),
+                    "{details}"
+                );
+            }
+            _ => panic!("expected activation failure details"),
+        }
     }
 
     #[test]

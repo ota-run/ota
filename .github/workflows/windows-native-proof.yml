@@ -96,8 +96,14 @@ jobs:
                 task: setup
           '@ | Set-Content -Path (Join-Path $proofRoot "ota.yaml") -NoNewline
 
-          $doctorJson = & $ota doctor $proofRoot --json
-          if ($LASTEXITCODE -ne 0) {
+          $doctorRawPath = Join-Path $proofRoot "doctor.raw.txt"
+          & $ota doctor $proofRoot --json *> $doctorRawPath
+          $doctorExit = $LASTEXITCODE
+          $doctorJson = Get-Content $doctorRawPath -Raw
+          if ($doctorExit -ne 0) {
+            if ($doctorJson) {
+              Write-Host $doctorJson
+            }
             throw "ota doctor failed on the Windows native proof fixture"
           }
           $doctorJson | Set-Content -Path (Join-Path $proofRoot "doctor.json") -NoNewline
@@ -106,8 +112,14 @@ jobs:
             throw "doctor did not report ready on the Windows native proof fixture"
           }
 
-          $upJson = & $ota up $proofRoot --json
-          if ($LASTEXITCODE -ne 0) {
+          $upRawPath = Join-Path $proofRoot "up.raw.txt"
+          & $ota up $proofRoot --json *> $upRawPath
+          $upExit = $LASTEXITCODE
+          $upJson = Get-Content $upRawPath -Raw
+          if ($upExit -ne 0) {
+            if ($upJson) {
+              Write-Host $upJson
+            }
             throw "ota up failed on the Windows native proof fixture"
           }
           $upJson | Set-Content -Path (Join-Path $proofRoot "up.json") -NoNewline
@@ -119,8 +131,14 @@ jobs:
             throw "ota up receipt did not mark the native activation as applied"
           }
 
-          $proofJson = & $ota proof runtime $proofRoot --json
-          if ($LASTEXITCODE -ne 0) {
+          $proofRawPath = Join-Path $proofRoot "proof.raw.txt"
+          & $ota proof runtime $proofRoot --json *> $proofRawPath
+          $proofExit = $LASTEXITCODE
+          $proofJson = Get-Content $proofRawPath -Raw
+          if ($proofExit -ne 0) {
+            if ($proofJson) {
+              Write-Host $proofJson
+            }
             throw "ota proof runtime failed on the Windows native proof fixture"
           }
           $proofJson | Set-Content -Path (Join-Path $proofRoot "proof.json") -NoNewline
