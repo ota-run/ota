@@ -743,6 +743,15 @@ native_prerequisites:
         activation:
           kind: visual_studio_dev_shell
           arch: x64
+  nix-shell:
+    description: Repo-local shell environment that exports compiler and package paths
+    platforms:
+      linux:
+        check: nix-shell-ready
+        activation:
+          kind: command
+          shell: bash
+          run: source .env/nix-shell.sh
 
 checks:
   - name: node-native-build-tools-linux
@@ -757,6 +766,10 @@ checks:
     kind: precondition
     severity: error
     run: powershell -NoProfile -ExecutionPolicy Bypass -Command "$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'; if (!(Test-Path $vswhere)) { exit 1 }; & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; if ($LASTEXITCODE -ne 0) { exit 1 }; py --version"
+  - name: nix-shell-ready
+    kind: precondition
+    severity: error
+    run: env | grep NIX_CC
 
 tasks:
   setup:
@@ -775,7 +788,19 @@ Rules:
 - platform entries may declare `apt`, `brew`, `winget`, `choco`, `scoop`, generic `packages`,
   `xcode_clt`, `visual_studio_build_tools`, `activation`, `install`, or `note` guidance
 - `activation.kind: visual_studio_dev_shell` is the Windows MSVC activation hint for checks
-  that require `cl`/MSVC tools from a Visual Studio Developer shell; `arch` defaults to `x64`
+  and native task execution that require `cl`/MSVC tools from a Visual Studio Developer shell;
+  `arch` defaults to `x64`
+- `activation.kind: command` is the generic task-scoped shell-environment activation form; it
+  must declare both `shell` and `run`, and ota executes that shell activation before the selected
+  native check or native task body
+- when a native task path selected by `ota up` or `ota run` references a Windows native
+  prerequisite with `activation.kind: visual_studio_dev_shell`, ota runs that task inside the
+  activated Developer Shell instead of assuming the user already opened one manually
+- when a native task path selected by `ota up` or `ota run` references
+  `activation.kind: command`, ota captures the declared shell environment and applies it to the
+  selected native task body; the same activation also wraps the selected precondition check path
+- when one task references multiple native prerequisites for the same platform, any declared
+  activation hints must agree; conflicting activation kinds or architectures are rejected
 - Ota only evaluates native prerequisites selected by `tasks.<name>.requirements.native`
 - native prerequisite diagnosis is non-mutating; use policy-backed provisioning for tools or
   runtimes Ota is allowed to install

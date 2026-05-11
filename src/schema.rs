@@ -1539,12 +1539,27 @@ pub struct NativePrerequisiteActivationSpec {
     pub kind: NativePrerequisiteActivationKind,
     #[serde(default)]
     pub arch: Option<String>,
+    #[serde(default)]
+    pub shell: Option<NativePrerequisiteActivationShell>,
+    #[serde(default)]
+    pub run: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NativePrerequisiteActivationKind {
     VisualStudioDevShell,
+    Command,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NativePrerequisiteActivationShell {
+    Sh,
+    Bash,
+    Zsh,
+    Pwsh,
+    Cmd,
 }
 
 fn default_required() -> bool {

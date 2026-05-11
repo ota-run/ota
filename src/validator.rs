@@ -1105,27 +1105,12 @@ fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<Validatio
                 &platform_detail.scoop,
                 errors,
             );
-            if let Some(activation) = platform_detail.activation.as_ref()
-                && activation
-                    .arch
-                    .as_deref()
-                    .is_some_and(|value| value.trim().is_empty())
-            {
-                errors.push(ValidationError::new(format!(
-                    "native prerequisite `{name}` platform `{platform}` activation arch must not be empty"
-                )));
-            }
-            if let Some(activation) = platform_detail.activation.as_ref()
-                && matches!(
-                    activation.kind,
-                    crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell
-                )
-                && platform != "windows"
-            {
-                errors.push(ValidationError::new(format!(
-                    "native prerequisite `{name}` platform `{platform}` activation `visual_studio_dev_shell` is only supported on `windows`"
-                )));
-            }
+            validate_native_prerequisite_activation(
+                name,
+                platform,
+                platform_detail.activation.as_ref(),
+                errors,
+            );
             if platform_detail
                 .install
                 .as_deref()
@@ -1210,6 +1195,102 @@ fn is_shell_safe_corepack_token(value: &str) -> bool {
         && trimmed.chars().all(|ch| {
             ch.is_ascii_alphanumeric() || matches!(ch, '@' | '/' | '.' | '_' | '-' | '+' | '~')
         })
+}
+
+fn validate_native_prerequisite_activation(
+    name: &str,
+    platform: &str,
+    activation: Option<&crate::schema::NativePrerequisiteActivationSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(activation) = activation else {
+        return;
+    };
+
+    if activation
+        .arch
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "native prerequisite `{name}` platform `{platform}` activation arch must not be empty"
+        )));
+    }
+
+    if activation
+        .run
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "native prerequisite `{name}` platform `{platform}` activation run must not be empty"
+        )));
+    }
+
+    match activation.kind {
+        crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell => {
+            if platform != "windows" {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation `visual_studio_dev_shell` is only supported on `windows`"
+                )));
+            }
+            if activation_arch_is_invalid(Some(activation)) {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation arch must be a shell-safe token"
+                )));
+            }
+            if activation.shell.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation `visual_studio_dev_shell` must not declare `shell`"
+                )));
+            }
+            if activation.run.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation `visual_studio_dev_shell` must not declare `run`"
+                )));
+            }
+        }
+        crate::schema::NativePrerequisiteActivationKind::Command => {
+            if activation.arch.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation `command` must not declare `arch`"
+                )));
+            }
+            if activation.shell.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation `command` must declare `shell`"
+                )));
+            }
+            if activation
+                .run
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` activation `command` must declare `run`"
+                )));
+            }
+        }
+    }
+}
+
+fn activation_arch_is_invalid(
+    activation: Option<&crate::schema::NativePrerequisiteActivationSpec>,
+) -> bool {
+    activation
+        .and_then(|activation| activation.arch.as_deref())
+        .is_some_and(|value| !is_shell_safe_activation_token(value))
+}
+
+fn is_shell_safe_activation_token(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed == value
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
 }
 
 fn validate_only_on(
@@ -4748,6 +4829,7 @@ fn validate_task_requirement_references(
             )));
         }
     }
+    validate_task_native_requirement_activations(contract, task_name, task, errors);
 
     for check_name in &task.requirements.checks {
         if check_name.trim().is_empty() {
@@ -4773,6 +4855,63 @@ fn validate_task_requirement_references(
                 "task `{task_name}` references non-precondition/file check `{check_name}` in `requirements.checks`"
             )));
         }
+    }
+}
+
+fn validate_task_native_requirement_activations(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut activations_by_platform = BTreeMap::<&str, BTreeSet<String>>::new();
+    for native_name in &task.requirements.native {
+        let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+            continue;
+        };
+        for (platform_name, platform) in &prerequisite.platforms {
+            let Some(activation) = platform.activation.as_ref() else {
+                continue;
+            };
+            activations_by_platform
+                .entry(platform_name.as_str())
+                .or_default()
+                .insert(native_prerequisite_activation_conflict_key(activation));
+        }
+    }
+
+    for (platform_name, activations) in activations_by_platform {
+        if activations.len() > 1 {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` declares conflicting native prerequisite activations for platform `{platform_name}`: {}",
+                activations.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
+    }
+}
+
+fn native_prerequisite_activation_conflict_key(
+    activation: &crate::schema::NativePrerequisiteActivationSpec,
+) -> String {
+    match activation.kind {
+        crate::schema::NativePrerequisiteActivationKind::VisualStudioDevShell => format!(
+            "visual_studio_dev_shell:{}",
+            activation.arch.as_deref().unwrap_or("x64")
+        ),
+        crate::schema::NativePrerequisiteActivationKind::Command => format!(
+            "command:{}:{}",
+            activation
+                .shell
+                .map(|shell| match shell {
+                    crate::schema::NativePrerequisiteActivationShell::Sh => "sh",
+                    crate::schema::NativePrerequisiteActivationShell::Bash => "bash",
+                    crate::schema::NativePrerequisiteActivationShell::Zsh => "zsh",
+                    crate::schema::NativePrerequisiteActivationShell::Pwsh => "pwsh",
+                    crate::schema::NativePrerequisiteActivationShell::Cmd => "cmd",
+                })
+                .unwrap_or("unknown"),
+            activation.run.as_deref().unwrap_or_default()
+        ),
     }
 }
 
@@ -15154,6 +15293,145 @@ tasks:
             errors.errors().iter().any(|error| error
                 .to_string()
                 .contains("activation `visual_studio_dev_shell` is only supported on `windows`")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_native_activation_arch_with_shell_unsafe_token() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      windows:
+        check: node-native-build-tools-present
+        activation:
+          kind: visual_studio_dev_shell
+          arch: "x64 && echo bad"
+checks:
+  - name: node-native-build-tools-present
+    kind: precondition
+    severity: error
+    run: where cl
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("unsafe activation arch should fail");
+        assert!(
+            errors.errors().iter().any(|error| error
+                .to_string()
+                .contains("activation arch must be a shell-safe token")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_command_activation_without_shell_and_run() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  shell-env:
+    platforms:
+      linux:
+        check: shell-env-check
+        activation:
+          kind: command
+checks:
+  - name: shell-env-check
+    kind: precondition
+    severity: error
+    run: env | grep PATH
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - shell-env
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("command activation without shell/run should fail");
+        assert!(
+            errors.errors().iter().any(|error| error
+                .to_string()
+                .contains("activation `command` must declare `shell`")),
+            "{errors:?}"
+        );
+        assert!(
+            errors.errors().iter().any(|error| error
+                .to_string()
+                .contains("activation `command` must declare `run`")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_task_native_prerequisites_with_conflicting_activations() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  build-tools-x64:
+    platforms:
+      windows:
+        check: build-tools-x64-check
+        activation:
+          kind: visual_studio_dev_shell
+          arch: x64
+  build-tools-arm64:
+    platforms:
+      windows:
+        check: build-tools-arm64-check
+        activation:
+          kind: visual_studio_dev_shell
+          arch: arm64
+checks:
+  - name: build-tools-x64-check
+    kind: precondition
+    severity: error
+    run: where cl
+  - name: build-tools-arm64-check
+    kind: precondition
+    severity: error
+    run: where cl
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - build-tools-x64
+        - build-tools-arm64
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("conflicting task native activations should fail");
+        assert!(
+            errors.errors().iter().any(|error| error.to_string().contains(
+                "task `setup` declares conflicting native prerequisite activations for platform `windows`"
+            )),
             "{errors:?}"
         );
     }

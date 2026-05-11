@@ -2747,6 +2747,7 @@ Root monorepo summary output can also include grouped member findings under `mem
 Optional fields:
 
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
+- `receipt.native_prerequisites`: additive selected native prerequisite detail for the executed native task/setup path, including provisioning guidance and any applied native activation
 - `service`: present when a required service start command fails
 - `task`: present when a task failure is reported
 - `exit_code`: present when a child command failure is reported
@@ -2934,6 +2935,10 @@ The nested `receipt` object can also include:
 - `lifecycle`
 - `image` when container execution is selected
 - `target` when the recorded execution phase had a real named target, such as a persistent container, a named ephemeral task or diagnosis container, or a remote target
+- `native_prerequisites` when the selected execution path uses native task prerequisites; each entry can include additive `check`, `activation`, `provisioning`, and `note` fields
+- `native_prerequisites[*].activation.applied` tells you whether this command actually ran inside
+  the declared native activation; preview and read-only receipt paths can still report the
+  declared activation with `applied: false`
 
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.

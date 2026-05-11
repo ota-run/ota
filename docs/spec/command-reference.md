@@ -1127,6 +1127,10 @@ ota run build --skip-deps
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
 - applies configured environment values, approved policy env values, and task input env variables
+- when the selected native task path references `requirements.native` entries with
+  `activation.kind`, ota resolves the declared native activation environment first; Windows
+  `visual_studio_dev_shell` and generic `command` activations both apply to the real task body
+  instead of assuming the current terminal was already activated correctly
 - when `tasks.<name>.runtime.listeners` declare host projection, ota also injects runtime endpoint env values before process start when the projection is known:
 - `OTA_PUBLIC_URL`
 - `OTA_PUBLIC_HOST`
@@ -1577,6 +1581,10 @@ Current behavior:
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
   activation lane before setup when it is safe and selected; Corepack-managed `pnpm` is the first
   shipped path
+- when the selected workflow setup or run task references `requirements.native` entries with
+  `activation.kind`, ota resolves that native activation environment first; Windows
+  `visual_studio_dev_shell` and generic `command` activations both apply to the affected native
+  task bodies instead of assuming the current terminal was pre-activated
 - when policy-backed provisioning is selected for a tool that also has an acquisition path, `ota up
   --dry-run` names the provisioning action and explicitly marks the Corepack activation as skipped
 - when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
