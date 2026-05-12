@@ -27806,7 +27806,7 @@ tasks:
       args:
         - sh
         - -c
-        - python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & pid=$!; sleep 10; kill "$pid"
+        - python3 -c "import http.server, socketserver, threading, time; s = socketserver.TCPServer(('127.0.0.1', {port}), http.server.SimpleHTTPRequestHandler); t = threading.Thread(target=s.serve_forever, daemon=True); t.start(); time.sleep(10); s.shutdown(); s.server_close()"
     runtime:
       kind: service
       surfaces:
