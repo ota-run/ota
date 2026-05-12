@@ -27806,7 +27806,7 @@ tasks:
       args:
         - sh
         - -c
-        - python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & pid=$!; sleep 1; kill "$pid"
+        - python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & pid=$!; sleep 3; kill "$pid"
     runtime:
       kind: service
       surfaces:
