@@ -797,6 +797,7 @@ struct RemoteProbeContext {
 
 const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
 const CONTAINER_PROBE_STARTED_MARKER: &str = "__OTA_CONTAINER_PROBE_STARTED__";
+const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandVersionProbe {
@@ -3626,10 +3627,7 @@ fn run_service_readiness(
                 Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
                 Ok(_) => {
                     failed_attempts = failed_attempts.saturating_add(1);
-                    if timing
-                        .retries
-                        .is_some_and(|failure_budget| failed_attempts >= failure_budget)
-                    {
+                    if failed_attempts >= timing.retries {
                         return Ok(CheckStatus::Failed);
                     }
                 }
@@ -3680,10 +3678,7 @@ fn run_service_readiness(
             Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
             Ok(_) => {
                 failed_attempts = failed_attempts.saturating_add(1);
-                if timing
-                    .retries
-                    .is_some_and(|failure_budget| failed_attempts >= failure_budget)
-                {
+                if failed_attempts >= timing.retries {
                     return Ok(CheckStatus::Failed);
                 }
             }
@@ -3697,7 +3692,7 @@ fn run_service_readiness(
 struct ServiceReadinessTimingPolicy {
     start_period: Duration,
     interval: Duration,
-    retries: Option<u32>,
+    retries: u32,
 }
 
 fn service_readiness_timing_policy(
@@ -3714,7 +3709,9 @@ fn service_readiness_timing_policy(
             .as_deref()
             .and_then(crate::schema::parse_readiness_duration_spec)
             .unwrap_or(Duration::from_millis(200)),
-        retries: readiness.retries,
+        retries: readiness
+            .retries
+            .unwrap_or(DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES),
     }
 }
 
@@ -11883,7 +11880,7 @@ services:
     }
 
     #[test]
-    fn diagnose_service_structured_http_readiness_keeps_waiting_when_retries_omitted() {
+    fn diagnose_service_structured_http_readiness_uses_default_retry_budget_when_retries_omitted() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener
             .local_addr()

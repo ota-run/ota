@@ -550,7 +550,7 @@ Fields:
 - structured `readiness.body.contains`: optional exact required response substring; it must not be combined with `method: HEAD`
 - structured `readiness.interval`: optional wait between probe attempts
 - structured `readiness.timeout`: optional per-attempt probe timeout
-- structured `readiness.retries`: optional failed probe budget before the service readiness gate fails; when omitted, ota keeps waiting until readiness passes, the run is interrupted, or a higher-level command boundary ends the wait
+- structured `readiness.retries`: optional failed probe budget before the service readiness gate fails; when omitted, Ota uses a bounded default budget (120 probe attempts) and reports failure when that budget is exhausted
 - structured `readiness.start_period`: optional delay before the first structured readiness probe
 
 Current behavior:
@@ -581,7 +581,7 @@ Current behavior:
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
-- reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, ota keeps waiting until readiness passes or the surrounding run is interrupted; declaring `retries` makes the failure budget explicit and bounded
+- reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, Ota uses the default bounded budget and reports failure after the limit is reached; declaring `retries` makes that budget explicit and tuned for the service
 - `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- bounded service readiness retries when omitted to prevent `ota doctor` hangs:
+  `services.<name>.readiness` checks now default to a finite probe budget (120 attempts) instead
+  of waiting indefinitely when `retries` is not explicitly set
+
 ## 1.6.11
 
 - fixed `ota proof runtime` lifecycle handling so the spawned `ota up --stream` process is always
