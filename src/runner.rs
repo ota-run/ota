@@ -6190,15 +6190,19 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         }
     }
 
-    let mut source_managed_actions = Vec::new();
+    let source_managed_actions = source_managed_actions(&request.actions);
     if let Some(ProvisioningExecutionTarget::Container {
         engine,
         container_name: Some(container_name),
         ..
     }) = plan.provisioning_target.as_ref()
     {
-        install_source_managed_tool_wrappers(engine, container_name, task_name, &request.actions)?;
-        source_managed_actions = request.actions.clone();
+        install_source_managed_tool_wrappers(
+            engine,
+            container_name,
+            task_name,
+            &source_managed_actions,
+        )?;
     }
 
     let remaining = detect_missing_backend_requirements(
@@ -7261,6 +7265,14 @@ fn source_managed_tool_wrappers_required(actions: &[ProvisioningAction]) -> bool
     actions
         .iter()
         .any(|action| action.source == "mise" && action.target_kind == ProvisioningTargetKind::Tool)
+}
+
+fn source_managed_actions(actions: &[ProvisioningAction]) -> Vec<ProvisioningAction> {
+    actions
+        .iter()
+        .filter(|action| action.source == "mise")
+        .cloned()
+        .collect()
 }
 
 fn source_managed_tool_wrapper_path_export(path_export: Option<&str>) -> String {
@@ -40443,6 +40455,43 @@ tasks:
         );
 
         assert_eq!(effective, task_publications.as_slice());
+    }
+
+    #[test]
+    fn source_managed_actions_retains_only_mise_actions() {
+        let actions = vec![
+            ProvisioningAction {
+                kind: ProvisioningActionKind::Install,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: String::from("bun"),
+                requested_version: String::from("1.3.12"),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: None,
+                source: String::from("mise"),
+                approved_version: Some(String::from("1.3.12")),
+                source_config: None,
+                policy_match: None,
+            },
+            ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: String::from("winget"),
+                requested_version: String::from("*"),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: None,
+                source: String::from("winget-bootstrap"),
+                approved_version: Some(String::from("*")),
+                source_config: None,
+                policy_match: None,
+            },
+        ];
+
+        let retained = super::source_managed_actions(&actions);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].source, "mise");
+        assert_eq!(retained[0].name, "bun");
     }
 
     #[test]
