@@ -30,7 +30,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -54,7 +54,8 @@ use crate::doctor::{
     OTA_RECEIPTS_GITIGNORE_ENTRY, OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY,
     command_available, command_version, diagnose_checks_only_for_workflow, diagnose_contract,
     diagnose_contract_with_mode_and_lifecycle,
-    diagnose_contract_with_mode_and_lifecycle_for_workflow, diagnose_policy_review,
+    diagnose_contract_with_mode_and_lifecycle_for_workflow,
+    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow, diagnose_service,
     diagnose_services_only_for_workflow, finding_targets_container_image,
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
@@ -1816,37 +1817,36 @@ pub fn proof_runtime(
                     return CommandOutput::failure(error);
                 }
 
-                let repo_up_result = match execute_repo_up(
-                    &target.contract,
+                let mut up_process = match spawn_proof_runtime_up_process(
                     &target.contract_path,
-                    overrides,
                     workflow_name,
-                    None,
-                    false,
-                    RepoExecutionMode::Capture,
+                    member,
+                    file_override,
+                    overrides,
+                    &up_log_artifact_path,
                 ) {
-                    Ok(result) => result,
+                    Ok(child) => child,
                     Err(error) => return CommandOutput::failure(error),
                 };
+                let (proof_report, proof_phase, proof_ok, up_process_failure) =
+                    match wait_for_proof_runtime_readiness(
+                        &target.contract,
+                        &target.contract_path,
+                        workflow_name,
+                        overrides,
+                        &mut up_process,
+                    ) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            let _ = stop_proof_runtime_up_process(&mut up_process);
+                            return CommandOutput::failure(error);
+                        }
+                    };
                 let proof_summary = doctor_summary(
-                    &repo_up_result.report,
+                    &proof_report,
                     crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
                 );
-                let proof_phase = repo_up_result.phase;
-                let proof_ok = repo_up_result.ok;
-                let up_log_contents =
-                    phase_output_text(&repo_up_result.stdout, &repo_up_result.stderr);
-                let up_output = render_up_result(
-                    &path_display,
-                    &text_path_display,
-                    repo_up_result,
-                    OutputFormat::Text,
-                    false,
-                );
-                let up_log_contents = up_log_contents.unwrap_or_else(|| up_output.stdout.clone());
-                if let Err(error) = write_proof_artifact(&up_log_artifact_path, &up_log_contents) {
-                    return CommandOutput::failure(error);
-                }
+                let up_process_failure = up_process_failure.as_deref();
 
                 let member_args = member.into_iter().map(str::to_string).collect::<Vec<_>>();
                 let doctor_output = doctor(
@@ -1861,6 +1861,7 @@ pub fn proof_runtime(
                     false,
                 );
                 if doctor_output.stdout.trim().is_empty() {
+                    let _ = stop_proof_runtime_up_process(&mut up_process);
                     return CommandOutput::failure(command_message_failure_text(
                         "PROOF",
                         &text_path_display,
@@ -1872,18 +1873,32 @@ pub fn proof_runtime(
                 if let Err(error) =
                     write_proof_artifact(&doctor_artifact_path, &doctor_output.stdout)
                 {
+                    let _ = stop_proof_runtime_up_process(&mut up_process);
                     return CommandOutput::failure(error);
                 }
 
                 let cleanup_error = clean_execution_report(&target.contract, &target.contract_path)
                     .err()
                     .map(|error| error.to_string());
+                let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
+                    .err()
+                    .map(|error| error.to_string());
+                let cleanup_error = cleanup_error.or(process_cleanup_error);
                 let cleanup_next = cleanup_error.as_ref().map(|_| {
                     format!(
                         "run `{}` to remove the remaining runtime state, then rerun proof",
                         command_for_repo_contract_target("ota clean", &target.contract_path)
                     )
                 });
+                let proof_error = cleanup_error.as_deref().or(up_process_failure);
+                let proof_next = match (&cleanup_next, up_process_failure) {
+                    (Some(next), _) => Some(next.clone()),
+                    (None, Some(failure_message)) => Some(format!(
+                        "inspect `{}` and rerun `ota proof runtime` ({failure_message})",
+                        up_log_artifact_display
+                    )),
+                    (None, None) => None,
+                };
                 let status = proof_runtime_status_word(
                     proof_summary.verdict,
                     proof_phase,
@@ -1912,6 +1927,7 @@ pub fn proof_runtime(
                             text_phase,
                             status,
                             &proof_summary,
+                            up_process_failure,
                             &topology_artifact_display,
                             &doctor_artifact_display,
                             &up_log_artifact_display,
@@ -1934,8 +1950,8 @@ pub fn proof_runtime(
                                 doctor: &doctor_artifact_display,
                                 up_log: &up_log_artifact_display,
                             }),
-                            error: cleanup_error.as_deref(),
-                            next: cleanup_next.as_deref(),
+                            error: proof_error,
+                            next: proof_next.as_deref(),
                         }),
                         stderr: None,
                         exit_code: if ok { 0 } else { 1 },
@@ -36783,6 +36799,7 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
 
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
@@ -36804,10 +36821,11 @@ mod tests {
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
-        ContractIdentity, DetectComparison, DetectComparisonRemoval, EnvSourceStatus,
-        ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs, ExecutionReceiptSummary,
-        ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary, ServiceProducerSummary,
-        ServiceReadinessSummary, ServiceSummary, TaskSummary, WorkflowSummary,
+        ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorVerdict,
+        EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs,
+        ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
+        ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary, TaskSummary,
+        WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -36918,6 +36936,120 @@ tasks:
                 && entry.value.as_deref() == Some("/workspace/context-cache")
                 && entry.source == "execution"
         }));
+    }
+
+    #[test]
+    fn wait_for_proof_runtime_readiness_short_circuits_on_immediate_up_exit() {
+        let _guard = cwd_mutex_lock();
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: proof-runtime-regression
+checks:
+  - name: failing-check
+    kind: precondition
+    severity: error
+    run: missing-check-command
+    timeout: 10
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 1"]).spawn().unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 1"]).spawn().unwrap()
+        };
+
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            None,
+            ExecutionOverrides::default(),
+            &mut child,
+        )
+        .unwrap();
+
+        assert!(!proof_ok);
+        assert_eq!(phase, "service readiness");
+        let reason = up_failure.as_deref().unwrap_or_default();
+        assert!(reason.contains("exit code 1"));
+        assert!(!report.ok);
+
+        let exit = child.wait().unwrap();
+        assert!(!exit.success());
+    }
+
+    #[test]
+    fn render_proof_runtime_text_prioritizes_up_process_failure() {
+        let _guard = cwd_mutex_lock();
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: proof-runtime-regression
+checks:
+  - name: failing-check
+    kind: precondition
+    severity: error
+    run: missing-check-command
+    timeout: 10
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let report = super::diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+            &contract,
+            &contract_path,
+            crate::doctor::DoctorMode::Native,
+            None,
+            None,
+            ExecutionOverrides::default(),
+        );
+        let summary = super::doctor_summary(&report, DoctorVerdict::NotReady);
+
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("default"),
+            &contract_path,
+            "service readiness",
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            &summary,
+            Some("up process exited with code 1"),
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            None,
+            None,
+        ));
+
+        assert!(rendered.contains("Up process exited unexpectedly"));
+        assert!(rendered.contains("Why: up process exited with code 1"));
+        assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
     }
 
     #[test]
@@ -56644,6 +56776,152 @@ fn proof_runtime_artifact_segment(value: &str) -> String {
     }
 }
 
+fn spawn_proof_runtime_up_process(
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    member: Option<&str>,
+    file_override: Option<&Path>,
+    overrides: ExecutionOverrides,
+    up_log_artifact_path: &Path,
+) -> Result<std::process::Child, String> {
+    let exe = env::current_exe().map_err(|error| {
+        format!("could not resolve the current ota executable for runtime proof: {error}")
+    })?;
+    let working_dir = contract_working_dir(contract_path);
+    let stdout_log = File::create(up_log_artifact_path)
+        .map_err(|error| format!("could not create proof up log artifact: {error}"))?;
+    let stderr_log = stdout_log
+        .try_clone()
+        .map_err(|error| format!("could not prepare proof up log stream: {error}"))?;
+
+    let mut command = Command::new(exe);
+    command.current_dir(working_dir).arg("up").arg("--stream");
+
+    if let Some(backend) = overrides.backend {
+        command.arg("--mode").arg(match backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        });
+    }
+    if let Some(lifecycle) = overrides.lifecycle {
+        command.arg("--lifecycle").arg(match lifecycle {
+            Lifecycle::Persistent => "persistent",
+            Lifecycle::Ephemeral => "ephemeral",
+        });
+    }
+    if let Some(host_port) = overrides.host_port {
+        command.arg("--host-port").arg(host_port.to_string());
+    }
+    if let Some(memory) = overrides.memory {
+        command.arg("--memory").arg(memory.to_string());
+    }
+    if overrides.skip_deps {
+        command.arg("--skip-deps");
+    }
+    if let Some(workflow_name) = workflow_name {
+        command.arg("--workflow").arg(workflow_name);
+    }
+    if let Some(member) = member {
+        command.arg("--member").arg(member);
+    }
+    if let Some(file_override) = file_override {
+        command.env("OTA_FILE", file_override);
+    }
+    command
+        .arg(".")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log));
+
+    command
+        .spawn()
+        .map_err(|error| format!("could not start `ota up --stream` for runtime proof: {error}"))
+}
+
+fn wait_for_proof_runtime_readiness(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    up_process: &mut std::process::Child,
+) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
+    let agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
+    loop {
+        let latest_report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+            contract,
+            contract_path,
+            doctor_mode,
+            overrides.lifecycle,
+            workflow_name,
+            overrides.clone(),
+        );
+        let summary = doctor_summary(&latest_report, agent_verdict);
+        if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+            return Ok((latest_report, "post-up diagnosis", true, None));
+        }
+
+        match up_process.try_wait() {
+            Ok(Some(exit_status)) => {
+                let up_process_failure = if let Some(code) = exit_status.code() {
+                    Some(format!(
+                        "`ota up --stream` exited while waiting for readiness (exit code {code})"
+                    ))
+                } else {
+                    Some(String::from(
+                        "`ota up --stream` was terminated before readiness could be observed",
+                    ))
+                };
+                return Ok((
+                    latest_report,
+                    "service readiness",
+                    false,
+                    up_process_failure,
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(format!(
+                    "could not observe the runtime-proof `ota up --stream` process: {error}"
+                ));
+            }
+        }
+
+        if Instant::now() >= deadline {
+            return Ok((
+                latest_report,
+                "service readiness",
+                false,
+                Some(String::from("timed out while waiting for readiness")),
+            ));
+        }
+
+        thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match up_process.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) if Instant::now() >= deadline => {
+                up_process.kill().map_err(|error| {
+                    format!("could not stop runtime-proof `ota up` process: {error}")
+                })?;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(error) => {
+                return Err(format!(
+                    "could not observe runtime-proof `ota up` process shutdown: {error}"
+                ));
+            }
+        }
+    }
+}
+
 fn proof_runtime_status_word(
     verdict: DoctorVerdict,
     phase: &str,
@@ -56701,6 +56979,7 @@ fn render_proof_runtime_text(
     phase: &str,
     status: &str,
     summary: &DoctorSummary,
+    up_process_failure: Option<&str>,
     topology_artifact: &str,
     doctor_artifact: &str,
     up_log_artifact: &str,
@@ -56772,6 +57051,23 @@ fn render_proof_runtime_text(
                     cleanup_next.unwrap_or(
                         "run `ota clean`, inspect the remaining runtime state, then rerun proof"
                     ),
+                    None,
+                )
+            ));
+        } else if let Some(process_failure) = up_process_failure {
+            stdout.push_str(&format!(
+                "\n{}  {}\n{} {}\n{} {}",
+                render_severity(FindingSeverity::Error),
+                render_finding_summary_with_count(
+                    FindingSeverity::Error,
+                    "Up process exited unexpectedly",
+                    1,
+                ),
+                finding_detail_key(FindingSeverity::Error, "Why:"),
+                render_backticked_text(process_failure, None),
+                finding_detail_key(FindingSeverity::Error, "Next:"),
+                render_backticked_text(
+                    &format!("inspect {} and rerun `ota proof runtime`", up_log_artifact),
                     None,
                 )
             ));
@@ -63195,12 +63491,13 @@ fn execute_repo_up(
         });
     }
 
-    let report = diagnose_contract_with_mode_and_lifecycle_for_workflow(
+    let report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
         contract,
         resolved_path,
         doctor_mode,
         overrides.lifecycle,
         workflow_name,
+        overrides.clone(),
     );
     let workloads = resolve_up_workloads(
         setup_task,

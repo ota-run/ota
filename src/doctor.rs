@@ -54,11 +54,12 @@ use crate::provisioning::{
     render_provisioning_action_command,
 };
 use crate::runner::{
-    DeclaredEnvSourceStatus, HttpReadinessRequest, HttpReadinessStatus, LoadedDeclaredEnvSource,
-    ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedNamedReadinessProbeContract,
-    RunError, capture_declared_native_activation_env, combine_readiness_probe_paths,
-    host_runtime_readiness_observed, http_readiness_endpoint_status, load_declared_env_sources,
-    parse_http_probe_url, resolve_context_execution_backend, resolve_declared_env_source_value,
+    DeclaredEnvSourceStatus, ExecutionOverrides, HttpReadinessRequest, HttpReadinessStatus,
+    LoadedDeclaredEnvSource, ResolvedExecutionBackend, ResolvedNamedReadinessProbe,
+    ResolvedNamedReadinessProbeContract, RunError, capture_declared_native_activation_env,
+    combine_readiness_probe_paths, effective_task_execution, host_runtime_readiness_observed,
+    http_readiness_endpoint_status, load_declared_env_sources, parse_http_probe_url,
+    resolve_context_execution_backend, resolve_declared_env_source_value,
     resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
     resolve_task_target_binding_url_with_contract_path, run_backend_command_captured,
     task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
@@ -70,7 +71,7 @@ use crate::schema::{
     ToolAcquisitionSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
-use crate::validator::{ContractAdvisory, collect_contract_advisories};
+use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -2119,6 +2120,7 @@ pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorRep
         DoctorMode::Native,
         None,
         None,
+        ExecutionOverrides::default(),
     )
 }
 
@@ -2127,7 +2129,15 @@ pub fn diagnose_contract_in_mode(
     contract_path: &Path,
     mode: DoctorMode,
 ) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::All, mode, None, None)
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::All,
+        mode,
+        None,
+        None,
+        ExecutionOverrides::default(),
+    )
 }
 
 pub fn diagnose_contract_with_mode_and_lifecycle(
@@ -2159,6 +2169,26 @@ pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow(
         mode,
         lifecycle_override,
         workflow_name,
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    lifecycle_override: Option<Lifecycle>,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> DoctorReport {
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::All,
+        mode,
+        lifecycle_override,
+        workflow_name,
+        overrides,
     )
 }
 
@@ -2226,6 +2256,7 @@ pub fn diagnose_preconditions_with_mode_for_workflow(
         mode,
         None,
         workflow_name,
+        ExecutionOverrides::default(),
     )
 }
 
@@ -2245,6 +2276,7 @@ pub fn diagnose_checks_only_for_workflow(
         DoctorMode::Native,
         None,
         workflow_name,
+        ExecutionOverrides::default(),
     )
 }
 
@@ -2264,6 +2296,7 @@ pub fn diagnose_services_only_for_workflow(
         DoctorMode::Native,
         None,
         workflow_name,
+        ExecutionOverrides::default(),
     )
 }
 
@@ -2311,6 +2344,7 @@ fn diagnose_contract_with_scope(
     mode: DoctorMode,
     lifecycle_override: Option<Lifecycle>,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
@@ -2495,7 +2529,7 @@ fn diagnose_contract_with_scope(
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
         diagnose_agent_boundary_review(contract, &mut findings);
-        diagnose_contract_advisories(contract, &mut findings);
+        diagnose_contract_advisories(contract, &mut findings, overrides);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
         diagnose_services(
@@ -2549,8 +2583,30 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
     });
 }
 
-fn diagnose_contract_advisories(contract: &Contract, findings: &mut Vec<Finding>) {
+fn diagnose_contract_advisories(
+    contract: &Contract,
+    findings: &mut Vec<Finding>,
+    overrides: ExecutionOverrides,
+) {
     for advisory in collect_contract_advisories(contract) {
+        let advisory = match advisory {
+            ContractAdvisory::DependsOnBoundary(advisory) => {
+                if let Some(advisory) =
+                    normalize_depends_on_boundary_for_overrides(contract, advisory, overrides)
+                {
+                    ContractAdvisory::DependsOnBoundary(advisory)
+                } else {
+                    continue;
+                }
+            }
+            ContractAdvisory::LikelyUnusedAttachment(advisory) => {
+                ContractAdvisory::LikelyUnusedAttachment(advisory)
+            }
+            ContractAdvisory::MutatesManagedIsolatedPath(advisory) => {
+                ContractAdvisory::MutatesManagedIsolatedPath(advisory)
+            }
+        };
+
         findings.push(match advisory {
             ContractAdvisory::DependsOnBoundary(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -2581,6 +2637,51 @@ fn diagnose_contract_advisories(contract: &Contract, findings: &mut Vec<Finding>
             },
         });
     }
+}
+
+fn normalize_depends_on_boundary_for_overrides(
+    contract: &Contract,
+    advisory: crate::validator::DependsOnBoundaryAdvisory,
+    overrides: ExecutionOverrides,
+) -> Option<crate::validator::DependsOnBoundaryAdvisory> {
+    if overrides.backend.is_none() && overrides.lifecycle.is_none() {
+        return Some(advisory);
+    }
+
+    let parent = match effective_boundary_for_task(contract, &advisory.parent_task, overrides) {
+        Some(boundary) => boundary,
+        None => advisory.parent,
+    };
+    let dependency =
+        match effective_boundary_for_task(contract, &advisory.dependency_task, overrides) {
+            Some(boundary) => boundary,
+            None => advisory.dependency,
+        };
+
+    (parent != dependency).then_some(crate::validator::DependsOnBoundaryAdvisory {
+        parent_task: advisory.parent_task,
+        dependency_task: advisory.dependency_task,
+        parent,
+        dependency,
+    })
+}
+
+fn effective_boundary_for_task(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<TaskExecutionBoundary> {
+    let task = contract.tasks.get(task_name)?;
+    let effective = effective_task_execution(contract, task_name, overrides);
+
+    Some(TaskExecutionBoundary {
+        context_name: effective.context_name.map(str::to_string),
+        backend: effective.backend,
+        lifecycle: effective.lifecycle,
+        backend_binding: task
+            .backend_binding_for_backend(effective.backend)
+            .map(str::to_string),
+    })
 }
 
 fn diagnose_agent_boundary_review(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -5888,12 +5989,12 @@ fn command_version_probe_in_container(
                 extract_version_token(&combined)
                     .map(CommandVersionProbeOutcome::Version)
                     .unwrap_or(CommandVersionProbeOutcome::Unparseable)
-            } else if resolved_path.is_none() {
+            } else if probe_started && resolved_path.is_none() {
                 CommandVersionProbeOutcome::Missing
             } else {
                 CommandVersionProbeOutcome::ProbeFailed {
                     exit_code: output.status.code(),
-                    error: None,
+                    error: Some(combined),
                 }
             };
             (probe_started, resolved_path.map(PathBuf::from), outcome)
@@ -5936,12 +6037,12 @@ fn command_version_probe_in_remote(
                 extract_version_token(&combined)
                     .map(CommandVersionProbeOutcome::Version)
                     .unwrap_or(CommandVersionProbeOutcome::Unparseable)
-            } else if resolved_path.is_none() {
+            } else if probe_started && resolved_path.is_none() {
                 CommandVersionProbeOutcome::Missing
             } else {
                 CommandVersionProbeOutcome::ProbeFailed {
                     exit_code: Some(output.exit_code),
-                    error: None,
+                    error: Some(combined),
                 }
             };
             (probe_started, resolved_path.map(PathBuf::from), outcome)
@@ -7298,15 +7399,29 @@ fn command_path_candidates(path: &Path) -> Vec<PathBuf> {
             return vec![path.to_path_buf()];
         }
 
-        let mut candidates = vec![path.to_path_buf()];
-        let pathext = std::env::var_os("PATHEXT")
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_else(|| String::from(".COM;.EXE;.BAT;.CMD"));
-        for ext in pathext
-            .split(';')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        let mut candidates = Vec::new();
+        let mut extensions = std::env::var_os("PATHEXT")
+            .map(|value| {
+                value
+                    .to_string_lossy()
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| value.to_uppercase())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![".COM".to_string(), ".EXE".to_string(), ".BAT".to_string()]);
+        let baseline_extensions = [".CMD", ".COM", ".EXE", ".BAT"];
+        for extension in baseline_extensions {
+            if !extensions
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case(extension))
+            {
+                extensions.push(extension.to_string());
+            }
+        }
+
+        for ext in extensions {
             let mut candidate = path.as_os_str().to_os_string();
             candidate.push(ext);
             candidates.push(PathBuf::from(candidate));
@@ -7608,9 +7723,11 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        CheckStatus, DoctorMode, FindingSeverity, compose_service_healthcheck_command,
-        diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_preconditions,
-        diagnose_preconditions_with_mode, tool_executable_name, version_matches,
+        Backend, CheckStatus, DoctorMode, FindingSeverity, compose_service_healthcheck_command,
+        diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode,
+        diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
+        diagnose_preconditions, diagnose_preconditions_with_mode, tool_executable_name,
+        version_matches,
     };
 
     #[cfg(unix)]
@@ -7739,7 +7856,11 @@ tasks:
         .unwrap();
 
         let mut findings = Vec::new();
-        super::diagnose_contract_advisories(&contract, &mut findings);
+        super::diagnose_contract_advisories(
+            &contract,
+            &mut findings,
+            crate::runner::ExecutionOverrides::default(),
+        );
 
         assert!(findings.iter().any(|finding| {
             finding.severity == FindingSeverity::Warn
@@ -7749,6 +7870,64 @@ tasks:
                     .why
                     .contains("only durable external side effects survive")
         }));
+    }
+
+    #[test]
+    fn doctor_does_not_warn_depends_on_crosses_execution_boundaries_when_overridden_native() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+    verify:
+      backend: native
+tasks:
+  setup:
+    context: app
+    run: npm install
+  build:
+    context: verify
+    run: npm run build
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            None,
+            None,
+            crate::runner::ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        );
+
+        assert!(report.ok);
+        let boundary_crossings: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.summary
+                    == "Task `build` depends_on `setup` across different execution boundaries"
+            })
+            .collect();
+        assert!(boundary_crossings.is_empty());
     }
 
     #[test]
@@ -7781,7 +7960,11 @@ tasks:
         .unwrap();
 
         let mut findings = Vec::new();
-        super::diagnose_contract_advisories(&contract, &mut findings);
+        super::diagnose_contract_advisories(
+            &contract,
+            &mut findings,
+            crate::runner::ExecutionOverrides::default(),
+        );
 
         assert!(findings.iter().any(|finding| {
             finding.severity == FindingSeverity::Warn
@@ -7817,7 +8000,11 @@ tasks:
         .unwrap();
 
         let mut findings = Vec::new();
-        super::diagnose_contract_advisories(&contract, &mut findings);
+        super::diagnose_contract_advisories(
+            &contract,
+            &mut findings,
+            crate::runner::ExecutionOverrides::default(),
+        );
 
         assert!(findings.iter().any(|finding| {
             finding.severity == FindingSeverity::Warn
@@ -8249,6 +8436,80 @@ tasks:
     }
 
     #[test]
+    #[cfg(windows)]
+    fn resolve_command_path_prefers_path_extensions_over_extensionless_file() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let original_dir = env::current_dir().unwrap();
+        let original_path = env::var_os("PATH");
+
+        let bare_path = temp.path().join("npm");
+        fs::write(&bare_path, "not-an-exe").unwrap();
+        let ext_path = write_fake_command(temp.path(), "npm", "@echo off\r\necho 9.9.9\r\n");
+
+        unsafe {
+            env::set_var("PATH", temp.path().join("missing-bin"));
+        }
+        env::set_current_dir(temp.path()).unwrap();
+
+        let resolved = super::resolve_command_path("npm");
+
+        env::set_current_dir(original_dir).unwrap();
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(resolved.as_deref(), Some(ext_path.as_path()));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resolve_command_path_includes_common_extensions_when_pathext_is_sparse() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let original_dir = env::current_dir().unwrap();
+        let original_path = env::var_os("PATH");
+        let original_pathext = env::var_os("PATHEXT");
+
+        let npm_path = write_fake_command(&temp, "npm", "@echo off\r\necho 9.9.9\r\n");
+
+        unsafe {
+            env::set_var("PATH", temp.path());
+            env::set_var("PATHEXT", ".EXE;.BAT");
+        }
+        env::set_current_dir(temp.path()).unwrap();
+
+        let resolved = super::resolve_command_path("npm");
+
+        env::set_current_dir(original_dir).unwrap();
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_pathext {
+            Some(pathext) => unsafe {
+                env::set_var("PATHEXT", pathext);
+            },
+            None => unsafe {
+                env::remove_var("PATHEXT");
+            },
+        }
+
+        assert_eq!(resolved.as_deref(), Some(npm_path.as_path()));
+    }
+
+    #[test]
     fn reports_tool_probe_failures_with_resolved_probe_path() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
@@ -8537,6 +8798,75 @@ tasks:
         assert_eq!(finding.evidence().command, "npm --version");
         assert_eq!(finding.evidence().path, "/usr/local/bin/npm");
         assert_eq!(finding.evidence().source, "container_target");
+        assert_eq!(finding.owner(), "container_target");
+    }
+
+    #[test]
+    fn reports_container_tool_probe_failed_when_command_cannot_run() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\necho daemon unavailable\r\nexit 1\r\n"
+        } else {
+            "#!/bin/sh\necho daemon unavailable >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tools:
+  node: ">=20"
+tasks:
+  test:
+    run: node --version
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_contract_in_mode(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Tool probe failed: node")
+            .expect("expected tool probe failure finding");
+        assert_eq!(finding.evidence().path, "node");
         assert_eq!(finding.owner(), "container_target");
     }
 
