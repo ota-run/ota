@@ -205,9 +205,10 @@ tasks:
       - when:
           os: windows
         script: |
-          $ErrorActionPreference = "Stop"
           cargo test contract_is_stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test json_schema_contracts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test detect_fixtures
     depends_on:
       - setup
