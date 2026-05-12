@@ -32,6 +32,7 @@ use thiserror::Error;
 use crate::execution::container_backend_probe_failure;
 use crate::policy_pack::{
     ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest, ProvisioningTargetKind,
+    evaluate_actual_version_policy_match,
 };
 use crate::runner::{
     ResolvedExecutionBackend, StreamPhaseLoader, join_stream_reader, persistent_container_name,
@@ -1304,9 +1305,12 @@ fn ensure_bootstrap_source_version(
         });
     };
 
-    if approved_versions.iter().any(|approved| {
-        approved.trim() == "*" || text_output_contains_requested_version(&version, approved)
-    }) {
+    if approved_versions.iter().any(|approved| approved.trim() == "*")
+        || approved_versions
+            .iter()
+            .any(|approved| text_output_contains_requested_version(&version, approved))
+        || bootstrap_source_version_matches_policy(command, &version, approved_versions)
+    {
         return Ok(());
     }
 
@@ -1319,6 +1323,35 @@ fn ensure_bootstrap_source_version(
             approved_versions.join(", ")
         ),
     })
+}
+
+fn bootstrap_source_version_matches_policy(
+    command: &str,
+    version_output: &str,
+    approved_versions: &[String],
+) -> bool {
+    let normalized = strip_ansi_sequences(version_output);
+    normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .flat_map(|line| {
+            line.split(|ch: char| {
+                ch.is_whitespace()
+                    || matches!(ch, '|' | ',' | '[' | ']' | '(' | ')' | '*' | '>' | ':' | '=')
+            })
+        })
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .any(|token| {
+            evaluate_actual_version_policy_match(
+                ProvisioningTargetKind::Tool,
+                command,
+                token.trim_start_matches('v'),
+                approved_versions,
+            )
+            .is_ok()
+        })
 }
 
 impl ProvisioningBackend for MiseProvisioningBackend {
@@ -4111,6 +4144,43 @@ mod tests {
         )
         .unwrap();
         assert!(fs::read_to_string(log).unwrap().contains("version"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn ensure_bootstrap_source_version_accepts_semver_range_from_version_output() {
+        let _guard = env_mutex_lock();
+        let shim_dir = TempDir::new().unwrap();
+        let shim = shim_dir.path().join("mise");
+        fs::write(
+            &shim,
+            "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then\n  printf '%s\\n' '2026.5.6 linux-x64 (2026-05-11)'\nfi\nexit 0\n",
+        )
+        .unwrap();
+        make_executable(&shim);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        ensure_bootstrap_source_version(
+            &ProvisioningExecutionTarget::Native,
+            Path::new("."),
+            "mise",
+            &["version"],
+            &[String::from(">=2024.12")],
+            ProvisioningOutputMode::Capture,
+        )
+        .unwrap();
 
         unsafe {
             env::set_var("PATH", original_path);
