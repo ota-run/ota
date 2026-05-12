@@ -479,7 +479,7 @@ repos:
     assert_eq!(json["repos"][0]["name"], "web");
     assert_eq!(json["repos"][0]["ok"], true);
     assert_eq!(json["repos"][0]["status"], "READY");
-    assert_eq!(json["repos"][0]["phase"], "post-setup diagnosis");
+    assert_eq!(json["repos"][0]["phase"], "post-up diagnosis");
 }
 
 #[cfg(unix)]
@@ -2539,7 +2539,7 @@ checks:
 
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout.contains("NOT READY"));
-    assert!(stdout.contains("Phase: post-setup diagnosis"));
+    assert!(stdout.contains("Phase: post-up diagnosis"));
     assert!(stdout.contains("ERROR  Check failed: docs-ops"));
     assert!(fixture.path().join(".service-ready").exists());
     assert!(fixture.path().join("prepared.txt").exists());
@@ -2606,7 +2606,7 @@ tasks:
 
     assert_eq!(json["ok"], true);
     assert_eq!(json["status"], "READY");
-    assert_eq!(json["phase"], "post-setup diagnosis");
+    assert_eq!(json["phase"], "post-up diagnosis");
     assert!(json.get("path").is_some());
     assert!(!json["findings"].as_array().unwrap().is_empty());
     assert_eq!(json["findings"][0]["severity"], "warn");
@@ -2702,7 +2702,7 @@ tasks:
 
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout.contains("READY"));
-    assert!(stdout.contains("Phase: post-setup diagnosis"));
+    assert!(stdout.contains("Phase: post-up diagnosis"));
     assert!(stdout.contains("WARN  Service healthcheck failed: redis"));
     assert!(fixture.path().join(".service-ready").exists());
     assert!(fixture.path().join("prepared.txt").exists());

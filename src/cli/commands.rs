@@ -39990,7 +39990,7 @@ tasks:
         assert!(text.contains("Next:"));
         assert!(text.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
         assert!(text.contains("Additional context:"));
-        assert!(text.contains("container readiness does not include host-only checks"));
+        assert!(text.contains("container readiness excludes host-only checks"));
         assert!(
             text.contains("an active policy pack still governs version and provisioning rules")
         );

@@ -108,6 +108,7 @@ tasks:
       preserves coverage without leaking test-local PATH or service state.
     category: test
     script: |
+      set -e
       cargo fmt --check
       cargo check
       cargo test --lib -- --test-threads=1 \
@@ -123,6 +124,7 @@ tasks:
       - when:
           os: windows
         script: |
+          $ErrorActionPreference = "Stop"
           cargo fmt --check
           cargo check
           cargo test --lib -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer
@@ -191,9 +193,18 @@ tasks:
       Use this to validate schema stability and fixture coverage before release work.
     category: test
     script: |
+      set -e
       cargo test contract_is_stable
       cargo test --test json_schema_contracts
       cargo test --test detect_fixtures
+    variants:
+      - when:
+          os: windows
+        script: |
+          $ErrorActionPreference = "Stop"
+          cargo test contract_is_stable
+          cargo test --test json_schema_contracts
+          cargo test --test detect_fixtures
     depends_on:
       - setup
     safe_for_agent: true
@@ -203,6 +214,7 @@ tasks:
       Use this to verify the repo against the release gate checks that run in GitHub Actions.
     category: test
     script: |
+      set -e
       if [ "$OSTYPE" != "msys" ] && [ "$OSTYPE" != "win32" ]; then
         cargo test --test real_repo_fixtures -- --test-threads=1
         cargo test --test examples_validate -- --test-threads=1
