@@ -31786,7 +31786,8 @@ tools:
             "#!/bin/sh\necho 'v24.14.1'\n"
         };
         write_fake_command(&bin_dir, "node", node_body);
-        let path = prepend_path(&bin_dir);
+
+        let path = std::env::join_paths(vec![bin_dir.to_path_buf()]).expect("join PATH");
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("48"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
