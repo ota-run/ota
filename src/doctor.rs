@@ -10414,6 +10414,9 @@ checks:
 tasks:
   setup:
     run: test -f .env.local || cp .env.example .env.local
+    requirements:
+      checks:
+        - env-local-present
 "#,
         )
         .unwrap();
@@ -11606,6 +11609,14 @@ checks:
 tasks:
   dev:
     run: cargo test
+    requirements:
+      checks:
+        - env-local-present
+workflows:
+  default: dev
+  dev:
+    run:
+      task: dev
 "#,
         )
         .unwrap();
