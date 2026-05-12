@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.11
+
 - fixed `ota proof runtime` lifecycle handling so the spawned `ota up --stream` process is always
   stopped on proof-exit paths and no longer leaks work when doctor artifacts are not captured
 - improved `ota proof runtime` diagnostics: readiness waits now short-circuit if the proof-up process
