@@ -1193,6 +1193,27 @@ impl MiseBootstrapProvisioningBackend {
     }
 }
 
+#[cfg(any(windows, test))]
+fn windows_mise_version_probe_script() -> &'static str {
+    r#"$ErrorActionPreference = 'Stop'
+$candidates = @(
+  (Join-Path $env:LOCALAPPDATA 'mise\bin\mise.exe'),
+  (Join-Path $env:USERPROFILE '.local\bin\mise.exe')
+)
+foreach ($candidate in $candidates) {
+  if (Test-Path $candidate) {
+    & $candidate --version
+    exit $LASTEXITCODE
+  }
+}
+$command = Get-Command mise -ErrorAction SilentlyContinue
+if ($null -ne $command) {
+  & mise --version
+  exit $LASTEXITCODE
+}
+throw 'mise executable not found after bootstrap'"#
+}
+
 impl SdkmanBootstrapProvisioningBackend {
     fn bootstrap_script() -> &'static str {
         r#"curl -s "https://get.sdkman.io" | bash"#
@@ -1305,7 +1326,9 @@ fn ensure_bootstrap_source_version(
         });
     };
 
-    if approved_versions.iter().any(|approved| approved.trim() == "*")
+    if approved_versions
+        .iter()
+        .any(|approved| approved.trim() == "*")
         || approved_versions
             .iter()
             .any(|approved| text_output_contains_requested_version(&version, approved))
@@ -1338,7 +1361,10 @@ fn bootstrap_source_version_matches_policy(
         .flat_map(|line| {
             line.split(|ch: char| {
                 ch.is_whitespace()
-                    || matches!(ch, '|' | ',' | '[' | ']' | '(' | ')' | '*' | '>' | ':' | '=')
+                    || matches!(
+                        ch,
+                        '|' | ',' | '[' | ']' | '(' | ')' | '*' | '>' | ':' | '='
+                    )
             })
         })
         .map(str::trim)
@@ -2206,8 +2232,57 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                 });
             }
 
-            let output =
-                apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?;
+            let output = {
+                #[cfg(windows)]
+                {
+                    if matches!(target, ProvisioningExecutionTarget::Native) {
+                        let winget_bootstrap = execute_provisioning_command(
+                            target,
+                            working_dir,
+                            "powershell",
+                            &[
+                                "-NoProfile",
+                                "-ExecutionPolicy",
+                                "Bypass",
+                                "-Command",
+                                WingetBootstrapProvisioningBackend::bootstrap_script(),
+                            ],
+                            mode,
+                        )?;
+                        stdout.push_str(&winget_bootstrap.stdout);
+                        stderr.push_str(&winget_bootstrap.stderr);
+                        if winget_bootstrap.exit_code != 0 {
+                            return Err(ProvisioningBackendError::CommandFailed {
+                                command: String::from("powershell winget bootstrap"),
+                                exit_code: winget_bootstrap.exit_code,
+                                stdout,
+                                stderr,
+                            });
+                        }
+                        execute_provisioning_command(
+                            target,
+                            working_dir,
+                            "winget",
+                            &[
+                                "install",
+                                "--id",
+                                "jdx.mise",
+                                "--exact",
+                                "--accept-source-agreements",
+                                "--accept-package-agreements",
+                                "--silent",
+                            ],
+                            mode,
+                        )?
+                    } else {
+                        apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?
+                }
+            };
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
@@ -2220,6 +2295,39 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                 });
             }
 
+            #[cfg(windows)]
+            if matches!(target, ProvisioningExecutionTarget::Native) {
+                ensure_bootstrap_source_version(
+                    target,
+                    working_dir,
+                    "powershell",
+                    &[
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        windows_mise_version_probe_script(),
+                    ],
+                    action
+                        .approved_version
+                        .as_ref()
+                        .map_or(&[], |value| std::slice::from_ref(value)),
+                    mode,
+                )?;
+            } else {
+                ensure_bootstrap_source_version(
+                    target,
+                    working_dir,
+                    "mise",
+                    &["--version"],
+                    action
+                        .approved_version
+                        .as_ref()
+                        .map_or(&[], |value| std::slice::from_ref(value)),
+                    mode,
+                )?;
+            }
+            #[cfg(not(windows))]
             ensure_bootstrap_source_version(
                 target,
                 working_dir,
@@ -3828,6 +3936,15 @@ mod tests {
         );
         fs::write(&shim, script).unwrap();
         make_executable(&shim);
+    }
+
+    #[test]
+    fn windows_mise_version_probe_script_checks_candidate_locations() {
+        let script = super::windows_mise_version_probe_script();
+        assert!(script.contains("LOCALAPPDATA"), "{script}");
+        assert!(script.contains("mise\\bin\\mise.exe"), "{script}");
+        assert!(script.contains("Get-Command mise"), "{script}");
+        assert!(script.contains("--version"), "{script}");
     }
 
     #[test]
