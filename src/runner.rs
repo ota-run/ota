@@ -7296,15 +7296,10 @@ fn provisioning_action_effective_version(action: &ProvisioningAction) -> &str {
         .unwrap_or(action.requested_version.as_str())
 }
 
-fn wrap_command_for_source_managed_actions(
-    command: &str,
-    actions: &[ProvisioningAction],
-) -> String {
-    let mise_targets = actions
+fn source_managed_mise_targets(actions: &[ProvisioningAction]) -> Vec<String> {
+    actions
         .iter()
-        .filter(|action| {
-            action.source == "mise" && action.target_kind == ProvisioningTargetKind::Runtime
-        })
+        .filter(|action| action.source == "mise")
         .map(|action| {
             format!(
                 "{}@{}",
@@ -7312,7 +7307,15 @@ fn wrap_command_for_source_managed_actions(
                 provisioning_action_effective_version(action)
             )
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
+
+#[cfg(unix)]
+fn wrap_command_for_source_managed_actions(
+    command: &str,
+    actions: &[ProvisioningAction],
+) -> String {
+    let mise_targets = source_managed_mise_targets(actions);
     if mise_targets.is_empty() {
         return command.to_string();
     }
@@ -7326,6 +7329,28 @@ fn wrap_command_for_source_managed_actions(
     }
     wrapped.push_str(" -- sh -lc ");
     wrapped.push_str(&shell_quote(command));
+    wrapped
+}
+
+#[cfg(windows)]
+fn wrap_command_for_source_managed_actions(
+    command: &str,
+    actions: &[ProvisioningAction],
+) -> String {
+    let mise_targets = source_managed_mise_targets(actions);
+    if mise_targets.is_empty() {
+        return command.to_string();
+    }
+
+    let mut wrapped = String::from(
+        r#"set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && if exist "%USERPROFILE%\.local\bin\mise.exe" set "__OTA_MISE=%USERPROFILE%\.local\bin\mise.exe" && "%__OTA_MISE%" exec"#,
+    );
+    for target in &mise_targets {
+        wrapped.push(' ');
+        wrapped.push_str(&cmd_quote(target));
+    }
+    wrapped.push_str(" -- cmd /C ");
+    wrapped.push_str(&cmd_quote(command));
     wrapped
 }
 
@@ -40447,8 +40472,9 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn wrap_command_for_source_managed_actions_ignores_tool_only_actions() {
+    fn wrap_command_for_source_managed_actions_wraps_tool_only_actions() {
         let actions = vec![ProvisioningAction {
             kind: ProvisioningActionKind::Install,
             target_kind: ProvisioningTargetKind::Tool,
@@ -40462,10 +40488,36 @@ tasks:
             source_config: None,
             policy_match: None,
         }];
-        assert_eq!(
-            super::wrap_command_for_source_managed_actions("yq --version", &actions),
-            "yq --version"
+        let wrapped = super::wrap_command_for_source_managed_actions("yq --version", &actions);
+        assert!(wrapped.contains("mise"), "{wrapped}");
+        assert!(wrapped.contains("yq@4.52.5"), "{wrapped}");
+        assert!(wrapped.contains("sh -lc"), "{wrapped}");
+        assert!(wrapped.contains("'yq --version'"), "{wrapped}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wrap_command_for_source_managed_actions_uses_mise_exec_on_windows() {
+        let actions = vec![ProvisioningAction {
+            kind: ProvisioningActionKind::Install,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: String::from("bun"),
+            requested_version: String::from("1.3.12"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("mise"),
+            approved_version: Some(String::from("1.3.12")),
+            source_config: None,
+            policy_match: None,
+        }];
+        let wrapped = super::wrap_command_for_source_managed_actions("bun install", &actions);
+        assert!(
+            wrapped.contains("%LOCALAPPDATA%\\mise\\bin\\mise.exe"),
+            "{wrapped}"
         );
+        assert!(wrapped.contains("exec bun@1.3.12 -- cmd /C"), "{wrapped}");
+        assert!(wrapped.contains("\"bun install\""), "{wrapped}");
     }
 
     #[test]
