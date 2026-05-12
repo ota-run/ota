@@ -29,6 +29,7 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value;
 use thiserror::Error;
 
+use crate::execution::container_backend_probe_failure;
 use crate::policy_pack::{
     ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest, ProvisioningTargetKind,
 };
@@ -2597,6 +2598,17 @@ pub fn apply_provisioning_request_with_target(
     target: &ProvisioningExecutionTarget,
     mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+    if let ProvisioningExecutionTarget::Container { engine, .. } = target
+        && let Some(failure) = container_backend_probe_failure(engine.as_str())
+    {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: format!("{engine} info"),
+            exit_code: failure.exit_code.unwrap_or(1),
+            stdout: String::new(),
+            stderr: failure.details,
+        });
+    }
+
     let mut stdout = String::new();
     let mut stderr = String::new();
 
@@ -4818,7 +4830,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"E: Version '8.13.0' for 'curl' was not found\" >&2\n  exit 100\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  echo \"E: Version '8.13.0' for 'curl' was not found\" >&2\n  exit 100\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);
@@ -4881,7 +4893,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1; exit 0 ;;\n  esac\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1; exit 0 ;;\n  esac\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);
@@ -4944,7 +4956,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"Err:1 http://deb.debian.org/debian bookworm InRelease\" >&2\n  echo \"  Temporary failure resolving 'deb.debian.org'\" >&2\n  echo \"E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease\" >&2\n  echo \"E: Some index files failed to download. They have been ignored, or old ones used instead.\" >&2\n  exit 100\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  echo \"Err:1 http://deb.debian.org/debian bookworm InRelease\" >&2\n  echo \"  Temporary failure resolving 'deb.debian.org'\" >&2\n  echo \"E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease\" >&2\n  echo \"E: Some index files failed to download. They have been ignored, or old ones used instead.\" >&2\n  exit 100\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);
@@ -5004,7 +5016,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'Error: No available formula with the name \"node@22\"' >&2\n  exit 1\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  echo 'Error: No available formula with the name \"node@22\"' >&2\n  exit 1\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);

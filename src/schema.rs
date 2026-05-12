@@ -255,6 +255,33 @@ impl Contract {
         self.task_dependency_closure_names(roots)
     }
 
+    pub fn task_closure_required_env_names(
+        &self,
+        roots: impl IntoIterator<Item = String>,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for task_name in self.task_dependency_closure_names(roots) {
+            let Some(task) = self.tasks.get(task_name.as_str()) else {
+                continue;
+            };
+            names.extend(task.requirements.env.iter().cloned());
+        }
+        names
+    }
+
+    pub fn selected_workflow_required_env_names(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> BTreeSet<String> {
+        self.task_closure_required_env_names(
+            self.selected_workflow_task_closure_names(workflow_name),
+        )
+    }
+
+    pub fn task_required_env_names(&self, task_name: &str) -> BTreeSet<String> {
+        self.task_closure_required_env_names([task_name.to_string()])
+    }
+
     fn collect_task_dependency_closure(
         &self,
         name: &str,
