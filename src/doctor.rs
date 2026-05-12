@@ -8478,7 +8478,7 @@ tasks:
         let original_path = env::var_os("PATH");
         let original_pathext = env::var_os("PATHEXT");
 
-        let npm_path = write_fake_command(&temp, "npm", "@echo off\r\necho 9.9.9\r\n");
+        let npm_path = write_fake_command(temp.path(), "npm", "@echo off\r\necho 9.9.9\r\n");
 
         unsafe {
             env::set_var("PATH", temp.path());
