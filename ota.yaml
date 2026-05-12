@@ -120,6 +120,21 @@ tasks:
       cargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1
       cargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1
       cargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1
+    variants:
+      - when:
+          os: windows
+        script: |
+          cargo fmt --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --lib -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1
     depends_on:
       - setup
     safe_for_agent: true
