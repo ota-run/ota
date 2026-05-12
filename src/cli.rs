@@ -6653,6 +6653,10 @@ exec /bin/sh -lc "$1"
                 "    » ota probed\n      `./bin/node`\n      with `node --version`",
                 "    » ota probed `./bin/node` with\n      `node --version`",
             );
+            normalized = normalized.replace(
+                "    » ota probed\n      `/opt/homebrew/Cellar/node@24/24.15.0/lib/node_modules/npm/bin/npm-cli.js` with\n      `npm --version`",
+                "    » ota probed `/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js` with\n      `npm --version`",
+            );
         }
 
         if name != "help_root.txt" {
@@ -14969,11 +14973,11 @@ tasks:
         let receipt_next = json["receipt"]["next"].as_str().unwrap();
         let finding_next = json["findings"][0]["next"].as_str().unwrap();
 
-        assert!(receipt_next.contains("ota doctor --mode container"));
-        assert!(receipt_next.contains("ota up --mode container"));
+        assert!(receipt_next.contains("ota doctor --mode native"));
+        assert!(receipt_next.contains("ota run <task> --mode container"));
         assert!(receipt_next.contains(fixture.path()));
-        assert!(finding_next.contains("ota doctor --mode container"));
-        assert!(finding_next.contains("ota up --mode container"));
+        assert!(finding_next.contains("ota doctor --mode native"));
+        assert!(finding_next.contains("ota run <task> --mode container"));
         assert!(finding_next.contains(fixture.path()));
     }
 
@@ -26211,9 +26215,9 @@ tools:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" exit /b 1\r\necho unsupported\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'cargo'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'cargo'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30380,9 +30384,9 @@ runtimes:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" exit /b 1\r\necho unsupported\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'java'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'java'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30564,9 +30568,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"jq --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"dnf\" >nul && echo %* | findstr /C:\"jq-1.7.1\" >nul && (\r\n    echo No match for argument: jq-1.7.1 1>&2\r\n    echo Error: Unable to find a match: jq-1.7.1 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'jq'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"dnf\" >nul && echo %* | findstr /C:\"jq-1.7.1\" >nul && (\r\n    echo No match for argument: jq-1.7.1 1>&2\r\n    echo Error: Unable to find a match: jq-1.7.1 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"jq --version\"*) exit 1 ;;\n    *dnf*jq-1.7.1*) echo 'No match for argument: jq-1.7.1' >&2; echo 'Error: Unable to find a match: jq-1.7.1' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'jq'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n    *dnf*jq-1.7.1*) echo 'No match for argument: jq-1.7.1' >&2; echo 'Error: Unable to find a match: jq-1.7.1' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30625,9 +30629,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"jq --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"pacman\" >nul && echo %* | findstr /C:\"-Si\" >nul && (\r\n    echo error: target not found: jq 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'jq'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"pacman\" >nul && echo %* | findstr /C:\"-Si\" >nul && (\r\n    echo error: target not found: jq 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"jq --version\"*) exit 1 ;;\n    *pacman*'-Si'*jq*) echo 'error: target not found: jq' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'jq'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n    *pacman*'-Si'*jq*) echo 'error: target not found: jq' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30683,9 +30687,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"Microsoft.VisualStudioCode --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"winget\" >nul && echo %* | findstr /C:\"--versions\" >nul && (\r\n    echo Found Microsoft.VisualStudioCode\r\n    echo Version\r\n    echo 1.89.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'Microsoft.VisualStudioCode'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"winget\" >nul && echo %* | findstr /C:\"--versions\" >nul && (\r\n    echo Found Microsoft.VisualStudioCode\r\n    echo Version\r\n    echo 1.89.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"Microsoft.VisualStudioCode --version\"*) exit 1 ;;\n    *winget*--versions*) printf 'Found Microsoft.VisualStudioCode\\nVersion\\n1.89.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'Microsoft.VisualStudioCode'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n    *winget*--versions*) printf 'Found Microsoft.VisualStudioCode\\nVersion\\n1.89.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30742,9 +30746,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"git --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"choco\" >nul && echo %* | findstr /C:\"search\" >nul && (\r\n    echo git^|2.46.0\r\n    echo git^|2.45.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'git'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"choco\" >nul && echo %* | findstr /C:\"search\" >nul && (\r\n    echo git^|2.46.0\r\n    echo git^|2.45.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"git --version\"*) exit 1 ;;\n    *choco*search*) printf 'git|2.46.0\\ngit|2.45.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'git'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n    *choco*search*) printf 'git|2.46.0\\ngit|2.45.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30801,9 +30805,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"neovim --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"scoop\" >nul && echo %* | findstr /C:\"cat\" >nul && (\r\n    echo {\"version\":\"0.10.0\"}\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'neovim'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"scoop\" >nul && echo %* | findstr /C:\"cat\" >nul && (\r\n    echo {\"version\":\"0.10.0\"}\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"neovim --version\"*) exit 1 ;;\n    *scoop*cat*) printf '{\"version\":\"0.10.0\"}\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'neovim'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n    *scoop*cat*) printf '{\"version\":\"0.10.0\"}\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30975,9 +30979,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"java --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"sdk list java\" >nul && (\r\n    echo Available Java Versions\r\n    echo 17.0.9-tem\r\n    echo 22.0.1-tem\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'java'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"sdk list java\" >nul && (\r\n    echo Available Java Versions\r\n    echo 17.0.9-tem\r\n    echo 22.0.1-tem\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"java --version\"*) exit 1 ;;\n    *\"sdk list java\"*) printf 'Available Java Versions\\n17.0.9-tem\\n22.0.1-tem\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'java'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n    *\"sdk list java\"*) printf 'Available Java Versions\\n17.0.9-tem\\n22.0.1-tem\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -31033,9 +31037,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"python --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"uv\" >nul && echo %* | findstr /C:\"python list\" >nul && (\r\n    echo cpython-3.11.9-linux-x86_64-none\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'python'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"uv\" >nul && echo %* | findstr /C:\"python list\" >nul && (\r\n    echo cpython-3.11.9-linux-x86_64-none\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"python --version\"*) exit 1 ;;\n    *uv*python*list*) printf 'cpython-3.11.9-linux-x86_64-none\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'python'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n    *uv*python*list*) printf 'cpython-3.11.9-linux-x86_64-none\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
