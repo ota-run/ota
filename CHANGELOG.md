@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- fixed `ota proof runtime` lifecycle handling so the spawned `ota up --stream` process is always
+  stopped on proof-exit paths and no longer leaks work when doctor artifacts are not captured
+- improved `ota proof runtime` diagnostics: readiness waits now short-circuit if the proof-up process
+  exits early, and that termination reason is surfaced in proof text/JSON output as the command-level
+  error with actionable next steps
+- fixed Windows `ota doctor --container` false-missing tool diagnostics by keeping container
+  tool probing honest when a declared command resolves to shim-like entrypoints, so the same
+  image no longer reports `Missing Node` in one failure mode and a probe failure in another
+- updated Windows command resolution so command probing checks extensioned shims (for example
+  `.CMD`) even when `PATHEXT` is sparse, reducing platform-specific false negatives in
+  `ota doctor` and `ota run` prerequisite checks
+
 ## 1.6.10
 
 - hardened Windows native prerequisite activation so `visual_studio_dev_shell` now applies to the
