@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.12
+
 ## 1.6.11
 
 - fixed `ota proof runtime` lifecycle handling so the spawned `ota up --stream` process is always
