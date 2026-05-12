@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- fixed container backend trust on Windows and other mixed-host setups: `ota doctor` now treats
+  a declared/preferred container path as blocked when the selected engine CLI exists but `docker
+  info` / equivalent cannot reach a usable backend, `ota up` now preflights that backend before
+  provisioning so Docker connectivity failures are surfaced as backend availability problems
+  instead of misleading `mise` / tool-install diagnosis, and multi-engine contracts now prefer a
+  healthy engine when one candidate is down but another is usable
 - bounded service readiness retries when omitted to prevent `ota doctor` hangs:
   `services.<name>.readiness` checks now default to a finite probe budget (120 attempts) instead
   of waiting indefinitely when `retries` is not explicitly set

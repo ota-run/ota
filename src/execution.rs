@@ -22,6 +22,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::doctor::{command_available, resolve_command_path};
 use crate::schema::{Backend, ContainerBackend, Contract, Execution, Lifecycle, RemoteBackend};
@@ -178,6 +179,65 @@ pub(crate) fn container_engine_candidates_from_backend(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContainerBackendProbeFailure {
+    pub engine: String,
+    pub exit_code: Option<i32>,
+    pub details: String,
+}
+
+pub(crate) fn container_backend_probe_failure(
+    engine: &str,
+) -> Option<ContainerBackendProbeFailure> {
+    let output = Command::new(resolve_engine_path(engine))
+        .arg("info")
+        .output();
+    match output {
+        Ok(output) if output.status.success() => None,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let details = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                format!(
+                    "`{engine} info` exited with status {}",
+                    output.status.code().unwrap_or(1)
+                )
+            };
+            Some(ContainerBackendProbeFailure {
+                engine: engine.to_string(),
+                exit_code: output.status.code(),
+                details,
+            })
+        }
+        Err(error) => Some(ContainerBackendProbeFailure {
+            engine: engine.to_string(),
+            exit_code: None,
+            details: error.to_string(),
+        }),
+    }
+}
+
+pub(crate) fn preferred_container_backend_probe_failure(
+    container: Option<&ContainerBackend>,
+) -> Option<ContainerBackendProbeFailure> {
+    let mut first_failure = None;
+    for engine in container_engine_candidates_from_backend(container) {
+        if !command_available(engine.as_str()) {
+            continue;
+        }
+        match container_backend_probe_failure(engine.as_str()) {
+            None => return None,
+            Some(failure) if first_failure.is_none() => first_failure = Some(failure),
+            Some(_) => {}
+        }
+    }
+    first_failure
+}
+
 pub(crate) fn selected_container_engine(contract: &Contract) -> Option<String> {
     selected_container_engine_from_backend(selected_container_backend(contract.execution.as_ref()))
 }
@@ -187,7 +247,13 @@ pub(crate) fn selected_container_engine_from_backend(
 ) -> Option<String> {
     container_engine_candidates_from_backend(container)
         .into_iter()
-        .find(|engine| command_available(engine))
+        .filter(|engine| command_available(engine))
+        .find(|engine| container_backend_probe_failure(engine).is_none())
+        .or_else(|| {
+            container_engine_candidates_from_backend(container)
+                .into_iter()
+                .find(|engine| command_available(engine))
+        })
 }
 
 pub(crate) fn available_container_engines() -> Vec<String> {

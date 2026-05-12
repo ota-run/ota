@@ -61,9 +61,9 @@ use crate::doctor::{
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::execution::{
-    container_engine_candidates, container_engine_candidates_from_backend,
-    ephemeral_container_target, execution_image, execution_target, format_backend,
-    format_lifecycle, selected_container_engine_from_backend,
+    container_backend_probe_failure, container_engine_candidates,
+    container_engine_candidates_from_backend, ephemeral_container_target, execution_image,
+    execution_target, format_backend, format_lifecycle, selected_container_engine_from_backend,
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
@@ -11126,6 +11126,8 @@ fn build_env_report(
 
     let policy_env = load_policy_env_overlay(contract_path).map_err(|error| error.to_string())?;
     let declared_sources = load_declared_env_sources(contract, contract_path);
+    let selected_required_env_names =
+        task_name.map(|task_name| contract.task_required_env_names(task_name));
     let mut env = Vec::new();
     let mut sources = Vec::new();
     let mut contract_resolved_count = 0usize;
@@ -11157,6 +11159,10 @@ fn build_env_report(
 
     for (name, requirement) in &contract.env {
         let task_override = task_env.as_ref().and_then(|task_env| task_env.get(name));
+        let required_for_selected_path = requirement.required
+            || selected_required_env_names
+                .as_ref()
+                .is_some_and(|names| names.contains(name));
 
         if let Some(value) = task_override {
             let source = if explicit_task_env.is_some_and(|task_env| task_env.contains_key(name)) {
@@ -11167,6 +11173,7 @@ fn build_env_report(
             env.push(build_task_overridden_env_entry(
                 name,
                 requirement,
+                required_for_selected_path,
                 value,
                 source,
             ));
@@ -11210,7 +11217,7 @@ fn build_env_report(
                     env.push(EnvEntry {
                         name: name.clone(),
                         kind: EnvEntryKind::Contract,
-                        required: requirement.required,
+                        required: required_for_selected_path,
                         default: requirement.default.clone(),
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
@@ -11229,7 +11236,7 @@ fn build_env_report(
                     env.push(EnvEntry {
                         name: name.clone(),
                         kind: EnvEntryKind::Contract,
-                        required: requirement.required,
+                        required: required_for_selected_path,
                         default: requirement.default.clone(),
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
@@ -11243,7 +11250,7 @@ fn build_env_report(
                     });
                 }
             }
-            None if requirement.required => {
+            None if required_for_selected_path => {
                 missing_count += 1;
                 env.push(EnvEntry {
                     name: name.clone(),
@@ -11403,13 +11410,14 @@ fn env_entry_source_metadata(
 fn build_task_overridden_env_entry(
     name: &str,
     requirement: &EnvRequirement,
+    required: bool,
     value: &str,
     source: &str,
 ) -> EnvEntry {
     EnvEntry {
         name: name.to_string(),
         kind: EnvEntryKind::Contract,
-        required: requirement.required,
+        required,
         default: requirement.default.clone(),
         allowed: requirement.allowed.clone(),
         value: Some(display_env_value(value, requirement.secret)),
@@ -15405,8 +15413,14 @@ pub fn doctor(
                         );
                     }
                 };
-                let execution_summary =
-                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                let required_env_names = target
+                    .contract
+                    .selected_workflow_required_env_names(workflow_name);
+                let execution_summary = ExecutionSummary::from_contract_with_required_env_names(
+                    &target.contract,
+                    &target.contract_path,
+                    (!required_env_names.is_empty()).then_some(&required_env_names),
+                );
                 if members.is_empty()
                     && target.contract_path == resolved_path
                     && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -15547,10 +15561,16 @@ pub fn doctor(
                                     );
                                 }
                             };
-                            let member_execution = ExecutionSummary::from_contract(
-                                &member_target.contract,
-                                &member_target.contract_path,
-                            );
+                            let member_required_env_names = member_target
+                                .contract
+                                .selected_workflow_required_env_names(workflow_name);
+                            let member_execution =
+                                ExecutionSummary::from_contract_with_required_env_names(
+                                    &member_target.contract,
+                                    &member_target.contract_path,
+                                    (!member_required_env_names.is_empty())
+                                        .then_some(&member_required_env_names),
+                                );
                             let rewritten_member_findings = rewrite_doctor_findings_for_contract(
                                 &member_report.findings,
                                 &member_target.contract_path,
@@ -15667,10 +15687,13 @@ pub fn doctor(
                                     ),
                                     workflow: workflow_summary,
                                     agent: agent_summary,
-                                    execution: ExecutionSummary::from_contract(
-                                        &target.contract,
-                                        &target.contract_path,
-                                    ),
+                                    execution:
+                                        ExecutionSummary::from_contract_with_required_env_names(
+                                            &target.contract,
+                                            &target.contract_path,
+                                            (!required_env_names.is_empty())
+                                                .then_some(&required_env_names),
+                                        ),
                                     provisioning: report
                                         .provisioning
                                         .as_ref()
@@ -61109,12 +61132,27 @@ fn resolve_provisioning_execution_target(
             engine,
             lifecycle,
             ..
-        }) => Ok(ProvisioningExecutionTarget::Container {
-            image,
-            engine,
-            lifecycle,
-            container_name: None,
-        }),
+        }) => {
+            if let Some(failure) = container_backend_probe_failure(&engine) {
+                return Err(Finding {
+                    severity: FindingSeverity::Error,
+                    summary: format!("Container execution backend unavailable: {engine}"),
+                    why: format!(
+                        "container preparation resolved `{engine}`, but `{engine} info` could not reach a usable container backend: {}",
+                        failure.details
+                    ),
+                    next: String::from(
+                        "start or repair the selected container engine, or use `--mode native` if the contract allows it, then rerun `ota up`",
+                    ),
+                });
+            }
+            Ok(ProvisioningExecutionTarget::Container {
+                image,
+                engine,
+                lifecycle,
+                container_name: None,
+            })
+        }
         Ok(ResolvedExecutionBackend::Native { .. }) => Err(Finding {
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
