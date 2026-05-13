@@ -30863,9 +30863,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" (\r\n  echo {}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo command not found 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*ls-remote*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'command not found\\n' >&2; exit 127 ;;\n    *mise*ls-remote*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30876,9 +30876,10 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains(
-            "Primary Blocker Node cannot be provisioned through `mise` in container mode"
-        ));
+        assert!(
+            text.contains("Primary Blocker Runtime probe failed: node"),
+            "{text}"
+        );
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }

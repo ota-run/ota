@@ -32347,7 +32347,25 @@ printf ready > bun-ran.txt
 EOF
     chmod +x "$script_dir/$tool"
     ;;
+  which)
+    tool="${2:-}"
+    if [ -x "$script_dir/$tool" ]; then
+      printf '%s\n' "$script_dir/$tool"
+      exit 0
+    fi
+    printf 'VersionUnavailable `tool` `%s`\n' "$tool" >&2
+    exit 1
+    ;;
+  use)
+    if [ "${2:-}" = "-g" ]; then
+      exit 0
+    fi
+    ;;
   exec)
+    if [ "$#" -ge 4 ] && [ "$2" = "--" ] && [ "$3" = "sh" ] && [ "$4" = "-lc" ] && [ "${5:-}" = "bun install" ]; then
+      printf ready > bun-ran.txt
+      exit 0
+    fi
     shift
     while [ "$1" != "--" ]; do
       shift

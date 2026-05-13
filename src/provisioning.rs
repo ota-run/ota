@@ -1249,6 +1249,52 @@ fn prepend_directory_to_process_path(directory: &std::path::Path, case_insensiti
     }
 }
 
+#[cfg(unix)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(unix)]
+fn install_posix_mise_tool_wrapper(
+    tool_name: &str,
+    resolved_tool_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let mise_dir = find_posix_mise_executable_from_process_path()
+        .or_else(find_posix_mise_executable)
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))?;
+    let wrapper_path = mise_dir.join(tool_name);
+    if wrapper_path == resolved_tool_path {
+        return Some(wrapper_path);
+    }
+    let script = format!(
+        "#!/bin/sh\nexec {} \"$@\"\n",
+        shell_single_quote(&resolved_tool_path.to_string_lossy())
+    );
+    if std::fs::write(&wrapper_path, script).is_err() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&wrapper_path) {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o755);
+            if std::fs::set_permissions(&wrapper_path, permissions).is_err() {
+                return None;
+            }
+        }
+    }
+    Some(wrapper_path)
+}
+
+#[cfg(unix)]
+fn find_posix_mise_executable_from_process_path() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|segment| segment.join("mise"))
+        .find(|candidate| candidate.is_file())
+}
+
 #[cfg(any(windows, test))]
 fn windows_mise_candidate_paths() -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
@@ -1333,6 +1379,23 @@ fn posix_mise_candidate_paths() -> Vec<std::path::PathBuf> {
 }
 
 #[cfg(any(unix, test))]
+fn posix_mise_shim_directories() -> Vec<std::path::PathBuf> {
+    let mut shims = Vec::new();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let xdg_data_home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from);
+
+    if let Some(base) = home.as_ref() {
+        shims.push(base.join(".local").join("share").join("mise").join("shims"));
+        shims.push(base.join(".mise").join("shims"));
+    }
+    if let Some(base) = xdg_data_home.as_ref() {
+        shims.push(base.join("mise").join("shims"));
+    }
+
+    shims
+}
+
+#[cfg(any(unix, test))]
 fn find_posix_mise_executable() -> Option<std::path::PathBuf> {
     posix_mise_candidate_paths()
         .into_iter()
@@ -1346,6 +1409,22 @@ fn activate_posix_mise_on_path() -> Option<std::path::PathBuf> {
     prepend_directory_to_process_path(&directory, false);
 
     Some(executable)
+}
+
+pub(crate) fn activate_mise_paths_for_current_process() {
+    #[cfg(windows)]
+    {
+        let _ = activate_windows_mise_on_path();
+    }
+    #[cfg(unix)]
+    {
+        let _ = activate_posix_mise_on_path();
+        for shims_dir in posix_mise_shim_directories() {
+            if shims_dir.is_dir() {
+                prepend_directory_to_process_path(&shims_dir, false);
+            }
+        }
+    }
 }
 
 impl SdkmanBootstrapProvisioningBackend {
@@ -1615,9 +1694,20 @@ impl ProvisioningBackend for MiseProvisioningBackend {
                     .lines()
                     .map(str::trim)
                     .find(|line| !line.is_empty())
-                && let Some(tool_dir) = std::path::Path::new(path_text).parent()
             {
-                prepend_directory_to_process_path(tool_dir, cfg!(windows));
+                let resolved_tool_path = std::path::PathBuf::from(path_text);
+                #[cfg(unix)]
+                let path_candidate =
+                    install_posix_mise_tool_wrapper(&tool_name, &resolved_tool_path)
+                        .unwrap_or(resolved_tool_path.clone());
+                #[cfg(not(unix))]
+                let path_candidate = resolved_tool_path.clone();
+
+                if let Some(tool_dir) = path_candidate.parent() {
+                    prepend_directory_to_process_path(tool_dir, cfg!(windows));
+                } else if let Some(tool_dir) = resolved_tool_path.parent() {
+                    prepend_directory_to_process_path(tool_dir, cfg!(windows));
+                }
             }
         }
 
@@ -4171,6 +4261,36 @@ mod tests {
     }
 
     #[test]
+    fn activate_mise_paths_adds_posix_shims_directory() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let home = sandbox.path().join("home");
+        let shims = home.join(".local").join("share").join("mise").join("shims");
+        fs::create_dir_all(&shims).unwrap();
+
+        let original_home = env::var_os("HOME");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("HOME", &home);
+            env::set_var("PATH", sandbox.path().join("path-base"));
+        }
+
+        super::activate_mise_paths_for_current_process();
+        let updated_path = env::var_os("PATH").unwrap();
+        let segments = env::split_paths(&updated_path).collect::<Vec<_>>();
+        assert!(segments.contains(&shims), "{segments:?}");
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+    }
+
+    #[test]
     fn activates_windows_mise_path_from_winget_package_layout() {
         let _guard = env_mutex_lock();
         let sandbox = TempDir::new().unwrap();
@@ -4310,7 +4430,8 @@ mod tests {
         assert!(log_contents.contains("java@22"));
         let updated_path = env::var_os("PATH").unwrap();
         let mut segments = env::split_paths(&updated_path);
-        assert_eq!(segments.next(), Some(tools_dir));
+        assert_eq!(segments.next(), Some(shim_dir.path().to_path_buf()));
+        assert!(fs::metadata(shim_dir.path().join("java")).is_ok());
 
         unsafe {
             env::set_var("PATH", original_path);
