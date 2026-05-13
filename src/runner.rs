@@ -6255,6 +6255,13 @@ fn backend_fulfillment_plan(
     backend: &ResolvedExecutionBackend,
     host_port_override: Option<u16>,
 ) -> Result<Option<BackendFulfillmentPlan>, RunError> {
+    let task = contract
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| RunError::UnknownTask {
+            task: task_name.to_string(),
+        })?;
+
     if let ResolvedExecutionBackend::Native {
         shared_local_backend: Some(shared_local_backend),
     } = backend
@@ -6302,6 +6309,51 @@ fn backend_fulfillment_plan(
             backend_unit,
             backend_label: String::from("native"),
             mode,
+            strategy: BackendFulfillmentStrategy::Immediate,
+            target_os,
+            declared_runtimes,
+            declared_tools,
+            probe_backend: backend.clone(),
+            provisioning_target,
+        }));
+    }
+
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        let target_os = current_os().to_string();
+        let (declared_runtimes, declared_tools) =
+            direct_task_requirement_versions(contract, task, task_name, target_os.as_str())
+                .map_err(|details| RunError::BackendFulfillmentFailed {
+                    task: task_name.to_string(),
+                    backend_unit: format!("task:{task_name}:native"),
+                    details,
+                    evidence: BackendFulfillmentEvidence {
+                        backend_unit: format!("task:{task_name}:native"),
+                        backend: String::from("native"),
+                        mode: BackendFulfillmentMode::Run,
+                        declared_runtimes: BTreeMap::new(),
+                        declared_tools: BTreeMap::new(),
+                        missing: Vec::new(),
+                        actions: Vec::new(),
+                        result: BackendFulfillmentResult::Failed,
+                        task_executed: false,
+                    },
+                })?;
+        if declared_runtimes.is_empty() && declared_tools.is_empty() {
+            return Ok(None);
+        }
+        let backend_unit = format!("task:{task_name}:native");
+        let provisioning_target = Some(provisioning_target_for_resolved_backend(
+            contract_path,
+            backend,
+        )?);
+        return Ok(Some(BackendFulfillmentPlan {
+            cache_key: backend_fulfillment_cache_key(
+                backend_unit.clone(),
+                provisioning_target.as_ref(),
+            ),
+            backend_unit,
+            backend_label: String::from("native"),
+            mode: BackendFulfillmentMode::Run,
             strategy: BackendFulfillmentStrategy::Immediate,
             target_os,
             declared_runtimes,
@@ -6660,6 +6712,49 @@ fn direct_context_requirement_versions(
     merge_requirement_versions(
         &mut tools,
         &context.requirements.tools,
+        target_os,
+        tool_source.as_str(),
+    )?;
+
+    Ok((
+        runtimes
+            .into_iter()
+            .map(|(name, (version, _))| (name, version))
+            .collect(),
+        tools
+            .into_iter()
+            .map(|(name, (version, _))| (name, version))
+            .collect(),
+    ))
+}
+
+fn direct_task_requirement_versions(
+    contract: &Contract,
+    task: &TaskSpec,
+    task_name: &str,
+    target_os: &str,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
+    let mut runtimes = BTreeMap::<String, (String, String)>::new();
+    let mut tools = BTreeMap::<String, (String, String)>::new();
+    merge_requirement_versions(
+        &mut runtimes,
+        &contract.runtimes,
+        target_os,
+        "contract.runtimes",
+    )?;
+    merge_requirement_versions(&mut tools, &contract.tools, target_os, "contract.tools")?;
+
+    let runtime_source = format!("task `{task_name}` runtimes");
+    let tool_source = format!("task `{task_name}` tools");
+    merge_requirement_versions(
+        &mut runtimes,
+        &task.requirements.runtimes,
+        target_os,
+        runtime_source.as_str(),
+    )?;
+    merge_requirement_versions(
+        &mut tools,
+        &task.requirements.tools,
         target_os,
         tool_source.as_str(),
     )?;
@@ -32185,6 +32280,117 @@ tasks:
                 .unwrap()
                 .contains("run-ephemeral")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_setup_uses_mise_exec_for_source_managed_tool_actions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+tools:
+  bun:
+    version: "1.3.12"
+tasks:
+  setup:
+    run: bun install
+    requirements:
+      tools:
+        bun: "1.3.12"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: true
+  version_policy:
+    tools:
+      bun:
+        approved_versions:
+          - "1.3.12"
+  provisioning:
+    bun:
+      source: mise
+      approved_versions:
+        - "1.3.12"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let mise_path = bin_dir.join("mise");
+        fs::write(
+            &mise_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+printf '%s\n' "$*" >> "$script_dir/mise.log"
+case "${1:-}" in
+  --version)
+    printf '2026.5.6\n'
+    ;;
+  install)
+    tool="${2%@*}"
+    cat > "$script_dir/$tool" <<'EOF'
+#!/bin/sh
+printf ready > bun-ran.txt
+EOF
+    chmod +x "$script_dir/$tool"
+    ;;
+  exec)
+    shift
+    while [ "$1" != "--" ]; do
+      shift
+    done
+    shift
+    PATH="$script_dir:$PATH" "$@"
+    ;;
+  *)
+    ;;
+esac
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&mise_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&mise_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("bun-ran.txt")).unwrap(),
+            "ready"
+        );
+        let mise_log = fs::read_to_string(bin_dir.join("mise.log")).unwrap();
+        assert!(mise_log.contains("install bun@1.3.12"), "{mise_log}");
+        assert!(mise_log.contains("exec bun@1.3.12 -- sh -lc"), "{mise_log}");
     }
 
     #[cfg(unix)]
