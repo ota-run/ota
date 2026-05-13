@@ -24,6 +24,8 @@
 version: 1
 project:
   name: ota-script-example
+  description: Minimal script-first repo with an explicit setup and verification workflow
+  type: application
 tasks:
   setup:
     description: Prepare generated files with an inline shell script
@@ -37,6 +39,16 @@ tasks:
     depends_on:
       - setup
     run: test -f .ota/state.txt
+workflows:
+  default: bootstrap
+  bootstrap:
+    description: Canonical script-driven setup and verification path
+    setup:
+      task: setup
+    run:
+      task: test
+    notes: |
+      Use this when the repo value is generated state or filesystem preparation rather than a package toolchain.
 agent:
   entrypoint: setup
   default_task: test
@@ -52,5 +64,6 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
+    Use `ota workflows` to inspect the script-driven front door before running tasks directly.
     Use the setup step to prepare generated files before validation.
     Use `ota run test` as the confirmation path after edits.

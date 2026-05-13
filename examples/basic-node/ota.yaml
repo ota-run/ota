@@ -24,21 +24,55 @@
 version: 1
 project:
   name: basic-node
+  description: Minimal Node repo that still shows workflow, requirements, and acquisition
+  type: application
 runtimes:
   node: "22"
 tools:
-  pnpm: "10"
+  pnpm:
+    version: "10"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.0.0"
 tasks:
   setup:
+    description: Install Node dependencies
     run: pnpm install
+    requirements:
+      runtimes:
+        node: "22"
+      tools:
+        pnpm: "10"
+      checks:
+        - node-installed
   dev:
+    description: Start the local development task
     run: pnpm dev
     depends_on:
       - setup
+    requirements:
+      tools:
+        pnpm: "10"
   test:
+    description: Run the verification suite
     run: pnpm test
     depends_on:
       - setup
+    requirements:
+      tools:
+        pnpm: "10"
+workflows:
+  default: app
+  app:
+    intent: local_development
+    description: Canonical Node front door with explicit setup and run tasks
+    setup:
+      task: setup
+    run:
+      task: dev
+    notes: |
+      Use this when you want the repo front door, not just one command.
 checks:
   - name: node-installed
     kind: precondition
@@ -60,4 +94,5 @@ agent:
     - ota.yaml
   notes: |
     Use `ota validate` before changes and `ota doctor` after edits.
+    Use `ota workflows` to inspect the main repo path and `ota up --workflow app` to prepare it.
     Use `ota run test` as the main verification step for Node and TypeScript changes.

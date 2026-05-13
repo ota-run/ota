@@ -97,7 +97,7 @@ jobs:
           '@ | Set-Content -Path (Join-Path $proofRoot "ota.yaml") -NoNewline
 
           $doctorRawPath = Join-Path $proofRoot "doctor.raw.txt"
-          & $ota doctor $proofRoot --json *> $doctorRawPath
+          & $ota doctor --json $proofRoot *> $doctorRawPath
           $doctorExit = $LASTEXITCODE
           $doctorJson = Get-Content $doctorRawPath -Raw
           if ($doctorExit -ne 0) {
@@ -111,9 +111,12 @@ jobs:
           if (-not $doctor.ok) {
             throw "doctor did not report ready on the Windows native proof fixture"
           }
+          if ($doctor.summary.verdict -ne "ready") {
+            throw "doctor did not report a ready verdict on the Windows native proof fixture"
+          }
 
           $upRawPath = Join-Path $proofRoot "up.raw.txt"
-          & $ota up $proofRoot --json *> $upRawPath
+          & $ota up --json $proofRoot *> $upRawPath
           $upExit = $LASTEXITCODE
           $upJson = Get-Content $upRawPath -Raw
           if ($upExit -ne 0) {
@@ -132,7 +135,7 @@ jobs:
           }
 
           $proofRawPath = Join-Path $proofRoot "proof.raw.txt"
-          & $ota proof runtime $proofRoot --json *> $proofRawPath
+          & $ota proof runtime --json $proofRoot *> $proofRawPath
           $proofExit = $LASTEXITCODE
           $proofJson = Get-Content $proofRawPath -Raw
           if ($proofExit -ne 0) {
@@ -146,8 +149,24 @@ jobs:
           if (-not $proof.ok) {
             throw "ota proof runtime did not complete successfully on the Windows native proof fixture"
           }
+          if ($proof.mode -ne "runtime-proof") {
+            throw "ota proof runtime reported an unexpected mode"
+          }
+          if ($proof.workflow -ne "app") {
+            throw "ota proof runtime reported an unexpected workflow"
+          }
           if ($proof.summary.verdict -ne "ready") {
             throw "ota proof runtime did not report a ready verdict"
+          }
+          if (-not $proof.artifacts.topology -or -not $proof.artifacts.doctor -or -not $proof.artifacts.up_log) {
+            throw "ota proof runtime did not report all canonical artifact paths"
+          }
+
+          foreach ($artifact in @($proof.artifacts.topology, $proof.artifacts.doctor, $proof.artifacts.up_log)) {
+            $artifactPath = Join-Path $proofRoot $artifact
+            if (-not (Test-Path $artifactPath)) {
+              throw "ota proof runtime artifact missing: $artifact"
+            }
           }
 
       - name: Upload proof artifacts

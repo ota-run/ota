@@ -185,6 +185,18 @@ Use workflows for:
 - choosing the canonical prepare/setup/run path
 - grouping readiness under one named operational target
 
+Use `prepare` for one explicit host-side bootstrap action before setup, such as creating `.env.local`
+from `.env.example` when the real setup path should still stay container-backed or otherwise non-host.
+It must point at a native `action` task, not an ordinary shell or runtime task.
+
+Prepare vs setup vs run:
+
+- `prepare` is explicit host bootstrap before setup
+- `setup` is repo preparation
+- `run` is the primary operational path
+
+Good workflow design keeps those three meanings separate.
+
 Good boundary:
 
 - `tasks.setup` installs dependencies

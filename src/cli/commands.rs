@@ -35264,6 +35264,11 @@ fn render_agents_markdown(
             output.push_str(intent);
             output.push_str("`\n");
         }
+        if let Some(prepare_task) = workflow.prepare_task {
+            output.push_str("- `prepare`: `ota run ");
+            output.push_str(prepare_task);
+            output.push_str("`\n");
+        }
         if let Some(setup_task) = workflow.setup_task {
             output.push_str("- `setup`: `ota run ");
             output.push_str(setup_task);
@@ -44508,6 +44513,47 @@ execution:
 
         assert!(text.contains("run `ota run dev` to activate the canonical repo workflow"));
         assert!(!text.contains("run `ota run ci` to execute the default repo task"));
+    }
+
+    #[test]
+    fn render_agents_markdown_includes_default_workflow_prepare() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    prepare:
+      task: setup:env:local
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let rendered =
+            super::render_agents_markdown(&contract, Path::new("./ota.yaml"), None, "./ota.yaml");
+
+        assert!(rendered.contains("- `prepare`: `ota run setup:env:local`"));
+        assert!(rendered.contains("- `setup`: `ota run setup`"));
+        assert!(rendered.contains("- `run`: `ota run dev`"));
     }
 
     #[test]

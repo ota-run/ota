@@ -33,9 +33,29 @@ Doctor first, contract second.
 
 Pick the example that matches the outcome you want to prove first.
 
-### I need a first contract for one language repo
+### I need a first meaningful contract for one language repo
 
-Use one of the smallest starters:
+Start with the public templates and references:
+
+- [Node Service Template](https://github.com/ota-run/examples/tree/main/templates/node-service) for a real
+  Node service with workflow, requirements, acquisition, and agent boundaries
+- [Python Service Template](https://github.com/ota-run/examples/tree/main/templates/python-service) for a real
+  Python service with setup, lint, test, and acquisition
+- [Tool Acquisition Flow](https://github.com/ota-run/examples/tree/main/reference/tool-acquisition-flow) when
+  the main question is how Ota makes missing tools available instead of only checking for them
+- [Adoption Flow](https://github.com/ota-run/examples/tree/main/reference/adoption-flow) when you want to see
+  how an existing repo moves from implicit setup to an explicit Ota front door
+
+What this proves:
+
+- Ota models the repo front door, not just individual commands
+- setup and run are separate contract concerns
+- requirements and acquisition can live in the contract instead of in README prose
+- agent boundaries and repeatable verification are first-class
+
+### I need the smallest syntax example for one language repo
+
+Use one of the minimal starters:
 
 - [Basic Node](../../examples/basic-node/ota.yaml) for Node / TypeScript repos
 - [Basic Python](../../examples/basic-python/ota.yaml) for Python repos
@@ -49,7 +69,24 @@ What this proves:
 
 - the minimum `ota.yaml` shape for one stack
 - `ota doctor`, `ota up`, and `ota run` on a simple repo
-- the contract boundary without service topology or workspace complexity
+- the smallest contract boundary without service topology or workspace complexity
+
+Use these when you want the smallest valid shape first, not when you want the strongest example of
+what Ota can model.
+
+### I need a Windows-native repo with explicit compiler activation
+
+Start with:
+
+- [Windows-first adoption with explicit native activation](/docs/examples/windows-adoption)
+
+What this proves:
+
+- native compiler activation can be contract truth instead of shell tribal knowledge
+- `visual_studio_dev_shell` is part of the selected task path, not a manual prerequisite outside Ota
+- `ota doctor`, `ota up --dry-run`, and `ota proof runtime --workflow app` can describe and verify the same Windows-native path
+
+Use this when the repo is Windows-heavy and the real question is whether Ota can keep native activation explicit and trustworthy.
 
 ### I need a normal app repo with services
 
@@ -65,6 +102,9 @@ Then look at:
 What this proves:
 
 - service-backed tasks
+- workflow-scoped setup and run for an app path
+- workflow `prepare` for deterministic host file bootstrap before setup
+- contract env policy plus task-scoped env requirements
 - local readiness and targetable listeners
 - a more realistic app contract than a single-script starter
 
@@ -163,6 +203,7 @@ Use [ota-run/examples](https://github.com/ota-run/examples) when you want:
 - production-adjacent templates
 - more opinionated stack examples
 - examples that go beyond the small canonical shapes kept in this repo
+- stronger examples of workflows, acquisition, readiness, and agent-safe repo operation
 
 ## Related Docs
 

@@ -456,6 +456,7 @@ Current behavior:
 - when `--member` is set, inspects the merged member contract
 - when `--workflow` is set, plans the selected workflow instead of assuming `workflows.default`
 - when the selected workflow declares `run.task`, planning resolves that canonical runtime path first; if the workflow only declares `setup.task`, planning uses that setup path as the fallback
+- when the selected workflow also declares `prepare.task`, planning reports that host file-prep phase inside the additive workflow summary but does not use it as the concrete execution `task`
 - reuses the same backend and lifecycle resolution path as `ota run` and `ota up`
 - when named contexts use `execution.contexts.<name>.extends`, planning resolves the merged context first and reports that concrete backend/lifecycle/image shape
 - reports the resolved backend, lifecycle, image, container-engine selection, and target strategy
@@ -469,7 +470,7 @@ Text output:
 - status line: `RESOLVED`
 - optional `Workflow` section when the repo declares workflows and planning targets one explicitly
 - `Resolved` section with selected backend, lifecycle, image, engine candidates, target, and target strategy
-- selected `Task` when a workflow run task, or setup-only fallback, is the concrete planning source
+- selected `Task` when a workflow run task, or setup-only fallback, is the concrete planning source; `prepare` remains additive workflow context, not runtime identity
 - `Contract` section with the same compact contract identity used by receipts
 - `Execution` section when the contract declares execution intent
 - `Overrides` section when `--mode`, `--lifecycle`, or `--ephemeral` changed the resolved result
@@ -1404,6 +1405,9 @@ Current behavior:
 
 - keeps the contract-first boundary workflow inside `ota.yaml`: `ota agents --review` inspects the current writable/protected path boundary and provenance, `ota agents --confirm --dry-run` previews the exact `reviewed: true` mutation, and `ota agents --confirm` writes that confirmation into the contract before any `AGENTS.md` sync
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
+- when the default workflow is declared, the generated default-workflow summary now carries the
+  explicit `prepare`, `setup`, and `run` command forms instead of collapsing host file prep into
+  setup implicitly
 - when the repo contract does not declare `agent`, preview mode now behaves like a blocked agent-boundary sync surface instead of a generic scaffold preview: it reports `Agent contract missing`, shows compare-first next steps through `ota detect --dry-run` and `ota init --dry-run`, and surfaces any trustworthy inferred repo signals plus inferred starter agent boundaries under `Repo Signals`
 - `ota agents --write` now refuses when the repo contract still lacks `agent`, so Ota does not write generic guidance that looks more authoritative than the authored contract
 - renders an explicit `Bootstrap` section when `agent.bootstrap.ota` is present, including the approved shell and PowerShell install commands for `ota`
