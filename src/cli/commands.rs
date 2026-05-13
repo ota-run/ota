@@ -30852,6 +30852,16 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
             description
         ));
     }
+    if let Some(notes) = workflow.notes
+        && !notes.trim().is_empty()
+    {
+        output.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Notes:"),
+            render_multiline_field(notes)
+        ));
+    }
     if let Some(setup_task) = workflow.setup_task {
         output.push_str(&format!(
             "\n {}  {} `{}`",
@@ -37439,6 +37449,7 @@ tasks:
             name: "app",
             intent: Some("local_development"),
             description: Some("Primary local app workflow"),
+            notes: Some("Use this to validate local startup before release"),
             setup_task: Some("setup"),
             run_task: Some("dev"),
             run_task_launch: None,
@@ -37483,6 +37494,11 @@ tasks:
 
         assert!(rendered.contains("Workflow"), "{rendered}");
         assert!(rendered.contains("Name: app"), "{rendered}");
+        assert!(rendered.contains("Notes:"), "{rendered}");
+        assert!(
+            rendered.contains("Use this to validate local startup before release"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Setup: `ota run setup`"), "{rendered}");
         assert!(rendered.contains("Run: `ota run dev`"), "{rendered}");
         assert!(rendered.contains("Services: postgres"), "{rendered}");
@@ -44276,6 +44292,7 @@ execution:
             name: "app",
             intent: Some("local_development"),
             description: None,
+            notes: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
             run_task_launch: None,

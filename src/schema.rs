@@ -329,6 +329,8 @@ pub struct WorkflowSpec {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
     pub setup: Option<WorkflowTaskRefSpec>,
     #[serde(default)]
     pub run: Option<WorkflowTaskRefSpec>,

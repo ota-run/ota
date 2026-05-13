@@ -5,6 +5,46 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["ok", "path", "mode", "summary", "findings"],
+  "$defs": {
+    "workflowSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "intent": { "type": "string" },
+        "description": { "type": "string" },
+        "notes": { "type": "string" },
+        "setup_task": { "type": "string" },
+        "run_task": { "type": "string" },
+        "run_task_launch": { "$ref": "./execution.json#/$defs/taskLaunch" },
+        "required_services": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readiness_checks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readiness_probes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readiness_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "exposes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "expose_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
@@ -25,6 +65,7 @@
         "info_count": { "type": "integer", "minimum": 0 }
       }
     },
+    "workflow": { "$ref": "#/$defs/workflowSummary" },
     "agent": {
       "type": "object",
       "additionalProperties": false,

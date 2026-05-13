@@ -323,7 +323,7 @@ Text output:
 
 - header: `WORKFLOWS <path>`
 - overview includes workflow count and the selected default workflow when declared
-- each workflow may include `intent`, `description`, `setup`, `run`, `services`,
+- each workflow may include `intent`, `description`, `notes`, `setup`, `run`, `services`,
   `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, and `exposes`
 - when no workflows are declared, the text output says so explicitly and points users back to
   `ota tasks` or contract authoring instead of ending empty

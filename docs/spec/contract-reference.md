@@ -704,6 +704,7 @@ Rules:
   selected task/workflow requires it
 - `acquisition.provider`: supported values are `corepack` and `command`
 - `acquisition.package` and `acquisition.version` are required for `provider: corepack`
+- `tool node` cannot use `provider: corepack`; declare Node under `runtimes.node`.
 - `acquisition.shell` and `acquisition.run` are required for `provider: command`
 - `provider: corepack` activates package-manager-managed tools such as `pnpm` through
   `corepack enable && corepack prepare <package>@<version> --activate`
@@ -2051,6 +2052,7 @@ Fields:
 - `default`: required when `workflows` is declared; names the canonical repo workflow
 - `<name>.intent`: optional workflow classification such as `local_development`
 - `<name>.description`: optional operator-facing summary
+- `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
 - `<name>.services.required`: optional services that belong to that workflow
