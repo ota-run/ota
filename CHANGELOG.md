@@ -29,6 +29,9 @@
 - added workflow `notes` support (contract, CLI text, and JSON output): contracts can now declare
   `workflows.<name>.notes`, surfaced in `ota workflows` and workflow-scoped `ota tasks --workflow`
   output to provide operator guidance and setup context without overloading `description`
+- refreshed `ota workflows` text output to use the same flat scan-friendly layout as `ota tasks`,
+  including workflow-native `Use` / `Proof` command hints, per-entry `Default` status, and inline
+  workflow notes where declared
 - expanded docs for workflow notes and workflow output contracts: `docs/spec/contract-reference.md`,
   `docs/spec/command-reference.md`, and `docs/spec/json-output-reference.md` now mention workflow notes
   in the correct operator/API surfaces

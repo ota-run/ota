@@ -323,8 +323,12 @@ Text output:
 
 - header: `WORKFLOWS <path>`
 - overview includes workflow count and the selected default workflow when declared
+- each workflow is rendered in the same flat scan-friendly layout as `ota tasks`
+- each workflow includes workflow-native command hints such as `Use: ota up --workflow <name>`
+  and `Proof: ota proof runtime --workflow <name>`
 - each workflow may include `intent`, `description`, `notes`, `setup`, `run`, `services`,
-  `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, and `exposes`
+  `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, `exposes`, and
+  the per-entry `default` flag
 - when no workflows are declared, the text output says so explicitly and points users back to
   `ota tasks` or contract authoring instead of ending empty
 

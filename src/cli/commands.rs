@@ -30509,7 +30509,7 @@ fn render_tasks_text(
 
     if let Some(workflow) = workflow {
         output.push_str("\n\n");
-        output.push_str(&render_workflow_summary_text(workflow));
+        output.push_str(&render_workflow_summary_text(workflow, None));
     }
 
     if let Some(agent) = agent
@@ -30824,20 +30824,16 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     output
 }
 
-fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
-    let mut output = paint_section_title("Workflow");
-    output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
-        paint_key("Name:"),
-        paint(workflow.name, "1;37")
-    ));
+fn render_workflow_summary_text(
+    workflow: &WorkflowSummary<'_>,
+    default: Option<bool>,
+) -> String {
+    let mut output = format!("{} {}", list_bullet(), paint(workflow.name, "1"));
     if let Some(intent) = workflow.intent
         && !intent.trim().is_empty()
     {
         output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
+            "\n  {} {}",
             paint_key("Intent:"),
             intent
         ));
@@ -30846,49 +30842,53 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         && !description.trim().is_empty()
     {
         output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
+            "\n  {} {}",
             paint_key("Description:"),
             description
         ));
     }
+    output.push_str(&format!(
+        "\n  {} `{}`",
+        paint_key("Use:"),
+        paint_code(&format!("ota up --workflow {}", workflow.name))
+    ));
+    output.push_str(&format!(
+        "\n  {} `{}`",
+        paint_key("Proof:"),
+        paint_code(&format!("ota proof runtime --workflow {}", workflow.name))
+    ));
     if let Some(notes) = workflow.notes
         && !notes.trim().is_empty()
     {
         output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
+            "\n  {} {}",
             paint_key("Notes:"),
             render_multiline_field(notes)
         ));
     }
     if let Some(setup_task) = workflow.setup_task {
         output.push_str(&format!(
-            "\n {}  {} `{}`",
-            summary_bullet(),
+            "\n  {} `{}`",
             paint_key("Setup:"),
             paint_code(&format!("ota run {setup_task}"))
         ));
     }
     if let Some(run_task) = workflow.run_task {
         output.push_str(&format!(
-            "\n {}  {} `{}`",
-            summary_bullet(),
+            "\n  {} `{}`",
             paint_key("Run:"),
             paint_code(&format!("ota run {run_task}"))
         ));
     }
     if let Some(launch) = workflow.run_task_launch.as_ref() {
         output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
+            "\n  {} {}",
             paint_key("Run Launch:"),
             render_task_launch_text(launch)
         ));
     }
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Services:"),
         if workflow.required_services.is_empty() {
             String::from("-")
@@ -30897,8 +30897,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Readiness Checks:"),
         if workflow.readiness_checks.is_empty() {
             String::from("-")
@@ -30907,8 +30906,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Readiness Probes:"),
         if workflow.readiness_probes.is_empty() {
             String::from("-")
@@ -30917,8 +30915,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Readiness Surfaces:"),
         if workflow.readiness_surfaces.is_empty() {
             String::from("-")
@@ -30928,8 +30925,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
     ));
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
         output.push_str(&format!(
-            "\n {}  {}",
-            summary_bullet(),
+            "\n  {}",
             paint_key("Exposes:")
         ));
         if !workflow.expose_entries.is_empty() {
@@ -30953,6 +30949,13 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
                 ));
             }
         }
+    }
+    if let Some(default) = default {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Default:"),
+            if default { "true" } else { "false" }
+        ));
     }
     output
 }
@@ -31072,7 +31075,7 @@ fn render_tasks_output_text(
         let mut output = render_tasks_use_text(path, tasks);
         if let Some(workflow) = workflow {
             output.push_str("\n\n");
-            output.push_str(&render_workflow_summary_text(workflow));
+            output.push_str(&render_workflow_summary_text(workflow, None));
         }
         output
     } else {
@@ -31117,12 +31120,9 @@ fn render_workflows_output_text(
 
     for listed in workflows {
         output.push_str("\n\n");
-        output.push_str(&render_workflow_summary_text(&listed.workflow));
-        output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Default:"),
-            if listed.default { "true" } else { "false" }
+        output.push_str(&render_workflow_summary_text(
+            &listed.workflow,
+            Some(listed.default),
         ));
     }
 
@@ -32600,7 +32600,7 @@ fn render_report_section(
         stdout.push_str("\n\n");
     }
     if let Some(workflow) = workflow {
-        stdout.push_str(&render_workflow_summary_text(workflow));
+        stdout.push_str(&render_workflow_summary_text(workflow, None));
         stdout.push_str("\n\n");
     }
 
@@ -34680,7 +34680,10 @@ fn render_execution_plan_text(
         selected_execution_plan_context_summary(declared_execution, selected_context);
 
     if let Some(workflow) = workflow {
-        stdout.push_str(&format!("\n\n{}", render_workflow_summary_text(workflow)));
+        stdout.push_str(&format!(
+            "\n\n{}",
+            render_workflow_summary_text(workflow, None)
+        ));
     }
 
     stdout.push_str(&format!(
@@ -36867,8 +36870,8 @@ mod tests {
         ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorVerdict,
         EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs,
         ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
-        ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary, TaskSummary,
-        WorkflowSummary,
+        ListedWorkflowSummary, ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary,
+        TaskSummary, WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -37492,8 +37495,15 @@ tasks:
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", Some(&workflow), None, &[task]));
 
-        assert!(rendered.contains("Workflow"), "{rendered}");
-        assert!(rendered.contains("Name: app"), "{rendered}");
+        assert!(rendered.contains("✦ app"), "{rendered}");
+        assert!(
+            rendered.contains("Use: `ota up --workflow app`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Proof: `ota proof runtime --workflow app`"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Notes:"), "{rendered}");
         assert!(
             rendered.contains("Use this to validate local startup before release"),
@@ -38855,6 +38865,53 @@ tasks:
         assert!(text.contains(
             "add `workflows` to `ota.yaml` when the repo has more than one meaningful operational path"
         ));
+    }
+
+    #[test]
+    fn workflows_text_uses_task_style_layout_with_notes_and_commands() {
+        let workflows = vec![ListedWorkflowSummary {
+            default: false,
+            workflow: WorkflowSummary {
+                name: "build",
+                intent: Some("local_build"),
+                description: Some("Build artifacts for local installation testing"),
+                notes: Some("Use this path before packaging artifacts for manual QA."),
+                setup_task: Some("install:app"),
+                run_task: Some("build"),
+                run_task_launch: None,
+                required_services: Vec::new(),
+                readiness_checks: vec![
+                    String::from("node-toolchain-ready"),
+                    String::from("build-output-dir"),
+                ],
+                readiness_probes: Vec::new(),
+                readiness_surfaces: Vec::new(),
+                exposes: Vec::new(),
+                expose_surfaces: Vec::new(),
+                expose_entries: Vec::new(),
+            },
+        }];
+
+        let text = strip_ansi_codes(&super::render_workflows_output_text(
+            "./ota.yaml",
+            Some("contributor"),
+            &workflows,
+        ));
+
+        assert!(text.contains("✦ build"), "{text}");
+        assert!(text.contains("Use: `ota up --workflow build`"), "{text}");
+        assert!(
+            text.contains("Proof: `ota proof runtime --workflow build`"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Setup: `ota run install:app`"),
+            "{text}"
+        );
+        assert!(text.contains("Run: `ota run build`"), "{text}");
+        assert!(text.contains("Readiness Checks: node-toolchain-ready,build-output-dir"), "{text}");
+        assert!(text.contains("Notes:"), "{text}");
+        assert!(text.contains("Default: false"), "{text}");
     }
 
     #[test]
