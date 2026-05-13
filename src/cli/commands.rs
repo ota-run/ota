@@ -30824,19 +30824,12 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     output
 }
 
-fn render_workflow_summary_text(
-    workflow: &WorkflowSummary<'_>,
-    default: Option<bool>,
-) -> String {
+fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<bool>) -> String {
     let mut output = format!("{} {}", list_bullet(), paint(workflow.name, "1"));
     if let Some(intent) = workflow.intent
         && !intent.trim().is_empty()
     {
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Intent:"),
-            intent
-        ));
+        output.push_str(&format!("\n  {} {}", paint_key("Intent:"), intent));
     }
     if let Some(description) = workflow.description
         && !description.trim().is_empty()
@@ -30924,10 +30917,7 @@ fn render_workflow_summary_text(
         }
     ));
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
-        output.push_str(&format!(
-            "\n  {}",
-            paint_key("Exposes:")
-        ));
+        output.push_str(&format!("\n  {}", paint_key("Exposes:")));
         if !workflow.expose_entries.is_empty() {
             for expose in &workflow.expose_entries {
                 let detail = if let Some(surface) = expose.surface.as_deref() {
@@ -36869,8 +36859,8 @@ mod tests {
     use crate::output::{
         ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorVerdict,
         EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs,
-        ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
-        ListedWorkflowSummary, ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary,
+        ExecutionReceiptSummary, ExecutionSummary, ListedWorkflowSummary, ServiceEndpointSummary,
+        ServiceManagerSummary, ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary,
         TaskSummary, WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
@@ -38904,12 +38894,12 @@ tasks:
             text.contains("Proof: `ota proof runtime --workflow build`"),
             "{text}"
         );
+        assert!(text.contains("Setup: `ota run install:app`"), "{text}");
+        assert!(text.contains("Run: `ota run build`"), "{text}");
         assert!(
-            text.contains("Setup: `ota run install:app`"),
+            text.contains("Readiness Checks: node-toolchain-ready,build-output-dir"),
             "{text}"
         );
-        assert!(text.contains("Run: `ota run build`"), "{text}");
-        assert!(text.contains("Readiness Checks: node-toolchain-ready,build-output-dir"), "{text}");
         assert!(text.contains("Notes:"), "{text}");
         assert!(text.contains("Default: false"), "{text}");
     }
@@ -50877,7 +50867,10 @@ tasks:
         assert_eq!(result.status, "BLOCKED");
         assert_eq!(result.phase, "provisioning");
         assert_eq!(result.task.as_deref(), Some("setup"));
-        assert_eq!(result.report.findings[0].summary, "Runtime probe failed: node");
+        assert_eq!(
+            result.report.findings[0].summary,
+            "Runtime probe failed: node"
+        );
         assert_eq!(
             super::primary_up_failure_cause(
                 result.status,
