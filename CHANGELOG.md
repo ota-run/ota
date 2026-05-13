@@ -45,6 +45,10 @@
   `ota run` now activate detected mise bin/shims directories on process startup so subsequent
   command invocations can resolve policy-provisioned tools without requiring manual shell
   activation between steps
+- fixed mixed-mode dependency orchestration for `ota up` / `ota run`: when a requested task
+  runs in one backend but a dependency declares its own default mode (for example native
+  `copy_if_missing` setup actions before a container workflow), Ota now resolves that dependency
+  against its declared/default execution mode instead of force-applying the requested task mode
 - fixed container backend trust on Windows and other mixed-host setups: `ota doctor` now treats
   a declared/preferred container path as blocked when the selected engine CLI exists but `docker
   info` / equivalent cannot reach a usable backend, `ota up` now preflights that backend before

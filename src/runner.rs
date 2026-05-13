@@ -5044,11 +5044,18 @@ fn execute_task_with_hooks(
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
     if !(requested_relation && requested_overrides.skip_deps) {
+        let dependency_overrides = ExecutionOverrides {
+            backend: None,
+            lifecycle: requested_overrides.lifecycle,
+            host_port: None,
+            memory: None,
+            skip_deps: false,
+        };
         for dependency in &task.depends_on {
             let dependency_backend = resolve_execution_backend_with_contract_path(
                 contract,
                 dependency,
-                requested_overrides,
+                dependency_overrides,
                 Some(contract_path),
             )?;
             let dependency_exit = execute_task_with_hooks(
@@ -5056,7 +5063,7 @@ fn execute_task_with_hooks(
                 contract_path,
                 dependency,
                 &[],
-                requested_overrides.clone(),
+                dependency_overrides,
                 policy_env,
                 &dependency_backend,
                 mode.clone(),
@@ -32279,6 +32286,91 @@ tasks:
             fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
                 .unwrap()
                 .contains("run-ephemeral")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_container_mode_keeps_native_file_action_dependencies_on_host() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    run: printf ready > prepared.txt
+    depends_on:
+      - setup:env:local
+"#,
+        );
+        fs::write(fixture.dir.path().join(".env.example"), "KEY=VALUE\n").unwrap();
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap(),
+            "KEY=VALUE\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
         );
     }
 
