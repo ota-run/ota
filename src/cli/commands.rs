@@ -36917,6 +36917,18 @@ mod tests {
         write_executable_script(&dir.join("brew"), &brew_script);
     }
 
+    #[cfg(unix)]
+    fn make_mise_bootstrap_to_home_local_bin_shim(dir: &Path) {
+        let bootstrap_log = dir.join("mise-bootstrap.log");
+        let mise_log = dir.join("mise.log");
+        let sh_script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q \"curl https://mise.run | bash\"; then\n  mkdir -p \"$HOME/.local/bin\"\n  cat > \"$HOME/.local/bin/mise\" <<'MISEEOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '2025.1.0'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ] && [ \"$2\" = \"bun@1.3.12\" ]; then\n  cat > \"$(dirname \"$0\")/bun\" <<'BUNEOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '1.3.12'\n  exit 0\nfi\nexit 0\nBUNEOF\n  chmod +x \"$(dirname \"$0\")/bun\"\n  exit 0\nfi\nexit 0\nMISEEOF\n  chmod +x \"$HOME/.local/bin/mise\"\n  exit 0\nfi\nexec /bin/sh \"$@\"\n",
+            bootstrap_log.display(),
+            mise_log.display(),
+        );
+        write_executable_script(&dir.join("sh"), &sh_script);
+    }
+
     #[test]
     fn build_env_report_uses_effective_execution_env_for_task() {
         let temp_dir = TempDir::new().unwrap();
@@ -40609,7 +40621,42 @@ tasks:
     }
 
     #[test]
-    fn up_preview_does_not_treat_probe_failures_as_provisionable() {
+    fn finding_targets_provisioning_action_for_unparseable_tool_version() {
+        let finding = Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Unparseable version for tool: npm (context app)"),
+            why: String::from(
+                "ota probed `/usr/local/bin/npm` with `npm --version`, but the output did not contain a parseable version",
+            ),
+            next: String::from(
+                "run `npm --version` directly, inspect `/usr/local/bin/npm`, and make sure the output contains a parseable version before rerunning `ota doctor`",
+            ),
+        };
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: String::from("npm"),
+            requested_version: String::from("*"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("brew"),
+            source_config: None,
+            approved_version: Some(String::from("*")),
+            policy_match: None,
+        };
+
+        assert_eq!(
+            super::provisionable_target_key_for_finding(&finding),
+            Some(String::from("tool:npm"))
+        );
+        assert!(super::finding_targets_provisioning_action(
+            &finding, &action
+        ));
+    }
+
+    #[test]
+    fn up_preview_treats_probe_failures_as_provisionable() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -40667,13 +40714,13 @@ tasks:
         );
 
         assert!(
-            !preview
+            preview
                 .plan
                 .actions
                 .contains(&String::from("provision `npm` `*` via `choco`"))
         );
         assert!(
-            preview
+            !preview
                 .plan
                 .skipped
                 .contains(&String::from("skip `npm`; already satisfies the contract"))
@@ -49597,6 +49644,129 @@ policies:
             "Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
         ));
         assert!(rendered.contains("Task output: bash: line 1: curl: command not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_bootstrapped_mise_from_home_local_bin_recovers_and_provisions_same_run() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let policy_dir = repo.path().join(".ota");
+        fs::create_dir_all(&policy_dir).unwrap();
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: bootstrap-home-local-bin
+execution:
+  preferred: native
+  supported:
+    - native
+tools:
+  bun:
+    version: "1.3.12"
+tasks:
+  setup:
+    run: echo setup
+    requirements:
+      tools:
+        bun: "1.3.12"
+  ci:
+    run: echo ci
+    depends_on:
+      - setup
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+    run:
+      task: ci
+"#,
+        )
+        .unwrap();
+        fs::write(
+            policy_dir.join("org-policy.yaml"),
+            r#"
+policies:
+  version_policy:
+    tools:
+      bun:
+        approved_versions:
+          - "1.3.12"
+  provisioning:
+    bun:
+      source: mise
+      approved_versions:
+        - "1.3.12"
+  adapter_bootstrap:
+    mise:
+      source: mise-bootstrap
+      approved_versions:
+        - ">=2024.12"
+"#,
+        )
+        .unwrap();
+
+        let shim_dir = TempDir::new().unwrap();
+        let fake_home = TempDir::new().unwrap();
+        make_mise_bootstrap_to_home_local_bin_shim(shim_dir.path());
+
+        let original_home = env::var_os("HOME");
+        let original_path = env::var("PATH").unwrap_or_default();
+        let constrained_path = format!("{}:/usr/bin:/bin", shim_dir.path().display());
+        unsafe {
+            env::set_var("HOME", fake_home.path());
+            env::set_var("PATH", constrained_path);
+        }
+
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            &fs::read_to_string(&contract_path).unwrap(),
+        )
+        .unwrap();
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        let bootstrap_log = fs::read_to_string(shim_dir.path().join("mise-bootstrap.log"))
+            .unwrap_or_else(|_| String::from("<missing>"));
+        let mise_log = fs::read_to_string(shim_dir.path().join("mise.log"))
+            .unwrap_or_else(|_| String::from("<missing>"));
+
+        assert!(
+            result.ok,
+            "status={} phase={} exit={:?}\nstdout=\n{}\nstderr=\n{}\nbootstrap_log=\n{}\nmise_log=\n{}",
+            result.status,
+            result.phase,
+            result.exit_code,
+            result.stdout,
+            result.stderr,
+            bootstrap_log,
+            mise_log
+        );
+        assert_eq!(result.status, "READY");
+        assert!(bootstrap_log.contains("-lc"));
+        assert!(mise_log.contains("install"));
+        assert!(mise_log.contains("bun@1.3.12"));
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
     }
 
     #[test]
@@ -61427,6 +61597,15 @@ fn provisionable_target_key_for_finding(finding: &Finding) -> Option<String> {
         return Some(format!("tool:{}", strip_finding_context_suffix(name)));
     }
     if let Some(name) = finding.summary.strip_prefix("Version mismatch for tool: ") {
+        return Some(format!("tool:{}", strip_finding_context_suffix(name)));
+    }
+    if let Some(name) = finding.summary.strip_prefix("Tool probe failed: ") {
+        return Some(format!("tool:{}", strip_finding_context_suffix(name)));
+    }
+    if let Some(name) = finding
+        .summary
+        .strip_prefix("Unparseable version for tool: ")
+    {
         return Some(format!("tool:{}", strip_finding_context_suffix(name)));
     }
     None

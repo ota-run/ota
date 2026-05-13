@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- hardened Windows `mise-bootstrap` follow-through for native provisioning: after `winget
+  install jdx.mise`, Ota now probes additional real install locations (including WinGet package
+  directories/links), validates `mise --version` from those paths, and activates the resolved
+  `mise.exe` directory on the current process `PATH` so same-run host provisioning can continue
+  instead of failing with `mise executable not found after bootstrap`
+- hardened native `ota up` pre-provisioning sequencing for policy-backed `mise` flows: when
+  adapter bootstrap installs `mise` into standard user-local locations (for example
+  `~/.local/bin`), Ota now activates that path in-process before retrying provisioning, so
+  selected workflow setup paths no longer short-circuit to immediate `Missing tool` /
+  `Version mismatch` precondition blocks in the same run
 - fixed container backend trust on Windows and other mixed-host setups: `ota doctor` now treats
   a declared/preferred container path as blocked when the selected engine CLI exists but `docker
   info` / equivalent cannot reach a usable backend, `ota up` now preflights that backend before
