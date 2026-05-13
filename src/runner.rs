@@ -5044,14 +5044,24 @@ fn execute_task_with_hooks(
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
     if !(requested_relation && requested_overrides.skip_deps) {
-        let dependency_overrides = ExecutionOverrides {
-            backend: None,
-            lifecycle: requested_overrides.lifecycle,
-            host_port: None,
-            memory: None,
-            skip_deps: false,
-        };
         for dependency in &task.depends_on {
+            let dependency_declares_default_mode = contract
+                .tasks
+                .get(dependency)
+                .and_then(TaskSpec::mode_default_backend)
+                .is_some();
+            let dependency_backend_override = if dependency_declares_default_mode {
+                None
+            } else {
+                requested_overrides.backend
+            };
+            let dependency_overrides = ExecutionOverrides {
+                backend: dependency_backend_override,
+                lifecycle: requested_overrides.lifecycle,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            };
             let dependency_backend = resolve_execution_backend_with_contract_path(
                 contract,
                 dependency,
@@ -32371,6 +32381,55 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_native_mode_override_flows_to_dependencies_without_default_mode() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  supported:
+    - native
+    - container
+tasks:
+  setup:
+    run: printf setup > setup.txt
+  build:
+    run: printf build > build.txt
+    depends_on:
+      - setup
+"#,
+        );
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("setup.txt")).unwrap(),
+            "setup"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("build.txt")).unwrap(),
+            "build"
         );
     }
 
