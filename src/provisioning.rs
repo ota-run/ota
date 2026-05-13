@@ -1226,6 +1226,29 @@ if ($null -ne $command) {
 throw 'mise executable not found after bootstrap'"#
 }
 
+fn prepend_directory_to_process_path(directory: &std::path::Path, case_insensitive: bool) {
+    let mut path_segments = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let directory_text = directory.to_string_lossy().to_string();
+    let already_present = path_segments.iter().any(|segment| {
+        let segment_text = segment.to_string_lossy().to_string();
+        if case_insensitive {
+            segment_text.eq_ignore_ascii_case(directory_text.as_str())
+        } else {
+            segment_text == directory_text
+        }
+    });
+    if !already_present {
+        path_segments.insert(0, directory.to_path_buf());
+        if let Ok(joined) = std::env::join_paths(path_segments) {
+            unsafe {
+                std::env::set_var("PATH", joined);
+            }
+        }
+    }
+}
+
 #[cfg(any(windows, test))]
 fn windows_mise_candidate_paths() -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
@@ -1280,22 +1303,7 @@ fn find_windows_mise_executable() -> Option<std::path::PathBuf> {
 fn activate_windows_mise_on_path() -> Option<std::path::PathBuf> {
     let executable = find_windows_mise_executable()?;
     let directory = executable.parent()?.to_path_buf();
-
-    let mut path_segments = std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let normalized_directory = directory.to_string_lossy().to_ascii_lowercase();
-    let already_present = path_segments
-        .iter()
-        .any(|segment| segment.to_string_lossy().to_ascii_lowercase() == normalized_directory);
-    if !already_present {
-        path_segments.insert(0, directory);
-        if let Ok(joined) = std::env::join_paths(path_segments) {
-            unsafe {
-                std::env::set_var("PATH", joined);
-            }
-        }
-    }
+    prepend_directory_to_process_path(&directory, true);
 
     Some(executable)
 }
@@ -1335,22 +1343,7 @@ fn find_posix_mise_executable() -> Option<std::path::PathBuf> {
 fn activate_posix_mise_on_path() -> Option<std::path::PathBuf> {
     let executable = find_posix_mise_executable()?;
     let directory = executable.parent()?.to_path_buf();
-
-    let mut path_segments = std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let directory_text = directory.to_string_lossy().to_string();
-    let already_present = path_segments
-        .iter()
-        .any(|segment| segment.to_string_lossy() == directory_text);
-    if !already_present {
-        path_segments.insert(0, directory);
-        if let Ok(joined) = std::env::join_paths(path_segments) {
-            unsafe {
-                std::env::set_var("PATH", joined);
-            }
-        }
-    }
+    prepend_directory_to_process_path(&directory, false);
 
     Some(executable)
 }
@@ -1566,6 +1559,65 @@ impl ProvisioningBackend for MiseProvisioningBackend {
                     stdout,
                     stderr,
                 });
+            }
+
+            let tool_name = action.install_name().to_string();
+            let mut which_output = execute_provisioning_command(
+                target,
+                working_dir,
+                "mise",
+                &["which", &tool_name],
+                mode,
+            )?;
+            stdout.push_str(&which_output.stdout);
+            stderr.push_str(&which_output.stderr);
+            if which_output.exit_code != 0 || which_output.stdout.trim().is_empty() {
+                let use_output = execute_provisioning_command(
+                    target,
+                    working_dir,
+                    "mise",
+                    &["use", "-g", &install_target],
+                    mode,
+                )?;
+                stdout.push_str(&use_output.stdout);
+                stderr.push_str(&use_output.stderr);
+                if use_output.exit_code != 0 {
+                    return Err(ProvisioningBackendError::CommandFailed {
+                        command: format!("mise use -g {install_target}"),
+                        exit_code: use_output.exit_code,
+                        stdout,
+                        stderr,
+                    });
+                }
+
+                which_output = execute_provisioning_command(
+                    target,
+                    working_dir,
+                    "mise",
+                    &["which", &tool_name],
+                    mode,
+                )?;
+                stdout.push_str(&which_output.stdout);
+                stderr.push_str(&which_output.stderr);
+                if which_output.exit_code != 0 || which_output.stdout.trim().is_empty() {
+                    return Err(ProvisioningBackendError::CommandFailed {
+                        command: format!("mise which {tool_name}"),
+                        exit_code: which_output.exit_code,
+                        stdout,
+                        stderr,
+                    });
+                }
+            }
+
+            if matches!(target, ProvisioningExecutionTarget::Native)
+                && let Some(path_text) = which_output
+                    .stdout
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                && let Some(tool_dir) = std::path::Path::new(path_text).parent()
+            {
+                prepend_directory_to_process_path(tool_dir, cfg!(windows));
             }
         }
 
@@ -4202,7 +4254,21 @@ mod tests {
         let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("mise.log");
-        make_shim(shim_dir.path(), "mise", &log);
+        let active_marker = shim_dir.path().join("mise-active");
+        let tools_dir = shim_dir.path().join("tools");
+        fs::create_dir_all(&tools_dir).unwrap();
+        let java_executable = tools_dir.join("java");
+        fs::write(&java_executable, "#!/bin/sh\nexit 0\n").unwrap();
+        make_executable(&java_executable);
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"install\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"which\" ]; then\n  if [ -f \"{}\" ]; then\n    printf '%s\\n' \"{}\"\n    exit 0\n  fi\n  echo 'not active' >&2\n  exit 1\nfi\nif [ \"$1\" = \"use\" ] && [ \"$2\" = \"-g\" ]; then\n  : > \"{}\"\n  exit 0\nfi\nexit 0\n",
+            log.display(),
+            active_marker.display(),
+            java_executable.display(),
+            active_marker.display(),
+        );
+        fs::write(shim_dir.path().join("mise"), script).unwrap();
+        make_executable(&shim_dir.path().join("mise"));
 
         let original_path = env::var("PATH").unwrap_or_default();
         let mut new_path = shim_dir.path().display().to_string();
@@ -4231,11 +4297,20 @@ mod tests {
         };
 
         let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
-        assert!(result.stderr.is_empty());
-        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("not active"));
+        assert!(
+            result
+                .stdout
+                .contains(java_executable.to_string_lossy().as_ref())
+        );
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("which"));
+        assert!(log_contents.contains("use"));
         assert!(log_contents.contains("java@22"));
+        let updated_path = env::var_os("PATH").unwrap();
+        let mut segments = env::split_paths(&updated_path);
+        assert_eq!(segments.next(), Some(tools_dir));
 
         unsafe {
             env::set_var("PATH", original_path);
