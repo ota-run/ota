@@ -16069,12 +16069,14 @@ workflows:
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("WORKFLOWS "));
         assert!(body.contains("Default: app"));
-        assert!(body.contains("Name: app"));
+        assert!(body.contains("✦ app"));
         assert!(body.contains("Description: Full app workflow"));
+        assert!(body.contains("Use: `ota up --workflow app`"));
+        assert!(body.contains("Proof: `ota proof runtime --workflow app`"));
         assert!(body.contains("Readiness Checks: repo-ready"));
         assert!(body.contains("Run: `ota run dev`"));
         assert!(body.contains("Default: true"));
-        assert!(body.contains("Name: backend"));
+        assert!(body.contains("✦ backend"));
         assert!(body.contains("Default: false"));
     }
 
