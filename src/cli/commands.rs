@@ -36905,13 +36905,11 @@ mod tests {
         let java_log = dir.join("java.log");
 
         let brew_script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOJ'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\necho 'openjdk 22'\nexit 0\nEOJ\n/bin/chmod +x \"{}\"\nexit 0\nEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '4.4.0'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ] && [ \"$2\" = \"java@22\" ]; then\n  /bin/mkdir -p \"$HOME/.local/share/mise/installs/java/22/bin\"\n  /bin/cat > \"$HOME/.local/share/mise/installs/java/22/bin/java\" <<'EOJ'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo 'openjdk 22'\n  exit 0\nfi\nexit 0\nEOJ\n  /bin/chmod +x \"$HOME/.local/share/mise/installs/java/22/bin/java\"\n  exit 0\nfi\nif [ \"$1\" = \"which\" ] && [ \"$2\" = \"java\" ]; then\n  if [ -f \"$HOME/.config/mise/config.toml\" ]; then\n    echo \"$HOME/.local/share/mise/installs/java/22/bin/java\"\n    exit 0\n  fi\n  echo 'not active' >&2\n  exit 1\nfi\nif [ \"$1\" = \"use\" ] && [ \"$2\" = \"-g\" ] && [ \"$3\" = \"java@22\" ]; then\n  /bin/mkdir -p \"$HOME/.config/mise\"\n  echo 'java = \"22\"' > \"$HOME/.config/mise/config.toml\"\n  exit 0\nfi\nexit 0\nEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
             brew_log.display(),
             dir.join("mise").display(),
             mise_log.display(),
-            dir.join("java").display(),
             java_log.display(),
-            dir.join("java").display(),
             dir.join("mise").display(),
         );
         write_executable_script(&dir.join("brew"), &brew_script);
@@ -36922,7 +36920,7 @@ mod tests {
         let bootstrap_log = dir.join("mise-bootstrap.log");
         let mise_log = dir.join("mise.log");
         let sh_script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q \"curl https://mise.run | bash\"; then\n  mkdir -p \"$HOME/.local/bin\"\n  cat > \"$HOME/.local/bin/mise\" <<'MISEEOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '2025.1.0'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ] && [ \"$2\" = \"bun@1.3.12\" ]; then\n  cat > \"$(dirname \"$0\")/bun\" <<'BUNEOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '1.3.12'\n  exit 0\nfi\nexit 0\nBUNEOF\n  chmod +x \"$(dirname \"$0\")/bun\"\n  exit 0\nfi\nexit 0\nMISEEOF\n  chmod +x \"$HOME/.local/bin/mise\"\n  exit 0\nfi\nexec /bin/sh \"$@\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q \"curl https://mise.run | bash\"; then\n  mkdir -p \"$HOME/.local/bin\"\n  cat > \"$HOME/.local/bin/mise\" <<'MISEEOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '2025.1.0'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ] && [ \"$2\" = \"bun@1.3.12\" ]; then\n  mkdir -p \"$HOME/.local/share/mise/installs/bun/1.3.12/bin\"\n  cat > \"$HOME/.local/share/mise/installs/bun/1.3.12/bin/bun\" <<'BUNEOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '1.3.12'\n  exit 0\nfi\nexit 0\nBUNEOF\n  chmod +x \"$HOME/.local/share/mise/installs/bun/1.3.12/bin/bun\"\n  exit 0\nfi\nif [ \"$1\" = \"which\" ] && [ \"$2\" = \"bun\" ]; then\n  if [ -f \"$HOME/.config/mise/config.toml\" ]; then\n    echo \"$HOME/.local/share/mise/installs/bun/1.3.12/bin/bun\"\n    exit 0\n  fi\n  echo 'not active' >&2\n  exit 1\nfi\nif [ \"$1\" = \"use\" ] && [ \"$2\" = \"-g\" ] && [ \"$3\" = \"bun@1.3.12\" ]; then\n  mkdir -p \"$HOME/.config/mise\"\n  echo 'bun = \"1.3.12\"' > \"$HOME/.config/mise/config.toml\"\n  exit 0\nfi\nexit 0\nMISEEOF\n  chmod +x \"$HOME/.local/bin/mise\"\n  exit 0\nfi\nexec /bin/sh \"$@\"\n",
             bootstrap_log.display(),
             mise_log.display(),
         );

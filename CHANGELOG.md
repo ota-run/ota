@@ -36,6 +36,11 @@
   `~/.local/bin`), Ota now activates that path in-process before retrying provisioning, so
   selected workflow setup paths no longer short-circuit to immediate `Missing tool` /
   `Version mismatch` precondition blocks in the same run
+- fixed `mise` tool activation follow-through after native policy provisioning: after
+  `mise install <tool@version>`, Ota now resolves the installed binary with `mise which`,
+  runs `mise use -g <tool@version>` when the tool is not yet active, and prepends the resolved
+  tool directory to the current process `PATH` so same-run `ota up` precondition checks can
+  observe the provisioned version instead of remaining blocked
 - fixed container backend trust on Windows and other mixed-host setups: `ota doctor` now treats
   a declared/preferred container path as blocked when the selected engine CLI exists but `docker
   info` / equivalent cannot reach a usable backend, `ota up` now preflights that backend before
