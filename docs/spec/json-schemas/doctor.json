@@ -15,6 +15,7 @@
         "intent": { "type": "string" },
         "description": { "type": "string" },
         "notes": { "type": "string" },
+        "prepare_task": { "type": "string" },
         "setup_task": { "type": "string" },
         "run_task": { "type": "string" },
         "run_task_launch": { "$ref": "./execution.json#/$defs/taskLaunch" },

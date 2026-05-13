@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added first-class workflow `prepare.task` for host file-prep before setup: workflows can now
+  declare one native `action` task that `ota up` runs before pre-setup services or setup, so
+  container-backed repos can keep `setup` on the selected backend while deterministic host file
+  actions such as `copy_if_missing` stay explicit; workflow summaries, JSON schemas, docs, and
+  public site guidance were updated to surface the new phase
 - made task-scoped `requirements.env` execution-complete: `ota doctor`, `ota env --task`,
   `ota run`, workflow-driven `ota up`, and execution/receipt env reporting now all treat
   `tasks.<name>.requirements.env` as selected-path required env truth without forcing the same

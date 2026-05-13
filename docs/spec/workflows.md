@@ -182,7 +182,7 @@ Use tasks for:
 Use workflows for:
 
 - repo-level intent
-- choosing the canonical setup/run path
+- choosing the canonical prepare/setup/run path
 - grouping readiness under one named operational target
 
 Good boundary:

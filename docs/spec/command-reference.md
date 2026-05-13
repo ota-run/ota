@@ -326,7 +326,7 @@ Text output:
 - each workflow is rendered in the same flat scan-friendly layout as `ota tasks`
 - each workflow includes workflow-native command hints such as `Use: ota up --workflow <name>`
   and `Proof: ota proof runtime --workflow <name>`
-- each workflow may include `intent`, `description`, `notes`, `setup`, `run`, `services`,
+- each workflow may include `intent`, `description`, `notes`, `prepare`, `setup`, `run`, `services`,
   `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, `exposes`, and
   the per-entry `default` flag
 - when no workflows are declared, the text output says so explicitly and points users back to
@@ -1598,6 +1598,7 @@ Current behavior:
 - when policy-backed provisioning is selected for a tool that also has an acquisition path, `ota up
   --dry-run` names the provisioning action and explicitly marks the selected acquisition activation
   as skipped
+- when a selected workflow declares `prepare.task`, `ota up` runs that native host file-prep action before pre-setup services or setup; this phase is for deterministic file preparation such as `copy_if_missing`, not long-lived runtime or service work
 - when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
 - when blocking preconditions fail and the selected workflow declares a setup task, ota runs that setup phase early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
