@@ -88,6 +88,11 @@
 - bounded service readiness retries when omitted to prevent `ota doctor` hangs:
   `services.<name>.readiness` checks now default to a finite probe budget (120 attempts) instead
   of waiting indefinitely when `retries` is not explicitly set
+- hardened container task execution for mounted-repo git operations: Ota now injects a
+  container-local `safe.directory=/workspace` git config surface for container command runs
+  (unless the task already provides explicit `GIT_CONFIG_*` overrides), preventing
+  `detected dubious ownership` failures when repo tasks invoke `git` inside the mounted
+  workspace path
 
 ## 1.6.11
 

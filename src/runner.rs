@@ -15467,6 +15467,7 @@ fn execute_ephemeral_container_task_command(
     }
     append_container_publication_args(&mut create, publications);
     append_container_memory_arg(&mut create, memory_bytes);
+    append_container_git_safe_directory_args(&mut create, env_overrides);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             create.env(name, value);
@@ -15933,6 +15934,7 @@ fn create_idle_ephemeral_container(
     }
     append_container_publication_args(&mut create, publications);
     append_container_memory_arg(&mut create, memory_bytes);
+    append_container_git_safe_directory_args(&mut create, env_overrides);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             create.env(name, value);
@@ -16894,6 +16896,7 @@ fn create_persistent_container(
     }
     append_container_publication_vec(&mut args, publications);
     append_container_memory_vec(&mut args, memory_bytes);
+    append_container_git_safe_directory_vec(&mut args);
     args.push(image.to_string());
     args.push("-lc".to_string());
     args.push("while true; do sleep 3600; done".to_string());
@@ -16933,6 +16936,41 @@ fn append_container_memory_vec(args: &mut Vec<String>, memory_bytes: Option<u64>
         args.push("--memory".to_string());
         args.push(memory_bytes.to_string());
     }
+}
+
+fn append_container_git_safe_directory_args(
+    command: &mut Command,
+    env_overrides: &BTreeMap<String, String>,
+) {
+    if !should_inject_container_git_safe_directory_env(env_overrides) {
+        return;
+    }
+    command
+        .arg("--env")
+        .arg("GIT_CONFIG_COUNT=1")
+        .arg("--env")
+        .arg("GIT_CONFIG_KEY_0=safe.directory")
+        .arg("--env")
+        .arg("GIT_CONFIG_VALUE_0=/workspace");
+}
+
+fn append_container_git_safe_directory_vec(args: &mut Vec<String>) {
+    args.push("--env".to_string());
+    args.push("GIT_CONFIG_COUNT=1".to_string());
+    args.push("--env".to_string());
+    args.push("GIT_CONFIG_KEY_0=safe.directory".to_string());
+    args.push("--env".to_string());
+    args.push("GIT_CONFIG_VALUE_0=/workspace".to_string());
+}
+
+fn should_inject_container_git_safe_directory_env(
+    env_overrides: &BTreeMap<String, String>,
+) -> bool {
+    !env_overrides.keys().any(|name| {
+        name == "GIT_CONFIG_COUNT"
+            || name.starts_with("GIT_CONFIG_KEY_")
+            || name.starts_with("GIT_CONFIG_VALUE_")
+    })
 }
 
 fn container_publication_arg(publication: &ContainerPortPublication) -> String {
@@ -18343,6 +18381,7 @@ fn exec_persistent_container_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let mut container = container_engine_command(engine);
     container.arg("exec").arg("-i");
+    append_container_git_safe_directory_args(&mut container, env_overrides);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             container.env(name, value);
@@ -41057,6 +41096,26 @@ tasks:
         let probe = super::backend_runtime_version_probe_command("node", &backend);
         assert!(probe.contains("command -v"), "{probe}");
         assert!(probe.contains("else exit 127"), "{probe}");
+    }
+
+    #[test]
+    fn container_git_safe_directory_env_injection_enabled_by_default() {
+        let env = BTreeMap::new();
+        assert!(super::should_inject_container_git_safe_directory_env(&env));
+    }
+
+    #[test]
+    fn container_git_safe_directory_env_injection_respects_explicit_git_config_env() {
+        let mut env = BTreeMap::new();
+        env.insert(String::from("GIT_CONFIG_COUNT"), String::from("2"));
+        assert!(!super::should_inject_container_git_safe_directory_env(&env));
+
+        env.clear();
+        env.insert(
+            String::from("GIT_CONFIG_KEY_1"),
+            String::from("safe.directory"),
+        );
+        assert!(!super::should_inject_container_git_safe_directory_env(&env));
     }
 
     #[cfg(unix)]
