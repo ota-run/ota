@@ -7143,6 +7143,12 @@ fn probe_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
+    if cfg!(windows)
+        && matches!(backend, ResolvedExecutionBackend::Native { .. })
+        && windows_native_shell_prefers_posix()
+    {
+        return probe_posix_shell_command_version(working_dir, command_name);
+    }
     let probe_command = backend_runtime_version_probe_command(command_name, backend);
     let output = run_backend_command_captured(
         "__ota_backend_requirement_probe__",
@@ -7151,6 +7157,67 @@ fn probe_backend_command_version(
         backend,
     )
     .map_err(|error| error.to_string())?;
+    if output.exit_code == 127 {
+        return Ok(None);
+    }
+    let combined = format!("{} {}", output.stdout, output.stderr);
+    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+        return Ok(Some(version));
+    }
+    if output.exit_code != 0 {
+        return Err(format!(
+            "version probe command exited with code {}",
+            output.exit_code
+        ));
+    }
+    Err(String::from(
+        "version probe did not return a parseable version",
+    ))
+}
+
+fn windows_native_shell_prefers_posix() -> bool {
+    std::env::var("MSYSTEM").is_ok()
+        || std::env::var("SHELL")
+            .ok()
+            .map(|shell| {
+                let lowered = shell.to_ascii_lowercase();
+                lowered.contains("bash") || lowered.contains("sh")
+            })
+            .unwrap_or(false)
+}
+
+fn probe_posix_shell_command_version(
+    working_dir: &Path,
+    command_name: &str,
+) -> Result<Option<String>, String> {
+    let quoted = shell_quote(command_name);
+    let probe_command = format!(
+        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
+    );
+    let shell_program = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.trim().is_empty())
+        .unwrap_or_else(|| String::from("sh"));
+    let output = Command::new(shell_program)
+        .arg("-lc")
+        .arg(probe_command)
+        .current_dir(working_dir)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|child| child.wait_with_output())
+        .map(|output| TaskCommandOutput {
+            exit_code: output.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            target: None,
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        })
+        .map_err(|error| error.to_string())?;
     if output.exit_code == 127 {
         return Ok(None);
     }
