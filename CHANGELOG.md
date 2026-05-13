@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- added workflow `notes` support (contract, CLI text, and JSON output): contracts can now declare
+  `workflows.<name>.notes`, surfaced in `ota workflows` and workflow-scoped `ota tasks --workflow`
+  output to provide operator guidance and setup context without overloading `description`
+- expanded docs for workflow notes and workflow output contracts: `docs/spec/contract-reference.md`,
+  `docs/spec/command-reference.md`, and `docs/spec/json-output-reference.md` now mention workflow notes
+  in the correct operator/API surfaces
+- added `ota validate` semantic guardrails for Node/Corepack modeling: contracts now fail
+  validation when `tools.node` uses `acquisition.provider: corepack` or when any Corepack
+  acquisition declares `package: node`; diagnostics now direct authors to declare Node under
+  `runtimes.node` and reserve Corepack acquisition for package managers such as `pnpm`/`yarn`
 - hardened Windows `mise-bootstrap` follow-through for native provisioning: after `winget
   install jdx.mise`, Ota now probes additional real install locations (including WinGet package
   directories/links), validates `mise --version` from those paths, and activates the resolved

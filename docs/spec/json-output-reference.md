@@ -301,7 +301,8 @@ When the repo declares `workflows`, `ota execution plan --json` may include addi
 `workflow` and `task` fields. `workflow` mirrors the selected canonical operational path, and
 `task` names the concrete workflow run task that drove execution planning, or the workflow setup
 task when the workflow does not declare a run phase. The workflow object may also include additive
-`readiness_probes` when the selected workflow references reusable named probes.
+`notes` and `readiness_probes` when the selected workflow declares notes or references reusable
+named probes.
 
 Success:
 
@@ -313,6 +314,7 @@ Success:
   "workflow": {
     "name": "app",
     "intent": "local_development",
+    "notes": "Use this workflow as the operator-first local path.\n",
     "setup_task": "setup",
     "run_task": "dev",
     "required_services": ["postgres"],
@@ -1305,6 +1307,7 @@ Success:
   "workflow": {
     "name": "app",
     "intent": "local_development",
+    "notes": "Use this path when validating readiness and preparing local app runs.\n",
     "setup_task": "setup",
     "run_task": "dev",
     "required_services": ["postgres"],
@@ -1416,6 +1419,7 @@ Success:
       "name": "quickstart",
       "intent": "quickstart",
       "description": "Structured packaged command path",
+      "notes": "Use this path for local container-backed previews.\n",
       "setup_task": "setup",
       "run_task": "preview:quickstart",
       "run_task_launch": {
@@ -1452,6 +1456,7 @@ Notes:
 - each workflow entry includes additive fields only when declared or resolved:
   - `intent`
   - `description`
+  - `notes`
   - `setup_task`
   - `run_task`
   - `run_task_launch`
@@ -1672,7 +1677,8 @@ execution. Backend providers receive a structured request on stdin and in
 When the repo declares `workflows`, `ota doctor --json` includes an additive top-level `workflow`
 object for the default workflow so editors and automation can reason about the canonical repo path
 without inferring it from task names. That workflow summary may also include additive
-`readiness_probes` when the workflow references reusable named probes.
+`notes` and `readiness_probes` when the workflow declares them or references reusable named
+probes.
 
 ## `ota policy review --json`
 
@@ -2663,6 +2669,7 @@ summary for the default workflow, including workflow `readiness_probes`,
   "path": "/abs/path/to/ota.yaml",
   "workflow": {
     "name": "app",
+    "notes": "Use this for the primary readiness path.\n",
     "run_task": "dev",
     "required_services": ["postgres"],
     "readiness_checks": ["app-health"],

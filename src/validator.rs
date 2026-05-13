@@ -1237,6 +1237,17 @@ fn validate_tool_acquisition(
                     "tool `{name}` acquisition `version` must be a shell-safe Corepack version token"
                 )));
             }
+            if name.eq_ignore_ascii_case("node") {
+                errors.push(ValidationError::new(
+                    "tool `node` acquisition `corepack` is invalid; declare Node under `runtimes.node` and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                        .to_string(),
+                ));
+            }
+            if package.eq_ignore_ascii_case("node") && !name.eq_ignore_ascii_case("node") {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `corepack` must not declare `package: node`; declare Node under `runtimes.node` and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                )));
+            }
             if acquisition.shell.is_some() {
                 errors.push(ValidationError::new(format!(
                     "tool `{name}` acquisition `corepack` must not declare `shell`"
@@ -15290,6 +15301,72 @@ tools:
                     "tool `pnpm` acquisition `version` must be a shell-safe Corepack version token",
                 )
             }),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_corepack_acquisition_for_node_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  node:
+    version: ">=20"
+    acquisition:
+      provider: corepack
+      package: node
+      version: "20.0.0"
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message.contains(
+                "tool `node` acquisition `corepack` is invalid; declare Node under `runtimes.node`"
+            )),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_corepack_acquisition_with_node_package() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  npm:
+    version: ">=10"
+    acquisition:
+      provider: corepack
+      package: node
+      version: "20.0.0"
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message.contains(
+                "tool `npm` acquisition `corepack` must not declare `package: node`; declare Node under `runtimes.node`"
+            )),
             "{messages:?}"
         );
     }
