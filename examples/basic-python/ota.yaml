@@ -24,13 +24,37 @@
 version: 1
 project:
   name: basic-python
+  description: Minimal Python repo that still shows workflow-scoped setup and verification
+  type: application
 runtimes:
   python: "3.12"
 tasks:
   setup:
+    description: Install Python dependencies from requirements.txt
     run: python -m pip install -r requirements.txt
+    requirements:
+      runtimes:
+        python: "3.12"
+      checks:
+        - python-installed
   test:
+    description: Run the Python test suite
     run: python -m pytest
+    depends_on:
+      - setup
+    requirements:
+      runtimes:
+        python: "3.12"
+workflows:
+  default: verify
+  verify:
+    description: Canonical Python setup and verification path
+    setup:
+      task: setup
+    run:
+      task: test
+    notes: |
+      Use this when the repo front door is setup plus verification rather than a long-running dev server.
 checks:
   - name: python-installed
     kind: precondition
@@ -51,5 +75,5 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
-    Use `ota validate` before changes and `ota run test` after edits.
+    Use `ota validate` before changes and `ota workflows` to inspect the setup-plus-test path.
     Keep dependency installation in `setup` and use `ota run test` to verify Python changes.

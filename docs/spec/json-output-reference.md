@@ -305,9 +305,10 @@ Failure:
 When the repo declares `workflows`, `ota execution plan --json` may include additive top-level
 `workflow` and `task` fields. `workflow` mirrors the selected canonical operational path, and
 `task` names the concrete workflow run task that drove execution planning, or the workflow setup
-task when the workflow does not declare a run phase. The workflow object may also include additive
-`notes` and `readiness_probes` when the selected workflow declares notes or references reusable
-named probes.
+task when the workflow does not declare a run phase. `workflow.prepare_task` is additive path
+context only; it does not replace the concrete execution `task` because host file prep is not the
+selected runtime identity. The workflow object may also include additive `notes` and
+`readiness_probes` when the selected workflow declares notes or references reusable named probes.
 
 Success:
 

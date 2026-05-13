@@ -24,6 +24,17 @@
 version: 1
 project:
   name: basic-services
+  description: Service-backed app example with explicit setup, run, and managed dependency boundaries
+  type: application
+runtimes:
+  node: "22"
+tools:
+  pnpm:
+    version: "10"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.0.0"
 execution:
   default_context: host
   contexts:
@@ -32,6 +43,20 @@ execution:
       requirements:
         tools:
           docker: "*"
+env:
+  vars:
+    APP_ENV:
+      default: local
+      allowed:
+        - local
+        - ci
+    DATABASE_URL:
+      required: true
+    REDIS_URL:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env.local
 services:
   api:
     manager:
@@ -93,11 +118,31 @@ services:
       retries: 5
       start_period: 10s
 tasks:
+  setup:env:local:
+    internal: true
+    description: Materialize a local env overlay when the repo has not created one yet
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
   setup:
     context: host
+    description: Install application dependencies on the host
     run: pnpm install
+    depends_on:
+      - setup:env:local
+    requirements:
+      runtimes:
+        node: "22"
+      tools:
+        pnpm: "10"
+      checks:
+        - node-installed
   dev:
     context: host
+    description: Start the app once the managed services are ready
+    env:
+      APP_ENV: local
     run: pnpm dev
     depends_on:
       - setup
@@ -105,6 +150,31 @@ tasks:
       - api
       - postgres
       - redis
+    requirements:
+      tools:
+        pnpm: "10"
+      env:
+        - DATABASE_URL
+        - REDIS_URL
+workflows:
+  default: app
+  app:
+    intent: local_development
+    description: Canonical app path with explicit setup, services, and run task boundaries
+    prepare:
+      task: setup:env:local
+    setup:
+      task: setup
+    run:
+      task: dev
+    notes: |
+      Use this when you want one front door that prepares local env state, waits for services,
+      and starts the app.
+checks:
+  - name: node-installed
+    kind: precondition
+    severity: error
+    run: node --version
 agent:
   entrypoint: setup
   default_task: dev
@@ -119,5 +189,8 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
+    Use `ota workflows` to inspect the service-backed app path before running direct tasks.
+    Use `ota up --workflow app` when you want Ota to prepare `.env.local`, verify env requirements,
+    wait for services, and start the app through one declared path.
     Use `ota up` before starting the service stack.
     Keep service startup and readiness in the contract instead of in README prose.
