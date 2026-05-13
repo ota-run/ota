@@ -390,6 +390,9 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, inspects the merged member contract
 - when `--task` is set, includes the effective execution env for that task alongside the contract env view
+- when `--task` is set, any `tasks.<name>.requirements.env` entries are treated as required for
+  that selected task view even when the same top-level `env.vars.<name>` entry is optional in the
+  repo-wide contract
 - resolves values in the same precedence order as task execution
 - reports declared env source status alongside the env-variable view
 - shows the winning source for each contract env entry
@@ -1199,6 +1202,8 @@ ota doctor --member api --member web --json [PATH]
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, doctor
   scopes runtime, tool, env, and precondition-check diagnosis to that setup/run dependency path
   instead of treating unrelated task-specific prerequisites as repo-global truth
+- selected-path `requirements.env` entries become missing-env blockers for that diagnosis even when
+  the same top-level `env.vars.<name>` entry is optional outside the selected task/workflow path
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path

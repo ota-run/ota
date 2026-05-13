@@ -14853,6 +14853,93 @@ agent:
     }
 
     #[test]
+    fn task_scoped_env_requirements_become_required_for_selected_task_and_workflow() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: scoped-env
+env:
+  vars:
+    DISCORD_TOKEN:
+      secret: true
+tasks:
+  setup:
+    run: echo setup
+  start:
+    run: echo start
+    requirements:
+      env:
+        - DISCORD_TOKEN
+    depends_on:
+      - setup
+workflows:
+  default: runtime
+  runtime:
+    run:
+      task: start
+"#,
+        );
+
+        let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor.exit_code, 1);
+        let doctor_json: Value = serde_json::from_str(&doctor.stdout).unwrap();
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["summary"],
+            "Missing environment variable: DISCORD_TOKEN"
+        );
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["why"],
+            "DISCORD_TOKEN is required by the selected task or workflow path"
+        );
+        assert_eq!(doctor_json["workflow"]["name"], "runtime");
+        assert_eq!(doctor_json["workflow"]["run_task"], "start");
+
+        let env = run_with(["ota", "env", "--json", "--task", "start", fixture.path()]);
+        assert_eq!(env.exit_code, 1);
+        let env_json: Value = serde_json::from_str(&env.stdout).unwrap();
+        assert_eq!(env_json["task"], "start");
+        assert_eq!(env_json["summary"]["missing_count"], 1);
+        let task_entry = env_json["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "DISCORD_TOKEN")
+            .unwrap();
+        assert_eq!(task_entry["required"], true);
+        assert_eq!(task_entry["status"], "missing");
+        assert_eq!(
+            task_entry["next"],
+            "set DISCORD_TOKEN in policy env, the shell, a declared env source, or task env for `start`, then rerun `ota env --task start`"
+        );
+
+        let repo_env = run_with(["ota", "env", "--json", fixture.path()]);
+        assert_eq!(repo_env.exit_code, 0);
+        let repo_env_json: Value = serde_json::from_str(&repo_env.stdout).unwrap();
+        assert_eq!(repo_env_json["summary"]["missing_count"], 0);
+        let repo_entry = repo_env_json["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "DISCORD_TOKEN")
+            .unwrap();
+        assert_eq!(repo_entry["required"], false);
+        assert_eq!(repo_entry["status"], "optional");
+
+        let run = run_with(["ota", "run", "start", fixture.path()]);
+        assert_eq!(run.exit_code, 1);
+        let run_output = format!(
+            "{}\n{}",
+            run.stdout,
+            run.stderr.as_deref().unwrap_or_default()
+        );
+        assert!(run_output.contains("Required environment value is missing"));
+        assert!(run_output.contains(
+            "task `start` requires environment variable `DISCORD_TOKEN`, but it is not set"
+        ));
+    }
+
+    #[test]
     fn receipt_json_preserves_repo_target_in_doctor_followups() {
         let _guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();

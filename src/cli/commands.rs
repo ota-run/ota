@@ -129,7 +129,8 @@ use crate::runner::{
     named_execution_context, persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_effective_task_container_backend,
     resolve_execution_backend, resolve_execution_backend_with_contract_path,
-    resolve_task_env_details, resolve_task_env_details_with_policy,
+    resolve_task_env_details, resolve_task_env_details_for_task,
+    resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
@@ -55167,9 +55168,13 @@ fn run_execution_receipt_with_shared(
             .get(task_name)
             .map(|task| task.env_for_backend(contract.execution.as_ref(), backend)),
     };
-    let env_details =
-        resolve_task_env_details(contract, contract_path, effective_task_env.as_ref())
-            .unwrap_or_default();
+    let env_details = resolve_task_env_details_for_task(
+        contract,
+        contract_path,
+        task_name,
+        effective_task_env.as_ref(),
+    )
+    .unwrap_or_default();
     let declared_sources = load_declared_env_sources(contract, contract_path);
     let steps = executed_steps
         .iter()
@@ -60415,8 +60420,17 @@ fn repo_execution_receipt(
     let effective_task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| task.env_for_backend(contract.execution.as_ref(), execution_backend));
-    let env_details =
-        resolve_task_env_details(contract, path, effective_task_env.as_ref()).unwrap_or_default();
+    let env_details = task
+        .map(|task_name| {
+            resolve_task_env_details_for_task(
+                contract,
+                path,
+                task_name,
+                effective_task_env.as_ref(),
+            )
+        })
+        .unwrap_or_else(|| resolve_task_env_details(contract, path, effective_task_env.as_ref()))
+        .unwrap_or_default();
     let declared_sources = load_declared_env_sources(contract, path);
     let detail = service
         .map(|service| format!("service `{service}`"))
@@ -61016,6 +61030,7 @@ fn receipt_history_status_label<'a>(status: Option<&'a str>, ok: bool) -> &'a st
 fn workspace_env_sources(
     contract: &Contract,
     contract_path: &Path,
+    task_name: Option<&str>,
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Vec<ExecutionReceiptEnvSource> {
@@ -61023,7 +61038,19 @@ fn workspace_env_sources(
     let workspace_policy_env = policy_env.cloned().unwrap_or_default();
     let declared_sources = load_declared_env_sources(contract, contract_path);
 
-    resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)
+    task_name
+        .map(|task_name| {
+            resolve_task_env_details_for_task_with_policy(
+                contract,
+                contract_path,
+                task_name,
+                task_env,
+                policy_env,
+            )
+        })
+        .unwrap_or_else(|| {
+            resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)
+        })
         .unwrap_or_default()
         .into_iter()
         .map(|(name, value)| {
@@ -65213,6 +65240,9 @@ fn run_workspace_repo_up(
                     workspace_env_sources(
                         &target.contract,
                         &target.contract_path,
+                        target
+                            .contract
+                            .selected_setup_task_name_for(repo.workflow.as_deref()),
                         Some(&task.env),
                         Some(&repo.policy_env),
                     )
@@ -66702,6 +66732,7 @@ fn run_workspace_repo_task(
                     workspace_env_sources(
                         &contract,
                         &repo.contract_path,
+                        Some(task),
                         Some(&task_spec.env),
                         Some(&repo.policy_env),
                     )
