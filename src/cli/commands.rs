@@ -15205,6 +15205,7 @@ pub fn doctor(
 ) -> CommandOutput {
     let mode = doctor_mode_from_execution_overrides(overrides.backend);
     let doctor_lifecycle = overrides.lifecycle;
+    let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -15364,7 +15365,7 @@ pub fn doctor(
                         mode,
                         doctor_lifecycle,
                         workflow_name,
-                        overrides,
+                        diagnosis_overrides,
                     );
                 append_contract_drift_findings(
                     &target.contract,
@@ -15528,7 +15529,7 @@ pub fn doctor(
                                     mode,
                                     doctor_lifecycle,
                                     workflow_name,
-                                    overrides,
+                                    diagnosis_overrides,
                                 );
                             append_contract_drift_findings(
                                 &member_target.contract,
@@ -15779,7 +15780,7 @@ pub fn doctor(
                             mode,
                             doctor_lifecycle,
                             workflow_name,
-                            overrides,
+                            diagnosis_overrides,
                         );
                     append_contract_drift_findings(
                         &target.contract,
