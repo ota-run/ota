@@ -45,6 +45,10 @@
   `ota run` now activate detected mise bin/shims directories on process startup so subsequent
   command invocations can resolve policy-provisioned tools without requiring manual shell
   activation between steps
+- fixed Windows cross-command native tool visibility for policy-provisioned mise runtimes:
+  command startup activation now adds detected Windows mise shim directories (for example
+  `%LOCALAPPDATA%\\mise\\shims`) alongside `mise.exe` so follow-up commands like `ota doctor`
+  can resolve provisioned tools (such as `bun`) after a successful `ota up`
 - fixed mixed-mode dependency orchestration for `ota up` / `ota run`: when a requested task
   runs in one backend but a dependency declares its own default mode (for example native
   `copy_if_missing` setup actions before a container workflow), Ota now resolves that dependency

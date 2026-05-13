@@ -1346,10 +1346,33 @@ fn find_windows_mise_executable() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(any(windows, test))]
+fn windows_mise_shim_directories() -> Vec<std::path::PathBuf> {
+    let mut shims = Vec::new();
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    let user_profile = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+
+    if let Some(base) = local_app_data.as_ref() {
+        shims.push(base.join("mise").join("shims"));
+        shims.push(base.join("Programs").join("mise").join("shims"));
+    }
+    if let Some(base) = user_profile.as_ref() {
+        shims.push(base.join(".local").join("share").join("mise").join("shims"));
+        shims.push(base.join(".mise").join("shims"));
+    }
+
+    shims
+}
+
+#[cfg(any(windows, test))]
 fn activate_windows_mise_on_path() -> Option<std::path::PathBuf> {
     let executable = find_windows_mise_executable()?;
     let directory = executable.parent()?.to_path_buf();
     prepend_directory_to_process_path(&directory, true);
+    for shims_dir in windows_mise_shim_directories() {
+        if shims_dir.is_dir() {
+            prepend_directory_to_process_path(&shims_dir, true);
+        }
+    }
 
     Some(executable)
 }
@@ -4320,6 +4343,46 @@ mod tests {
         let updated_path = env::var_os("PATH").unwrap();
         let mut segments = env::split_paths(&updated_path);
         assert_eq!(segments.next(), Some(package_root));
+
+        match original_local_app_data {
+            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
+            None => unsafe { env::remove_var("LOCALAPPDATA") },
+        }
+        match original_user_profile {
+            Some(value) => unsafe { env::set_var("USERPROFILE", value) },
+            None => unsafe { env::remove_var("USERPROFILE") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+    }
+
+    #[test]
+    fn activate_mise_paths_adds_windows_shim_directory() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let local_app_data = sandbox.path().join("LocalAppData");
+        let mise_bin = local_app_data.join("mise").join("bin");
+        let mise_shims = local_app_data.join("mise").join("shims");
+        fs::create_dir_all(&mise_bin).unwrap();
+        fs::create_dir_all(&mise_shims).unwrap();
+        fs::write(mise_bin.join("mise.exe"), b"").unwrap();
+
+        let original_local_app_data = env::var_os("LOCALAPPDATA");
+        let original_user_profile = env::var_os("USERPROFILE");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("LOCALAPPDATA", &local_app_data);
+            env::set_var("USERPROFILE", sandbox.path().join("UserProfile"));
+            env::set_var("PATH", sandbox.path().join("path-base"));
+        }
+
+        let activated = super::activate_windows_mise_on_path();
+        assert!(activated.is_some());
+        let updated_path = env::var_os("PATH").unwrap();
+        let segments = env::split_paths(&updated_path).collect::<Vec<_>>();
+        assert!(segments.contains(&mise_shims), "{segments:?}");
 
         match original_local_app_data {
             Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
