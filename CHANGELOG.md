@@ -58,6 +58,10 @@
   is active and a required runtime is missing, fallback findings now use canonical
   `Runtime probe failed: <runtime>` wording (instead of version-mismatch wording) and still
   classify `UP SUMMARY` cause as `missing runtime/tool`
+- fixed Windows native runtime/tool version probing shell semantics: Ota now emits a
+  Windows-native probe command shape (`where ...`) for native Windows backends instead of
+  POSIX `command -v ...`, so host runtime checks (for example `node`) no longer fail
+  immediately under Windows native `ota up` / backend fulfillment paths due to shell mismatch
 - fixed `mise` tool activation follow-through after native policy provisioning: after
   `mise install <tool@version>`, Ota now resolves the installed binary with `mise which`,
   runs `mise use -g <tool@version>` when the tool is not yet active, and prepends the resolved
