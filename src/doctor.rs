@@ -58,9 +58,9 @@ use crate::runner::{
     DeclaredEnvSourceStatus, ExecutionOverrides, HttpReadinessRequest, HttpReadinessStatus,
     LoadedDeclaredEnvSource, ResolvedExecutionBackend, ResolvedNamedReadinessProbe,
     ResolvedNamedReadinessProbeContract, RunError, capture_declared_native_activation_env,
-    combine_readiness_probe_paths, effective_task_execution, host_runtime_readiness_observed,
-    http_readiness_endpoint_status, load_declared_env_sources, parse_http_probe_url,
-    resolve_context_execution_backend, resolve_declared_env_source_value,
+    combine_readiness_probe_paths, effective_execution, effective_task_execution,
+    host_runtime_readiness_observed, http_readiness_endpoint_status, load_declared_env_sources,
+    parse_http_probe_url, resolve_context_execution_backend, resolve_declared_env_source_value,
     resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
     resolve_task_target_binding_url_with_contract_path, run_backend_command_captured,
     task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
@@ -2251,6 +2251,22 @@ pub fn diagnose_preconditions_with_mode_for_workflow(
     mode: DoctorMode,
     workflow_name: Option<&str>,
 ) -> DoctorReport {
+    diagnose_preconditions_with_mode_for_workflow_with_overrides(
+        contract,
+        contract_path,
+        mode,
+        workflow_name,
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn diagnose_preconditions_with_mode_for_workflow_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
         contract_path,
@@ -2258,7 +2274,7 @@ pub fn diagnose_preconditions_with_mode_for_workflow(
         mode,
         None,
         workflow_name,
-        ExecutionOverrides::default(),
+        overrides,
     )
 }
 
@@ -2387,8 +2403,13 @@ fn diagnose_contract_with_scope(
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, mode, selected_lifecycle, &mut findings);
-        let container_probe =
-            diagnose_execution_backend(contract, &mut findings, mode, selected_lifecycle);
+        let container_probe = diagnose_execution_backend(
+            contract,
+            &mut findings,
+            mode,
+            selected_lifecycle,
+            overrides,
+        );
         let declared_env_sources = load_declared_env_sources(contract, contract_path);
         diagnose_env_sources(&declared_env_sources, &mut findings);
         if mode == DoctorMode::Native {
@@ -2780,6 +2801,7 @@ fn diagnose_execution_backend(
     findings: &mut Vec<Finding>,
     mode: DoctorMode,
     lifecycle: Option<Lifecycle>,
+    overrides: ExecutionOverrides,
 ) -> Option<ContainerProbeContext> {
     let Some(execution) = contract.execution.as_ref() else {
         if mode == DoctorMode::Container {
@@ -2926,9 +2948,9 @@ fn diagnose_execution_backend(
         return None;
     }
 
-    match execution.preferred {
-        Some(Backend::Container) => diagnose_container_backend_cli(contract, findings),
-        Some(Backend::Remote) => {
+    match effective_execution(contract, overrides).0 {
+        Backend::Container => diagnose_container_backend_cli(contract, findings),
+        Backend::Remote => {
             let Some(remote) = execution
                 .backends
                 .as_ref()
@@ -3001,7 +3023,7 @@ fn diagnose_execution_backend(
                 );
             }
         }
-        _ => {}
+        Backend::Native => {}
     }
 
     None

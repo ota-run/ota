@@ -56,8 +56,8 @@ use crate::doctor::{
     diagnose_contract_with_mode_and_lifecycle,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
-    diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow, diagnose_service,
-    diagnose_services_only_for_workflow, finding_targets_container_image,
+    diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow_with_overrides,
+    diagnose_service, diagnose_services_only_for_workflow, finding_targets_container_image,
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::execution::{
@@ -50261,6 +50261,88 @@ workflows:
     }
 
     #[test]
+    fn up_native_override_does_not_require_container_backend_cli_in_preflight() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: override-native
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: oven/bun:1.3.12-slim
+      engines:
+        - docker
+        - podman
+tasks:
+  setup:
+    run: echo setup
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "");
+        }
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+            Some("contributor"),
+            None,
+            true,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            !result.report.findings.iter().any(|finding| {
+                finding
+                    .summary
+                    .starts_with("Missing container execution backend CLI")
+            }),
+            "findings={:?}",
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn up_blocks_remote_setup_contexts_before_running_setup() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -62671,11 +62753,12 @@ fn execute_repo_up(
     }
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let execution_dir = contract_working_dir(resolved_path);
-    let mut preflight = diagnose_preconditions_with_mode_for_workflow(
+    let mut preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
         contract,
         resolved_path,
         doctor_mode,
         workflow_name,
+        overrides,
     );
     if dry_run {
         let preview = build_up_preview(
@@ -62772,11 +62855,12 @@ fn execute_repo_up(
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
                 }
-                preflight = diagnose_preconditions_with_mode_for_workflow(
+                preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
                     contract,
                     resolved_path,
                     doctor_mode,
                     workflow_name,
+                    overrides,
                 );
             }
             Err(ProvisioningBackendError::DiagnosedCommandFailed {
@@ -62992,12 +63076,14 @@ fn execute_repo_up(
                                 stdout.push_str(&outcome.stdout);
                                 stderr.push_str(&outcome.stderr);
                             }
-                            preflight = diagnose_preconditions_with_mode_for_workflow(
-                                contract,
-                                resolved_path,
-                                doctor_mode,
-                                workflow_name,
-                            );
+                            preflight =
+                                diagnose_preconditions_with_mode_for_workflow_with_overrides(
+                                    contract,
+                                    resolved_path,
+                                    doctor_mode,
+                                    workflow_name,
+                                    overrides,
+                                );
                         }
                         Err(ProvisioningBackendError::DiagnosedCommandFailed {
                             stdout: backend_stdout,
@@ -63206,11 +63292,12 @@ fn execute_repo_up(
             }
         }
 
-        preflight = diagnose_preconditions_with_mode_for_workflow(
+        preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
             contract,
             resolved_path,
             doctor_mode,
             workflow_name,
+            overrides,
         );
     }
 
@@ -63365,11 +63452,12 @@ fn execute_repo_up(
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
                 if !preflight.ok {
-                    let refreshed = diagnose_preconditions_with_mode_for_workflow(
+                    let refreshed = diagnose_preconditions_with_mode_for_workflow_with_overrides(
                         contract,
                         resolved_path,
                         doctor_mode,
                         workflow_name,
+                        overrides,
                     );
                     if !refreshed.ok {
                         return Ok(RepoUpResult {
