@@ -7143,10 +7143,7 @@ fn probe_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    let quoted = shell_quote(command_name);
-    let probe_command = format!(
-        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
-    );
+    let probe_command = backend_runtime_version_probe_command(command_name, backend);
     let output = run_backend_command_captured(
         "__ota_backend_requirement_probe__",
         probe_command.as_str(),
@@ -7170,6 +7167,21 @@ fn probe_backend_command_version(
     Err(String::from(
         "version probe did not return a parseable version",
     ))
+}
+
+fn backend_runtime_version_probe_command(
+    command_name: &str,
+    backend: &ResolvedExecutionBackend,
+) -> String {
+    let quoted = shell_quote(command_name);
+    if cfg!(windows) && matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return format!(
+            "where {quoted} >NUL 2>&1 && ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1) || exit /B 127"
+        );
+    }
+    format!(
+        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
+    )
 }
 
 fn probe_named_container_command_version(
@@ -40955,6 +40967,29 @@ tasks:
             super::cmd_quote(r#"hello & goodbye"#),
             r#""hello ^& goodbye""#
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_runtime_probe_command_uses_windows_shell_shape() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let probe = super::backend_runtime_version_probe_command("node", &backend);
+        assert!(probe.starts_with("where node"), "{probe}");
+        assert!(probe.contains("exit /B 127"), "{probe}");
+        assert!(!probe.contains("command -v"), "{probe}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn native_runtime_probe_command_uses_posix_shell_shape() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let probe = super::backend_runtime_version_probe_command("node", &backend);
+        assert!(probe.contains("command -v"), "{probe}");
+        assert!(probe.contains("else exit 127"), "{probe}");
     }
 
     #[cfg(unix)]
