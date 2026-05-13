@@ -1280,7 +1280,7 @@ idempotent: if `to` already exists, Ota leaves it untouched.
   or packaged-runtime path
 - use `requirements.native` when a task needs host-native build tools but Ota should diagnose and
   guide instead of silently installing OS packages
-- workflow-aware readiness commands evaluate the selected workflow's `setup.task` / `run.task`
+- workflow-aware readiness commands evaluate the selected workflow's `prepare.task` / `setup.task` / `run.task`
   dependency closure and merge those task-scoped requirements before diagnosing preconditions
 - an explicitly selected workflow with no `setup.task` has no setup prerequisite phase; legacy
   `tasks.setup` fallback is reserved for the unselected default compatibility path
@@ -2034,6 +2034,8 @@ workflows:
   app:
     intent: local_development
     description: Canonical local app workflow
+    prepare:
+      task: setup:env:local
     setup:
       task: setup
     run:
@@ -2057,6 +2059,7 @@ Fields:
 - `<name>.intent`: optional workflow classification such as `local_development`
 - `<name>.description`: optional operator-facing summary
 - `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
+- `<name>.prepare.task`: optional native `action` task ota should run first as explicit host file preparation for that workflow
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
 - `<name>.services.required`: optional services that belong to that workflow
@@ -2081,6 +2084,7 @@ Current behavior:
 - use `checks[].probe` when a named check should reuse a named readiness probe outside that
   workflow-scoped path or when the repo does not declare workflows
 - `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
+- if `workflows.<default>.prepare.task` is declared, `ota up` runs that host prepare phase before service startup or setup; it must reference a native `action` task and is intended for deterministic file preparation such as `copy_if_missing`
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness
 - `tasks.setup` remains the compatibility fallback for the unselected default path; `ota up

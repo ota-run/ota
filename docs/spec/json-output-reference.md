@@ -320,6 +320,7 @@ Success:
     "name": "app",
     "intent": "local_development",
     "notes": "Use this workflow as the operator-first local path.\n",
+    "prepare_task": "setup:env:local",
     "setup_task": "setup",
     "run_task": "dev",
     "required_services": ["postgres"],
@@ -1313,6 +1314,7 @@ Success:
     "name": "app",
     "intent": "local_development",
     "notes": "Use this path when validating readiness and preparing local app runs.\n",
+    "prepare_task": "setup:env:local",
     "setup_task": "setup",
     "run_task": "dev",
     "required_services": ["postgres"],
@@ -1425,6 +1427,7 @@ Success:
       "intent": "quickstart",
       "description": "Structured packaged command path",
       "notes": "Use this path for local container-backed previews.\n",
+      "prepare_task": "setup:env:local",
       "setup_task": "setup",
       "run_task": "preview:quickstart",
       "run_task_launch": {
@@ -1462,6 +1465,7 @@ Notes:
   - `intent`
   - `description`
   - `notes`
+  - `prepare_task`
   - `setup_task`
   - `run_task`
   - `run_task_launch`
@@ -1503,6 +1507,7 @@ Failure:
   "workflow": {
     "name": "app",
     "intent": "local_development",
+    "prepare_task": "setup:env:local",
     "setup_task": "setup",
     "run_task": "dev",
     "required_services": ["postgres"],
