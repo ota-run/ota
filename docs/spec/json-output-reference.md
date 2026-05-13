@@ -254,6 +254,11 @@ loaded from declared sources also carry additive `source_kind`, `source_path`, `
 such as `missing` or `invalid`. The `kind` field is an explicit curated source kind such as
 `dotenv`, `properties`, `json`, `yaml`, or `toml`.
 
+When `--task` is set, `env[].required` reflects the selected task path, not only repo-global
+`env.vars.<name>.required`. A top-level env var that is optional repo-wide may still report
+`required: true` in task-scoped output when the selected task/workflow closure references it from
+`tasks.<name>.requirements.env`.
+
 Canonical source status values are:
 
 - `loaded`
@@ -2457,6 +2462,7 @@ When task inference is confident enough to write, `config.tasks.<name>.notes` ma
 present and point at the matching `ota run <task>` command.
 
 Each `inferred[*]` entry now carries additive metadata for human and machine consumers:
+
 - `type` is one of `project`, `runtime`, `tool`, `env`, `service`, `check`, `task`, `agent`, or `field`
 - `signal` is one of `config`, `script`, `lockfile`, `file`, `template`, or `convention`
 - task-shaped entries can also include `agent_safe` (`yes`, `no`, `unknown`) and `agent_signal` (`verification_candidate` or `bootstrap_candidate`) when ota can classify the task for agent workflows

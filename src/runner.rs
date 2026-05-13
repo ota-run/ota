@@ -1624,7 +1624,28 @@ pub fn resolve_task_env_details(
     contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
-    resolve_task_env_details_with_policy(contract, contract_path, task_env, None)
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        task_env,
+        None,
+        None,
+    )
+}
+
+pub fn resolve_task_env_details_for_task(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    resolve_task_env_details_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        task_env,
+        None,
+    )
 }
 
 pub fn resolve_task_env_details_with_policy(
@@ -1632,6 +1653,39 @@ pub fn resolve_task_env_details_with_policy(
     contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        task_env,
+        policy_env,
+        None,
+    )
+}
+
+pub fn resolve_task_env_details_for_task_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    let required_env_names = contract.task_required_env_names(task_name);
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        task_env,
+        policy_env,
+        (!required_env_names.is_empty()).then_some(&required_env_names),
+    )
+}
+
+fn resolve_task_env_details_with_policy_and_required_env_names(
+    contract: &Contract,
+    contract_path: &Path,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    selected_required_env_names: Option<&BTreeSet<String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
     let mut resolved_values = BTreeMap::new();
     let repo_policy =
@@ -1645,6 +1699,8 @@ pub fn resolve_task_env_details_with_policy(
         if requirement.secret && requirement.default.is_some() {
             return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
         }
+        let required_for_selected_path = requirement.required
+            || selected_required_env_names.is_some_and(|names| names.contains(name));
         let process_value = std::env::var(name).ok();
         let task_value = task_env.and_then(|values| values.get(name)).cloned();
         let resolved = task_value
@@ -1704,7 +1760,7 @@ pub fn resolve_task_env_details_with_policy(
                     },
                 );
             }
-            None if requirement.required => {
+            None if required_for_selected_path => {
                 return Err(RunError::MissingRequiredEnv { name: name.clone() });
             }
             None => {}
@@ -2638,6 +2694,29 @@ pub fn resolve_task_env_with_policy(
 ) -> Result<BTreeMap<String, String>, RunError> {
     let resolved =
         resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)?;
+    let mut overrides = BTreeMap::new();
+
+    for (name, resolved) in resolved {
+        overrides.insert(name, resolved.value);
+    }
+
+    Ok(overrides)
+}
+
+pub fn resolve_task_env_for_task_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let resolved = resolve_task_env_details_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        task_env,
+        policy_env,
+    )?;
     let mut overrides = BTreeMap::new();
 
     for (name, resolved) in resolved {
@@ -5120,8 +5199,13 @@ fn execute_task_with_hooks(
             });
         };
     let task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
-    let env_details =
-        resolve_task_env_details_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
+    let env_details = resolve_task_env_details_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        Some(&task_env),
+        policy_env,
+    )?;
     let secret_env_names: BTreeSet<String> = env_details
         .iter()
         .filter(|(_, value)| value.secret)
@@ -5133,8 +5217,13 @@ fn execute_task_with_hooks(
             names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
         });
     }
-    let env_overrides =
-        resolve_task_env_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
+    let env_overrides = resolve_task_env_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        Some(&task_env),
+        policy_env,
+    )?;
     let native_activation_env = task_native_activation_env(
         contract,
         task_name,
@@ -19739,12 +19828,12 @@ mod tests {
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
         resolve_execution_backend, resolve_execution_backend_with_contract_path, resolve_task_env,
-        resolve_task_env_details, resolve_task_target_binding_url,
-        resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
-        run_task_captured_with_args_with_overrides, run_task_with_args,
-        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
-        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
-        shell_quote, version_matches_requirement,
+        resolve_task_env_details, resolve_task_env_details_for_task,
+        resolve_task_target_binding_url, resolve_task_target_binding_url_with_contract_path,
+        run_task, run_task_captured, run_task_captured_with_args_with_overrides,
+        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
+        run_task_with_overrides, run_task_with_progress, running_loader_label,
+        running_loader_label_for_backend, shell_quote, version_matches_requirement,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -20016,6 +20105,49 @@ tasks:
             EnvResolutionSource::Task
         );
         assert_eq!(resolved["OTA_TEST_REQUIRED"].value, "task-value");
+    }
+
+    #[test]
+    fn task_scoped_env_requirements_are_required_during_execution_resolution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DISCORD_TOKEN:
+      secret: true
+tasks:
+  start:
+    run: echo start
+    requirements:
+      env:
+        - DISCORD_TOKEN
+"#,
+        )
+        .unwrap();
+
+        let error = resolve_task_env_details_for_task(
+            &contract,
+            Path::new("ota.yaml"),
+            "start",
+            Some(&contract.tasks["start"].env),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::MissingRequiredEnv { name } if name == "DISCORD_TOKEN"
+        ));
+
+        let repo_view = resolve_task_env_details(
+            &contract,
+            Path::new("ota.yaml"),
+            Some(&contract.tasks["start"].env),
+        )
+        .unwrap();
+        assert!(!repo_view.contains_key("DISCORD_TOKEN"));
     }
 
     #[test]

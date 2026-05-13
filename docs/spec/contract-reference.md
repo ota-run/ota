@@ -1291,6 +1291,10 @@ idempotent: if `to` already exists, Ota leaves it untouched.
   that path; reference a check from `requirements.checks` when that task path needs it
 - `requirements.env` must reference declared top-level `env.vars` names; it does not create new env
   requirements inline
+- selected task/workflow evaluation treats `requirements.env` as path-scoped required env truth:
+  the referenced top-level names become required for `ota doctor`, `ota env --task`, `ota up`, and
+  task execution on that selected path even when `env.vars.<name>.required` is not repo-global
+  `true`
 
 `launch` rules:
 

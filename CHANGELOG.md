@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- made task-scoped `requirements.env` execution-complete: `ota doctor`, `ota env --task`,
+  `ota run`, workflow-driven `ota up`, and execution/receipt env reporting now all treat
+  `tasks.<name>.requirements.env` as selected-path required env truth without forcing the same
+  `env.vars.<name>` entry to become repo-global `required: true`; docs, JSON reference, and
+  public site env guidance were updated to match the shipped behavior
 - added workflow `notes` support (contract, CLI text, and JSON output): contracts can now declare
   `workflows.<name>.notes`, surfaced in `ota workflows` and workflow-scoped `ota tasks --workflow`
   output to provide operator guidance and setup context without overloading `description`
