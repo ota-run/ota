@@ -113,7 +113,8 @@ use crate::policy_pack::{
 };
 use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningFailureDiagnosis,
-    ProvisioningOutputMode, apply_provisioning_request_with_target,
+    ProvisioningOutputMode, activate_mise_paths_for_current_process,
+    apply_provisioning_request_with_target,
 };
 use crate::runner::{
     CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
@@ -13139,6 +13140,7 @@ pub fn run_command(
     stream: bool,
     persist_logs: bool,
 ) -> CommandOutput {
+    activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -15203,6 +15205,7 @@ pub fn doctor(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    activate_mise_paths_for_current_process();
     let mode = doctor_mode_from_execution_overrides(overrides.backend);
     let doctor_lifecycle = overrides.lifecycle;
     let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
@@ -20588,6 +20591,7 @@ pub fn up(
     stream: bool,
     show_receipt: bool,
 ) -> CommandOutput {
+    activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(

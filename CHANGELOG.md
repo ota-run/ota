@@ -41,6 +41,10 @@
   runs `mise use -g <tool@version>` when the tool is not yet active, and prepends the resolved
   tool directory to the current process `PATH` so same-run `ota up` precondition checks can
   observe the provisioned version instead of remaining blocked
+- hardened command startup activation for mise-managed tools: `ota doctor`, `ota up`, and
+  `ota run` now activate detected mise bin/shims directories on process startup so subsequent
+  command invocations can resolve policy-provisioned tools without requiring manual shell
+  activation between steps
 - fixed container backend trust on Windows and other mixed-host setups: `ota doctor` now treats
   a declared/preferred container path as blocked when the selected engine CLI exists but `docker
   info` / equivalent cannot reach a usable backend, `ota up` now preflights that backend before
