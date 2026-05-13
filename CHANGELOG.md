@@ -49,6 +49,15 @@
   `~/.local/bin`), Ota now activates that path in-process before retrying provisioning, so
   selected workflow setup paths no longer short-circuit to immediate `Missing tool` /
   `Version mismatch` precondition blocks in the same run
+- fixed unmanaged native `ota up` backend fulfillment blocking: when a selected setup/run path
+  is missing required runtimes/tools and no org policy pack is active, Ota now surfaces a
+  canonical blocker finding (for example `Tool probe failed: <tool>`) and returns a normal
+  blocked provisioning result with standard `UP SUMMARY` output (`Cause: missing runtime/tool`)
+  instead of aborting with a raw backend-fulfillment policy-pack error
+- corrected unmanaged native `ota up` runtime fallback classification: when no org policy pack
+  is active and a required runtime is missing, fallback findings now use canonical
+  `Runtime probe failed: <runtime>` wording (instead of version-mismatch wording) and still
+  classify `UP SUMMARY` cause as `missing runtime/tool`
 - fixed `mise` tool activation follow-through after native policy provisioning: after
   `mise install <tool@version>`, Ota now resolves the installed binary with `mise which`,
   runs `mise use -g <tool@version>` when the tool is not yet active, and prepends the resolved

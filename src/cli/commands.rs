@@ -50763,6 +50763,136 @@ tasks:
     }
 
     #[test]
+    fn no_policy_backend_fulfillment_maps_to_tool_probe_blocker() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: no-policy
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        let error = RunError::BackendFulfillmentFailed {
+            task: String::from("setup"),
+            backend_unit: String::from("task:setup:native"),
+            details: String::from(super::NO_ACTIVE_POLICY_PROVISIONING_DETAILS),
+            evidence: crate::runner::BackendFulfillmentEvidence {
+                backend_unit: String::from("task:setup:native"),
+                backend: String::from("native"),
+                mode: crate::runner::BackendFulfillmentMode::Run,
+                declared_runtimes: BTreeMap::new(),
+                declared_tools: BTreeMap::from([(String::from("bun"), String::from("1.3.12"))]),
+                missing: vec![String::from(
+                    "tool `bun` requires `1.3.12` (command `bun` is not available)",
+                )],
+                actions: Vec::new(),
+                result: crate::runner::BackendFulfillmentResult::Failed,
+                task_executed: false,
+            },
+        };
+
+        let result = super::up_backend_fulfillment_blocked_result(
+            &contract,
+            Path::new("ota.yaml"),
+            None,
+            ExecutionOverrides::default(),
+            "setup",
+            None,
+            String::new(),
+            String::new(),
+            &error,
+        )
+        .expect("expected blocked up result");
+
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "provisioning");
+        assert_eq!(result.task.as_deref(), Some("setup"));
+        assert_eq!(result.report.findings[0].summary, "Tool probe failed: bun");
+        assert_eq!(
+            super::primary_up_failure_cause(
+                result.status,
+                result.phase,
+                &result.report.findings,
+                result.receipt.backend.as_deref(),
+                None,
+                result.service.as_deref(),
+                result.task.as_deref()
+            ),
+            Some(super::UpFailureCause::MissingRuntimeTool)
+        );
+    }
+
+    #[test]
+    fn no_policy_backend_fulfillment_maps_to_runtime_probe_blocker() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: no-policy
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        let error = RunError::BackendFulfillmentFailed {
+            task: String::from("setup"),
+            backend_unit: String::from("task:setup:native"),
+            details: String::from(super::NO_ACTIVE_POLICY_PROVISIONING_DETAILS),
+            evidence: crate::runner::BackendFulfillmentEvidence {
+                backend_unit: String::from("task:setup:native"),
+                backend: String::from("native"),
+                mode: crate::runner::BackendFulfillmentMode::Run,
+                declared_runtimes: BTreeMap::from([(String::from("node"), String::from("20"))]),
+                declared_tools: BTreeMap::new(),
+                missing: vec![String::from(
+                    "runtime `node` requires `20` (command `node` is not available)",
+                )],
+                actions: Vec::new(),
+                result: crate::runner::BackendFulfillmentResult::Failed,
+                task_executed: false,
+            },
+        };
+
+        let result = super::up_backend_fulfillment_blocked_result(
+            &contract,
+            Path::new("ota.yaml"),
+            None,
+            ExecutionOverrides::default(),
+            "setup",
+            None,
+            String::new(),
+            String::new(),
+            &error,
+        )
+        .expect("expected blocked up result");
+
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "provisioning");
+        assert_eq!(result.task.as_deref(), Some("setup"));
+        assert_eq!(result.report.findings[0].summary, "Runtime probe failed: node");
+        assert_eq!(
+            super::primary_up_failure_cause(
+                result.status,
+                result.phase,
+                &result.report.findings,
+                result.receipt.backend.as_deref(),
+                None,
+                result.service.as_deref(),
+                result.task.as_deref()
+            ),
+            Some(super::UpFailureCause::MissingRuntimeTool)
+        );
+    }
+
+    #[test]
     fn bootstrap_lookup_uses_provisioning_sources_before_missing_command_name() {
         let policy: OrgPolicyPack = serde_yaml::from_str(
             r#"
@@ -56741,6 +56871,7 @@ fn render_up_section_body(
 enum UpFailureCause {
     BackendStartup,
     Provisioning,
+    MissingRuntimeTool,
     ServiceReadiness,
     RepoSetup,
     Preconditions,
@@ -56750,6 +56881,7 @@ fn up_failure_cause_key(cause: UpFailureCause) -> &'static str {
     match cause {
         UpFailureCause::BackendStartup => "backend_startup",
         UpFailureCause::Provisioning => "provisioning",
+        UpFailureCause::MissingRuntimeTool => "missing_runtime_tool",
         UpFailureCause::ServiceReadiness => "service_readiness",
         UpFailureCause::RepoSetup => "repo_setup",
         UpFailureCause::Preconditions => "preconditions",
@@ -56760,6 +56892,7 @@ fn up_failure_cause_label(cause: UpFailureCause) -> &'static str {
     match cause {
         UpFailureCause::BackendStartup => "backend startup",
         UpFailureCause::Provisioning => "provisioning",
+        UpFailureCause::MissingRuntimeTool => "missing runtime/tool",
         UpFailureCause::ServiceReadiness => "service readiness",
         UpFailureCause::RepoSetup => "repo setup",
         UpFailureCause::Preconditions => "preconditions",
@@ -56790,6 +56923,13 @@ fn primary_up_failure_cause(
 
     if findings.iter().any(|finding| {
         finding.severity == FindingSeverity::Error
+            && is_missing_runtime_or_tool_finding(finding.summary.as_str())
+    }) {
+        return Some(UpFailureCause::MissingRuntimeTool);
+    }
+
+    if findings.iter().any(|finding| {
+        finding.severity == FindingSeverity::Error
             && finding.summary.starts_with("Service readiness failed")
     }) {
         return Some(UpFailureCause::ServiceReadiness);
@@ -56806,6 +56946,13 @@ fn primary_up_failure_cause(
     }
 
     None
+}
+
+fn is_missing_runtime_or_tool_finding(summary: &str) -> bool {
+    summary.starts_with("Tool probe failed: ")
+        || summary.starts_with("Runtime probe failed: ")
+        || summary.starts_with("Version mismatch for runtime: ")
+        || summary.starts_with("Version mismatch for tool: ")
 }
 
 fn backend_output_indicates_backend_startup_issue(
@@ -62485,7 +62632,7 @@ fn run_up_task(
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
     mode: RepoExecutionMode,
-) -> Result<CommandRunResult, String> {
+) -> Result<CommandRunResult, RunError> {
     match mode {
         RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides_with_policy(
             contract,
@@ -62505,7 +62652,7 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
         })
-        .map_err(|error| render_up_run_error(resolved_path, error)),
+        .map_err(|error| error),
         RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
             contract,
             resolved_path,
@@ -62521,7 +62668,7 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
         })
-        .map_err(|error| render_up_run_error(resolved_path, error)),
+        .map_err(|error| error),
     }
 }
 
@@ -63835,7 +63982,22 @@ fn execute_repo_up(
                     }
                 }
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    setup_task_name,
+                    setup_task_command.clone(),
+                    stdout.clone(),
+                    stderr.clone(),
+                    &error,
+                ) {
+                    return Ok(blocked_result);
+                }
+                return Err(render_up_run_error(resolved_path, error));
+            }
         }
     }
 
@@ -63913,7 +64075,22 @@ fn execute_repo_up(
                 stderr.push_str(&outcome.stderr);
                 run_runtime = outcome.runtime;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    run_task_name,
+                    run_task_command.clone(),
+                    stdout.clone(),
+                    stderr.clone(),
+                    &error,
+                ) {
+                    return Ok(blocked_result);
+                }
+                return Err(render_up_run_error(resolved_path, error));
+            }
         }
     }
 
@@ -67406,6 +67583,158 @@ fn load_and_diagnose_workspace_streaming(
 
 fn render_run_error(error: RunError) -> String {
     error.to_string()
+}
+
+const NO_ACTIVE_POLICY_PROVISIONING_DETAILS: &str =
+    "no active org policy pack is available to select approved provisioning sources";
+
+fn up_backend_fulfillment_blocked_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    task_name: &str,
+    task_command: Option<String>,
+    stdout: String,
+    stderr: String,
+    error: &RunError,
+) -> Option<RepoUpResult> {
+    let fallback_finding = fallback_backend_fulfillment_missing_requirement_finding(error)?;
+    let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
+    let mut report = diagnose_preconditions_with_mode_for_workflow_with_overrides(
+        contract,
+        resolved_path,
+        doctor_mode,
+        workflow_name,
+        overrides,
+    );
+    prepend_finding_if_missing(&mut report.findings, fallback_finding);
+    report.ok = false;
+
+    let receipt = repo_execution_receipt(
+        resolved_path,
+        contract,
+        doctor_report_execution_context(
+            contract,
+            resolved_path,
+            doctor_mode,
+            overrides.lifecycle,
+            &report,
+        ),
+        "BLOCKED",
+        "provisioning",
+        None,
+        Some(task_name),
+        &report.findings,
+        None,
+        report.findings.first().map(|finding| finding.next.clone()),
+    );
+
+    Some(RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: "provisioning",
+        report,
+        preview: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: Some(task_name.to_string()),
+        task_command,
+        exit_code: None,
+        stdout,
+        stderr,
+    })
+}
+
+fn fallback_backend_fulfillment_missing_requirement_finding(error: &RunError) -> Option<Finding> {
+    let evidence = match error {
+        RunError::BackendFulfillmentFailed {
+            details, evidence, ..
+        } if details == NO_ACTIVE_POLICY_PROVISIONING_DETAILS => evidence,
+        _ => return None,
+    };
+
+    let Some(primary_gap) = evidence.missing.first() else {
+        return Some(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Backend prerequisites are missing"),
+            why: String::from(
+                "the selected run path requires prerequisites that are not currently available in this execution context",
+            ),
+            next: String::from("install the missing prerequisites and rerun `ota up`"),
+        });
+    };
+
+    if let Some((kind, name, required, details)) = parse_backend_requirement_gap(primary_gap) {
+        if kind == "tool" {
+            let why = if details.contains("not available") {
+                format!(
+                    "`{name}` is required by the selected run path, but {details} on this execution context"
+                )
+            } else {
+                format!(
+                    "`{name}` is required by the selected run path (`{required}`), but {details}"
+                )
+            };
+            return Some(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Tool probe failed: {name}"),
+                why,
+                next: format!(
+                    "install `{name}` on the selected execution context and rerun `ota up`"
+                ),
+            });
+        }
+
+        if kind == "runtime" {
+            if details.contains("not available") {
+                return Some(Finding {
+                    severity: FindingSeverity::Error,
+                    summary: format!("Runtime probe failed: {name}"),
+                    why: format!(
+                        "`{name}` is required by the selected run path, but {details} on this execution context"
+                    ),
+                    next: format!(
+                        "install `{name}` on the selected execution context and rerun `ota up`"
+                    ),
+                });
+            }
+            return Some(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Version mismatch for runtime: {name}"),
+                why: format!(
+                    "`{name}` is required by the selected run path (`{required}`), but {details}"
+                ),
+                next: format!(
+                    "install `{name}` on the selected execution context and rerun `ota up`"
+                ),
+            });
+        }
+    }
+
+    Some(Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("Backend prerequisites are missing"),
+        why: format!(
+            "the selected run path is missing required prerequisites: {}",
+            evidence.missing.join("; ")
+        ),
+        next: String::from("install the missing prerequisites and rerun `ota up`"),
+    })
+}
+
+fn parse_backend_requirement_gap(line: &str) -> Option<(String, String, String, String)> {
+    let (kind, rest) = line.split_once(" `")?;
+    let (name, rest) = rest.split_once("` requires `")?;
+    let (required, details) = rest.split_once("` (")?;
+    let details = details.strip_suffix(')')?;
+    Some((
+        kind.trim().to_ascii_lowercase(),
+        name.to_string(),
+        required.to_string(),
+        details.to_string(),
+    ))
 }
 
 fn render_up_run_error(contract_path: &Path, error: RunError) -> String {
