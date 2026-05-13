@@ -15357,13 +15357,15 @@ pub fn doctor(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let mut report = diagnose_contract_with_mode_and_lifecycle_for_workflow(
-                    &target.contract,
-                    &target.contract_path,
-                    mode,
-                    doctor_lifecycle,
-                    workflow_name,
-                );
+                let mut report =
+                    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                        &target.contract,
+                        &target.contract_path,
+                        mode,
+                        doctor_lifecycle,
+                        workflow_name,
+                        overrides,
+                    );
                 append_contract_drift_findings(
                     &target.contract,
                     &target.contract_path,
@@ -15520,12 +15522,13 @@ pub fn doctor(
                                     }
                                 };
                             let mut member_report =
-                                diagnose_contract_with_mode_and_lifecycle_for_workflow(
+                                diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
                                     &member_target.contract,
                                     &member_target.contract_path,
                                     mode,
                                     doctor_lifecycle,
                                     workflow_name,
+                                    overrides,
                                 );
                             append_contract_drift_findings(
                                 &member_target.contract,
@@ -15769,13 +15772,15 @@ pub fn doctor(
                                 );
                             }
                         };
-                    let mut report = diagnose_contract_with_mode_and_lifecycle_for_workflow(
-                        &target.contract,
-                        &target.contract_path,
-                        mode,
-                        doctor_lifecycle,
-                        workflow_name,
-                    );
+                    let mut report =
+                        diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                            &target.contract,
+                            &target.contract_path,
+                            mode,
+                            doctor_lifecycle,
+                            workflow_name,
+                            overrides,
+                        );
                     append_contract_drift_findings(
                         &target.contract,
                         &target.contract_path,
@@ -36830,8 +36835,8 @@ mod tests {
         build_env_report, build_up_preview, collect_validate_warnings,
         compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, contractless_signal_summary_parts,
-        doctor_mode_execution_overrides, env as env_command, execute_repo_up,
-        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
+        doctor as doctor_command, doctor_mode_execution_overrides, env as env_command,
+        execute_repo_up, execution_receipt_step, execution_receipt_step_detail, render_clean_text,
         render_detect_comparison_section, render_env_text, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_tasks_text,
         render_tasks_use_text, render_up_result, render_up_section_from_parts,
@@ -50339,6 +50344,82 @@ workflows:
                 .iter()
                 .map(|finding| finding.summary.clone())
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn doctor_native_override_does_not_require_container_backend_cli() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: native-doctor
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: oven/bun:1.3.12-slim
+      engines:
+        - docker
+        - podman
+tasks:
+  setup:
+    run: echo setup
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "");
+        }
+
+        let output = doctor_command(
+            Some(fixture.path()),
+            None,
+            &[],
+            Some("contributor"),
+            false,
+            false,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+            OutputFormat::Text,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            !output
+                .stdout
+                .contains("Missing container execution backend CLI"),
+            "{}",
+            output.stdout
         );
     }
 
