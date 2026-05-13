@@ -1198,8 +1198,20 @@ fn windows_mise_version_probe_script() -> &'static str {
     r#"$ErrorActionPreference = 'Stop'
 $candidates = @(
   (Join-Path $env:LOCALAPPDATA 'mise\bin\mise.exe'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\mise\bin\mise.exe'),
+  (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\mise.exe'),
   (Join-Path $env:USERPROFILE '.local\bin\mise.exe')
 )
+$wingetPackageRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+if (Test-Path $wingetPackageRoot) {
+  Get-ChildItem -Path $wingetPackageRoot -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'jdx.mise*' } |
+    ForEach-Object {
+      $candidates += (Join-Path $_.FullName 'mise.exe')
+      $candidates += (Join-Path $_.FullName 'bin\mise.exe')
+      $candidates += (Join-Path $_.FullName 'mise\bin\mise.exe')
+    }
+}
 foreach ($candidate in $candidates) {
   if (Test-Path $candidate) {
     & $candidate --version
@@ -1212,6 +1224,135 @@ if ($null -ne $command) {
   exit $LASTEXITCODE
 }
 throw 'mise executable not found after bootstrap'"#
+}
+
+#[cfg(any(windows, test))]
+fn windows_mise_candidate_paths() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    let user_profile = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+
+    if let Some(base) = local_app_data.as_ref() {
+        candidates.push(base.join("mise").join("bin").join("mise.exe"));
+        candidates.push(
+            base.join("Programs")
+                .join("mise")
+                .join("bin")
+                .join("mise.exe"),
+        );
+        candidates.push(
+            base.join("Microsoft")
+                .join("WinGet")
+                .join("Links")
+                .join("mise.exe"),
+        );
+
+        let winget_packages = base.join("Microsoft").join("WinGet").join("Packages");
+        if let Ok(entries) = std::fs::read_dir(winget_packages) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let normalized = file_name.to_string_lossy().to_ascii_lowercase();
+                if normalized.starts_with("jdx.mise") {
+                    let package_root = entry.path();
+                    candidates.push(package_root.join("mise.exe"));
+                    candidates.push(package_root.join("bin").join("mise.exe"));
+                    candidates.push(package_root.join("mise").join("bin").join("mise.exe"));
+                }
+            }
+        }
+    }
+
+    if let Some(base) = user_profile.as_ref() {
+        candidates.push(base.join(".local").join("bin").join("mise.exe"));
+    }
+
+    candidates
+}
+
+#[cfg(any(windows, test))]
+fn find_windows_mise_executable() -> Option<std::path::PathBuf> {
+    windows_mise_candidate_paths()
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(any(windows, test))]
+fn activate_windows_mise_on_path() -> Option<std::path::PathBuf> {
+    let executable = find_windows_mise_executable()?;
+    let directory = executable.parent()?.to_path_buf();
+
+    let mut path_segments = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let normalized_directory = directory.to_string_lossy().to_ascii_lowercase();
+    let already_present = path_segments
+        .iter()
+        .any(|segment| segment.to_string_lossy().to_ascii_lowercase() == normalized_directory);
+    if !already_present {
+        path_segments.insert(0, directory);
+        if let Ok(joined) = std::env::join_paths(path_segments) {
+            unsafe {
+                std::env::set_var("PATH", joined);
+            }
+        }
+    }
+
+    Some(executable)
+}
+
+#[cfg(any(unix, test))]
+fn posix_mise_candidate_paths() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let xdg_data_home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from);
+
+    if let Some(base) = home.as_ref() {
+        candidates.push(base.join(".local").join("bin").join("mise"));
+        candidates.push(
+            base.join(".local")
+                .join("share")
+                .join("mise")
+                .join("bin")
+                .join("mise"),
+        );
+        candidates.push(base.join(".mise").join("bin").join("mise"));
+    }
+    if let Some(base) = xdg_data_home.as_ref() {
+        candidates.push(base.join("mise").join("bin").join("mise"));
+    }
+
+    candidates
+}
+
+#[cfg(any(unix, test))]
+fn find_posix_mise_executable() -> Option<std::path::PathBuf> {
+    posix_mise_candidate_paths()
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(any(unix, test))]
+fn activate_posix_mise_on_path() -> Option<std::path::PathBuf> {
+    let executable = find_posix_mise_executable()?;
+    let directory = executable.parent()?.to_path_buf();
+
+    let mut path_segments = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let directory_text = directory.to_string_lossy().to_string();
+    let already_present = path_segments
+        .iter()
+        .any(|segment| segment.to_string_lossy() == directory_text);
+    if !already_present {
+        path_segments.insert(0, directory);
+        if let Ok(joined) = std::env::join_paths(path_segments) {
+            unsafe {
+                std::env::set_var("PATH", joined);
+            }
+        }
+    }
+
+    Some(executable)
 }
 
 impl SdkmanBootstrapProvisioningBackend {
@@ -2314,6 +2455,7 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                         .map_or(&[], |value| std::slice::from_ref(value)),
                     mode,
                 )?;
+                let _ = activate_windows_mise_on_path();
             } else {
                 ensure_bootstrap_source_version(
                     target,
@@ -2326,6 +2468,10 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                         .map_or(&[], |value| std::slice::from_ref(value)),
                     mode,
                 )?;
+            }
+            #[cfg(not(windows))]
+            if matches!(target, ProvisioningExecutionTarget::Native) {
+                let _ = activate_posix_mise_on_path();
             }
             #[cfg(not(windows))]
             ensure_bootstrap_source_version(
@@ -3943,8 +4089,112 @@ mod tests {
         let script = super::windows_mise_version_probe_script();
         assert!(script.contains("LOCALAPPDATA"), "{script}");
         assert!(script.contains("mise\\bin\\mise.exe"), "{script}");
+        assert!(script.contains("Programs\\mise\\bin\\mise.exe"), "{script}");
+        assert!(script.contains("Microsoft\\WinGet\\Packages"), "{script}");
         assert!(script.contains("Get-Command mise"), "{script}");
         assert!(script.contains("--version"), "{script}");
+    }
+
+    #[test]
+    fn posix_mise_candidates_include_home_local_bin() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let home = sandbox.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let original_home = env::var_os("HOME");
+        unsafe {
+            env::set_var("HOME", &home);
+        }
+
+        let candidates = super::posix_mise_candidate_paths();
+        assert!(
+            candidates.contains(&home.join(".local").join("bin").join("mise")),
+            "{candidates:?}"
+        );
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn activates_windows_mise_path_from_winget_package_layout() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let local_app_data = sandbox.path().join("local-app-data");
+        let package_root = local_app_data
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Packages")
+            .join("jdx.mise_Microsoft.Winget.Source_8wekyb3d8bbwe")
+            .join("bin");
+        fs::create_dir_all(&package_root).unwrap();
+        let mise_executable = package_root.join("mise.exe");
+        fs::write(&mise_executable, "stub").unwrap();
+
+        let original_local_app_data = env::var_os("LOCALAPPDATA");
+        let original_user_profile = env::var_os("USERPROFILE");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("LOCALAPPDATA", &local_app_data);
+            env::set_var("USERPROFILE", sandbox.path().join("user-profile"));
+            env::set_var("PATH", "/usr/bin");
+        }
+
+        let resolved = super::activate_windows_mise_on_path();
+        assert_eq!(resolved.as_deref(), Some(mise_executable.as_path()));
+
+        let updated_path = env::var_os("PATH").unwrap();
+        let mut segments = env::split_paths(&updated_path);
+        assert_eq!(segments.next(), Some(package_root));
+
+        match original_local_app_data {
+            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
+            None => unsafe { env::remove_var("LOCALAPPDATA") },
+        }
+        match original_user_profile {
+            Some(value) => unsafe { env::set_var("USERPROFILE", value) },
+            None => unsafe { env::remove_var("USERPROFILE") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+    }
+
+    #[test]
+    fn activates_posix_mise_path_from_home_local_bin() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let home = sandbox.path().join("home");
+        let mise_bin = home.join(".local").join("bin");
+        fs::create_dir_all(&mise_bin).unwrap();
+        let mise_executable = mise_bin.join("mise");
+        fs::write(&mise_executable, "stub").unwrap();
+
+        let original_home = env::var_os("HOME");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("HOME", &home);
+            env::set_var("PATH", sandbox.path().join("path-base"));
+        }
+
+        let resolved = super::activate_posix_mise_on_path();
+        assert_eq!(resolved.as_deref(), Some(mise_executable.as_path()));
+
+        let updated_path = env::var_os("PATH").unwrap();
+        let mut segments = env::split_paths(&updated_path);
+        assert_eq!(segments.next(), Some(mise_bin));
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
     }
 
     #[test]
