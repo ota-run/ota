@@ -96,8 +96,18 @@ jobs:
       - name: Validate contract
         run: ota validate
 
-      - name: Run release gate
+      - name: Run release gate (non-Windows)
+        if: runner.os != 'Windows'
         run: ota run release-gate --backend native --stream
+
+      - name: Run release gate (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+          $env:PATH = "$cargoBin;$env:PATH"
+          cargo --version
+          ota run release-gate --backend native --stream
 
   release-tag:
     name: Create Release Tag
