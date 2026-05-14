@@ -107,7 +107,7 @@ jobs:
           $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
           $env:PATH = "$cargoBin;$env:PATH"
           cargo --version
-          ota run release-gate --backend native --stream
+          ota run release-gate --backend native --skip-deps --stream
 
   release-tag:
     name: Create Release Tag
