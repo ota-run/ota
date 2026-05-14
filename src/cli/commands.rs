@@ -15207,9 +15207,9 @@ pub fn doctor(
     debug: bool,
 ) -> CommandOutput {
     activate_mise_paths_for_current_process();
-    let mode = doctor_mode_from_execution_overrides(overrides.backend);
+    let mode_override = doctor_mode_from_execution_overrides(overrides.backend);
+    let mode = mode_override.unwrap_or(DoctorMode::Native);
     let doctor_lifecycle = overrides.lifecycle;
-    let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -15362,6 +15362,10 @@ pub fn doctor(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
+                let mode = mode_override.unwrap_or_else(|| {
+                    doctor_mode_for_contract(&target.contract, overrides, workflow_name)
+                });
+                let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
                 let mut report =
                     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
                         &target.contract,
@@ -15726,6 +15730,7 @@ pub fn doctor(
                 let mut overall_ok = true;
                 let mut text_sections = Vec::new();
                 let mut member_results = Vec::new();
+                let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
                 for member in members {
                     let target =
                         match load_and_validate_target(&resolved_path, Some(member.as_str())) {
@@ -18568,7 +18573,8 @@ pub fn receipt(
     promote_baseline: bool,
     debug: bool,
 ) -> CommandOutput {
-    let mode = doctor_mode_from_execution_overrides(overrides.backend);
+    let mode_override = doctor_mode_from_execution_overrides(overrides.backend);
+    let mode = mode_override.unwrap_or(DoctorMode::Native);
     let doctor_lifecycle = overrides.lifecycle;
     if history {
         let history_root = match resolve_receipt_history_root(path, file_override) {
@@ -18683,6 +18689,8 @@ pub fn receipt(
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(target) => {
+                let mode = mode_override
+                    .unwrap_or_else(|| doctor_mode_for_contract(&target.contract, overrides, None));
                 let mut report = diagnose_contract_with_mode_and_lifecycle(
                     &target.contract,
                     &target.contract_path,
@@ -60571,11 +60579,31 @@ fn backend_for_doctor_mode(mode: DoctorMode) -> Backend {
     }
 }
 
-fn doctor_mode_from_execution_overrides(backend: Option<Backend>) -> DoctorMode {
-    match backend.unwrap_or(Backend::Native) {
+fn doctor_mode_from_execution_overrides(backend: Option<Backend>) -> Option<DoctorMode> {
+    backend.map(|backend| match backend {
         Backend::Native => DoctorMode::Native,
         Backend::Container => DoctorMode::Container,
         Backend::Remote => DoctorMode::Remote,
+    })
+}
+
+fn doctor_mode_for_contract(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> DoctorMode {
+    if let Some(task_name) = selected_up_primary_task_name(contract, workflow_name) {
+        return match effective_task_execution(contract, task_name, overrides).backend {
+            Backend::Native => DoctorMode::Native,
+            Backend::Container => DoctorMode::Container,
+            Backend::Remote => DoctorMode::Native,
+        };
+    }
+
+    match effective_execution(contract, overrides).0 {
+        Backend::Native => DoctorMode::Native,
+        Backend::Container => DoctorMode::Container,
+        Backend::Remote => DoctorMode::Native,
     }
 }
 
