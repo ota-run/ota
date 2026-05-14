@@ -20,15 +20,25 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::doctor::{command_available, resolve_command_path};
 use crate::schema::{Backend, ContainerBackend, Contract, Execution, Lifecycle, RemoteBackend};
 
 pub(crate) const LEGACY_EXECUTION_CONTEXT_NAME: &str = "app";
+
+static CONTAINER_BACKEND_PROBE_FAILURE_CACHE: OnceLock<
+    Mutex<HashMap<PathBuf, Option<ContainerBackendProbeFailure>>>,
+> = OnceLock::new();
+
+fn container_backend_probe_failure_cache()
+-> &'static Mutex<HashMap<PathBuf, Option<ContainerBackendProbeFailure>>> {
+    CONTAINER_BACKEND_PROBE_FAILURE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 pub(crate) fn format_backend(backend: Backend) -> &'static str {
     match backend {
@@ -190,7 +200,18 @@ pub(crate) struct ContainerBackendProbeFailure {
 pub(crate) fn container_backend_probe_failure(
     engine: &str,
 ) -> Option<ContainerBackendProbeFailure> {
-    let mut child = match Command::new(resolve_engine_path(engine))
+    let resolved_path = resolve_engine_path(engine);
+
+    if let Some(cached) = container_backend_probe_failure_cache()
+        .lock()
+        .expect("container backend probe cache should be lockable")
+        .get(&resolved_path)
+        .cloned()
+    {
+        return cached;
+    }
+
+    let mut child = match Command::new(&resolved_path)
         .arg("info")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -229,7 +250,7 @@ pub(crate) fn container_backend_probe_failure(
         }
     }
 
-    match child.wait_with_output() {
+    let result = match child.wait_with_output() {
         Ok(output) if output.status.success() => None,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -255,7 +276,16 @@ pub(crate) fn container_backend_probe_failure(
             exit_code: None,
             details: error.to_string(),
         }),
+    };
+
+    {
+        let mut cache = container_backend_probe_failure_cache()
+            .lock()
+            .expect("container backend probe cache should be lockable");
+        cache.insert(resolved_path, result.clone());
     }
+
+    result
 }
 
 pub(crate) fn preferred_container_backend_probe_failure(

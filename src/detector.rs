@@ -3809,11 +3809,14 @@ fn should_skip_detect_dir(name: &str) -> bool {
 }
 
 fn relative_detect_source(root: &Path, relative_path: &Path) -> String {
-    root.join(relative_path)
+    let relative = root
+        .join(relative_path)
         .strip_prefix(root)
         .unwrap_or(relative_path)
         .display()
         .to_string()
+        .replace('\\', "/");
+    relative
 }
 
 fn dotnet_project_sort_key(root: &Path, relative_path: &Path) -> (usize, usize, String) {
@@ -3832,11 +3835,12 @@ fn dotnet_project_sort_key(root: &Path, relative_path: &Path) -> (usize, usize, 
         || relative_path
             .components()
             .any(|component| component.as_os_str() == "tests");
+    let path_sort_key = relative_path.display().to_string().replace('\\', "/");
 
     (
         usize::from(!is_solution),
         usize::from(is_test_project),
-        relative_path.display().to_string(),
+        path_sort_key,
     )
 }
 

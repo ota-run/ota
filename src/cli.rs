@@ -6650,7 +6650,11 @@ exec /bin/sh -lc "$1"
     }
 
     fn normalize_snapshot_text(value: &str) -> String {
-        value.replace("\r\n", "\n").trim_end().to_string()
+        value
+            .replace("\r\n", "\n")
+            .replace('\\', "/")
+            .trim_end()
+            .to_string()
     }
 
     fn normalize_snapshot_dynamic_fields(name: &str, value: &str) -> String {

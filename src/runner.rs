@@ -32,6 +32,8 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Once;
+#[cfg(windows)]
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -19785,9 +19787,51 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(windows)]
 fn shell_command(command: &str) -> Command {
-    let mut shell = Command::new("cmd");
-    shell.arg("/C").arg(command);
-    shell
+    if looks_like_posix_script(command) && has_bash() {
+        let mut shell = Command::new("bash");
+        shell.arg("-lc").arg(command);
+        shell
+    } else {
+        let mut shell = Command::new("cmd");
+        shell.arg("/C").arg(command);
+        shell
+    }
+}
+
+#[cfg(windows)]
+fn looks_like_posix_script(command: &str) -> bool {
+    const POSIX_MARKERS: [&str; 8] = [
+        "command -v ",
+        "; then",
+        " fi",
+        "&& ",
+        " || ",
+        "<<'PY'",
+        "sh -lc ",
+        "bash -lc ",
+    ];
+    if command.starts_with("cmd ") || command.starts_with("cmd/") {
+        return false;
+    }
+    if command.starts_with("powershell ") || command.starts_with("pwsh ") {
+        return false;
+    }
+    command.contains("&&")
+        || command.contains("||")
+        || POSIX_MARKERS.iter().any(|marker| command.contains(marker))
+        || command.contains(" ${")
+}
+
+#[cfg(windows)]
+fn has_bash() -> bool {
+    static HAS_BASH: OnceLock<bool> = OnceLock::new();
+    *HAS_BASH.get_or_init(|| {
+        Command::new("bash")
+            .arg("--version")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
 }
 
 #[cfg(test)]
