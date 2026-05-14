@@ -3644,6 +3644,11 @@ fn run_service_readiness(
     working_dir: &Path,
     readiness: &crate::schema::ServiceReadinessSpec,
 ) -> Result<CheckStatus, RunError> {
+    let Some(from_context) = readiness.from_context() else {
+        return Ok(CheckStatus::Failed);
+    };
+    let backend = resolve_context_execution_backend(contract, from_context)?;
+
     if let Some(probe_name) = readiness
         .probe
         .as_deref()
@@ -3653,50 +3658,95 @@ fn run_service_readiness(
         let Ok(resolved) = resolve_named_readiness_probe_contract(contract, probe_name) else {
             return Ok(CheckStatus::Failed);
         };
-        let Some(from_context) = readiness.from_context() else {
-            return Ok(CheckStatus::Failed);
-        };
-        let backend = resolve_context_execution_backend(contract, from_context)?;
         let Some(endpoint) = service.endpoint_for_context(from_context) else {
             return Ok(CheckStatus::Failed);
         };
-        let command = match resolved {
-            ResolvedNamedReadinessProbeContract::Http {
-                request, timeout, ..
-            } => service_http_readiness_probe_command_from_request(endpoint, &request, timeout),
-            ResolvedNamedReadinessProbeContract::Tcp { timeout, .. } => {
-                service_tcp_readiness_probe_command_from_timeout(endpoint, timeout)
-            }
-        };
+        let is_native_backend = matches!(backend, ResolvedExecutionBackend::Native { .. });
         let timing = service_readiness_timing_policy(readiness);
         if !timing.start_period.is_zero() {
             thread::sleep(timing.start_period);
         }
         let mut failed_attempts = 0u32;
         loop {
-            match run_backend_command_captured(
-                &format!("readiness:{name}"),
-                command.as_str(),
-                working_dir,
-                &backend,
-            ) {
-                Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
-                Ok(_) => {
-                    failed_attempts = failed_attempts.saturating_add(1);
-                    if failed_attempts >= timing.retries {
-                        return Ok(CheckStatus::Failed);
+            match &resolved {
+                ResolvedNamedReadinessProbeContract::Http {
+                    request, timeout, ..
+                } => {
+                    if is_native_backend {
+                        match http_readiness_endpoint_status(
+                            endpoint.address.as_str(),
+                            endpoint.port,
+                            request,
+                            *timeout,
+                        ) {
+                            HttpReadinessStatus::Passed => return Ok(CheckStatus::Passed),
+                            HttpReadinessStatus::Failed | HttpReadinessStatus::TimedOut => {
+                                failed_attempts = failed_attempts.saturating_add(1);
+                                if failed_attempts >= timing.retries {
+                                    return Ok(CheckStatus::Failed);
+                                }
+                            }
+                        }
+                    } else {
+                        let command = service_http_readiness_probe_command_from_request(
+                            endpoint, request, *timeout,
+                        );
+                        match run_backend_command_captured(
+                            &format!("readiness:{name}"),
+                            command.as_str(),
+                            working_dir,
+                            &backend,
+                        ) {
+                            Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
+                            Ok(_) => {
+                                failed_attempts = failed_attempts.saturating_add(1);
+                                if failed_attempts >= timing.retries {
+                                    return Ok(CheckStatus::Failed);
+                                }
+                            }
+                            Err(error) => return Err(error),
+                        }
                     }
                 }
-                Err(error) => return Err(error),
+                ResolvedNamedReadinessProbeContract::Tcp { timeout, .. } => {
+                    if is_native_backend {
+                        match tcp_readiness_endpoint_status(
+                            endpoint.address.as_str(),
+                            endpoint.port,
+                            *timeout,
+                        ) {
+                            HttpReadinessStatus::Passed => return Ok(CheckStatus::Passed),
+                            HttpReadinessStatus::Failed | HttpReadinessStatus::TimedOut => {
+                                failed_attempts = failed_attempts.saturating_add(1);
+                                if failed_attempts >= timing.retries {
+                                    return Ok(CheckStatus::Failed);
+                                }
+                            }
+                        }
+                    } else {
+                        let command =
+                            service_tcp_readiness_probe_command_from_timeout(endpoint, *timeout);
+                        match run_backend_command_captured(
+                            &format!("readiness:{name}"),
+                            command.as_str(),
+                            working_dir,
+                            &backend,
+                        ) {
+                            Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
+                            Ok(_) => {
+                                failed_attempts = failed_attempts.saturating_add(1);
+                                if failed_attempts >= timing.retries {
+                                    return Ok(CheckStatus::Failed);
+                                }
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                }
             }
             thread::sleep(timing.interval);
         }
     }
-
-    let Some(from_context) = readiness.from_context() else {
-        return Ok(CheckStatus::Failed);
-    };
-    let backend = resolve_context_execution_backend(contract, from_context)?;
 
     if let Some(command) = readiness.legacy_run_command() {
         return match run_backend_command_captured(
@@ -3717,28 +3767,86 @@ fn run_service_readiness(
     let Some(endpoint) = service.endpoint_for_context(from_context) else {
         return Ok(CheckStatus::Failed);
     };
-    let command = structured_service_readiness_command(readiness, endpoint, kind);
     let timing = service_readiness_timing_policy(readiness);
     if !timing.start_period.is_zero() {
         thread::sleep(timing.start_period);
     }
-
     let mut failed_attempts = 0u32;
+    let is_native_backend = matches!(backend, ResolvedExecutionBackend::Native { .. });
     loop {
-        match run_backend_command_captured(
-            &format!("readiness:{name}"),
-            command.as_str(),
-            working_dir,
-            &backend,
-        ) {
-            Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
-            Ok(_) => {
-                failed_attempts = failed_attempts.saturating_add(1);
-                if failed_attempts >= timing.retries {
-                    return Ok(CheckStatus::Failed);
+        if is_native_backend {
+            match kind {
+                crate::schema::TaskRuntimeReadinessKind::Http => {
+                    let request = HttpReadinessRequest {
+                        method: readiness
+                            .method
+                            .unwrap_or(crate::schema::TaskRuntimeReadinessHttpMethod::Get),
+                        path: normalized_runtime_path(readiness.path.as_deref()),
+                        headers: readiness.headers.clone(),
+                        success_statuses: readiness
+                            .success
+                            .as_ref()
+                            .filter(|success| !success.status.is_empty())
+                            .map(|success| success.status.clone())
+                            .unwrap_or_else(|| (200u16..400u16).collect()),
+                        body_contains: readiness.body.as_ref().map(|body| body.contains.clone()),
+                    };
+                    let timeout = readiness
+                        .timeout
+                        .as_deref()
+                        .and_then(crate::schema::parse_readiness_duration_spec);
+                    match http_readiness_endpoint_status(
+                        endpoint.address.as_str(),
+                        endpoint.port,
+                        &request,
+                        timeout,
+                    ) {
+                        HttpReadinessStatus::Passed => return Ok(CheckStatus::Passed),
+                        HttpReadinessStatus::Failed | HttpReadinessStatus::TimedOut => {
+                            failed_attempts = failed_attempts.saturating_add(1);
+                            if failed_attempts >= timing.retries {
+                                return Ok(CheckStatus::Failed);
+                            }
+                        }
+                    }
+                }
+                crate::schema::TaskRuntimeReadinessKind::Tcp => {
+                    let timeout = readiness
+                        .timeout
+                        .as_deref()
+                        .and_then(crate::schema::parse_readiness_duration_spec);
+                    match tcp_readiness_endpoint_status(
+                        endpoint.address.as_str(),
+                        endpoint.port,
+                        timeout,
+                    ) {
+                        HttpReadinessStatus::Passed => return Ok(CheckStatus::Passed),
+                        HttpReadinessStatus::Failed | HttpReadinessStatus::TimedOut => {
+                            failed_attempts = failed_attempts.saturating_add(1);
+                            if failed_attempts >= timing.retries {
+                                return Ok(CheckStatus::Failed);
+                            }
+                        }
+                    }
                 }
             }
-            Err(error) => return Err(error),
+        } else {
+            let command = structured_service_readiness_command(readiness, endpoint, kind);
+            match run_backend_command_captured(
+                &format!("readiness:{name}"),
+                command.as_str(),
+                working_dir,
+                &backend,
+            ) {
+                Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
+                Ok(_) => {
+                    failed_attempts = failed_attempts.saturating_add(1);
+                    if failed_attempts >= timing.retries {
+                        return Ok(CheckStatus::Failed);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
         }
         thread::sleep(timing.interval);
     }
