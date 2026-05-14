@@ -30,19 +30,52 @@ runtimes:
 tools:
   maven: "*"
 tasks:
+  setup:
+    description: Warm the Maven dependency graph
+    run: mvn -q -DskipTests dependency:go-offline
+    requirements:
+      runtimes:
+        java: "21"
+      tools:
+        maven: "*"
+      checks:
+        - java-installed
   build:
+    description: Compile and package the repo
     run: mvn package
+    depends_on:
+      - setup
+    requirements:
+      tools:
+        maven: "*"
   test:
+    description: Run the Maven test suite
     run: mvn test
+    depends_on:
+      - setup
+    requirements:
+      tools:
+        maven: "*"
+workflows:
+  default: verify
+  verify:
+    description: Canonical Java dependency warmup and verification path
+    setup:
+      task: setup
+    run:
+      task: test
+    notes: |
+      Use this when you want the repo front door instead of calling Maven tasks directly.
 checks:
   - name: java-installed
     kind: precondition
     severity: error
     run: java --version
 agent:
-  entrypoint: build
+  entrypoint: setup
   default_task: test
   safe_tasks:
+    - setup
     - build
     - test
   verify_after_changes:
@@ -54,5 +87,5 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
-    Use `ota validate` before changes and `ota run test` after edits.
+    Use `ota validate` before changes and `ota workflows` to inspect the dependency-and-test path.
     Use `ota run build` to confirm the Maven wiring and `ota run test` to verify Java changes.

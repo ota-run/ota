@@ -56,14 +56,14 @@ use crate::doctor::{
     diagnose_contract_with_mode_and_lifecycle,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
-    diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow, diagnose_service,
-    diagnose_services_only_for_workflow, finding_targets_container_image,
+    diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow_with_overrides,
+    diagnose_service, diagnose_services_only_for_workflow, finding_targets_container_image,
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::execution::{
-    container_engine_candidates, container_engine_candidates_from_backend,
-    ephemeral_container_target, execution_image, execution_target, format_backend,
-    format_lifecycle, selected_container_engine_from_backend,
+    container_backend_probe_failure, container_engine_candidates,
+    container_engine_candidates_from_backend, ephemeral_container_target, execution_image,
+    execution_target, format_backend, format_lifecycle, selected_container_engine_from_backend,
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
@@ -113,7 +113,8 @@ use crate::policy_pack::{
 };
 use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningFailureDiagnosis,
-    ProvisioningOutputMode, apply_provisioning_request_with_target,
+    ProvisioningOutputMode, activate_mise_paths_for_current_process,
+    apply_provisioning_request_with_target,
 };
 use crate::runner::{
     CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
@@ -128,7 +129,8 @@ use crate::runner::{
     named_execution_context, persistent_container_name, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_effective_task_container_backend,
     resolve_execution_backend, resolve_execution_backend_with_contract_path,
-    resolve_task_env_details, resolve_task_env_details_with_policy,
+    resolve_task_env_details, resolve_task_env_details_for_task,
+    resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
@@ -11126,6 +11128,8 @@ fn build_env_report(
 
     let policy_env = load_policy_env_overlay(contract_path).map_err(|error| error.to_string())?;
     let declared_sources = load_declared_env_sources(contract, contract_path);
+    let selected_required_env_names =
+        task_name.map(|task_name| contract.task_required_env_names(task_name));
     let mut env = Vec::new();
     let mut sources = Vec::new();
     let mut contract_resolved_count = 0usize;
@@ -11157,6 +11161,10 @@ fn build_env_report(
 
     for (name, requirement) in &contract.env {
         let task_override = task_env.as_ref().and_then(|task_env| task_env.get(name));
+        let required_for_selected_path = requirement.required
+            || selected_required_env_names
+                .as_ref()
+                .is_some_and(|names| names.contains(name));
 
         if let Some(value) = task_override {
             let source = if explicit_task_env.is_some_and(|task_env| task_env.contains_key(name)) {
@@ -11167,6 +11175,7 @@ fn build_env_report(
             env.push(build_task_overridden_env_entry(
                 name,
                 requirement,
+                required_for_selected_path,
                 value,
                 source,
             ));
@@ -11210,7 +11219,7 @@ fn build_env_report(
                     env.push(EnvEntry {
                         name: name.clone(),
                         kind: EnvEntryKind::Contract,
-                        required: requirement.required,
+                        required: required_for_selected_path,
                         default: requirement.default.clone(),
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
@@ -11229,7 +11238,7 @@ fn build_env_report(
                     env.push(EnvEntry {
                         name: name.clone(),
                         kind: EnvEntryKind::Contract,
-                        required: requirement.required,
+                        required: required_for_selected_path,
                         default: requirement.default.clone(),
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
@@ -11243,7 +11252,7 @@ fn build_env_report(
                     });
                 }
             }
-            None if requirement.required => {
+            None if required_for_selected_path => {
                 missing_count += 1;
                 env.push(EnvEntry {
                     name: name.clone(),
@@ -11403,13 +11412,14 @@ fn env_entry_source_metadata(
 fn build_task_overridden_env_entry(
     name: &str,
     requirement: &EnvRequirement,
+    required: bool,
     value: &str,
     source: &str,
 ) -> EnvEntry {
     EnvEntry {
         name: name.to_string(),
         kind: EnvEntryKind::Contract,
-        required: requirement.required,
+        required,
         default: requirement.default.clone(),
         allowed: requirement.allowed.clone(),
         value: Some(display_env_value(value, requirement.secret)),
@@ -13131,6 +13141,7 @@ pub fn run_command(
     stream: bool,
     persist_logs: bool,
 ) -> CommandOutput {
+    activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -15195,7 +15206,9 @@ pub fn doctor(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
-    let mode = doctor_mode_from_execution_overrides(overrides.backend);
+    activate_mise_paths_for_current_process();
+    let mode_override = doctor_mode_from_execution_overrides(overrides.backend);
+    let mode = mode_override.unwrap_or(DoctorMode::Native);
     let doctor_lifecycle = overrides.lifecycle;
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
@@ -15349,13 +15362,19 @@ pub fn doctor(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let mut report = diagnose_contract_with_mode_and_lifecycle_for_workflow(
-                    &target.contract,
-                    &target.contract_path,
-                    mode,
-                    doctor_lifecycle,
-                    workflow_name,
-                );
+                let mode = mode_override.unwrap_or_else(|| {
+                    doctor_mode_for_contract(&target.contract, overrides, workflow_name)
+                });
+                let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
+                let mut report =
+                    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                        &target.contract,
+                        &target.contract_path,
+                        mode,
+                        doctor_lifecycle,
+                        workflow_name,
+                        diagnosis_overrides,
+                    );
                 append_contract_drift_findings(
                     &target.contract,
                     &target.contract_path,
@@ -15405,8 +15424,14 @@ pub fn doctor(
                         );
                     }
                 };
-                let execution_summary =
-                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                let required_env_names = target
+                    .contract
+                    .selected_workflow_required_env_names(workflow_name);
+                let execution_summary = ExecutionSummary::from_contract_with_required_env_names(
+                    &target.contract,
+                    &target.contract_path,
+                    (!required_env_names.is_empty()).then_some(&required_env_names),
+                );
                 if members.is_empty()
                     && target.contract_path == resolved_path
                     && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -15506,12 +15531,13 @@ pub fn doctor(
                                     }
                                 };
                             let mut member_report =
-                                diagnose_contract_with_mode_and_lifecycle_for_workflow(
+                                diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
                                     &member_target.contract,
                                     &member_target.contract_path,
                                     mode,
                                     doctor_lifecycle,
                                     workflow_name,
+                                    diagnosis_overrides,
                                 );
                             append_contract_drift_findings(
                                 &member_target.contract,
@@ -15547,10 +15573,16 @@ pub fn doctor(
                                     );
                                 }
                             };
-                            let member_execution = ExecutionSummary::from_contract(
-                                &member_target.contract,
-                                &member_target.contract_path,
-                            );
+                            let member_required_env_names = member_target
+                                .contract
+                                .selected_workflow_required_env_names(workflow_name);
+                            let member_execution =
+                                ExecutionSummary::from_contract_with_required_env_names(
+                                    &member_target.contract,
+                                    &member_target.contract_path,
+                                    (!member_required_env_names.is_empty())
+                                        .then_some(&member_required_env_names),
+                                );
                             let rewritten_member_findings = rewrite_doctor_findings_for_contract(
                                 &member_report.findings,
                                 &member_target.contract_path,
@@ -15667,10 +15699,13 @@ pub fn doctor(
                                     ),
                                     workflow: workflow_summary,
                                     agent: agent_summary,
-                                    execution: ExecutionSummary::from_contract(
-                                        &target.contract,
-                                        &target.contract_path,
-                                    ),
+                                    execution:
+                                        ExecutionSummary::from_contract_with_required_env_names(
+                                            &target.contract,
+                                            &target.contract_path,
+                                            (!required_env_names.is_empty())
+                                                .then_some(&required_env_names),
+                                        ),
                                     provisioning: report
                                         .provisioning
                                         .as_ref()
@@ -15695,6 +15730,7 @@ pub fn doctor(
                 let mut overall_ok = true;
                 let mut text_sections = Vec::new();
                 let mut member_results = Vec::new();
+                let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
                 for member in members {
                     let target =
                         match load_and_validate_target(&resolved_path, Some(member.as_str())) {
@@ -15746,13 +15782,15 @@ pub fn doctor(
                                 );
                             }
                         };
-                    let mut report = diagnose_contract_with_mode_and_lifecycle_for_workflow(
-                        &target.contract,
-                        &target.contract_path,
-                        mode,
-                        doctor_lifecycle,
-                        workflow_name,
-                    );
+                    let mut report =
+                        diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                            &target.contract,
+                            &target.contract_path,
+                            mode,
+                            doctor_lifecycle,
+                            workflow_name,
+                            diagnosis_overrides,
+                        );
                     append_contract_drift_findings(
                         &target.contract,
                         &target.contract_path,
@@ -18535,7 +18573,8 @@ pub fn receipt(
     promote_baseline: bool,
     debug: bool,
 ) -> CommandOutput {
-    let mode = doctor_mode_from_execution_overrides(overrides.backend);
+    let mode_override = doctor_mode_from_execution_overrides(overrides.backend);
+    let mode = mode_override.unwrap_or(DoctorMode::Native);
     let doctor_lifecycle = overrides.lifecycle;
     if history {
         let history_root = match resolve_receipt_history_root(path, file_override) {
@@ -18650,6 +18689,8 @@ pub fn receipt(
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(target) => {
+                let mode = mode_override
+                    .unwrap_or_else(|| doctor_mode_for_contract(&target.contract, overrides, None));
                 let mut report = diagnose_contract_with_mode_and_lifecycle(
                     &target.contract,
                     &target.contract_path,
@@ -20559,6 +20600,7 @@ pub fn up(
     stream: bool,
     show_receipt: bool,
 ) -> CommandOutput {
+    activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -30476,7 +30518,7 @@ fn render_tasks_text(
 
     if let Some(workflow) = workflow {
         output.push_str("\n\n");
-        output.push_str(&render_workflow_summary_text(workflow));
+        output.push_str(&render_workflow_summary_text(workflow, None));
     }
 
     if let Some(agent) = agent
@@ -30791,61 +30833,71 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     output
 }
 
-fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
-    let mut output = paint_section_title("Workflow");
-    output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
-        paint_key("Name:"),
-        paint(workflow.name, "1;37")
-    ));
+fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<bool>) -> String {
+    let mut output = format!("{} {}", list_bullet(), paint(workflow.name, "1"));
     if let Some(intent) = workflow.intent
         && !intent.trim().is_empty()
     {
-        output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Intent:"),
-            intent
-        ));
+        output.push_str(&format!("\n  {} {}", paint_key("Intent:"), intent));
     }
     if let Some(description) = workflow.description
         && !description.trim().is_empty()
     {
         output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
+            "\n  {} {}",
             paint_key("Description:"),
             description
         ));
     }
+    output.push_str(&format!(
+        "\n  {} `{}`",
+        paint_key("Use:"),
+        paint_code(&format!("ota up --workflow {}", workflow.name))
+    ));
+    output.push_str(&format!(
+        "\n  {} `{}`",
+        paint_key("Proof:"),
+        paint_code(&format!("ota proof runtime --workflow {}", workflow.name))
+    ));
+    if let Some(notes) = workflow.notes
+        && !notes.trim().is_empty()
+    {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Notes:"),
+            render_multiline_field(notes)
+        ));
+    }
+    if let Some(prepare_task) = workflow.prepare_task {
+        output.push_str(&format!(
+            "\n  {} `{}`",
+            paint_key("Prepare:"),
+            paint_code(&format!("ota run {prepare_task}"))
+        ));
+    }
     if let Some(setup_task) = workflow.setup_task {
         output.push_str(&format!(
-            "\n {}  {} `{}`",
-            summary_bullet(),
+            "\n  {} `{}`",
             paint_key("Setup:"),
             paint_code(&format!("ota run {setup_task}"))
         ));
     }
     if let Some(run_task) = workflow.run_task {
         output.push_str(&format!(
-            "\n {}  {} `{}`",
-            summary_bullet(),
+            "\n  {} `{}`",
             paint_key("Run:"),
             paint_code(&format!("ota run {run_task}"))
         ));
     }
     if let Some(launch) = workflow.run_task_launch.as_ref() {
         output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
+            "\n  {} {}",
             paint_key("Run Launch:"),
             render_task_launch_text(launch)
         ));
     }
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Services:"),
         if workflow.required_services.is_empty() {
             String::from("-")
@@ -30854,8 +30906,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Readiness Checks:"),
         if workflow.readiness_checks.is_empty() {
             String::from("-")
@@ -30864,8 +30915,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Readiness Probes:"),
         if workflow.readiness_probes.is_empty() {
             String::from("-")
@@ -30874,8 +30924,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     output.push_str(&format!(
-        "\n {}  {} {}",
-        summary_bullet(),
+        "\n  {} {}",
         paint_key("Readiness Surfaces:"),
         if workflow.readiness_surfaces.is_empty() {
             String::from("-")
@@ -30884,11 +30933,7 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
         }
     ));
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
-        output.push_str(&format!(
-            "\n {}  {}",
-            summary_bullet(),
-            paint_key("Exposes:")
-        ));
+        output.push_str(&format!("\n  {}", paint_key("Exposes:")));
         if !workflow.expose_entries.is_empty() {
             for expose in &workflow.expose_entries {
                 let detail = if let Some(surface) = expose.surface.as_deref() {
@@ -30910,6 +30955,13 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>) -> String {
                 ));
             }
         }
+    }
+    if let Some(default) = default {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Default:"),
+            if default { "true" } else { "false" }
+        ));
     }
     output
 }
@@ -31029,7 +31081,7 @@ fn render_tasks_output_text(
         let mut output = render_tasks_use_text(path, tasks);
         if let Some(workflow) = workflow {
             output.push_str("\n\n");
-            output.push_str(&render_workflow_summary_text(workflow));
+            output.push_str(&render_workflow_summary_text(workflow, None));
         }
         output
     } else {
@@ -31074,12 +31126,9 @@ fn render_workflows_output_text(
 
     for listed in workflows {
         output.push_str("\n\n");
-        output.push_str(&render_workflow_summary_text(&listed.workflow));
-        output.push_str(&format!(
-            "\n {}  {} {}",
-            summary_bullet(),
-            paint_key("Default:"),
-            if listed.default { "true" } else { "false" }
+        output.push_str(&render_workflow_summary_text(
+            &listed.workflow,
+            Some(listed.default),
         ));
     }
 
@@ -32557,7 +32606,7 @@ fn render_report_section(
         stdout.push_str("\n\n");
     }
     if let Some(workflow) = workflow {
-        stdout.push_str(&render_workflow_summary_text(workflow));
+        stdout.push_str(&render_workflow_summary_text(workflow, None));
         stdout.push_str("\n\n");
     }
 
@@ -34637,7 +34686,10 @@ fn render_execution_plan_text(
         selected_execution_plan_context_summary(declared_execution, selected_context);
 
     if let Some(workflow) = workflow {
-        stdout.push_str(&format!("\n\n{}", render_workflow_summary_text(workflow)));
+        stdout.push_str(&format!(
+            "\n\n{}",
+            render_workflow_summary_text(workflow, None)
+        ));
     }
 
     stdout.push_str(&format!(
@@ -35218,6 +35270,11 @@ fn render_agents_markdown(
         if let Some(intent) = workflow.intent {
             output.push_str("- `intent`: `");
             output.push_str(intent);
+            output.push_str("`\n");
+        }
+        if let Some(prepare_task) = workflow.prepare_task {
+            output.push_str("- `prepare`: `ota run ");
+            output.push_str(prepare_task);
             output.push_str("`\n");
         }
         if let Some(setup_task) = workflow.setup_task {
@@ -36807,8 +36864,8 @@ mod tests {
         build_env_report, build_up_preview, collect_validate_warnings,
         compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, contractless_signal_summary_parts,
-        doctor_mode_execution_overrides, env as env_command, execute_repo_up,
-        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
+        doctor as doctor_command, doctor_mode_execution_overrides, env as env_command,
+        execute_repo_up, execution_receipt_step, execution_receipt_step_detail, render_clean_text,
         render_detect_comparison_section, render_env_text, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_tasks_text,
         render_tasks_use_text, render_up_result, render_up_section_from_parts,
@@ -36823,9 +36880,9 @@ mod tests {
     use crate::output::{
         ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorVerdict,
         EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs,
-        ExecutionReceiptSummary, ExecutionSummary, ServiceEndpointSummary, ServiceManagerSummary,
-        ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary, TaskSummary,
-        WorkflowSummary,
+        ExecutionReceiptSummary, ExecutionSummary, ListedWorkflowSummary, ServiceEndpointSummary,
+        ServiceManagerSummary, ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary,
+        TaskSummary, WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -36876,16 +36933,26 @@ mod tests {
         let java_log = dir.join("java.log");
 
         let brew_script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOJ'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\necho 'openjdk 22'\nexit 0\nEOJ\n/bin/chmod +x \"{}\"\nexit 0\nEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '4.4.0'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ] && [ \"$2\" = \"java@22\" ]; then\n  /bin/mkdir -p \"$HOME/.local/share/mise/installs/java/22/bin\"\n  /bin/cat > \"$HOME/.local/share/mise/installs/java/22/bin/java\" <<'EOJ'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo 'openjdk 22'\n  exit 0\nfi\nexit 0\nEOJ\n  /bin/chmod +x \"$HOME/.local/share/mise/installs/java/22/bin/java\"\n  exit 0\nfi\nif [ \"$1\" = \"which\" ] && [ \"$2\" = \"java\" ]; then\n  if [ -f \"$HOME/.config/mise/config.toml\" ]; then\n    echo \"$HOME/.local/share/mise/installs/java/22/bin/java\"\n    exit 0\n  fi\n  echo 'not active' >&2\n  exit 1\nfi\nif [ \"$1\" = \"use\" ] && [ \"$2\" = \"-g\" ] && [ \"$3\" = \"java@22\" ]; then\n  /bin/mkdir -p \"$HOME/.config/mise\"\n  echo 'java = \"22\"' > \"$HOME/.config/mise/config.toml\"\n  exit 0\nfi\nexit 0\nEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
             brew_log.display(),
             dir.join("mise").display(),
             mise_log.display(),
-            dir.join("java").display(),
             java_log.display(),
-            dir.join("java").display(),
             dir.join("mise").display(),
         );
         write_executable_script(&dir.join("brew"), &brew_script);
+    }
+
+    #[cfg(unix)]
+    fn make_mise_bootstrap_to_home_local_bin_shim(dir: &Path) {
+        let bootstrap_log = dir.join("mise-bootstrap.log");
+        let mise_log = dir.join("mise.log");
+        let sh_script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"-lc\" ] && printf '%s' \"$2\" | grep -q \"curl https://mise.run | bash\"; then\n  mkdir -p \"$HOME/.local/bin\"\n  cat > \"$HOME/.local/bin/mise\" <<'MISEEOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '2025.1.0'\n  exit 0\nfi\nif [ \"$1\" = \"install\" ] && [ \"$2\" = \"bun@1.3.12\" ]; then\n  mkdir -p \"$HOME/.local/share/mise/installs/bun/1.3.12/bin\"\n  cat > \"$HOME/.local/share/mise/installs/bun/1.3.12/bin/bun\" <<'BUNEOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ] || [ \"$1\" = \"-v\" ]; then\n  echo '1.3.12'\n  exit 0\nfi\nexit 0\nBUNEOF\n  chmod +x \"$HOME/.local/share/mise/installs/bun/1.3.12/bin/bun\"\n  exit 0\nfi\nif [ \"$1\" = \"which\" ] && [ \"$2\" = \"bun\" ]; then\n  if [ -f \"$HOME/.config/mise/config.toml\" ]; then\n    echo \"$HOME/.local/share/mise/installs/bun/1.3.12/bin/bun\"\n    exit 0\n  fi\n  echo 'not active' >&2\n  exit 1\nfi\nif [ \"$1\" = \"use\" ] && [ \"$2\" = \"-g\" ] && [ \"$3\" = \"bun@1.3.12\" ]; then\n  mkdir -p \"$HOME/.config/mise\"\n  echo 'bun = \"1.3.12\"' > \"$HOME/.config/mise/config.toml\"\n  exit 0\nfi\nexit 0\nMISEEOF\n  chmod +x \"$HOME/.local/bin/mise\"\n  exit 0\nfi\nexec /bin/sh \"$@\"\n",
+            bootstrap_log.display(),
+            mise_log.display(),
+        );
+        write_executable_script(&dir.join("sh"), &sh_script);
     }
 
     #[test]
@@ -37396,6 +37463,8 @@ tasks:
             name: "app",
             intent: Some("local_development"),
             description: Some("Primary local app workflow"),
+            notes: Some("Use this to validate local startup before release"),
+            prepare_task: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
             run_task_launch: None,
@@ -37438,8 +37507,20 @@ tasks:
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", Some(&workflow), None, &[task]));
 
-        assert!(rendered.contains("Workflow"), "{rendered}");
-        assert!(rendered.contains("Name: app"), "{rendered}");
+        assert!(rendered.contains("✦ app"), "{rendered}");
+        assert!(
+            rendered.contains("Use: `ota up --workflow app`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Proof: `ota proof runtime --workflow app`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Notes:"), "{rendered}");
+        assert!(
+            rendered.contains("Use this to validate local startup before release"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Setup: `ota run setup`"), "{rendered}");
         assert!(rendered.contains("Run: `ota run dev`"), "{rendered}");
         assert!(rendered.contains("Services: postgres"), "{rendered}");
@@ -38796,6 +38877,54 @@ tasks:
         assert!(text.contains(
             "add `workflows` to `ota.yaml` when the repo has more than one meaningful operational path"
         ));
+    }
+
+    #[test]
+    fn workflows_text_uses_task_style_layout_with_notes_and_commands() {
+        let workflows = vec![ListedWorkflowSummary {
+            default: false,
+            workflow: WorkflowSummary {
+                name: "build",
+                intent: Some("local_build"),
+                description: Some("Build artifacts for local installation testing"),
+                notes: Some("Use this path before packaging artifacts for manual QA."),
+                prepare_task: None,
+                setup_task: Some("install:app"),
+                run_task: Some("build"),
+                run_task_launch: None,
+                required_services: Vec::new(),
+                readiness_checks: vec![
+                    String::from("node-toolchain-ready"),
+                    String::from("build-output-dir"),
+                ],
+                readiness_probes: Vec::new(),
+                readiness_surfaces: Vec::new(),
+                exposes: Vec::new(),
+                expose_surfaces: Vec::new(),
+                expose_entries: Vec::new(),
+            },
+        }];
+
+        let text = strip_ansi_codes(&super::render_workflows_output_text(
+            "./ota.yaml",
+            Some("contributor"),
+            &workflows,
+        ));
+
+        assert!(text.contains("✦ build"), "{text}");
+        assert!(text.contains("Use: `ota up --workflow build`"), "{text}");
+        assert!(
+            text.contains("Proof: `ota proof runtime --workflow build`"),
+            "{text}"
+        );
+        assert!(text.contains("Setup: `ota run install:app`"), "{text}");
+        assert!(text.contains("Run: `ota run build`"), "{text}");
+        assert!(
+            text.contains("Readiness Checks: node-toolchain-ready,build-output-dir"),
+            "{text}"
+        );
+        assert!(text.contains("Notes:"), "{text}");
+        assert!(text.contains("Default: false"), "{text}");
     }
 
     #[test]
@@ -40541,6 +40670,79 @@ tasks:
     }
 
     #[test]
+    fn up_preview_lists_prepare_before_setup_and_services() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    endpoints:
+      app:
+        address: postgres
+        port: 5432
+    readiness:
+      from: app
+      kind: tcp
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    requires_services:
+      - postgres
+    run: ./bin/setup
+workflows:
+  default: app
+  app:
+    prepare:
+      task: setup:env:local
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+        );
+
+        assert_eq!(
+            preview.plan.actions,
+            vec![
+                String::from("run host prepare task `setup:env:local`"),
+                String::from("start service `postgres` before `setup`"),
+                String::from("verify service `postgres` readiness before `setup`"),
+                String::from("run task `setup`"),
+                String::from("re-check repo readiness"),
+            ]
+        );
+    }
+
+    #[test]
     fn finding_targets_provisioning_action_strips_context_suffix() {
         let finding = Finding {
             severity: FindingSeverity::Error,
@@ -40580,7 +40782,42 @@ tasks:
     }
 
     #[test]
-    fn up_preview_does_not_treat_probe_failures_as_provisionable() {
+    fn finding_targets_provisioning_action_for_unparseable_tool_version() {
+        let finding = Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Unparseable version for tool: npm (context app)"),
+            why: String::from(
+                "ota probed `/usr/local/bin/npm` with `npm --version`, but the output did not contain a parseable version",
+            ),
+            next: String::from(
+                "run `npm --version` directly, inspect `/usr/local/bin/npm`, and make sure the output contains a parseable version before rerunning `ota doctor`",
+            ),
+        };
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: String::from("npm"),
+            requested_version: String::from("*"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("brew"),
+            source_config: None,
+            approved_version: Some(String::from("*")),
+            policy_match: None,
+        };
+
+        assert_eq!(
+            super::provisionable_target_key_for_finding(&finding),
+            Some(String::from("tool:npm"))
+        );
+        assert!(super::finding_targets_provisioning_action(
+            &finding, &action
+        ));
+    }
+
+    #[test]
+    fn up_preview_treats_probe_failures_as_provisionable() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -40638,13 +40875,13 @@ tasks:
         );
 
         assert!(
-            !preview
+            preview
                 .plan
                 .actions
                 .contains(&String::from("provision `npm` `*` via `choco`"))
         );
         assert!(
-            preview
+            !preview
                 .plan
                 .skipped
                 .contains(&String::from("skip `npm`; already satisfies the contract"))
@@ -43561,6 +43798,48 @@ tasks:
     }
 
     #[test]
+    fn collect_validate_warnings_skips_native_action_only_host_prepare_dependencies() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    context: app
+    run: npm install
+    depends_on:
+      - setup:env:local
+"#,
+        )
+        .unwrap();
+
+        let warnings = collect_validate_warnings(&contract);
+
+        assert!(!warnings.iter().any(|warning| {
+            warning.contains(
+                "task `setup` depends_on `setup:env:local` across different execution boundaries",
+            )
+        }));
+    }
+
+    #[test]
     fn collect_validate_warnings_reports_managed_isolated_path_mutation() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -44198,6 +44477,8 @@ execution:
             name: "app",
             intent: Some("local_development"),
             description: None,
+            notes: None,
+            prepare_task: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
             run_task_launch: None,
@@ -44240,6 +44521,47 @@ execution:
 
         assert!(text.contains("run `ota run dev` to activate the canonical repo workflow"));
         assert!(!text.contains("run `ota run ci` to execute the default repo task"));
+    }
+
+    #[test]
+    fn render_agents_markdown_includes_default_workflow_prepare() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    prepare:
+      task: setup:env:local
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let rendered =
+            super::render_agents_markdown(&contract, Path::new("./ota.yaml"), None, "./ota.yaml");
+
+        assert!(rendered.contains("- `prepare`: `ota run setup:env:local`"));
+        assert!(rendered.contains("- `setup`: `ota run setup`"));
+        assert!(rendered.contains("- `run`: `ota run dev`"));
     }
 
     #[test]
@@ -49570,6 +49892,129 @@ policies:
         assert!(rendered.contains("Task output: bash: line 1: curl: command not found"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn up_bootstrapped_mise_from_home_local_bin_recovers_and_provisions_same_run() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let policy_dir = repo.path().join(".ota");
+        fs::create_dir_all(&policy_dir).unwrap();
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: bootstrap-home-local-bin
+execution:
+  preferred: native
+  supported:
+    - native
+tools:
+  bun:
+    version: "1.3.12"
+tasks:
+  setup:
+    run: echo setup
+    requirements:
+      tools:
+        bun: "1.3.12"
+  ci:
+    run: echo ci
+    depends_on:
+      - setup
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+    run:
+      task: ci
+"#,
+        )
+        .unwrap();
+        fs::write(
+            policy_dir.join("org-policy.yaml"),
+            r#"
+policies:
+  version_policy:
+    tools:
+      bun:
+        approved_versions:
+          - "1.3.12"
+  provisioning:
+    bun:
+      source: mise
+      approved_versions:
+        - "1.3.12"
+  adapter_bootstrap:
+    mise:
+      source: mise-bootstrap
+      approved_versions:
+        - ">=2024.12"
+"#,
+        )
+        .unwrap();
+
+        let shim_dir = TempDir::new().unwrap();
+        let fake_home = TempDir::new().unwrap();
+        make_mise_bootstrap_to_home_local_bin_shim(shim_dir.path());
+
+        let original_home = env::var_os("HOME");
+        let original_path = env::var("PATH").unwrap_or_default();
+        let constrained_path = format!("{}:/usr/bin:/bin", shim_dir.path().display());
+        unsafe {
+            env::set_var("HOME", fake_home.path());
+            env::set_var("PATH", constrained_path);
+        }
+
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            &fs::read_to_string(&contract_path).unwrap(),
+        )
+        .unwrap();
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("contributor"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        let bootstrap_log = fs::read_to_string(shim_dir.path().join("mise-bootstrap.log"))
+            .unwrap_or_else(|_| String::from("<missing>"));
+        let mise_log = fs::read_to_string(shim_dir.path().join("mise.log"))
+            .unwrap_or_else(|_| String::from("<missing>"));
+
+        assert!(
+            result.ok,
+            "status={} phase={} exit={:?}\nstdout=\n{}\nstderr=\n{}\nbootstrap_log=\n{}\nmise_log=\n{}",
+            result.status,
+            result.phase,
+            result.exit_code,
+            result.stdout,
+            result.stderr,
+            bootstrap_log,
+            mise_log
+        );
+        assert_eq!(result.status, "READY");
+        assert!(bootstrap_log.contains("-lc"));
+        assert!(mise_log.contains("install"));
+        assert!(mise_log.contains("bun@1.3.12"));
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
     #[test]
     fn up_post_setup_diagnosis_keeps_container_scope_for_host_bound_checks() {
         let _guard = env_mutex_lock();
@@ -49739,10 +50184,10 @@ project:
   name: container-first
 execution:
   preferred: container
+  lifecycle: ephemeral
   supported:
     - native
     - container
-  lifecycle: persistent
   backends:
     container:
       image: jdxcode/mise:latest
@@ -49880,6 +50325,89 @@ workflows:
         assert_eq!(
             up_doctor_mode(&contract, ExecutionOverrides::default(), Some("backend")),
             DoctorMode::Container
+        );
+    }
+
+    #[test]
+    fn up_runs_workflow_prepare_before_setup() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: prepare-up
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    run: test -f .env.local && echo setup >> run.log
+    depends_on:
+      - setup:env:local
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    prepare:
+      task: setup:env:local
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+        fs::write(repo.path().join(".env.example"), "TOKEN=test\n").unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("app"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            result.ok,
+            "status={} phase={} findings={:?} stdout=\n{}\nstderr=\n{}",
+            result.status,
+            result.phase,
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.as_str())
+                .collect::<Vec<_>>(),
+            result.stdout,
+            result.stderr
+        );
+        assert_eq!(result.status, "READY");
+        assert!(repo.path().join(".env.local").exists());
+        assert_eq!(
+            result
+                .stdout
+                .matches("copied `.env.example` to `.env.local`")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["setup"]
         );
     }
 
@@ -50238,6 +50766,164 @@ workflows:
     }
 
     #[test]
+    fn up_native_override_does_not_require_container_backend_cli_in_preflight() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: override-native
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: oven/bun:1.3.12-slim
+      engines:
+        - docker
+        - podman
+tasks:
+  setup:
+    run: echo setup
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "");
+        }
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+            Some("contributor"),
+            None,
+            true,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            !result.report.findings.iter().any(|finding| {
+                finding
+                    .summary
+                    .starts_with("Missing container execution backend CLI")
+            }),
+            "findings={:?}",
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn doctor_native_override_does_not_require_container_backend_cli() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: native-doctor
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: oven/bun:1.3.12-slim
+      engines:
+        - docker
+        - podman
+tasks:
+  setup:
+    run: echo setup
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "");
+        }
+
+        let output = doctor_command(
+            Some(fixture.path()),
+            None,
+            &[],
+            Some("contributor"),
+            false,
+            false,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+            OutputFormat::Text,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            !output
+                .stdout
+                .contains("Missing container execution backend CLI"),
+            "{}",
+            output.stdout
+        );
+    }
+
+    #[test]
     fn up_blocks_remote_setup_contexts_before_running_setup() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -50326,6 +51012,139 @@ tasks:
         assert_eq!(
             preview.blockers[0].summary,
             "Remote setup contexts are not supported by `ota up` yet"
+        );
+    }
+
+    #[test]
+    fn no_policy_backend_fulfillment_maps_to_tool_probe_blocker() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: no-policy
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        let error = RunError::BackendFulfillmentFailed {
+            task: String::from("setup"),
+            backend_unit: String::from("task:setup:native"),
+            details: String::from(super::NO_ACTIVE_POLICY_PROVISIONING_DETAILS),
+            evidence: crate::runner::BackendFulfillmentEvidence {
+                backend_unit: String::from("task:setup:native"),
+                backend: String::from("native"),
+                mode: crate::runner::BackendFulfillmentMode::Run,
+                declared_runtimes: BTreeMap::new(),
+                declared_tools: BTreeMap::from([(String::from("bun"), String::from("1.3.12"))]),
+                missing: vec![String::from(
+                    "tool `bun` requires `1.3.12` (command `bun` is not available)",
+                )],
+                actions: Vec::new(),
+                result: crate::runner::BackendFulfillmentResult::Failed,
+                task_executed: false,
+            },
+        };
+
+        let result = super::up_backend_fulfillment_blocked_result(
+            &contract,
+            Path::new("ota.yaml"),
+            None,
+            ExecutionOverrides::default(),
+            "setup",
+            None,
+            String::new(),
+            String::new(),
+            &error,
+        )
+        .expect("expected blocked up result");
+
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "provisioning");
+        assert_eq!(result.task.as_deref(), Some("setup"));
+        assert_eq!(result.report.findings[0].summary, "Tool probe failed: bun");
+        assert_eq!(
+            super::primary_up_failure_cause(
+                result.status,
+                result.phase,
+                &result.report.findings,
+                result.receipt.backend.as_deref(),
+                None,
+                result.service.as_deref(),
+                result.task.as_deref()
+            ),
+            Some(super::UpFailureCause::MissingRuntimeTool)
+        );
+    }
+
+    #[test]
+    fn no_policy_backend_fulfillment_maps_to_runtime_probe_blocker() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: no-policy
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        let error = RunError::BackendFulfillmentFailed {
+            task: String::from("setup"),
+            backend_unit: String::from("task:setup:native"),
+            details: String::from(super::NO_ACTIVE_POLICY_PROVISIONING_DETAILS),
+            evidence: crate::runner::BackendFulfillmentEvidence {
+                backend_unit: String::from("task:setup:native"),
+                backend: String::from("native"),
+                mode: crate::runner::BackendFulfillmentMode::Run,
+                declared_runtimes: BTreeMap::from([(String::from("node"), String::from("20"))]),
+                declared_tools: BTreeMap::new(),
+                missing: vec![String::from(
+                    "runtime `node` requires `20` (command `node` is not available)",
+                )],
+                actions: Vec::new(),
+                result: crate::runner::BackendFulfillmentResult::Failed,
+                task_executed: false,
+            },
+        };
+
+        let result = super::up_backend_fulfillment_blocked_result(
+            &contract,
+            Path::new("ota.yaml"),
+            None,
+            ExecutionOverrides::default(),
+            "setup",
+            None,
+            String::new(),
+            String::new(),
+            &error,
+        )
+        .expect("expected blocked up result");
+
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "provisioning");
+        assert_eq!(result.task.as_deref(), Some("setup"));
+        assert_eq!(
+            result.report.findings[0].summary,
+            "Runtime probe failed: node"
+        );
+        assert_eq!(
+            super::primary_up_failure_cause(
+                result.status,
+                result.phase,
+                &result.report.findings,
+                result.receipt.backend.as_deref(),
+                None,
+                result.service.as_deref(),
+                result.task.as_deref()
+            ),
+            Some(super::UpFailureCause::MissingRuntimeTool)
         );
     }
 
@@ -54611,9 +55430,13 @@ fn run_execution_receipt_with_shared(
             .get(task_name)
             .map(|task| task.env_for_backend(contract.execution.as_ref(), backend)),
     };
-    let env_details =
-        resolve_task_env_details(contract, contract_path, effective_task_env.as_ref())
-            .unwrap_or_default();
+    let env_details = resolve_task_env_details_for_task(
+        contract,
+        contract_path,
+        task_name,
+        effective_task_env.as_ref(),
+    )
+    .unwrap_or_default();
     let declared_sources = load_declared_env_sources(contract, contract_path);
     let steps = executed_steps
         .iter()
@@ -56308,6 +57131,7 @@ fn render_up_section_body(
 enum UpFailureCause {
     BackendStartup,
     Provisioning,
+    MissingRuntimeTool,
     ServiceReadiness,
     RepoSetup,
     Preconditions,
@@ -56317,6 +57141,7 @@ fn up_failure_cause_key(cause: UpFailureCause) -> &'static str {
     match cause {
         UpFailureCause::BackendStartup => "backend_startup",
         UpFailureCause::Provisioning => "provisioning",
+        UpFailureCause::MissingRuntimeTool => "missing_runtime_tool",
         UpFailureCause::ServiceReadiness => "service_readiness",
         UpFailureCause::RepoSetup => "repo_setup",
         UpFailureCause::Preconditions => "preconditions",
@@ -56327,6 +57152,7 @@ fn up_failure_cause_label(cause: UpFailureCause) -> &'static str {
     match cause {
         UpFailureCause::BackendStartup => "backend startup",
         UpFailureCause::Provisioning => "provisioning",
+        UpFailureCause::MissingRuntimeTool => "missing runtime/tool",
         UpFailureCause::ServiceReadiness => "service readiness",
         UpFailureCause::RepoSetup => "repo setup",
         UpFailureCause::Preconditions => "preconditions",
@@ -56357,6 +57183,13 @@ fn primary_up_failure_cause(
 
     if findings.iter().any(|finding| {
         finding.severity == FindingSeverity::Error
+            && is_missing_runtime_or_tool_finding(finding.summary.as_str())
+    }) {
+        return Some(UpFailureCause::MissingRuntimeTool);
+    }
+
+    if findings.iter().any(|finding| {
+        finding.severity == FindingSeverity::Error
             && finding.summary.starts_with("Service readiness failed")
     }) {
         return Some(UpFailureCause::ServiceReadiness);
@@ -56373,6 +57206,13 @@ fn primary_up_failure_cause(
     }
 
     None
+}
+
+fn is_missing_runtime_or_tool_finding(summary: &str) -> bool {
+    summary.starts_with("Tool probe failed: ")
+        || summary.starts_with("Runtime probe failed: ")
+        || summary.starts_with("Version mismatch for runtime: ")
+        || summary.starts_with("Version mismatch for tool: ")
 }
 
 fn backend_output_indicates_backend_startup_issue(
@@ -59739,11 +60579,31 @@ fn backend_for_doctor_mode(mode: DoctorMode) -> Backend {
     }
 }
 
-fn doctor_mode_from_execution_overrides(backend: Option<Backend>) -> DoctorMode {
-    match backend.unwrap_or(Backend::Native) {
+fn doctor_mode_from_execution_overrides(backend: Option<Backend>) -> Option<DoctorMode> {
+    backend.map(|backend| match backend {
         Backend::Native => DoctorMode::Native,
         Backend::Container => DoctorMode::Container,
         Backend::Remote => DoctorMode::Remote,
+    })
+}
+
+fn doctor_mode_for_contract(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> DoctorMode {
+    if let Some(task_name) = selected_up_primary_task_name(contract, workflow_name) {
+        return match effective_task_execution(contract, task_name, overrides).backend {
+            Backend::Native => DoctorMode::Native,
+            Backend::Container => DoctorMode::Container,
+            Backend::Remote => DoctorMode::Native,
+        };
+    }
+
+    match effective_execution(contract, overrides).0 {
+        Backend::Native => DoctorMode::Native,
+        Backend::Container => DoctorMode::Container,
+        Backend::Remote => DoctorMode::Native,
     }
 }
 
@@ -59842,8 +60702,17 @@ fn repo_execution_receipt(
     let effective_task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| task.env_for_backend(contract.execution.as_ref(), execution_backend));
-    let env_details =
-        resolve_task_env_details(contract, path, effective_task_env.as_ref()).unwrap_or_default();
+    let env_details = task
+        .map(|task_name| {
+            resolve_task_env_details_for_task(
+                contract,
+                path,
+                task_name,
+                effective_task_env.as_ref(),
+            )
+        })
+        .unwrap_or_else(|| resolve_task_env_details(contract, path, effective_task_env.as_ref()))
+        .unwrap_or_default();
     let declared_sources = load_declared_env_sources(contract, path);
     let detail = service
         .map(|service| format!("service `{service}`"))
@@ -60443,6 +61312,7 @@ fn receipt_history_status_label<'a>(status: Option<&'a str>, ok: bool) -> &'a st
 fn workspace_env_sources(
     contract: &Contract,
     contract_path: &Path,
+    task_name: Option<&str>,
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Vec<ExecutionReceiptEnvSource> {
@@ -60450,7 +61320,19 @@ fn workspace_env_sources(
     let workspace_policy_env = policy_env.cloned().unwrap_or_default();
     let declared_sources = load_declared_env_sources(contract, contract_path);
 
-    resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)
+    task_name
+        .map(|task_name| {
+            resolve_task_env_details_for_task_with_policy(
+                contract,
+                contract_path,
+                task_name,
+                task_env,
+                policy_env,
+            )
+        })
+        .unwrap_or_else(|| {
+            resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)
+        })
         .unwrap_or_default()
         .into_iter()
         .map(|(name, value)| {
@@ -61094,7 +61976,7 @@ fn resolve_provisioning_execution_target(
                 "`ota up --mode container` requires a canonical workflow task so ota can provision and prepare the selected execution boundary deterministically",
             ),
             next: String::from(
-                "declare a default workflow with `setup` or `run`, or add a repo `setup` task before rerunning `ota up --mode container`",
+                "declare a default workflow with `prepare`, `setup`, or `run`, or add a repo `setup` task before rerunning `ota up --mode container`",
             ),
         });
     };
@@ -61109,12 +61991,27 @@ fn resolve_provisioning_execution_target(
             engine,
             lifecycle,
             ..
-        }) => Ok(ProvisioningExecutionTarget::Container {
-            image,
-            engine,
-            lifecycle,
-            container_name: None,
-        }),
+        }) => {
+            if let Some(failure) = container_backend_probe_failure(&engine) {
+                return Err(Finding {
+                    severity: FindingSeverity::Error,
+                    summary: format!("Container execution backend unavailable: {engine}"),
+                    why: format!(
+                        "container preparation resolved `{engine}`, but `{engine} info` could not reach a usable container backend: {}",
+                        failure.details
+                    ),
+                    next: String::from(
+                        "start or repair the selected container engine, or use `--mode native` if the contract allows it, then rerun `ota up`",
+                    ),
+                });
+            }
+            Ok(ProvisioningExecutionTarget::Container {
+                image,
+                engine,
+                lifecycle,
+                container_name: None,
+            })
+        }
         Ok(ResolvedExecutionBackend::Native { .. }) => Err(Finding {
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
@@ -61225,6 +62122,15 @@ fn provisionable_target_key_for_finding(finding: &Finding) -> Option<String> {
         return Some(format!("tool:{}", strip_finding_context_suffix(name)));
     }
     if let Some(name) = finding.summary.strip_prefix("Version mismatch for tool: ") {
+        return Some(format!("tool:{}", strip_finding_context_suffix(name)));
+    }
+    if let Some(name) = finding.summary.strip_prefix("Tool probe failed: ") {
+        return Some(format!("tool:{}", strip_finding_context_suffix(name)));
+    }
+    if let Some(name) = finding
+        .summary
+        .strip_prefix("Unparseable version for tool: ")
+    {
         return Some(format!("tool:{}", strip_finding_context_suffix(name)));
     }
     None
@@ -61820,13 +62726,15 @@ fn append_up_preview_service_actions_for_workflow(
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
 
+    if let Some(prepare_task) = selected_up_prepare_task_name(contract, workflow_name) {
+        actions.push(format!("run host prepare task `{prepare_task}`"));
+    }
     append_up_preview_service_phase_actions(
         contract,
         &pre_setup_services,
         actions,
         setup_task.map(|task| format!("before `{task}`")).as_deref(),
     );
-
     if let Some(setup_task) = setup_task {
         actions.push(format!("run task `{setup_task}`"));
     }
@@ -62002,6 +62910,7 @@ fn preview_receipt(
     findings: &[Finding],
 ) -> ExecutionReceipt {
     let preview_task = selected_up_setup_task_name(contract, workflow_name)
+        .or_else(|| selected_up_prepare_task_name(contract, workflow_name))
         .or_else(|| selected_up_primary_task_name(contract, workflow_name));
     repo_execution_receipt(
         resolved_path,
@@ -62028,7 +62937,7 @@ fn run_up_task(
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
     mode: RepoExecutionMode,
-) -> Result<CommandRunResult, String> {
+) -> Result<CommandRunResult, RunError> {
     match mode {
         RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides_with_policy(
             contract,
@@ -62048,7 +62957,7 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
         })
-        .map_err(|error| render_up_run_error(resolved_path, error)),
+        .map_err(|error| error),
         RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
             contract,
             resolved_path,
@@ -62064,22 +62973,40 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
         })
-        .map_err(|error| render_up_run_error(resolved_path, error)),
+        .map_err(|error| error),
     }
 }
 
-fn contract_without_task_requires_services(
+fn contract_adjusted_for_up_setup_phase(
     contract: &Contract,
     task_name: &str,
+    prepare_task_name: Option<&str>,
 ) -> Option<Contract> {
     let task = contract.tasks.get(task_name)?;
-    if task.requires_services.is_empty() {
+    let setup_plan = crate::runner::plan_task_execution(contract, task_name).ok();
+    let should_remove_prepare = prepare_task_name.is_some_and(|prepare_name| {
+        setup_plan
+            .as_ref()
+            .is_some_and(|plan| plan.tasks.iter().any(|task| task == prepare_name))
+    });
+    if task.requires_services.is_empty() && !should_remove_prepare {
         return None;
     }
 
     let mut adjusted = contract.clone();
     if let Some(task) = adjusted.tasks.get_mut(task_name) {
         task.requires_services.clear();
+    }
+    if let Some(prepare_name) = prepare_task_name
+        && should_remove_prepare
+        && let Some(plan) = setup_plan
+    {
+        for planned_task in plan.tasks {
+            if let Some(task) = adjusted.tasks.get_mut(&planned_task) {
+                task.depends_on
+                    .retain(|dependency| dependency != prepare_name);
+            }
+        }
     }
     Some(adjusted)
 }
@@ -62558,6 +63485,7 @@ fn execute_repo_up(
         ));
     }
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
+    let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
@@ -62633,11 +63561,12 @@ fn execute_repo_up(
     }
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let execution_dir = contract_working_dir(resolved_path);
-    let mut preflight = diagnose_preconditions_with_mode_for_workflow(
+    let mut preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
         contract,
         resolved_path,
         doctor_mode,
         workflow_name,
+        overrides,
     );
     if dry_run {
         let preview = build_up_preview(
@@ -62734,11 +63663,12 @@ fn execute_repo_up(
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
                 }
-                preflight = diagnose_preconditions_with_mode_for_workflow(
+                preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
                     contract,
                     resolved_path,
                     doctor_mode,
                     workflow_name,
+                    overrides,
                 );
             }
             Err(ProvisioningBackendError::DiagnosedCommandFailed {
@@ -62954,12 +63884,14 @@ fn execute_repo_up(
                                 stdout.push_str(&outcome.stdout);
                                 stderr.push_str(&outcome.stderr);
                             }
-                            preflight = diagnose_preconditions_with_mode_for_workflow(
-                                contract,
-                                resolved_path,
-                                doctor_mode,
-                                workflow_name,
-                            );
+                            preflight =
+                                diagnose_preconditions_with_mode_for_workflow_with_overrides(
+                                    contract,
+                                    resolved_path,
+                                    doctor_mode,
+                                    workflow_name,
+                                    overrides,
+                                );
                         }
                         Err(ProvisioningBackendError::DiagnosedCommandFailed {
                             stdout: backend_stdout,
@@ -63168,11 +64100,12 @@ fn execute_repo_up(
             }
         }
 
-        preflight = diagnose_preconditions_with_mode_for_workflow(
+        preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
             contract,
             resolved_path,
             doctor_mode,
             workflow_name,
+            overrides,
         );
     }
 
@@ -63214,7 +64147,7 @@ fn execute_repo_up(
         });
     }
 
-    if !preflight.ok && setup_task.is_none() {
+    if !preflight.ok && setup_task.is_none() && prepare_task.is_none() {
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",
@@ -63252,6 +64185,117 @@ fn execute_repo_up(
         });
     }
 
+    if let Some(prepare_task_name) = prepare_task {
+        let prepare_overrides = ExecutionOverrides {
+            backend: Some(Backend::Native),
+            ..ExecutionOverrides::default()
+        };
+        let prepare_task_command = contract
+            .tasks
+            .get(prepare_task_name)
+            .and_then(task_command_preview);
+        match run_up_task(
+            contract,
+            resolved_path,
+            prepare_task_name,
+            prepare_overrides,
+            policy_env,
+            mode,
+        ) {
+            Ok(outcome) if outcome.exit_code != 0 => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "PREPARE FAILED",
+                    phase: "prepare",
+                    preview: None,
+                    receipt: repo_execution_receipt(
+                        resolved_path,
+                        contract,
+                        task_phase_execution_context(
+                            contract,
+                            resolved_path,
+                            prepare_task_name,
+                            prepare_overrides,
+                            outcome.target.clone(),
+                        ),
+                        "PREPARE FAILED",
+                        "prepare",
+                        None,
+                        Some(prepare_task_name),
+                        &[],
+                        Some(outcome.exit_code),
+                        None,
+                    ),
+                    report: DoctorReport {
+                        ok: false,
+                        provisioning: None,
+                        adapter_bootstrap: None,
+                        execution_target: None,
+                        findings: Vec::new(),
+                    },
+                    service: None,
+                    service_command: None,
+                    task: Some(prepare_task_name.to_string()),
+                    task_command: prepare_task_command,
+                    exit_code: Some(outcome.exit_code),
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(outcome) => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    workflow_name,
+                    overrides,
+                );
+                if !preflight.ok && setup_task.is_none() {
+                    return Ok(RepoUpResult {
+                        ok: false,
+                        status: "BLOCKED",
+                        phase: "preconditions",
+                        preview: None,
+                        receipt: repo_execution_receipt(
+                            resolved_path,
+                            contract,
+                            doctor_report_execution_context(
+                                contract,
+                                resolved_path,
+                                doctor_mode,
+                                overrides.lifecycle,
+                                &preflight,
+                            ),
+                            "BLOCKED",
+                            "preconditions",
+                            None,
+                            Some(prepare_task_name),
+                            &preflight.findings,
+                            None,
+                            preflight
+                                .findings
+                                .first()
+                                .map(|finding| finding.next.clone()),
+                        ),
+                        report: preflight,
+                        service: None,
+                        service_command: None,
+                        task: Some(prepare_task_name.to_string()),
+                        task_command: None,
+                        exit_code: None,
+                        stdout,
+                        stderr,
+                    });
+                }
+            }
+            Err(error) => return Err(render_up_run_error(resolved_path, error)),
+        }
+    }
+
     let pre_setup_services = up_pre_setup_service_closure(contract, workflow_name);
     if let Some(result) = run_up_required_services_phase(
         contract,
@@ -63270,7 +64314,8 @@ fn execute_repo_up(
             .tasks
             .get(setup_task_name)
             .and_then(task_command_preview);
-        let setup_contract = contract_without_task_requires_services(contract, setup_task_name);
+        let setup_contract =
+            contract_adjusted_for_up_setup_phase(contract, setup_task_name, prepare_task);
         let setup_contract_ref = setup_contract.as_ref().unwrap_or(contract);
         match run_up_task(
             setup_contract_ref,
@@ -63327,11 +64372,12 @@ fn execute_repo_up(
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
                 if !preflight.ok {
-                    let refreshed = diagnose_preconditions_with_mode_for_workflow(
+                    let refreshed = diagnose_preconditions_with_mode_for_workflow_with_overrides(
                         contract,
                         resolved_path,
                         doctor_mode,
                         workflow_name,
+                        overrides,
                     );
                     if !refreshed.ok {
                         return Ok(RepoUpResult {
@@ -63372,7 +64418,22 @@ fn execute_repo_up(
                     }
                 }
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    setup_task_name,
+                    setup_task_command.clone(),
+                    stdout.clone(),
+                    stderr.clone(),
+                    &error,
+                ) {
+                    return Ok(blocked_result);
+                }
+                return Err(render_up_run_error(resolved_path, error));
+            }
         }
     }
 
@@ -63450,7 +64511,22 @@ fn execute_repo_up(
                 stderr.push_str(&outcome.stderr);
                 run_runtime = outcome.runtime;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    run_task_name,
+                    run_task_command.clone(),
+                    stdout.clone(),
+                    stderr.clone(),
+                    &error,
+                ) {
+                    return Ok(blocked_result);
+                }
+                return Err(render_up_run_error(resolved_path, error));
+            }
         }
     }
 
@@ -64580,6 +65656,9 @@ fn run_workspace_repo_up(
                     workspace_env_sources(
                         &target.contract,
                         &target.contract_path,
+                        target
+                            .contract
+                            .selected_setup_task_name_for(repo.workflow.as_deref()),
                         Some(&task.env),
                         Some(&repo.policy_env),
                     )
@@ -66069,6 +67148,7 @@ fn run_workspace_repo_task(
                     workspace_env_sources(
                         &contract,
                         &repo.contract_path,
+                        Some(task),
                         Some(&task_spec.env),
                         Some(&repo.policy_env),
                     )
@@ -66538,6 +67618,15 @@ fn selected_up_setup_task_name<'a>(
         .filter(|name| contract.tasks.contains_key(*name))
 }
 
+fn selected_up_prepare_task_name<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+) -> Option<&'a str> {
+    contract
+        .selected_prepare_task_name_for(workflow_name)
+        .filter(|name| contract.tasks.contains_key(*name))
+}
+
 fn selected_execution_plan_task_name<'a>(
     contract: &'a Contract,
     workflow_name: Option<&str>,
@@ -66943,6 +68032,158 @@ fn load_and_diagnose_workspace_streaming(
 
 fn render_run_error(error: RunError) -> String {
     error.to_string()
+}
+
+const NO_ACTIVE_POLICY_PROVISIONING_DETAILS: &str =
+    "no active org policy pack is available to select approved provisioning sources";
+
+fn up_backend_fulfillment_blocked_result(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    task_name: &str,
+    task_command: Option<String>,
+    stdout: String,
+    stderr: String,
+    error: &RunError,
+) -> Option<RepoUpResult> {
+    let fallback_finding = fallback_backend_fulfillment_missing_requirement_finding(error)?;
+    let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
+    let mut report = diagnose_preconditions_with_mode_for_workflow_with_overrides(
+        contract,
+        resolved_path,
+        doctor_mode,
+        workflow_name,
+        overrides,
+    );
+    prepend_finding_if_missing(&mut report.findings, fallback_finding);
+    report.ok = false;
+
+    let receipt = repo_execution_receipt(
+        resolved_path,
+        contract,
+        doctor_report_execution_context(
+            contract,
+            resolved_path,
+            doctor_mode,
+            overrides.lifecycle,
+            &report,
+        ),
+        "BLOCKED",
+        "provisioning",
+        None,
+        Some(task_name),
+        &report.findings,
+        None,
+        report.findings.first().map(|finding| finding.next.clone()),
+    );
+
+    Some(RepoUpResult {
+        ok: false,
+        status: "BLOCKED",
+        phase: "provisioning",
+        report,
+        preview: None,
+        receipt,
+        service: None,
+        service_command: None,
+        task: Some(task_name.to_string()),
+        task_command,
+        exit_code: None,
+        stdout,
+        stderr,
+    })
+}
+
+fn fallback_backend_fulfillment_missing_requirement_finding(error: &RunError) -> Option<Finding> {
+    let evidence = match error {
+        RunError::BackendFulfillmentFailed {
+            details, evidence, ..
+        } if details == NO_ACTIVE_POLICY_PROVISIONING_DETAILS => evidence,
+        _ => return None,
+    };
+
+    let Some(primary_gap) = evidence.missing.first() else {
+        return Some(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Backend prerequisites are missing"),
+            why: String::from(
+                "the selected run path requires prerequisites that are not currently available in this execution context",
+            ),
+            next: String::from("install the missing prerequisites and rerun `ota up`"),
+        });
+    };
+
+    if let Some((kind, name, required, details)) = parse_backend_requirement_gap(primary_gap) {
+        if kind == "tool" {
+            let why = if details.contains("not available") {
+                format!(
+                    "`{name}` is required by the selected run path, but {details} on this execution context"
+                )
+            } else {
+                format!(
+                    "`{name}` is required by the selected run path (`{required}`), but {details}"
+                )
+            };
+            return Some(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Tool probe failed: {name}"),
+                why,
+                next: format!(
+                    "install `{name}` on the selected execution context and rerun `ota up`"
+                ),
+            });
+        }
+
+        if kind == "runtime" {
+            if details.contains("not available") {
+                return Some(Finding {
+                    severity: FindingSeverity::Error,
+                    summary: format!("Runtime probe failed: {name}"),
+                    why: format!(
+                        "`{name}` is required by the selected run path, but {details} on this execution context"
+                    ),
+                    next: format!(
+                        "install `{name}` on the selected execution context and rerun `ota up`"
+                    ),
+                });
+            }
+            return Some(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Version mismatch for runtime: {name}"),
+                why: format!(
+                    "`{name}` is required by the selected run path (`{required}`), but {details}"
+                ),
+                next: format!(
+                    "install `{name}` on the selected execution context and rerun `ota up`"
+                ),
+            });
+        }
+    }
+
+    Some(Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("Backend prerequisites are missing"),
+        why: format!(
+            "the selected run path is missing required prerequisites: {}",
+            evidence.missing.join("; ")
+        ),
+        next: String::from("install the missing prerequisites and rerun `ota up`"),
+    })
+}
+
+fn parse_backend_requirement_gap(line: &str) -> Option<(String, String, String, String)> {
+    let (kind, rest) = line.split_once(" `")?;
+    let (name, rest) = rest.split_once("` requires `")?;
+    let (required, details) = rest.split_once("` (")?;
+    let details = details.strip_suffix(')')?;
+    Some((
+        kind.trim().to_ascii_lowercase(),
+        name.to_string(),
+        required.to_string(),
+        details.to_string(),
+    ))
 }
 
 fn render_up_run_error(contract_path: &Path, error: RunError) -> String {

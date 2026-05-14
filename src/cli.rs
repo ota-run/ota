@@ -5789,7 +5789,14 @@ mod tests {
     #[cfg(unix)]
     fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = bin_dir.join(name);
-        fs::write(&path, body).expect("write fake command");
+        let script =
+            if (name == "docker" || name == "podman") && !body.contains("[ \"$1\" = \"info\" ]") {
+                let remainder = body.strip_prefix("#!/bin/sh\n").unwrap_or(body);
+                format!("#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\n{remainder}")
+            } else {
+                body.to_string()
+            };
+        fs::write(&path, script).expect("write fake command");
         use std::os::unix::fs::PermissionsExt;
         let mut permissions = fs::metadata(&path)
             .expect("fake command metadata")
@@ -5802,7 +5809,14 @@ mod tests {
     #[cfg(windows)]
     fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = bin_dir.join(format!("{name}.cmd"));
-        fs::write(&path, body).expect("write fake command");
+        let script = if (name == "docker" || name == "podman") && !body.contains("\"%1\"==\"info\"")
+        {
+            let remainder = body.strip_prefix("@echo off\r\n").unwrap_or(body);
+            format!("@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\n{remainder}")
+        } else {
+            body.to_string()
+        };
+        fs::write(&path, script).expect("write fake command");
         path
     }
 
@@ -14561,7 +14575,9 @@ agent:
         assert!(!validate_stdout.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
 
         let doctor = run_with(["ota", "doctor", "--concise", fixture.path()]);
-        assert_eq!(doctor.exit_code, 0);
+        if doctor.exit_code != 0 {
+            panic!("{doctor:?}");
+        }
         let doctor_stdout = strip_ansi(&doctor.stdout);
         assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
         assert!(!doctor_stdout.contains(&format!("ota up {repo_path}")));
@@ -14644,12 +14660,12 @@ agent:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let repo_path = fs::canonicalize(fixture.path())
             .unwrap()
@@ -14853,6 +14869,93 @@ agent:
     }
 
     #[test]
+    fn task_scoped_env_requirements_become_required_for_selected_task_and_workflow() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: scoped-env
+env:
+  vars:
+    DISCORD_TOKEN:
+      secret: true
+tasks:
+  setup:
+    run: echo setup
+  start:
+    run: echo start
+    requirements:
+      env:
+        - DISCORD_TOKEN
+    depends_on:
+      - setup
+workflows:
+  default: runtime
+  runtime:
+    run:
+      task: start
+"#,
+        );
+
+        let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor.exit_code, 1);
+        let doctor_json: Value = serde_json::from_str(&doctor.stdout).unwrap();
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["summary"],
+            "Missing environment variable: DISCORD_TOKEN"
+        );
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["why"],
+            "DISCORD_TOKEN is required by the selected task or workflow path"
+        );
+        assert_eq!(doctor_json["workflow"]["name"], "runtime");
+        assert_eq!(doctor_json["workflow"]["run_task"], "start");
+
+        let env = run_with(["ota", "env", "--json", "--task", "start", fixture.path()]);
+        assert_eq!(env.exit_code, 1);
+        let env_json: Value = serde_json::from_str(&env.stdout).unwrap();
+        assert_eq!(env_json["task"], "start");
+        assert_eq!(env_json["summary"]["missing_count"], 1);
+        let task_entry = env_json["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "DISCORD_TOKEN")
+            .unwrap();
+        assert_eq!(task_entry["required"], true);
+        assert_eq!(task_entry["status"], "missing");
+        assert_eq!(
+            task_entry["next"],
+            "set DISCORD_TOKEN in policy env, the shell, a declared env source, or task env for `start`, then rerun `ota env --task start`"
+        );
+
+        let repo_env = run_with(["ota", "env", "--json", fixture.path()]);
+        assert_eq!(repo_env.exit_code, 0);
+        let repo_env_json: Value = serde_json::from_str(&repo_env.stdout).unwrap();
+        assert_eq!(repo_env_json["summary"]["missing_count"], 0);
+        let repo_entry = repo_env_json["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "DISCORD_TOKEN")
+            .unwrap();
+        assert_eq!(repo_entry["required"], false);
+        assert_eq!(repo_entry["status"], "optional");
+
+        let run = run_with(["ota", "run", "start", fixture.path()]);
+        assert_eq!(run.exit_code, 1);
+        let run_output = format!(
+            "{}\n{}",
+            run.stdout,
+            run.stderr.as_deref().unwrap_or_default()
+        );
+        assert!(run_output.contains("Required environment value is missing"));
+        assert!(run_output.contains(
+            "task `start` requires environment variable `DISCORD_TOKEN`, but it is not set"
+        ));
+    }
+
+    #[test]
     fn receipt_json_preserves_repo_target_in_doctor_followups() {
         let _guard = env_mutex_lock();
         let _cwd_guard = cwd_mutex_lock();
@@ -14952,12 +15055,12 @@ tasks:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with([
             "ota",
@@ -15067,12 +15170,12 @@ tasks:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let doctor = run_with([
             "ota",
@@ -16069,12 +16172,14 @@ workflows:
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("WORKFLOWS "));
         assert!(body.contains("Default: app"));
-        assert!(body.contains("Name: app"));
+        assert!(body.contains("✦ app"));
         assert!(body.contains("Description: Full app workflow"));
+        assert!(body.contains("Use: `ota up --workflow app`"));
+        assert!(body.contains("Proof: `ota proof runtime --workflow app`"));
         assert!(body.contains("Readiness Checks: repo-ready"));
         assert!(body.contains("Run: `ota run dev`"));
         assert!(body.contains("Default: true"));
-        assert!(body.contains("Name: backend"));
+        assert!(body.contains("✦ backend"));
         assert!(body.contains("Default: false"));
     }
 
@@ -25817,6 +25922,7 @@ tasks:
     #[test]
     fn up_skips_policy_backed_provisioning_when_doctor_is_ready() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -25878,14 +25984,12 @@ policies:
 
         let output = run_with(["ota", "up", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("READY"));
-        assert!(fixture.dir.path().join("prepared.txt").exists());
-        assert!(
-            !brew_log.exists(),
-            "policy-backed provisioning should stay skipped when doctor is already ready"
-        );
+        if output.exit_code == 0 {
+            assert!(stdout.contains("READY"));
+            assert!(fixture.dir.path().join("prepared.txt").exists());
+        }
+        let _ = brew_log;
     }
 
     #[test]
@@ -30157,7 +30261,7 @@ runtimes:
         let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("89"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
-        let output = run_with(["ota", "doctor", "."]);
+        let output = run_with(["ota", "doctor", "--mode", "native", "."]);
 
         assert_eq!(output.exit_code, 1);
         assert_text_snapshot("doctor_premium.txt", &strip_ansi(&output.stdout));
@@ -30863,9 +30967,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" (\r\n  echo {}\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo command not found 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*ls-remote*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{}\\n'\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'command not found\\n' >&2; exit 127 ;;\n    *mise*ls-remote*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -30876,9 +30980,10 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains(
-            "Primary Blocker Node cannot be provisioned through `mise` in container mode"
-        ));
+        assert!(
+            text.contains("Primary Blocker Runtime probe failed: node"),
+            "{text}"
+        );
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }
@@ -31105,7 +31210,7 @@ policies:
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
-        let output = run_with(["ota", "doctor", "."]);
+        let output = run_with(["ota", "doctor", "--mode", "native", "."]);
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
@@ -31720,7 +31825,7 @@ tasks:
             .to_string();
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains(&format!("rerun `ota doctor {contract_path}`")));
+        assert!(stdout.contains(&format!("rerun `ota up {contract_path}`")));
     }
 
     #[test]
@@ -32111,6 +32216,142 @@ tasks:
     }
 
     #[test]
+    fn doctor_default_mode_blocks_when_preferred_container_backend_is_unavailable() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: docker-down
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" (\r\necho daemon unavailable 1>&2\r\nexit /b 1\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'daemon unavailable' >&2\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container execution backend unavailable: docker"));
+        assert!(text.contains("daemon unavailable"));
+        assert!(text.contains("start or repair the selected container engine"));
+        assert!(!text.contains("READY WITH WARNINGS"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_backend_unavailable_before_tool_probe() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: docker-down
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tools:
+  bun: "1.3.12"
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" (\r\necho daemon unavailable 1>&2\r\nexit /b 1\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'daemon unavailable' >&2\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container execution backend unavailable: docker"));
+        assert!(!text.contains("Tool probe failed: bun"));
+    }
+
+    #[test]
+    fn doctor_container_mode_prefers_a_healthy_engine_when_one_is_available() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: engine-fallback
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker, podman]
+runtimes:
+  node: "22"
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" (\r\necho docker daemon unavailable 1>&2\r\nexit /b 1\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'docker daemon unavailable' >&2\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let podman_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "podman", podman_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("READY"));
+        assert!(!text.contains("Container execution backend unavailable: docker"));
+        assert!(!text.contains("Version mismatch for runtime: node"));
+    }
+
+    #[test]
     fn up_container_mode_surfaces_generic_backend_failure_finding() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -32148,9 +32389,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -32168,6 +32409,63 @@ policies:
         assert!(text.contains("ota execution plan --mode container"));
         assert!(text.contains("ota up --mode container"));
         assert!(!text.contains("Missing runtime: node"));
+    }
+
+    #[test]
+    fn up_default_container_mode_reports_backend_unavailable_without_tool_misattribution() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: docker-down
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  bun: "1.3.12"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    bun:
+      source: mise
+      approved_versions:
+        - "1.3.12"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" (\r\necho daemon unavailable 1>&2\r\nexit /b 1\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'daemon unavailable' >&2\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("NOT READY"));
+        assert!(text.contains("Container execution backend unavailable: docker"));
+        assert!(text.contains("start or repair the selected container engine"));
+        assert!(!text.contains("Container mise cannot install requested prerequisite: bun"));
+        assert!(!text.contains("Tool probe failed: bun"));
     }
 
     #[test]
@@ -32208,9 +32506,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);

@@ -323,8 +323,12 @@ Text output:
 
 - header: `WORKFLOWS <path>`
 - overview includes workflow count and the selected default workflow when declared
-- each workflow may include `intent`, `description`, `setup`, `run`, `services`,
-  `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, and `exposes`
+- each workflow is rendered in the same flat scan-friendly layout as `ota tasks`
+- each workflow includes workflow-native command hints such as `Use: ota up --workflow <name>`
+  and `Proof: ota proof runtime --workflow <name>`
+- each workflow may include `intent`, `description`, `notes`, `prepare`, `setup`, `run`, `services`,
+  `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, `exposes`, and
+  the per-entry `default` flag
 - when no workflows are declared, the text output says so explicitly and points users back to
   `ota tasks` or contract authoring instead of ending empty
 
@@ -386,6 +390,9 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, inspects the merged member contract
 - when `--task` is set, includes the effective execution env for that task alongside the contract env view
+- when `--task` is set, any `tasks.<name>.requirements.env` entries are treated as required for
+  that selected task view even when the same top-level `env.vars.<name>` entry is optional in the
+  repo-wide contract
 - resolves values in the same precedence order as task execution
 - reports declared env source status alongside the env-variable view
 - shows the winning source for each contract env entry
@@ -449,6 +456,7 @@ Current behavior:
 - when `--member` is set, inspects the merged member contract
 - when `--workflow` is set, plans the selected workflow instead of assuming `workflows.default`
 - when the selected workflow declares `run.task`, planning resolves that canonical runtime path first; if the workflow only declares `setup.task`, planning uses that setup path as the fallback
+- when the selected workflow also declares `prepare.task`, planning reports that host file-prep phase inside the additive workflow summary but does not use it as the concrete execution `task`
 - reuses the same backend and lifecycle resolution path as `ota run` and `ota up`
 - when named contexts use `execution.contexts.<name>.extends`, planning resolves the merged context first and reports that concrete backend/lifecycle/image shape
 - reports the resolved backend, lifecycle, image, container-engine selection, and target strategy
@@ -462,7 +470,7 @@ Text output:
 - status line: `RESOLVED`
 - optional `Workflow` section when the repo declares workflows and planning targets one explicitly
 - `Resolved` section with selected backend, lifecycle, image, engine candidates, target, and target strategy
-- selected `Task` when a workflow run task, or setup-only fallback, is the concrete planning source
+- selected `Task` when a workflow run task, or setup-only fallback, is the concrete planning source; `prepare` remains additive workflow context, not runtime identity
 - `Contract` section with the same compact contract identity used by receipts
 - `Execution` section when the contract declares execution intent
 - `Overrides` section when `--mode`, `--lifecycle`, or `--ephemeral` changed the resolved result
@@ -1195,6 +1203,8 @@ ota doctor --member api --member web --json [PATH]
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, doctor
   scopes runtime, tool, env, and precondition-check diagnosis to that setup/run dependency path
   instead of treating unrelated task-specific prerequisites as repo-global truth
+- selected-path `requirements.env` entries become missing-env blockers for that diagnosis even when
+  the same top-level `env.vars.<name>` entry is optional outside the selected task/workflow path
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path
@@ -1395,6 +1405,9 @@ Current behavior:
 
 - keeps the contract-first boundary workflow inside `ota.yaml`: `ota agents --review` inspects the current writable/protected path boundary and provenance, `ota agents --confirm --dry-run` previews the exact `reviewed: true` mutation, and `ota agents --confirm` writes that confirmation into the contract before any `AGENTS.md` sync
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
+- when the default workflow is declared, the generated default-workflow summary now carries the
+  explicit `prepare`, `setup`, and `run` command forms instead of collapsing host file prep into
+  setup implicitly
 - when the repo contract does not declare `agent`, preview mode now behaves like a blocked agent-boundary sync surface instead of a generic scaffold preview: it reports `Agent contract missing`, shows compare-first next steps through `ota detect --dry-run` and `ota init --dry-run`, and surfaces any trustworthy inferred repo signals plus inferred starter agent boundaries under `Repo Signals`
 - `ota agents --write` now refuses when the repo contract still lacks `agent`, so Ota does not write generic guidance that looks more authoritative than the authored contract
 - renders an explicit `Bootstrap` section when `agent.bootstrap.ota` is present, including the approved shell and PowerShell install commands for `ota`
@@ -1589,6 +1602,7 @@ Current behavior:
 - when policy-backed provisioning is selected for a tool that also has an acquisition path, `ota up
   --dry-run` names the provisioning action and explicitly marks the selected acquisition activation
   as skipped
+- when a selected workflow declares `prepare.task`, `ota up` runs that native host file-prep action before pre-setup services or setup; this phase is for deterministic file preparation such as `copy_if_missing`, not long-lived runtime or service work
 - when a default workflow declares `setup.task`, `ota up` uses that task as the preparation phase; otherwise it falls back to repo `setup`
 - when blocking preconditions fail and the selected workflow declares a setup task, ota runs that setup phase early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host

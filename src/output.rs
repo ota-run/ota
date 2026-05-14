@@ -1060,6 +1060,14 @@ pub struct ExecutionSummary<'a> {
 
 impl<'a> ExecutionSummary<'a> {
     pub fn from_contract(contract: &'a Contract, contract_path: &std::path::Path) -> Option<Self> {
+        Self::from_contract_with_required_env_names(contract, contract_path, None)
+    }
+
+    pub fn from_contract_with_required_env_names(
+        contract: &'a Contract,
+        contract_path: &std::path::Path,
+        selected_required_env_names: Option<&BTreeSet<String>>,
+    ) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
         let (policy_env, policy_label, policy_issue) = match load_policy_env_overlay(contract_path)
         {
@@ -1109,7 +1117,8 @@ impl<'a> ExecutionSummary<'a> {
                 .iter()
                 .map(|(name, requirement)| ExecutionEnvSummary {
                     name,
-                    required: requirement.required,
+                    required: requirement.required
+                        || selected_required_env_names.is_some_and(|names| names.contains(name)),
                     default: requirement.default.as_deref(),
                     policy: policy_env.get(name).cloned(),
                     source: blocking_declared_env_source_label(&declared_sources)
@@ -2417,6 +2426,10 @@ pub struct WorkflowSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub setup_task: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_task: Option<&'a str>,
@@ -2513,6 +2526,8 @@ impl<'a> WorkflowSummary<'a> {
             name: workflow_name,
             intent: workflow.intent.as_deref(),
             description: workflow.description.as_deref(),
+            notes: workflow.notes.as_deref(),
+            prepare_task: workflow.prepare.as_ref().map(|phase| phase.task.as_str()),
             setup_task: workflow.setup.as_ref().map(|phase| phase.task.as_str()),
             run_task: workflow.run.as_ref().map(|phase| phase.task.as_str()),
             run_task_launch: workflow

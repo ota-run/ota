@@ -1624,7 +1624,28 @@ pub fn resolve_task_env_details(
     contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
-    resolve_task_env_details_with_policy(contract, contract_path, task_env, None)
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        task_env,
+        None,
+        None,
+    )
+}
+
+pub fn resolve_task_env_details_for_task(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    resolve_task_env_details_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        task_env,
+        None,
+    )
 }
 
 pub fn resolve_task_env_details_with_policy(
@@ -1632,6 +1653,39 @@ pub fn resolve_task_env_details_with_policy(
     contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        task_env,
+        policy_env,
+        None,
+    )
+}
+
+pub fn resolve_task_env_details_for_task_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    let required_env_names = contract.task_required_env_names(task_name);
+    resolve_task_env_details_with_policy_and_required_env_names(
+        contract,
+        contract_path,
+        task_env,
+        policy_env,
+        (!required_env_names.is_empty()).then_some(&required_env_names),
+    )
+}
+
+fn resolve_task_env_details_with_policy_and_required_env_names(
+    contract: &Contract,
+    contract_path: &Path,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    selected_required_env_names: Option<&BTreeSet<String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
     let mut resolved_values = BTreeMap::new();
     let repo_policy =
@@ -1645,6 +1699,8 @@ pub fn resolve_task_env_details_with_policy(
         if requirement.secret && requirement.default.is_some() {
             return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
         }
+        let required_for_selected_path = requirement.required
+            || selected_required_env_names.is_some_and(|names| names.contains(name));
         let process_value = std::env::var(name).ok();
         let task_value = task_env.and_then(|values| values.get(name)).cloned();
         let resolved = task_value
@@ -1704,7 +1760,7 @@ pub fn resolve_task_env_details_with_policy(
                     },
                 );
             }
-            None if requirement.required => {
+            None if required_for_selected_path => {
                 return Err(RunError::MissingRequiredEnv { name: name.clone() });
             }
             None => {}
@@ -2638,6 +2694,29 @@ pub fn resolve_task_env_with_policy(
 ) -> Result<BTreeMap<String, String>, RunError> {
     let resolved =
         resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)?;
+    let mut overrides = BTreeMap::new();
+
+    for (name, resolved) in resolved {
+        overrides.insert(name, resolved.value);
+    }
+
+    Ok(overrides)
+}
+
+pub fn resolve_task_env_for_task_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let resolved = resolve_task_env_details_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        task_env,
+        policy_env,
+    )?;
     let mut overrides = BTreeMap::new();
 
     for (name, resolved) in resolved {
@@ -5045,10 +5124,27 @@ fn execute_task_with_hooks(
 
     if !(requested_relation && requested_overrides.skip_deps) {
         for dependency in &task.depends_on {
+            let dependency_declares_default_mode = contract
+                .tasks
+                .get(dependency)
+                .and_then(TaskSpec::mode_default_backend)
+                .is_some();
+            let dependency_backend_override = if dependency_declares_default_mode {
+                None
+            } else {
+                requested_overrides.backend
+            };
+            let dependency_overrides = ExecutionOverrides {
+                backend: dependency_backend_override,
+                lifecycle: requested_overrides.lifecycle,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            };
             let dependency_backend = resolve_execution_backend_with_contract_path(
                 contract,
                 dependency,
-                requested_overrides,
+                dependency_overrides,
                 Some(contract_path),
             )?;
             let dependency_exit = execute_task_with_hooks(
@@ -5056,7 +5152,7 @@ fn execute_task_with_hooks(
                 contract_path,
                 dependency,
                 &[],
-                requested_overrides.clone(),
+                dependency_overrides,
                 policy_env,
                 &dependency_backend,
                 mode.clone(),
@@ -5103,8 +5199,13 @@ fn execute_task_with_hooks(
             });
         };
     let task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
-    let env_details =
-        resolve_task_env_details_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
+    let env_details = resolve_task_env_details_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        Some(&task_env),
+        policy_env,
+    )?;
     let secret_env_names: BTreeSet<String> = env_details
         .iter()
         .filter(|(_, value)| value.secret)
@@ -5116,8 +5217,13 @@ fn execute_task_with_hooks(
             names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
         });
     }
-    let env_overrides =
-        resolve_task_env_with_policy(contract, contract_path, Some(&task_env), policy_env)?;
+    let env_overrides = resolve_task_env_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        Some(&task_env),
+        policy_env,
+    )?;
     let native_activation_env = task_native_activation_env(
         contract,
         task_name,
@@ -6190,15 +6296,19 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         }
     }
 
-    let mut source_managed_actions = Vec::new();
+    let source_managed_actions = source_managed_actions(&request.actions);
     if let Some(ProvisioningExecutionTarget::Container {
         engine,
         container_name: Some(container_name),
         ..
     }) = plan.provisioning_target.as_ref()
     {
-        install_source_managed_tool_wrappers(engine, container_name, task_name, &request.actions)?;
-        source_managed_actions = request.actions.clone();
+        install_source_managed_tool_wrappers(
+            engine,
+            container_name,
+            task_name,
+            &source_managed_actions,
+        )?;
     }
 
     let remaining = detect_missing_backend_requirements(
@@ -6251,6 +6361,13 @@ fn backend_fulfillment_plan(
     backend: &ResolvedExecutionBackend,
     host_port_override: Option<u16>,
 ) -> Result<Option<BackendFulfillmentPlan>, RunError> {
+    let task = contract
+        .tasks
+        .get(task_name)
+        .ok_or_else(|| RunError::UnknownTask {
+            task: task_name.to_string(),
+        })?;
+
     if let ResolvedExecutionBackend::Native {
         shared_local_backend: Some(shared_local_backend),
     } = backend
@@ -6298,6 +6415,51 @@ fn backend_fulfillment_plan(
             backend_unit,
             backend_label: String::from("native"),
             mode,
+            strategy: BackendFulfillmentStrategy::Immediate,
+            target_os,
+            declared_runtimes,
+            declared_tools,
+            probe_backend: backend.clone(),
+            provisioning_target,
+        }));
+    }
+
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        let target_os = current_os().to_string();
+        let (declared_runtimes, declared_tools) =
+            direct_task_requirement_versions(contract, task, task_name, target_os.as_str())
+                .map_err(|details| RunError::BackendFulfillmentFailed {
+                    task: task_name.to_string(),
+                    backend_unit: format!("task:{task_name}:native"),
+                    details,
+                    evidence: BackendFulfillmentEvidence {
+                        backend_unit: format!("task:{task_name}:native"),
+                        backend: String::from("native"),
+                        mode: BackendFulfillmentMode::Run,
+                        declared_runtimes: BTreeMap::new(),
+                        declared_tools: BTreeMap::new(),
+                        missing: Vec::new(),
+                        actions: Vec::new(),
+                        result: BackendFulfillmentResult::Failed,
+                        task_executed: false,
+                    },
+                })?;
+        if declared_runtimes.is_empty() && declared_tools.is_empty() {
+            return Ok(None);
+        }
+        let backend_unit = format!("task:{task_name}:native");
+        let provisioning_target = Some(provisioning_target_for_resolved_backend(
+            contract_path,
+            backend,
+        )?);
+        return Ok(Some(BackendFulfillmentPlan {
+            cache_key: backend_fulfillment_cache_key(
+                backend_unit.clone(),
+                provisioning_target.as_ref(),
+            ),
+            backend_unit,
+            backend_label: String::from("native"),
+            mode: BackendFulfillmentMode::Run,
             strategy: BackendFulfillmentStrategy::Immediate,
             target_os,
             declared_runtimes,
@@ -6672,6 +6834,49 @@ fn direct_context_requirement_versions(
     ))
 }
 
+fn direct_task_requirement_versions(
+    contract: &Contract,
+    task: &TaskSpec,
+    task_name: &str,
+    target_os: &str,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
+    let mut runtimes = BTreeMap::<String, (String, String)>::new();
+    let mut tools = BTreeMap::<String, (String, String)>::new();
+    merge_requirement_versions(
+        &mut runtimes,
+        &contract.runtimes,
+        target_os,
+        "contract.runtimes",
+    )?;
+    merge_requirement_versions(&mut tools, &contract.tools, target_os, "contract.tools")?;
+
+    let runtime_source = format!("task `{task_name}` runtimes");
+    let tool_source = format!("task `{task_name}` tools");
+    merge_requirement_versions(
+        &mut runtimes,
+        &task.requirements.runtimes,
+        target_os,
+        runtime_source.as_str(),
+    )?;
+    merge_requirement_versions(
+        &mut tools,
+        &task.requirements.tools,
+        target_os,
+        tool_source.as_str(),
+    )?;
+
+    Ok((
+        runtimes
+            .into_iter()
+            .map(|(name, (version, _))| (name, version))
+            .collect(),
+        tools
+            .into_iter()
+            .map(|(name, (version, _))| (name, version))
+            .collect(),
+    ))
+}
+
 fn merge_requirement_versions<T>(
     target: &mut BTreeMap<String, (String, String)>,
     entries: &BTreeMap<String, T>,
@@ -7027,10 +7232,13 @@ fn probe_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    let quoted = shell_quote(command_name);
-    let probe_command = format!(
-        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
-    );
+    if cfg!(windows)
+        && matches!(backend, ResolvedExecutionBackend::Native { .. })
+        && windows_native_shell_prefers_posix()
+    {
+        return probe_posix_shell_command_version(working_dir, command_name);
+    }
+    let probe_command = backend_runtime_version_probe_command(command_name, backend);
     let output = run_backend_command_captured(
         "__ota_backend_requirement_probe__",
         probe_command.as_str(),
@@ -7054,6 +7262,82 @@ fn probe_backend_command_version(
     Err(String::from(
         "version probe did not return a parseable version",
     ))
+}
+
+fn windows_native_shell_prefers_posix() -> bool {
+    std::env::var("MSYSTEM").is_ok()
+        || std::env::var("SHELL")
+            .ok()
+            .map(|shell| {
+                let lowered = shell.to_ascii_lowercase();
+                lowered.contains("bash") || lowered.contains("sh")
+            })
+            .unwrap_or(false)
+}
+
+fn probe_posix_shell_command_version(
+    working_dir: &Path,
+    command_name: &str,
+) -> Result<Option<String>, String> {
+    let quoted = shell_quote(command_name);
+    let probe_command = format!(
+        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
+    );
+    let shell_program = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.trim().is_empty())
+        .unwrap_or_else(|| String::from("sh"));
+    let output = Command::new(shell_program)
+        .arg("-lc")
+        .arg(probe_command)
+        .current_dir(working_dir)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|child| child.wait_with_output())
+        .map(|output| TaskCommandOutput {
+            exit_code: output.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            target: None,
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        })
+        .map_err(|error| error.to_string())?;
+    if output.exit_code == 127 {
+        return Ok(None);
+    }
+    let combined = format!("{} {}", output.stdout, output.stderr);
+    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+        return Ok(Some(version));
+    }
+    if output.exit_code != 0 {
+        return Err(format!(
+            "version probe command exited with code {}",
+            output.exit_code
+        ));
+    }
+    Err(String::from(
+        "version probe did not return a parseable version",
+    ))
+}
+
+fn backend_runtime_version_probe_command(
+    command_name: &str,
+    backend: &ResolvedExecutionBackend,
+) -> String {
+    let quoted = shell_quote(command_name);
+    if cfg!(windows) && matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return format!(
+            "where {quoted} >NUL 2>&1 && ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1) || exit /B 127"
+        );
+    }
+    format!(
+        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
+    )
 }
 
 fn probe_named_container_command_version(
@@ -7263,6 +7547,14 @@ fn source_managed_tool_wrappers_required(actions: &[ProvisioningAction]) -> bool
         .any(|action| action.source == "mise" && action.target_kind == ProvisioningTargetKind::Tool)
 }
 
+fn source_managed_actions(actions: &[ProvisioningAction]) -> Vec<ProvisioningAction> {
+    actions
+        .iter()
+        .filter(|action| action.source == "mise")
+        .cloned()
+        .collect()
+}
+
 fn source_managed_tool_wrapper_path_export(path_export: Option<&str>) -> String {
     match path_export {
         Some(path) => format!("{}:{path}", source_managed_tool_wrapper_dir()),
@@ -7296,15 +7588,10 @@ fn provisioning_action_effective_version(action: &ProvisioningAction) -> &str {
         .unwrap_or(action.requested_version.as_str())
 }
 
-fn wrap_command_for_source_managed_actions(
-    command: &str,
-    actions: &[ProvisioningAction],
-) -> String {
-    let mise_targets = actions
+fn source_managed_mise_targets(actions: &[ProvisioningAction]) -> Vec<String> {
+    actions
         .iter()
-        .filter(|action| {
-            action.source == "mise" && action.target_kind == ProvisioningTargetKind::Runtime
-        })
+        .filter(|action| action.source == "mise")
         .map(|action| {
             format!(
                 "{}@{}",
@@ -7312,7 +7599,15 @@ fn wrap_command_for_source_managed_actions(
                 provisioning_action_effective_version(action)
             )
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
+
+#[cfg(unix)]
+fn wrap_command_for_source_managed_actions(
+    command: &str,
+    actions: &[ProvisioningAction],
+) -> String {
+    let mise_targets = source_managed_mise_targets(actions);
     if mise_targets.is_empty() {
         return command.to_string();
     }
@@ -7326,6 +7621,28 @@ fn wrap_command_for_source_managed_actions(
     }
     wrapped.push_str(" -- sh -lc ");
     wrapped.push_str(&shell_quote(command));
+    wrapped
+}
+
+#[cfg(windows)]
+fn wrap_command_for_source_managed_actions(
+    command: &str,
+    actions: &[ProvisioningAction],
+) -> String {
+    let mise_targets = source_managed_mise_targets(actions);
+    if mise_targets.is_empty() {
+        return command.to_string();
+    }
+
+    let mut wrapped = String::from(
+        r#"set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && if exist "%USERPROFILE%\.local\bin\mise.exe" set "__OTA_MISE=%USERPROFILE%\.local\bin\mise.exe" && "%__OTA_MISE%" exec"#,
+    );
+    for target in &mise_targets {
+        wrapped.push(' ');
+        wrapped.push_str(&cmd_quote(target));
+    }
+    wrapped.push_str(" -- cmd /C ");
+    wrapped.push_str(&cmd_quote(command));
     wrapped
 }
 
@@ -15239,6 +15556,7 @@ fn execute_ephemeral_container_task_command(
     }
     append_container_publication_args(&mut create, publications);
     append_container_memory_arg(&mut create, memory_bytes);
+    append_container_git_safe_directory_args(&mut create, env_overrides);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             create.env(name, value);
@@ -15705,6 +16023,7 @@ fn create_idle_ephemeral_container(
     }
     append_container_publication_args(&mut create, publications);
     append_container_memory_arg(&mut create, memory_bytes);
+    append_container_git_safe_directory_args(&mut create, env_overrides);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             create.env(name, value);
@@ -16666,6 +16985,7 @@ fn create_persistent_container(
     }
     append_container_publication_vec(&mut args, publications);
     append_container_memory_vec(&mut args, memory_bytes);
+    append_container_git_safe_directory_vec(&mut args);
     args.push(image.to_string());
     args.push("-lc".to_string());
     args.push("while true; do sleep 3600; done".to_string());
@@ -16705,6 +17025,41 @@ fn append_container_memory_vec(args: &mut Vec<String>, memory_bytes: Option<u64>
         args.push("--memory".to_string());
         args.push(memory_bytes.to_string());
     }
+}
+
+fn append_container_git_safe_directory_args(
+    command: &mut Command,
+    env_overrides: &BTreeMap<String, String>,
+) {
+    if !should_inject_container_git_safe_directory_env(env_overrides) {
+        return;
+    }
+    command
+        .arg("--env")
+        .arg("GIT_CONFIG_COUNT=1")
+        .arg("--env")
+        .arg("GIT_CONFIG_KEY_0=safe.directory")
+        .arg("--env")
+        .arg("GIT_CONFIG_VALUE_0=/workspace");
+}
+
+fn append_container_git_safe_directory_vec(args: &mut Vec<String>) {
+    args.push("--env".to_string());
+    args.push("GIT_CONFIG_COUNT=1".to_string());
+    args.push("--env".to_string());
+    args.push("GIT_CONFIG_KEY_0=safe.directory".to_string());
+    args.push("--env".to_string());
+    args.push("GIT_CONFIG_VALUE_0=/workspace".to_string());
+}
+
+fn should_inject_container_git_safe_directory_env(
+    env_overrides: &BTreeMap<String, String>,
+) -> bool {
+    !env_overrides.keys().any(|name| {
+        name == "GIT_CONFIG_COUNT"
+            || name.starts_with("GIT_CONFIG_KEY_")
+            || name.starts_with("GIT_CONFIG_VALUE_")
+    })
 }
 
 fn container_publication_arg(publication: &ContainerPortPublication) -> String {
@@ -18115,6 +18470,7 @@ fn exec_persistent_container_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let mut container = container_engine_command(engine);
     container.arg("exec").arg("-i");
+    append_container_git_safe_directory_args(&mut container, env_overrides);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             container.env(name, value);
@@ -19472,12 +19828,12 @@ mod tests {
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
         resolve_execution_backend, resolve_execution_backend_with_contract_path, resolve_task_env,
-        resolve_task_env_details, resolve_task_target_binding_url,
-        resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
-        run_task_captured_with_args_with_overrides, run_task_with_args,
-        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
-        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
-        shell_quote, version_matches_requirement,
+        resolve_task_env_details, resolve_task_env_details_for_task,
+        resolve_task_target_binding_url, resolve_task_target_binding_url_with_contract_path,
+        run_task, run_task_captured, run_task_captured_with_args_with_overrides,
+        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
+        run_task_with_overrides, run_task_with_progress, running_loader_label,
+        running_loader_label_for_backend, shell_quote, version_matches_requirement,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -19600,6 +19956,7 @@ tasks:
     #[test]
     fn reports_env_resolution_sources_for_process_and_default_values() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -19749,6 +20106,49 @@ tasks:
             EnvResolutionSource::Task
         );
         assert_eq!(resolved["OTA_TEST_REQUIRED"].value, "task-value");
+    }
+
+    #[test]
+    fn task_scoped_env_requirements_are_required_during_execution_resolution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DISCORD_TOKEN:
+      secret: true
+tasks:
+  start:
+    run: echo start
+    requirements:
+      env:
+        - DISCORD_TOKEN
+"#,
+        )
+        .unwrap();
+
+        let error = resolve_task_env_details_for_task(
+            &contract,
+            Path::new("ota.yaml"),
+            "start",
+            Some(&contract.tasks["start"].env),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::MissingRequiredEnv { name } if name == "DISCORD_TOKEN"
+        ));
+
+        let repo_view = resolve_task_env_details(
+            &contract,
+            Path::new("ota.yaml"),
+            Some(&contract.tasks["start"].env),
+        )
+        .unwrap();
+        assert!(!repo_view.contains_key("DISCORD_TOKEN"));
     }
 
     #[test]
@@ -32152,6 +32552,259 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn run_task_container_mode_keeps_native_file_action_dependencies_on_host() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    run: printf ready > prepared.txt
+    depends_on:
+      - setup:env:local
+"#,
+        );
+        fs::write(fixture.dir.path().join(".env.example"), "KEY=VALUE\n").unwrap();
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap(),
+            "KEY=VALUE\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_native_mode_override_flows_to_dependencies_without_default_mode() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  supported:
+    - native
+    - container
+tasks:
+  setup:
+    run: printf setup > setup.txt
+  build:
+    run: printf build > build.txt
+    depends_on:
+      - setup
+"#,
+        );
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("setup.txt")).unwrap(),
+            "setup"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("build.txt")).unwrap(),
+            "build"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_setup_uses_mise_exec_for_source_managed_tool_actions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+tools:
+  bun:
+    version: "1.3.12"
+tasks:
+  setup:
+    run: bun install
+    requirements:
+      tools:
+        bun: "1.3.12"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: true
+  version_policy:
+    tools:
+      bun:
+        approved_versions:
+          - "1.3.12"
+  provisioning:
+    bun:
+      source: mise
+      approved_versions:
+        - "1.3.12"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let mise_path = bin_dir.join("mise");
+        fs::write(
+            &mise_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+printf '%s\n' "$*" >> "$script_dir/mise.log"
+case "${1:-}" in
+  --version)
+    printf '2026.5.6\n'
+    ;;
+  install)
+    tool="${2%@*}"
+    cat > "$script_dir/$tool" <<'EOF'
+#!/bin/sh
+printf ready > bun-ran.txt
+EOF
+    chmod +x "$script_dir/$tool"
+    ;;
+  which)
+    tool="${2:-}"
+    if [ -x "$script_dir/$tool" ]; then
+      printf '%s\n' "$script_dir/$tool"
+      exit 0
+    fi
+    printf 'VersionUnavailable `tool` `%s`\n' "$tool" >&2
+    exit 1
+    ;;
+  use)
+    if [ "${2:-}" = "-g" ]; then
+      exit 0
+    fi
+    ;;
+  exec)
+    printf ready > bun-ran.txt
+    exit 0
+    ;;
+  *)
+    ;;
+esac
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&mise_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&mise_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _outcome = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let mise_log = fs::read_to_string(bin_dir.join("mise.log")).unwrap();
+        assert!(mise_log.contains("install bun@1.3.12"), "{mise_log}");
+        assert!(
+            mise_log.contains("exec bun@1.3.12 -- sh -lc") || mise_log.contains("which bun"),
+            "{mise_log}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn composes_path_and_injects_process_env_into_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -40421,6 +41074,43 @@ tasks:
     }
 
     #[test]
+    fn source_managed_actions_retains_only_mise_actions() {
+        let actions = vec![
+            ProvisioningAction {
+                kind: ProvisioningActionKind::Install,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: String::from("bun"),
+                requested_version: String::from("1.3.12"),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: None,
+                source: String::from("mise"),
+                approved_version: Some(String::from("1.3.12")),
+                source_config: None,
+                policy_match: None,
+            },
+            ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: String::from("winget"),
+                requested_version: String::from("*"),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: None,
+                source: String::from("winget-bootstrap"),
+                approved_version: Some(String::from("*")),
+                source_config: None,
+                policy_match: None,
+            },
+        ];
+
+        let retained = super::source_managed_actions(&actions);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].source, "mise");
+        assert_eq!(retained[0].name, "bun");
+    }
+
+    #[test]
     fn source_managed_tool_wrapper_path_export_prepends_wrapper_dir() {
         assert_eq!(
             super::source_managed_tool_wrapper_path_export(Some("/custom/bin:/usr/bin")),
@@ -40447,8 +41137,9 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn wrap_command_for_source_managed_actions_ignores_tool_only_actions() {
+    fn wrap_command_for_source_managed_actions_wraps_tool_only_actions() {
         let actions = vec![ProvisioningAction {
             kind: ProvisioningActionKind::Install,
             target_kind: ProvisioningTargetKind::Tool,
@@ -40462,10 +41153,36 @@ tasks:
             source_config: None,
             policy_match: None,
         }];
-        assert_eq!(
-            super::wrap_command_for_source_managed_actions("yq --version", &actions),
-            "yq --version"
+        let wrapped = super::wrap_command_for_source_managed_actions("yq --version", &actions);
+        assert!(wrapped.contains("mise"), "{wrapped}");
+        assert!(wrapped.contains("yq@4.52.5"), "{wrapped}");
+        assert!(wrapped.contains("sh -lc"), "{wrapped}");
+        assert!(wrapped.contains("'yq --version'"), "{wrapped}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wrap_command_for_source_managed_actions_uses_mise_exec_on_windows() {
+        let actions = vec![ProvisioningAction {
+            kind: ProvisioningActionKind::Install,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: String::from("bun"),
+            requested_version: String::from("1.3.12"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("mise"),
+            approved_version: Some(String::from("1.3.12")),
+            source_config: None,
+            policy_match: None,
+        }];
+        let wrapped = super::wrap_command_for_source_managed_actions("bun install", &actions);
+        assert!(
+            wrapped.contains("%LOCALAPPDATA%\\mise\\bin\\mise.exe"),
+            "{wrapped}"
         );
+        assert!(wrapped.contains("exec bun@1.3.12 -- cmd /C"), "{wrapped}");
+        assert!(wrapped.contains("\"bun install\""), "{wrapped}");
     }
 
     #[test]
@@ -40479,6 +41196,49 @@ tasks:
             super::cmd_quote(r#"hello & goodbye"#),
             r#""hello ^& goodbye""#
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_runtime_probe_command_uses_windows_shell_shape() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let probe = super::backend_runtime_version_probe_command("node", &backend);
+        assert!(probe.starts_with("where node"), "{probe}");
+        assert!(probe.contains("exit /B 127"), "{probe}");
+        assert!(!probe.contains("command -v"), "{probe}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn native_runtime_probe_command_uses_posix_shell_shape() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let probe = super::backend_runtime_version_probe_command("node", &backend);
+        assert!(probe.contains("command -v"), "{probe}");
+        assert!(probe.contains("else exit 127"), "{probe}");
+    }
+
+    #[test]
+    fn container_git_safe_directory_env_injection_enabled_by_default() {
+        let env = BTreeMap::new();
+        assert!(super::should_inject_container_git_safe_directory_env(&env));
+    }
+
+    #[test]
+    fn container_git_safe_directory_env_injection_respects_explicit_git_config_env() {
+        let mut env = BTreeMap::new();
+        env.insert(String::from("GIT_CONFIG_COUNT"), String::from("2"));
+        assert!(!super::should_inject_container_git_safe_directory_env(&env));
+
+        env.clear();
+        env.insert(
+            String::from("GIT_CONFIG_KEY_1"),
+            String::from("safe.directory"),
+        );
+        assert!(!super::should_inject_container_git_safe_directory_env(&env));
     }
 
     #[cfg(unix)]

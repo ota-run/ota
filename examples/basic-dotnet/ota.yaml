@@ -32,15 +32,41 @@ tools:
   dotnet: "*"
 tasks:
   setup:
+    description: Restore .NET dependencies
     run: dotnet restore
+    requirements:
+      runtimes:
+        dotnet: "8.0"
+      tools:
+        dotnet: "*"
+      checks:
+        - dotnet-installed
   build:
+    description: Build the .NET repo
     run: dotnet build
     depends_on:
       - setup
+    requirements:
+      tools:
+        dotnet: "*"
   test:
+    description: Run the .NET test suite
     run: dotnet test
     depends_on:
       - setup
+    requirements:
+      tools:
+        dotnet: "*"
+workflows:
+  default: verify
+  verify:
+    description: Canonical .NET restore and verification path
+    setup:
+      task: setup
+    run:
+      task: test
+    notes: |
+      Use this when you want one declared repo path instead of separate restore and test commands.
 checks:
   - name: dotnet-installed
     kind: precondition
@@ -62,5 +88,5 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
-    Use `ota validate` before changes and `ota run test` after edits.
+    Use `ota validate` before changes and `ota up --workflow verify` to prepare the repo path.
     Use `ota run build` when you want to confirm the .NET toolchain still matches the contract.

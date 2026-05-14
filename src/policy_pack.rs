@@ -1099,7 +1099,7 @@ fn evaluate_version_policy_match(
     ))
 }
 
-fn evaluate_actual_version_policy_match(
+pub(crate) fn evaluate_actual_version_policy_match(
     kind: ProvisioningTargetKind,
     name: &str,
     actual_version: &str,

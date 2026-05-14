@@ -24,13 +24,37 @@
 version: 1
 project:
   name: basic-go
+  description: Minimal Go repo that still shows workflow-scoped setup and verification
+  type: application
 runtimes:
   go: "1.24"
 tasks:
   setup:
+    description: Download module dependencies
     run: go mod download
+    requirements:
+      runtimes:
+        go: "1.24"
+      checks:
+        - go-installed
   test:
+    description: Run the Go test suite
     run: go test ./...
+    depends_on:
+      - setup
+    requirements:
+      runtimes:
+        go: "1.24"
+workflows:
+  default: verify
+  verify:
+    description: Canonical Go setup and verification path
+    setup:
+      task: setup
+    run:
+      task: test
+    notes: |
+      Use this when the repo front door is dependency preparation plus test verification.
 checks:
   - name: go-installed
     kind: precondition
@@ -51,5 +75,5 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
-    Use `ota validate` before changes and `ota run test` after edits.
+    Use `ota validate` before changes and `ota up --workflow verify` to prepare the repo path.
     Use `ota run test` as the main verification step for Go changes.

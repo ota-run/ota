@@ -192,6 +192,13 @@ impl Contract {
         self.selected_setup_task_name_for(None)
     }
 
+    pub fn selected_prepare_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.prepare.as_ref())
+            .map(|phase| phase.task.as_str())
+            .filter(|task| !task.trim().is_empty())
+    }
+
     pub fn selected_setup_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
         if let Some(name) = workflow_name {
             return self
@@ -244,8 +251,13 @@ impl Contract {
 
     pub fn selected_workflow_task_closure_names(&self, workflow_name: Option<&str>) -> Vec<String> {
         let mut roots = Vec::new();
+        if let Some(prepare) = self.selected_prepare_task_name_for(workflow_name) {
+            roots.push(prepare.to_string());
+        }
         if let Some(setup) = self.selected_setup_task_name_for(workflow_name) {
-            roots.push(setup.to_string());
+            if !roots.iter().any(|name| name == setup) {
+                roots.push(setup.to_string());
+            }
         }
         if let Some(run) = self.selected_run_task_name_for(workflow_name)
             && !roots.iter().any(|name| name == run)
@@ -253,6 +265,33 @@ impl Contract {
             roots.push(run.to_string());
         }
         self.task_dependency_closure_names(roots)
+    }
+
+    pub fn task_closure_required_env_names(
+        &self,
+        roots: impl IntoIterator<Item = String>,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for task_name in self.task_dependency_closure_names(roots) {
+            let Some(task) = self.tasks.get(task_name.as_str()) else {
+                continue;
+            };
+            names.extend(task.requirements.env.iter().cloned());
+        }
+        names
+    }
+
+    pub fn selected_workflow_required_env_names(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> BTreeSet<String> {
+        self.task_closure_required_env_names(
+            self.selected_workflow_task_closure_names(workflow_name),
+        )
+    }
+
+    pub fn task_required_env_names(&self, task_name: &str) -> BTreeSet<String> {
+        self.task_closure_required_env_names([task_name.to_string()])
     }
 
     fn collect_task_dependency_closure(
@@ -301,6 +340,10 @@ pub struct WorkflowSpec {
     pub intent: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub prepare: Option<WorkflowTaskRefSpec>,
     #[serde(default)]
     pub setup: Option<WorkflowTaskRefSpec>,
     #[serde(default)]
@@ -3781,6 +3824,45 @@ workflows:
         assert_eq!(
             contract.selected_workflow_task_closure_names(Some("instant")),
             vec![String::from("quickstart")]
+        );
+    }
+
+    #[test]
+    fn selected_prepare_task_respects_explicit_workflow() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-prepare
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+  setup:
+    run: echo setup
+workflows:
+  default: app
+  app:
+    prepare:
+      task: setup:env:local
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_prepare_task_name_for(Some("app")),
+            Some("setup:env:local")
+        );
+        assert_eq!(
+            contract.selected_workflow_task_closure_names(Some("app")),
+            vec![String::from("setup:env:local"), String::from("setup")]
         );
     }
 

@@ -35,6 +35,7 @@ fn load_schema(path: &str) -> Value {
 fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
     let success = &schema["oneOf"][0]["properties"];
+    let workflow_properties = &schema["$defs"]["workflowSummary"]["properties"];
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
     let task_action = &schema["$defs"]["taskAction"]["properties"];
     let task_action_required = schema["$defs"]["taskAction"]["required"]
@@ -53,8 +54,12 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         .as_array()
         .expect("task mode kind enum");
 
+    assert!(success.get("workflow").is_some());
+    assert!(workflow_properties.get("run_task_launch").is_some());
+    assert!(workflow_properties.get("notes").is_some());
     assert!(success.get("agent").is_some());
     assert!(success.get("members").is_some());
+    assert!(member_properties.get("workflow").is_some());
     assert!(agent_properties.get("protected_paths").is_some());
     assert!(agent_properties.get("inferred_boundary_reviewed").is_some());
     assert!(member_properties.get("member").is_some());
@@ -156,6 +161,7 @@ fn doctor_schema_includes_agent_summary() {
     let schema = load_schema("docs/spec/json-schemas/doctor.json");
     let shared = load_schema("docs/spec/json-schemas/shared.json");
     let properties = &schema["properties"];
+    let workflow_properties = &schema["$defs"]["workflowSummary"]["properties"];
     let agent_properties = &properties["agent"]["properties"];
     let member_properties = &properties["members"]["items"]["properties"];
     let member_agent_properties = &member_properties["agent"]["properties"];
@@ -164,6 +170,9 @@ fn doctor_schema_includes_agent_summary() {
     let provisioning_action = &shared["$defs"]["provisioningAction"]["properties"];
     let provisioning_entry = &shared["$defs"]["provisioningPlanEntry"]["properties"];
 
+    assert!(properties.get("workflow").is_some());
+    assert!(workflow_properties.get("run_task_launch").is_some());
+    assert!(workflow_properties.get("notes").is_some());
     assert!(properties.get("agent").is_some());
     assert!(properties.get("findings").is_some());
     assert!(properties.get("members").is_some());
@@ -212,6 +221,7 @@ fn execution_schema_includes_resolved_and_declared_execution_fields() {
     assert!(success.get("workflow").is_some());
     assert!(success.get("task").is_some());
     assert!(workflow.get("run_task_launch").is_some());
+    assert!(workflow.get("notes").is_some());
     assert_eq!(
         workflow["run_task_launch"]["$ref"],
         serde_json::json!("#/$defs/taskLaunch")
