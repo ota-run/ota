@@ -100,32 +100,70 @@ jobs:
         if: runner.os != 'Windows'
         run: ota run release-gate --backend native --stream
 
-      - name: Run release gate (Windows)
+      - name: Run release gate (Windows) - cargo version
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
-          $env:PATH = "$cargoBin;$env:PATH"
-          cargo --version
-          cargo fmt --check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --lib -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test contract_is_stable
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --test json_schema_contracts
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --test detect_fixtures
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Write-Host "Skipping integration tests on Windows"
+        timeout-minutes: 2
+        run: cargo --version
+
+      - name: Run release gate (Windows) - fmt
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo fmt --check
+
+      - name: Run release gate (Windows) - check
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 20
+        run: cargo check
+
+      - name: Run release gate (Windows) - lib tests (core)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 25
+        run: cargo test --lib -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer
+
+      - name: Run release gate (Windows) - policy-backed provisioning test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1
+
+      - name: Run release gate (Windows) - remote doctor mode test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1
+
+      - name: Run release gate (Windows) - restart ready activation tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1
+
+      - name: Run release gate (Windows) - contract stability
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo test contract_is_stable
+
+      - name: Run release gate (Windows) - JSON schema contracts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo test --test json_schema_contracts
+
+      - name: Run release gate (Windows) - detect fixtures
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo test --test detect_fixtures
+
+      - name: Run release gate (Windows) - integration note
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Write-Host "Skipping integration tests on Windows"
 
   release-tag:
     name: Create Release Tag
