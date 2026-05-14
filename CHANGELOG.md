@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.12
+
 - added first-class workflow `prepare.task` for host file-prep before setup: workflows can now
   declare one native `action` task that `ota up` runs before pre-setup services or setup, so
   container-backed repos can keep `setup` on the selected backend while deterministic host file
