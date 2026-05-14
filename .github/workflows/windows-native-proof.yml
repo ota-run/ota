@@ -163,7 +163,10 @@ jobs:
           }
 
           foreach ($artifact in @($proof.artifacts.topology, $proof.artifacts.doctor, $proof.artifacts.up_log)) {
-            $artifactPath = Join-Path $proofRoot $artifact
+            $artifactPath = $artifact
+            if (-not [System.IO.Path]::IsPathRooted($artifactPath)) {
+              $artifactPath = Join-Path $proofRoot $artifactPath
+            }
             if (-not (Test-Path $artifactPath)) {
               throw "ota proof runtime artifact missing: $artifact"
             }
