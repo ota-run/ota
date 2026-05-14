@@ -1673,7 +1673,10 @@ impl ProvisioningBackend for MiseProvisioningBackend {
             )?;
             stdout.push_str(&which_output.stdout);
             stderr.push_str(&which_output.stderr);
-            if which_output.exit_code != 0 || which_output.stdout.trim().is_empty() {
+            let requires_resolved_path = matches!(target, ProvisioningExecutionTarget::Native);
+            if which_output.exit_code != 0
+                || (requires_resolved_path && which_output.stdout.trim().is_empty())
+            {
                 let use_output = execute_provisioning_command(
                     target,
                     working_dir,
@@ -1701,7 +1704,9 @@ impl ProvisioningBackend for MiseProvisioningBackend {
                 )?;
                 stdout.push_str(&which_output.stdout);
                 stderr.push_str(&which_output.stderr);
-                if which_output.exit_code != 0 || which_output.stdout.trim().is_empty() {
+                if which_output.exit_code != 0
+                    || (requires_resolved_path && which_output.stdout.trim().is_empty())
+                {
                     return Err(ProvisioningBackendError::CommandFailed {
                         command: format!("mise which {tool_name}"),
                         exit_code: which_output.exit_code,
@@ -4220,7 +4225,7 @@ mod tests {
     fn make_shim(dir: &Path, name: &str, log: &Path) {
         let shim = dir.join(name);
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"which\" ] && [ -n \"$2\" ]; then\n  printf '/tmp/%s\\n' \"$2\"\nfi\ncase \"$*\" in\n  *\"mise which \"*) printf '/tmp/mise-tool\\n' ;;\nesac\nexit 0\n",
             log.display()
         );
         fs::write(&shim, script).unwrap();
@@ -4534,7 +4539,13 @@ mod tests {
         let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("docker.log");
-        make_shim(shim_dir.path(), "docker", &log);
+        let docker_shim = shim_dir.path().join("docker");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\ncase \"$*\" in\n  *\"mise which java\"*) printf '/tmp/java\\n' ;;\n  *\"mise ls-remote java\"*) printf '[\"22\",\"21\"]\\n' ;;\nesac\nexit 0\n",
+            log.display()
+        );
+        fs::write(&docker_shim, script).unwrap();
+        make_executable(&docker_shim);
 
         let original_path = env::var("PATH").unwrap_or_default();
         let mut new_path = shim_dir.path().display().to_string();

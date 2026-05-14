@@ -3023,7 +3023,20 @@ fn diagnose_execution_backend(
                 );
             }
         }
-        Backend::Native => {}
+        Backend::Native => {
+            if let Some(remote) = execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.remote.as_ref())
+            {
+                let provider = remote.provider.trim();
+                if matches!(provider, "ssh" | "tsh" | "kubectl")
+                    && let Some(target) = remote.target.as_deref()
+                {
+                    diagnose_remote_target_shape(provider, target, findings);
+                }
+            }
+        }
     }
 
     None
@@ -4096,12 +4109,12 @@ fn diagnose_env(
     for (name, requirement) in &contract.env {
         if let Some(selected_env_names) = selected_env_names
             && !selected_env_names.contains(name)
-            && !requirement.required
         {
             continue;
         }
-        let required_for_selected_path =
-            requirement.required || selected_env_names.is_some_and(|names| names.contains(name));
+        let required_for_selected_path = selected_env_names
+            .map(|names| names.contains(name))
+            .unwrap_or(requirement.required);
         let value = policy_env
             .and_then(|values| values.get(name))
             .cloned()
