@@ -12016,6 +12016,74 @@ tasks:
 
     #[test]
     fn diagnose_service_infers_container_mode_for_contextual_readiness_guidance() {
+        struct EnvPathGuard {
+            original: Option<std::ffi::OsString>,
+        }
+
+        impl Drop for EnvPathGuard {
+            fn drop(&mut self) {
+                match &self.original {
+                    Some(path) => unsafe {
+                        env::set_var("PATH", path);
+                    },
+                    None => unsafe {
+                        env::remove_var("PATH");
+                    },
+                }
+            }
+        }
+
+        let _guard = env_mutex_lock();
+        let temp_dir = TempDir::new().unwrap();
+        let bin_dir = temp_dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        let path_separator = if cfg!(windows) { ';' } else { ':' };
+        let new_path = match &original_path {
+            Some(path) => {
+                format!(
+                    "{}{}{}",
+                    bin_dir.display(),
+                    path_separator,
+                    path.to_string_lossy()
+                )
+            }
+            None => bin_dir.display().to_string(),
+        };
+        let _path_guard = EnvPathGuard {
+            original: original_path,
+        };
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let fake_docker = if cfg!(windows) {
+            r#"@echo off
+if "%1"=="info" exit /b 0
+if "%1"=="inspect" exit /b 1
+if "%1"=="run" exit /b 0
+if "%1"=="exec" (
+  echo %* | findstr /C:"exit 1" >nul
+  if errorlevel 1 exit /b 0
+  exit /b 1
+)
+if "%1"=="ps" exit /b 0
+exit /b 0
+"#
+        } else {
+            "#!/bin/sh\n\
+case \"$1\" in\n\
+  info)\n    exit 0\n    ;;\n\
+  inspect)\n    exit 1\n    ;;\n\
+  run)\n    exit 0\n    ;;\n\
+  exec)\n    if echo \"$*\" | grep -q \"exit 1\"; then\n      exit 1\n    fi\n    exit 0\n    ;;\n\
+  ps)\n    exit 0\n    ;;\n\
+  *)\n    exit 0\n    ;;\n\
+esac\n"
+        };
+
+        write_fake_command(&bin_dir, "docker", fake_docker);
+
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
