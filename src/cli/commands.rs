@@ -50180,7 +50180,6 @@ execution:
   supported:
     - native
     - container
-  lifecycle: persistent
   backends:
     container:
       image: jdxcode/mise:latest
