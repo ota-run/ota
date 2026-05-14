@@ -23,6 +23,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use crate::doctor::{command_available, resolve_command_path};
 use crate::schema::{Backend, ContainerBackend, Contract, Execution, Lifecycle, RemoteBackend};
@@ -189,10 +190,46 @@ pub(crate) struct ContainerBackendProbeFailure {
 pub(crate) fn container_backend_probe_failure(
     engine: &str,
 ) -> Option<ContainerBackendProbeFailure> {
-    let output = Command::new(resolve_engine_path(engine))
+    let mut child = match Command::new(resolve_engine_path(engine))
         .arg("info")
-        .output();
-    match output {
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            return Some(ContainerBackendProbeFailure {
+                engine: engine.to_string(),
+                exit_code: None,
+                details: error.to_string(),
+            })
+        }
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                return Some(ContainerBackendProbeFailure {
+                    engine: engine.to_string(),
+                    exit_code: None,
+                    details: format!("`{engine} info` timed out after 5 seconds"),
+                });
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(error) => {
+                return Some(ContainerBackendProbeFailure {
+                    engine: engine.to_string(),
+                    exit_code: None,
+                    details: error.to_string(),
+                })
+            }
+        }
+    }
+
+    match child.wait_with_output() {
         Ok(output) if output.status.success() => None,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
