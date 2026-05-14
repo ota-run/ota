@@ -22353,7 +22353,7 @@ fn render_backticked_text(value: &str, contract_path: Option<&Path>) -> String {
             && let Some(command) = contextualize_repo_command(token, contract_path)
         {
             command
-        } else if token.starts_with('/') {
+        } else if is_path_token(token) {
             compact_path(Path::new(token), DEFAULT_CONTRACT_FILE)
         } else {
             token.to_string()
@@ -22365,6 +22365,17 @@ fn render_backticked_text(value: &str, contract_path: Option<&Path>) -> String {
     }
 
     output
+}
+
+fn is_path_token(token: &str) -> bool {
+    let path = Path::new(token);
+    path.is_absolute()
+        || token.starts_with("./")
+        || token.starts_with("../")
+        || token.starts_with(r".\")
+        || token.starts_with(r"..\")
+        || token.contains(":\\")
+        || token.contains(":/")
 }
 
 fn contextualize_repo_command(token: &str, contract_path: &Path) -> Option<String> {
@@ -36581,7 +36592,7 @@ fn compact_contract_file_path_relative_to(
         return compact_path_relative_to(path, fallback, current_dir);
     }
     let Some(current_dir) = current_dir else {
-        return path.display().to_string();
+        return compact_path_display_text(path);
     };
 
     let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
@@ -36597,11 +36608,11 @@ fn compact_contract_file_path_relative_to(
             if relative.as_os_str().is_empty() {
                 return String::from(".");
             } else {
-                return format!("./{}", relative.display());
+                return format!("./{}", compact_path_display_text(relative));
             }
         }
     }
-    absolute.display().to_string()
+    compact_path_display_text(&absolute)
 }
 
 fn prune_yaml_nulls(value: &mut YamlValue) {
@@ -51237,7 +51248,7 @@ policies:
 
 fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Path>) -> String {
     let Some(current_dir) = current_dir else {
-        return path.display().to_string();
+        return compact_path_display_text(path);
     };
     let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
     let absolute = if path.is_absolute() {
@@ -51250,10 +51261,10 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
         if relative.as_os_str().is_empty() {
             return String::from(".");
         }
-        return format!("./{}", relative.display());
+        return format!("./{}", compact_path_display_text(&relative));
     }
     let absolute_display = if absolute.is_absolute() {
-        absolute.display().to_string()
+        compact_path_display_text(&absolute)
     } else {
         String::new()
     };
@@ -51280,11 +51291,24 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
 
 fn shorter_relative_path(base: &Path, target: &Path, absolute_display: &str) -> Option<String> {
     let relative = relative_path_from(base, target)?;
-    let rendered = relative.display().to_string();
+    let rendered = compact_path_display_text(&relative);
     if rendered.is_empty() || rendered.len() >= absolute_display.len() {
         return None;
     }
     Some(rendered)
+}
+
+fn compact_path_display_text(path: &Path) -> String {
+    compact_path_separator_style(&path.display().to_string())
+}
+
+fn compact_path_separator_style(value: &str) -> String {
+    let value = value
+        .strip_prefix("\\\\?\\")
+        .or_else(|| value.strip_prefix("//?/"))
+        .unwrap_or(value)
+        .to_string();
+    value.replace('\\', "/")
 }
 
 fn relative_path_from(base: &Path, target: &Path) -> Option<PathBuf> {

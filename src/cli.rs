@@ -6607,24 +6607,34 @@ exec /bin/sh -lc "$1"
     }
 
     fn compact_path(path: &std::path::Path, _fallback: &str) -> String {
-        std::fs::canonicalize(path)
-            .unwrap_or_else(|_| path.to_path_buf())
-            .display()
-            .to_string()
+        normalize_path_for_snapshot(path)
     }
 
     fn compact_contract(path: &std::path::Path) -> String {
-        std::fs::canonicalize(path)
-            .unwrap_or_else(|_| path.to_path_buf())
-            .display()
-            .to_string()
+        normalize_path_for_snapshot(path)
     }
 
     fn compact_workspace(path: &std::path::Path) -> String {
-        std::fs::canonicalize(path)
-            .unwrap_or_else(|_| path.to_path_buf())
-            .display()
-            .to_string()
+        normalize_path_for_snapshot(path)
+    }
+
+    fn normalize_path_for_snapshot(path: &std::path::Path) -> String {
+        compact_path_display_value(
+            &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+        )
+    }
+
+    fn compact_path_display_value(path: &std::path::Path) -> String {
+        compact_path_separator_style(&path.display().to_string())
+    }
+
+    fn compact_path_separator_style(value: &str) -> String {
+        let value = value
+            .strip_prefix("\\\\?\\")
+            .or_else(|| value.strip_prefix("//?/"))
+            .unwrap_or(value)
+            .to_string();
+        value.replace('\\', "/")
     }
 
     fn strip_ansi(value: &str) -> String {
@@ -6722,14 +6732,13 @@ exec /bin/sh -lc "$1"
     }
 
     fn assert_text_snapshot_for_dir(name: &str, actual: &str, dir: &std::path::Path) {
-        let raw_dir = dir.display().to_string();
-        let canonical_dir = fs::canonicalize(dir)
-            .map(|value| value.display().to_string())
-            .unwrap_or_else(|_| raw_dir.clone());
+        let raw_dir = compact_path_display_value(dir);
+        let canonical_dir = normalize_path_for_snapshot(dir);
         let temp_name = dir
             .file_name()
             .map(|value| value.to_string_lossy().to_string());
         let normalized = normalize_snapshot_text(actual)
+            .replace('\\', "/")
             .replace(&canonical_dir, "<TMP>")
             .replace(&raw_dir, "<TMP>");
         let normalized = temp_name
