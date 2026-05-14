@@ -84,21 +84,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo_command=""
-
           if command -v rustup >/dev/null 2>&1; then
-            cargo_command="$(rustup which cargo || true)"
+            toolchain="$(rustup default | awk '{print $1}')"
+            toolchain="${toolchain%% *}"
+
+            if [ -z "$toolchain" ]; then
+              echo "failed to resolve active rustup toolchain"
+              exit 1
+            fi
+
+            rustup run "$toolchain" cargo install --path . --locked
+            exit 0
           fi
 
-          if [ -z "$cargo_command" ] && ! command -v cargo >/dev/null 2>&1; then
+          if ! command -v cargo >/dev/null 2>&1; then
             echo "cargo not found in PATH"
             exit 1
           fi
 
-          if [ -z "$cargo_command" ]; then
-            cargo_command="$(command -v cargo)"
-          fi
-
+          cargo_command="$(command -v cargo)"
           "$cargo_command" install --path . --locked
 
       - name: Ensure cargo is on PATH (Windows)
