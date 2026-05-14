@@ -47,10 +47,11 @@ use serde_json;
 
 use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
-    LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
-    container_engine_candidates_from_backend, context_dependency_isolation_paths, execution_image,
-    format_lifecycle, matching_execution_context_name, resolve_engine_path,
-    selected_container_engine, selected_container_engine_from_backend,
+    LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_backend_probe_failure,
+    container_engine_candidates, container_engine_candidates_from_backend,
+    context_dependency_isolation_paths, execution_image, format_lifecycle,
+    matching_execution_context_name, resolve_engine_path, selected_container_engine,
+    selected_container_engine_from_backend,
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::policy_pack::{
@@ -14049,20 +14050,14 @@ fn execute_container_task_command(
     }
 }
 
-fn probe_container_backend(engine: &str, task_name: &str) -> Result<Option<String>, RunError> {
-    let probe = container_command_output(engine, &["info"], None, task_name)?;
-    if probe.exit_code == 0 {
+fn probe_container_backend(engine: &str, _task_name: &str) -> Result<Option<String>, RunError> {
+    let Some(failure) = container_backend_probe_failure(engine) else {
         return Ok(None);
-    }
-
-    let stderr = probe.stderr.trim();
-    let stdout = probe.stdout.trim();
-    let details = if !stderr.is_empty() {
-        stderr.to_string()
-    } else if !stdout.is_empty() {
-        stdout.to_string()
+    };
+    let details = if !failure.details.trim().is_empty() {
+        failure.details
     } else {
-        format!("`{engine} info` exited with status {}", probe.exit_code)
+        format!("`{engine} info` exited with status {:?}", failure.exit_code)
     };
 
     Ok(Some(format!(
