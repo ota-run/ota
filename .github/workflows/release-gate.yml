@@ -140,26 +140,95 @@ jobs:
         timeout-minutes: 20
         run: cargo check
 
-      - name: Run release gate (Windows) - lib tests (core)
+      - name: Run release gate (Windows) - lib tests (core) cli::tests
         if: runner.os == 'Windows'
         shell: pwsh
         timeout-minutes: 45
-        run: |
-          cargo test --lib cli::tests -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready
-          cargo test --lib cli::commands -- --test-threads=1
-          cargo test --lib contract_drift:: -- --test-threads=1
-          cargo test --lib detector:: -- --test-threads=1
-          cargo test --lib doctor:: -- --test-threads=1 --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts
-          cargo test --lib execution:: -- --test-threads=1
-          cargo test --lib parser:: -- --test-threads=1
-          cargo test --lib policy_pack:: -- --test-threads=1
-          cargo test --lib provisioning:: -- --test-threads=1
-          cargo test --lib runner:: -- --test-threads=1 --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target
-          cargo test --lib schema:: -- --test-threads=1
-          cargo test --lib terminal:: -- --test-threads=1
-          cargo test --lib update:: -- --test-threads=1
-          cargo test --lib validator:: -- --test-threads=1
-          cargo test --lib workspace:: -- --test-threads=1
+        run: cargo test --lib cli::tests -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready
+
+      - name: Run release gate (Windows) - lib tests (core) cli::commands
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib cli::commands -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) contract_drift
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib contract_drift:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) detector
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib detector:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) doctor
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib doctor:: -- --test-threads=1 --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts
+
+      - name: Run release gate (Windows) - lib tests (core) execution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib execution:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) parser
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib parser:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) policy_pack
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib policy_pack:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) provisioning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib provisioning:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib runner:: -- --test-threads=1 --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target
+
+      - name: Run release gate (Windows) - lib tests (core) schema
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib schema:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) terminal
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib terminal:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) update
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib update:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) validator
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib validator:: -- --test-threads=1
+
+      - name: Run release gate (Windows) - lib tests (core) workspace
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 45
+        run: cargo test --lib workspace:: -- --test-threads=1
 
       - name: Run release gate (Windows) - policy-backed provisioning test
         if: runner.os == 'Windows'
