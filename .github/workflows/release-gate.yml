@@ -84,18 +84,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v cargo >/dev/null 2>&1; then
+          cargo_command=""
+
+          if command -v rustup >/dev/null 2>&1; then
+            cargo_command="$(rustup which cargo || true)"
+          fi
+
+          if [ -z "$cargo_command" ] && ! command -v cargo >/dev/null 2>&1; then
             echo "cargo not found in PATH"
             exit 1
           fi
 
-          cargo_command="$(command -v cargo)"
-          if [ "$(basename "$cargo_command")" = "rustup-init" ]; then
-            if ! cargo_command="$(rustup which cargo)"; then
-              echo "cargo resolved to rustup-init, but rustup could not resolve an active cargo binary"
-              exit 1
-            fi
-            echo "Detected cargo shim as rustup-init; using resolved cargo at $cargo_command"
+          if [ -z "$cargo_command" ]; then
+            cargo_command="$(command -v cargo)"
           fi
 
           "$cargo_command" install --path . --locked
