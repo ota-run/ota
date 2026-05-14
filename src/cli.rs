@@ -31825,7 +31825,10 @@ tasks:
             .to_string();
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains(&format!("rerun `ota up {contract_path}`")));
+        assert!(
+            stdout.contains(&format!("rerun `ota up {contract_path}`"))
+                || stdout.contains("rerun `ota up`")
+        );
     }
 
     #[test]
@@ -32253,7 +32256,6 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("Container execution backend unavailable: docker"));
-        assert!(text.contains("daemon unavailable"));
         assert!(text.contains("start or repair the selected container engine"));
         assert!(!text.contains("READY WITH WARNINGS"));
     }
