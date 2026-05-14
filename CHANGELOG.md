@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- documented the planned `toolchains` contract layer and its ownership boundary with existing
+  `runtimes`, `tools`, and `native_prerequisites`, including duplication rules, provider behavior,
+  and the intended Rustup-first migration path; the public site now has a standalone reference
+  page for the same model
+
 ## 1.6.12
 
 - added first-class workflow `prepare.task` for host file-prep before setup: workflows can now

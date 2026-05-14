@@ -81,7 +81,20 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install ota
-        run: cargo install --path . --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v cargo >/dev/null 2>&1; then
+            rustup run stable cargo install --path . --locked
+            exit 0
+          fi
+
+          if [ "$(basename "$(command -v cargo)")" = "rustup-init" ]; then
+            echo "Detected cargo shim as rustup-init; using rustup run stable cargo"
+            rustup run stable cargo install --path . --locked
+          else
+            cargo install --path . --locked
+          fi
 
       - name: Ensure cargo is on PATH (Windows)
         if: runner.os == 'Windows'
