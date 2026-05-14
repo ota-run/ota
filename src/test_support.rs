@@ -23,6 +23,8 @@
 use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use fs2::FileExt;
 
@@ -46,15 +48,31 @@ fn acquire_cross_process_lock(name: &str) -> File {
         fs::create_dir_all(parent).expect("test lock directory should exist");
     }
 
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(&path)
-        .expect("test lock file should open");
-    file.lock_exclusive()
-        .expect("test lock file should lock exclusively");
-    file
+    let timeout = Duration::from_secs(30);
+    let poll_interval = Duration::from_millis(100);
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("test lock file should open");
+
+        match file.try_lock_exclusive() {
+            Ok(()) => return file,
+            Err(_) if Instant::now() < deadline => {
+                drop(file);
+                sleep(poll_interval);
+            }
+            Err(err) => {
+                panic!(
+                    "timed out waiting {timeout:?} for cross-process lock {name} at {path:?}: {err:?}"
+                )
+            }
+        }
+    }
 }
 
 /// Acquire the ENV_MUTEX and a matching cross-process test lock, recovering from poison if a
