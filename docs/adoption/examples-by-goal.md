@@ -78,7 +78,7 @@ what Ota can model.
 
 Start with:
 
-- [Windows-first adoption with explicit native activation](../examples/windows-adoption.md)
+- [Windows-first adoption with explicit native activation](https://github.com/ota-run/examples)
 
 What this proves:
 
