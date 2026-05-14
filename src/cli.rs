@@ -5782,7 +5782,7 @@ mod tests {
     ) -> Vec<String> {
         candidates
             .into_iter()
-            .map(|candidate| candidate.get_value().to_string_lossy().to_string())
+            .map(|candidate| compact_path_separator_style(&candidate.get_value().to_string_lossy()))
             .collect()
     }
 

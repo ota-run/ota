@@ -22368,14 +22368,28 @@ fn render_backticked_text(value: &str, contract_path: Option<&Path>) -> String {
 }
 
 fn is_path_token(token: &str) -> bool {
+    let token = token.trim();
+    if token.is_empty() || token.chars().any(char::is_whitespace) || token.contains("://") {
+        return false;
+    }
+
     let path = Path::new(token);
     path.is_absolute()
         || token.starts_with("./")
         || token.starts_with("../")
         || token.starts_with(r".\")
         || token.starts_with(r"..\")
-        || token.contains(":\\")
-        || token.contains(":/")
+        || token.starts_with('~')
+        || token.contains('\\')
+        || is_windows_drive_path_token(token)
+}
+
+fn is_windows_drive_path_token(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
 }
 
 fn contextualize_repo_command(token: &str, contract_path: &Path) -> Option<String> {
@@ -36592,7 +36606,7 @@ fn compact_contract_file_path_relative_to(
         return compact_path_relative_to(path, fallback, current_dir);
     }
     let Some(current_dir) = current_dir else {
-        return compact_path_display_text(path);
+        return path.display().to_string();
     };
 
     let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
@@ -36608,11 +36622,11 @@ fn compact_contract_file_path_relative_to(
             if relative.as_os_str().is_empty() {
                 return String::from(".");
             } else {
-                return format!("./{}", compact_path_display_text(relative));
+                return format!("./{}", relative.display());
             }
         }
     }
-    compact_path_display_text(&absolute)
+    absolute.display().to_string()
 }
 
 fn prune_yaml_nulls(value: &mut YamlValue) {
@@ -49537,6 +49551,29 @@ tasks:
     }
 
     #[test]
+    fn render_backticked_text_preserves_urls() {
+        let rendered = strip_ansi_codes(&super::render_backticked_text(
+            "endpoint `http://127.0.0.1:3001/`",
+            None,
+        ));
+
+        assert!(rendered.contains("`http://127.0.0.1:3001/`"), "{rendered}");
+    }
+
+    #[test]
+    fn render_backticked_text_preserves_commands_with_windows_path_arguments() {
+        let rendered = strip_ansi_codes(&super::render_backticked_text(
+            r"rerun `ota validate C:\Users\runner\work\ota\ota.yaml`",
+            None,
+        ));
+
+        assert!(
+            rendered.contains(r"`ota validate C:\Users\runner\work\ota\ota.yaml`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn task_use_details_footer_styles_next_key() {
         let rendered = super::task_use_details_footer(None, None);
         assert!(rendered.contains(&super::paint_next_key()), "{rendered}");
@@ -51248,7 +51285,7 @@ policies:
 
 fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Path>) -> String {
     let Some(current_dir) = current_dir else {
-        return compact_path_display_text(path);
+        return path.display().to_string();
     };
     let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
     let absolute = if path.is_absolute() {
@@ -51261,10 +51298,10 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
         if relative.as_os_str().is_empty() {
             return String::from(".");
         }
-        return format!("./{}", compact_path_display_text(&relative));
+        return format!("./{}", relative.display());
     }
     let absolute_display = if absolute.is_absolute() {
-        compact_path_display_text(&absolute)
+        absolute.display().to_string()
     } else {
         String::new()
     };
@@ -51291,24 +51328,11 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
 
 fn shorter_relative_path(base: &Path, target: &Path, absolute_display: &str) -> Option<String> {
     let relative = relative_path_from(base, target)?;
-    let rendered = compact_path_display_text(&relative);
+    let rendered = relative.display().to_string();
     if rendered.is_empty() || rendered.len() >= absolute_display.len() {
         return None;
     }
     Some(rendered)
-}
-
-fn compact_path_display_text(path: &Path) -> String {
-    compact_path_separator_style(&path.display().to_string())
-}
-
-fn compact_path_separator_style(value: &str) -> String {
-    let value = value
-        .strip_prefix("\\\\?\\")
-        .or_else(|| value.strip_prefix("//?/"))
-        .unwrap_or(value)
-        .to_string();
-    value.replace('\\', "/")
 }
 
 fn relative_path_from(base: &Path, target: &Path) -> Option<PathBuf> {
@@ -59708,6 +59732,7 @@ fn looks_like_path_token(token: &str) -> bool {
         || token.starts_with('/')
         || token.starts_with('~')
         || token.contains('\\')
+        || is_windows_drive_path_token(token)
         || token.ends_with(".yaml")
         || token.ends_with(".yml")
 }
