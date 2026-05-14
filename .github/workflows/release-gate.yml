@@ -144,7 +144,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         timeout-minutes: 45
-        run: cargo test --lib -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer
+        run: |
+          cargo test --lib cli::tests -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready
+          cargo test --lib cli::commands -- --test-threads=1
+          cargo test --lib contract_drift:: -- --test-threads=1
+          cargo test --lib detector:: -- --test-threads=1
+          cargo test --lib doctor:: -- --test-threads=1 --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts
+          cargo test --lib execution:: -- --test-threads=1
+          cargo test --lib parser:: -- --test-threads=1
+          cargo test --lib policy_pack:: -- --test-threads=1
+          cargo test --lib provisioning:: -- --test-threads=1
+          cargo test --lib runner:: -- --test-threads=1 --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target
+          cargo test --lib schema:: -- --test-threads=1
+          cargo test --lib terminal:: -- --test-threads=1
+          cargo test --lib update:: -- --test-threads=1
+          cargo test --lib validator:: -- --test-threads=1
+          cargo test --lib workspace:: -- --test-threads=1
 
       - name: Run release gate (Windows) - policy-backed provisioning test
         if: runner.os == 'Windows'
