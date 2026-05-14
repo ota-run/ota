@@ -11975,6 +11975,7 @@ services:
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn diagnose_service_structured_http_readiness_uses_default_retry_budget_when_retries_omitted() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener
