@@ -85,16 +85,20 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v cargo >/dev/null 2>&1; then
-            rustup run stable cargo install --path . --locked
-            exit 0
+            echo "cargo not found in PATH"
+            exit 1
           fi
 
-          if [ "$(basename "$(command -v cargo)")" = "rustup-init" ]; then
-            echo "Detected cargo shim as rustup-init; using rustup run stable cargo"
-            rustup run stable cargo install --path . --locked
-          else
-            cargo install --path . --locked
+          cargo_command="$(command -v cargo)"
+          if [ "$(basename "$cargo_command")" = "rustup-init" ]; then
+            if ! cargo_command="$(rustup which cargo)"; then
+              echo "cargo resolved to rustup-init, but rustup could not resolve an active cargo binary"
+              exit 1
+            fi
+            echo "Detected cargo shim as rustup-init; using resolved cargo at $cargo_command"
           fi
+
+          "$cargo_command" install --path . --locked
 
       - name: Ensure cargo is on PATH (Windows)
         if: runner.os == 'Windows'
