@@ -19782,6 +19782,9 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(windows)]
 fn shell_command(command: &str) -> Command {
+    if looks_like_powershell_script(command) {
+        return powershell_shell_command(command);
+    }
     if looks_like_posix_script(command) && has_bash() {
         let mut shell = Command::new("bash");
         shell.arg("-lc").arg(command);
@@ -19793,8 +19796,12 @@ fn shell_command(command: &str) -> Command {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn looks_like_posix_script(command: &str) -> bool {
+    let command = command.trim();
+    if command.is_empty() || looks_like_powershell_script(command) {
+        return false;
+    }
     const POSIX_MARKERS: [&str; 8] = [
         "command -v ",
         "; then",
@@ -19808,13 +19815,16 @@ fn looks_like_posix_script(command: &str) -> bool {
     if command.starts_with("cmd ") || command.starts_with("cmd/") {
         return false;
     }
-    if command.starts_with("powershell ") || command.starts_with("pwsh ") {
-        return false;
-    }
-    command.contains("&&")
+    command.starts_with("./")
+        || command.starts_with("../")
+        || command.contains("&&")
         || command.contains("||")
         || POSIX_MARKERS.iter().any(|marker| command.contains(marker))
-        || command.contains(" ${")
+        || command.contains('\n')
+        || command.contains("export ")
+        || command.contains("printf '")
+        || command.contains("printf \"")
+        || contains_posix_env_reference(command)
 }
 
 #[cfg(windows)]
@@ -19823,6 +19833,53 @@ fn has_bash() -> bool {
     *HAS_BASH.get_or_init(|| {
         Command::new("bash")
             .arg("--version")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(any(windows, test))]
+fn looks_like_powershell_script(command: &str) -> bool {
+    let command = command.trim_start();
+    command.starts_with("powershell ")
+        || command.starts_with("pwsh ")
+        || command.contains("$LASTEXITCODE")
+        || command.contains("$env:")
+        || command.contains("Join-Path ")
+        || command.contains("Test-Path ")
+        || command.contains("Add-Content ")
+        || command.contains("Set-Content ")
+        || command.contains("Get-ChildItem ")
+        || command.contains("New-Item ")
+        || command.contains("Write-Host ")
+        || command.contains("Write-Error ")
+        || command.contains("throw ")
+}
+
+#[cfg(any(windows, test))]
+fn contains_posix_env_reference(command: &str) -> bool {
+    let bytes = command.as_bytes();
+    bytes.windows(2).any(|window| {
+        window[0] == b'$'
+            && (window[1] == b'{' || window[1] == b'_' || window[1].is_ascii_alphabetic())
+    })
+}
+
+#[cfg(windows)]
+fn powershell_shell_command(command: &str) -> Command {
+    let executable = if has_pwsh() { "pwsh" } else { "powershell" };
+    let mut shell = Command::new(executable);
+    shell.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+    shell
+}
+
+#[cfg(windows)]
+fn has_pwsh() -> bool {
+    static HAS_PWSH: OnceLock<bool> = OnceLock::new();
+    *HAS_PWSH.get_or_init(|| {
+        Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -19862,17 +19919,18 @@ mod tests {
         clean_execution, clean_execution_report, container_identity_seed, contract_working_dir,
         current_os, effective_task_env_for_backend, effective_task_execution,
         ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
-        parse_windows_env_block, persistent_cleanup_targets, persistent_container_name,
-        persistent_container_name_for_seed, plan_task_execution,
-        preflight_container_host_publications, prepare_container_runtime_projection,
-        preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
-        resolve_execution_backend, resolve_execution_backend_with_contract_path, resolve_task_env,
-        resolve_task_env_details, resolve_task_env_details_for_task,
-        resolve_task_target_binding_url, resolve_task_target_binding_url_with_contract_path,
-        run_task, run_task_captured, run_task_captured_with_args_with_overrides,
-        run_task_with_args, run_task_with_args_with_overrides_and_stream_capture,
-        run_task_with_overrides, run_task_with_progress, running_loader_label,
-        running_loader_label_for_backend, shell_quote, version_matches_requirement,
+        looks_like_posix_script, looks_like_powershell_script, parse_windows_env_block,
+        persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
+        plan_task_execution, preflight_container_host_publications,
+        prepare_container_runtime_projection, preparing_loader_label, producer_owned_service_next,
+        ready_runtime_public_endpoint_line, resolve_execution_backend,
+        resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
+        resolve_task_env_details_for_task, resolve_task_target_binding_url,
+        resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
+        run_task_captured_with_args_with_overrides, run_task_with_args,
+        run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
+        run_task_with_progress, running_loader_label, running_loader_label_for_backend,
+        shell_quote, version_matches_requirement,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -19905,6 +19963,26 @@ mod tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn windows_shell_detection_routes_posix_task_scripts_to_bash() {
+        let script = "printf '%s' \"$OTA_INPUT_BASE_URL\" > version.txt\n";
+        assert!(looks_like_posix_script(script));
+        assert!(!looks_like_powershell_script(script));
+    }
+
+    #[test]
+    fn windows_shell_detection_keeps_powershell_variants_out_of_posix_path() {
+        let script = r#"$cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+if (-not (Test-Path $cargoBin)) {
+  throw "cargo bin path not found"
+}
+Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+"#;
+
+        assert!(looks_like_powershell_script(script));
+        assert!(!looks_like_posix_script(script));
     }
 
     #[cfg(unix)]
