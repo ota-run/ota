@@ -202,7 +202,7 @@ pub(crate) fn container_backend_probe_failure(
                 engine: engine.to_string(),
                 exit_code: None,
                 details: error.to_string(),
-            })
+            });
         }
     };
 
@@ -224,7 +224,7 @@ pub(crate) fn container_backend_probe_failure(
                     engine: engine.to_string(),
                     exit_code: None,
                     details: error.to_string(),
-                })
+                });
             }
         }
     }
