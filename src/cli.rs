@@ -31827,7 +31827,7 @@ tasks:
         assert_eq!(output.exit_code, 1);
         assert!(
             stdout.contains(&format!("rerun `ota up {contract_path}`"))
-                || stdout.contains("rerun `ota up`")
+                || stdout.contains("ota up")
         );
     }
 

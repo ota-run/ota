@@ -83,6 +83,16 @@ jobs:
       - name: Install ota
         run: cargo install --path . --locked
 
+      - name: Ensure cargo is on PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+          if (-not (Test-Path $cargoBin)) {
+            throw "cargo bin path not found: $cargoBin"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+
       - name: Validate contract
         run: ota validate
 
