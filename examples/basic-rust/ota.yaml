@@ -31,15 +31,41 @@ tools:
   cargo: "*"
 tasks:
   setup:
+    description: Fetch Cargo dependencies
     run: cargo fetch
+    requirements:
+      runtimes:
+        rust: "1.85"
+      tools:
+        cargo: "*"
+      checks:
+        - rust-installed
   build:
+    description: Compile the crate
     run: cargo build
     depends_on:
       - setup
+    requirements:
+      tools:
+        cargo: "*"
   test:
+    description: Run the Cargo test suite
     run: cargo test
     depends_on:
       - setup
+    requirements:
+      tools:
+        cargo: "*"
+workflows:
+  default: verify
+  verify:
+    description: Canonical Rust dependency, build, and verification path
+    setup:
+      task: setup
+    run:
+      task: test
+    notes: |
+      Use this when you want the repo front door instead of calling Cargo commands ad hoc.
 checks:
   - name: rust-installed
     kind: precondition
@@ -61,5 +87,6 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
+    Use `ota workflows` to inspect the main Rust path before running direct tasks.
     Use `ota run test` after edits and keep changes small and reviewable.
     Use `ota run build` to confirm the crate still compiles before broader verification.

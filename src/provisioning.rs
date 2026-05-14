@@ -29,8 +29,10 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value;
 use thiserror::Error;
 
+use crate::execution::container_backend_probe_failure;
 use crate::policy_pack::{
     ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest, ProvisioningTargetKind,
+    evaluate_actual_version_policy_match,
 };
 use crate::runner::{
     ResolvedExecutionBackend, StreamPhaseLoader, join_stream_reader, persistent_container_name,
@@ -1191,6 +1193,263 @@ impl MiseBootstrapProvisioningBackend {
     }
 }
 
+#[cfg(any(windows, test))]
+fn windows_mise_version_probe_script() -> &'static str {
+    r#"$ErrorActionPreference = 'Stop'
+$candidates = @(
+  (Join-Path $env:LOCALAPPDATA 'mise\bin\mise.exe'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\mise\bin\mise.exe'),
+  (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\mise.exe'),
+  (Join-Path $env:USERPROFILE '.local\bin\mise.exe')
+)
+$wingetPackageRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+if (Test-Path $wingetPackageRoot) {
+  Get-ChildItem -Path $wingetPackageRoot -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'jdx.mise*' } |
+    ForEach-Object {
+      $candidates += (Join-Path $_.FullName 'mise.exe')
+      $candidates += (Join-Path $_.FullName 'bin\mise.exe')
+      $candidates += (Join-Path $_.FullName 'mise\bin\mise.exe')
+    }
+}
+foreach ($candidate in $candidates) {
+  if (Test-Path $candidate) {
+    & $candidate --version
+    exit $LASTEXITCODE
+  }
+}
+$command = Get-Command mise -ErrorAction SilentlyContinue
+if ($null -ne $command) {
+  & mise --version
+  exit $LASTEXITCODE
+}
+throw 'mise executable not found after bootstrap'"#
+}
+
+fn prepend_directory_to_process_path(directory: &std::path::Path, case_insensitive: bool) {
+    let mut path_segments = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let directory_text = directory.to_string_lossy().to_string();
+    let already_present = path_segments.iter().any(|segment| {
+        let segment_text = segment.to_string_lossy().to_string();
+        if case_insensitive {
+            segment_text.eq_ignore_ascii_case(directory_text.as_str())
+        } else {
+            segment_text == directory_text
+        }
+    });
+    if !already_present {
+        path_segments.insert(0, directory.to_path_buf());
+        if let Ok(joined) = std::env::join_paths(path_segments) {
+            unsafe {
+                std::env::set_var("PATH", joined);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(unix)]
+fn install_posix_mise_tool_wrapper(
+    tool_name: &str,
+    resolved_tool_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let mise_dir = find_posix_mise_executable_from_process_path()
+        .or_else(find_posix_mise_executable)
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))?;
+    let wrapper_path = mise_dir.join(tool_name);
+    if wrapper_path == resolved_tool_path {
+        return Some(wrapper_path);
+    }
+    let script = format!(
+        "#!/bin/sh\nexec {} \"$@\"\n",
+        shell_single_quote(&resolved_tool_path.to_string_lossy())
+    );
+    if std::fs::write(&wrapper_path, script).is_err() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&wrapper_path) {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o755);
+            if std::fs::set_permissions(&wrapper_path, permissions).is_err() {
+                return None;
+            }
+        }
+    }
+    Some(wrapper_path)
+}
+
+#[cfg(unix)]
+fn find_posix_mise_executable_from_process_path() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|segment| segment.join("mise"))
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(any(windows, test))]
+fn windows_mise_candidate_paths() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    let user_profile = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+
+    if let Some(base) = local_app_data.as_ref() {
+        candidates.push(base.join("mise").join("bin").join("mise.exe"));
+        candidates.push(
+            base.join("Programs")
+                .join("mise")
+                .join("bin")
+                .join("mise.exe"),
+        );
+        candidates.push(
+            base.join("Microsoft")
+                .join("WinGet")
+                .join("Links")
+                .join("mise.exe"),
+        );
+
+        let winget_packages = base.join("Microsoft").join("WinGet").join("Packages");
+        if let Ok(entries) = std::fs::read_dir(winget_packages) {
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let normalized = file_name.to_string_lossy().to_ascii_lowercase();
+                if normalized.starts_with("jdx.mise") {
+                    let package_root = entry.path();
+                    candidates.push(package_root.join("mise.exe"));
+                    candidates.push(package_root.join("bin").join("mise.exe"));
+                    candidates.push(package_root.join("mise").join("bin").join("mise.exe"));
+                }
+            }
+        }
+    }
+
+    if let Some(base) = user_profile.as_ref() {
+        candidates.push(base.join(".local").join("bin").join("mise.exe"));
+    }
+
+    candidates
+}
+
+#[cfg(any(windows, test))]
+fn find_windows_mise_executable() -> Option<std::path::PathBuf> {
+    windows_mise_candidate_paths()
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(any(windows, test))]
+fn windows_mise_shim_directories() -> Vec<std::path::PathBuf> {
+    let mut shims = Vec::new();
+    let local_app_data = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    let user_profile = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+
+    if let Some(base) = local_app_data.as_ref() {
+        shims.push(base.join("mise").join("shims"));
+        shims.push(base.join("Programs").join("mise").join("shims"));
+    }
+    if let Some(base) = user_profile.as_ref() {
+        shims.push(base.join(".local").join("share").join("mise").join("shims"));
+        shims.push(base.join(".mise").join("shims"));
+    }
+
+    shims
+}
+
+#[cfg(any(windows, test))]
+fn activate_windows_mise_on_path() -> Option<std::path::PathBuf> {
+    let executable = find_windows_mise_executable()?;
+    let directory = executable.parent()?.to_path_buf();
+    prepend_directory_to_process_path(&directory, true);
+    for shims_dir in windows_mise_shim_directories() {
+        if shims_dir.is_dir() {
+            prepend_directory_to_process_path(&shims_dir, true);
+        }
+    }
+
+    Some(executable)
+}
+
+#[cfg(any(unix, test))]
+fn posix_mise_candidate_paths() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let xdg_data_home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from);
+
+    if let Some(base) = home.as_ref() {
+        candidates.push(base.join(".local").join("bin").join("mise"));
+        candidates.push(
+            base.join(".local")
+                .join("share")
+                .join("mise")
+                .join("bin")
+                .join("mise"),
+        );
+        candidates.push(base.join(".mise").join("bin").join("mise"));
+    }
+    if let Some(base) = xdg_data_home.as_ref() {
+        candidates.push(base.join("mise").join("bin").join("mise"));
+    }
+
+    candidates
+}
+
+#[cfg(any(unix, test))]
+fn posix_mise_shim_directories() -> Vec<std::path::PathBuf> {
+    let mut shims = Vec::new();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let xdg_data_home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from);
+
+    if let Some(base) = home.as_ref() {
+        shims.push(base.join(".local").join("share").join("mise").join("shims"));
+        shims.push(base.join(".mise").join("shims"));
+    }
+    if let Some(base) = xdg_data_home.as_ref() {
+        shims.push(base.join("mise").join("shims"));
+    }
+
+    shims
+}
+
+#[cfg(any(unix, test))]
+fn find_posix_mise_executable() -> Option<std::path::PathBuf> {
+    posix_mise_candidate_paths()
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(any(unix, test))]
+fn activate_posix_mise_on_path() -> Option<std::path::PathBuf> {
+    let executable = find_posix_mise_executable()?;
+    let directory = executable.parent()?.to_path_buf();
+    prepend_directory_to_process_path(&directory, false);
+
+    Some(executable)
+}
+
+pub(crate) fn activate_mise_paths_for_current_process() {
+    #[cfg(windows)]
+    {
+        let _ = activate_windows_mise_on_path();
+    }
+    #[cfg(unix)]
+    {
+        let _ = activate_posix_mise_on_path();
+        for shims_dir in posix_mise_shim_directories() {
+            if shims_dir.is_dir() {
+                prepend_directory_to_process_path(&shims_dir, false);
+            }
+        }
+    }
+}
+
 impl SdkmanBootstrapProvisioningBackend {
     fn bootstrap_script() -> &'static str {
         r#"curl -s "https://get.sdkman.io" | bash"#
@@ -1303,9 +1562,14 @@ fn ensure_bootstrap_source_version(
         });
     };
 
-    if approved_versions.iter().any(|approved| {
-        approved.trim() == "*" || text_output_contains_requested_version(&version, approved)
-    }) {
+    if approved_versions
+        .iter()
+        .any(|approved| approved.trim() == "*")
+        || approved_versions
+            .iter()
+            .any(|approved| text_output_contains_requested_version(&version, approved))
+        || bootstrap_source_version_matches_policy(command, &version, approved_versions)
+    {
         return Ok(());
     }
 
@@ -1318,6 +1582,38 @@ fn ensure_bootstrap_source_version(
             approved_versions.join(", ")
         ),
     })
+}
+
+fn bootstrap_source_version_matches_policy(
+    command: &str,
+    version_output: &str,
+    approved_versions: &[String],
+) -> bool {
+    let normalized = strip_ansi_sequences(version_output);
+    normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .flat_map(|line| {
+            line.split(|ch: char| {
+                ch.is_whitespace()
+                    || matches!(
+                        ch,
+                        '|' | ',' | '[' | ']' | '(' | ')' | '*' | '>' | ':' | '='
+                    )
+            })
+        })
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .any(|token| {
+            evaluate_actual_version_policy_match(
+                ProvisioningTargetKind::Tool,
+                command,
+                token.trim_start_matches('v'),
+                approved_versions,
+            )
+            .is_ok()
+        })
 }
 
 impl ProvisioningBackend for MiseProvisioningBackend {
@@ -1365,6 +1661,81 @@ impl ProvisioningBackend for MiseProvisioningBackend {
                     stdout,
                     stderr,
                 });
+            }
+
+            let tool_name = action.install_name().to_string();
+            let mut which_output = execute_provisioning_command(
+                target,
+                working_dir,
+                "mise",
+                &["which", &tool_name],
+                mode,
+            )?;
+            stdout.push_str(&which_output.stdout);
+            stderr.push_str(&which_output.stderr);
+            let requires_resolved_path = matches!(target, ProvisioningExecutionTarget::Native);
+            if which_output.exit_code != 0
+                || (requires_resolved_path && which_output.stdout.trim().is_empty())
+            {
+                let use_output = execute_provisioning_command(
+                    target,
+                    working_dir,
+                    "mise",
+                    &["use", "-g", &install_target],
+                    mode,
+                )?;
+                stdout.push_str(&use_output.stdout);
+                stderr.push_str(&use_output.stderr);
+                if use_output.exit_code != 0 {
+                    return Err(ProvisioningBackendError::CommandFailed {
+                        command: format!("mise use -g {install_target}"),
+                        exit_code: use_output.exit_code,
+                        stdout,
+                        stderr,
+                    });
+                }
+
+                which_output = execute_provisioning_command(
+                    target,
+                    working_dir,
+                    "mise",
+                    &["which", &tool_name],
+                    mode,
+                )?;
+                stdout.push_str(&which_output.stdout);
+                stderr.push_str(&which_output.stderr);
+                if which_output.exit_code != 0
+                    || (requires_resolved_path && which_output.stdout.trim().is_empty())
+                {
+                    return Err(ProvisioningBackendError::CommandFailed {
+                        command: format!("mise which {tool_name}"),
+                        exit_code: which_output.exit_code,
+                        stdout,
+                        stderr,
+                    });
+                }
+            }
+
+            if matches!(target, ProvisioningExecutionTarget::Native)
+                && let Some(path_text) = which_output
+                    .stdout
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+            {
+                let resolved_tool_path = std::path::PathBuf::from(path_text);
+                #[cfg(unix)]
+                let path_candidate =
+                    install_posix_mise_tool_wrapper(&tool_name, &resolved_tool_path)
+                        .unwrap_or(resolved_tool_path.clone());
+                #[cfg(not(unix))]
+                let path_candidate = resolved_tool_path.clone();
+
+                if let Some(tool_dir) = path_candidate.parent() {
+                    prepend_directory_to_process_path(tool_dir, cfg!(windows));
+                } else if let Some(tool_dir) = resolved_tool_path.parent() {
+                    prepend_directory_to_process_path(tool_dir, cfg!(windows));
+                }
             }
         }
 
@@ -2172,8 +2543,57 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                 });
             }
 
-            let output =
-                apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?;
+            let output = {
+                #[cfg(windows)]
+                {
+                    if matches!(target, ProvisioningExecutionTarget::Native) {
+                        let winget_bootstrap = execute_provisioning_command(
+                            target,
+                            working_dir,
+                            "powershell",
+                            &[
+                                "-NoProfile",
+                                "-ExecutionPolicy",
+                                "Bypass",
+                                "-Command",
+                                WingetBootstrapProvisioningBackend::bootstrap_script(),
+                            ],
+                            mode,
+                        )?;
+                        stdout.push_str(&winget_bootstrap.stdout);
+                        stderr.push_str(&winget_bootstrap.stderr);
+                        if winget_bootstrap.exit_code != 0 {
+                            return Err(ProvisioningBackendError::CommandFailed {
+                                command: String::from("powershell winget bootstrap"),
+                                exit_code: winget_bootstrap.exit_code,
+                                stdout,
+                                stderr,
+                            });
+                        }
+                        execute_provisioning_command(
+                            target,
+                            working_dir,
+                            "winget",
+                            &[
+                                "install",
+                                "--id",
+                                "jdx.mise",
+                                "--exact",
+                                "--accept-source-agreements",
+                                "--accept-package-agreements",
+                                "--silent",
+                            ],
+                            mode,
+                        )?
+                    } else {
+                        apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?
+                }
+            };
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
@@ -2186,6 +2606,44 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                 });
             }
 
+            #[cfg(windows)]
+            if matches!(target, ProvisioningExecutionTarget::Native) {
+                ensure_bootstrap_source_version(
+                    target,
+                    working_dir,
+                    "powershell",
+                    &[
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        windows_mise_version_probe_script(),
+                    ],
+                    action
+                        .approved_version
+                        .as_ref()
+                        .map_or(&[], |value| std::slice::from_ref(value)),
+                    mode,
+                )?;
+                let _ = activate_windows_mise_on_path();
+            } else {
+                ensure_bootstrap_source_version(
+                    target,
+                    working_dir,
+                    "mise",
+                    &["--version"],
+                    action
+                        .approved_version
+                        .as_ref()
+                        .map_or(&[], |value| std::slice::from_ref(value)),
+                    mode,
+                )?;
+            }
+            #[cfg(not(windows))]
+            if matches!(target, ProvisioningExecutionTarget::Native) {
+                let _ = activate_posix_mise_on_path();
+            }
+            #[cfg(not(windows))]
             ensure_bootstrap_source_version(
                 target,
                 working_dir,
@@ -2597,6 +3055,17 @@ pub fn apply_provisioning_request_with_target(
     target: &ProvisioningExecutionTarget,
     mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+    if let ProvisioningExecutionTarget::Container { engine, .. } = target
+        && let Some(failure) = container_backend_probe_failure(engine.as_str())
+    {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: format!("{engine} info"),
+            exit_code: failure.exit_code.unwrap_or(1),
+            stdout: String::new(),
+            stderr: failure.details,
+        });
+    }
+
     let mut stdout = String::new();
     let mut stderr = String::new();
 
@@ -3756,7 +4225,7 @@ mod tests {
     fn make_shim(dir: &Path, name: &str, log: &Path) {
         let shim = dir.join(name);
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"which\" ] && [ -n \"$2\" ]; then\n  printf '/tmp/%s\\n' \"$2\"\nfi\ncase \"$*\" in\n  *\"mise which \"*) printf '/tmp/mise-tool\\n' ;;\nesac\nexit 0\n",
             log.display()
         );
         fs::write(&shim, script).unwrap();
@@ -3786,11 +4255,208 @@ mod tests {
     }
 
     #[test]
+    fn windows_mise_version_probe_script_checks_candidate_locations() {
+        let script = super::windows_mise_version_probe_script();
+        assert!(script.contains("LOCALAPPDATA"), "{script}");
+        assert!(script.contains("mise\\bin\\mise.exe"), "{script}");
+        assert!(script.contains("Programs\\mise\\bin\\mise.exe"), "{script}");
+        assert!(script.contains("Microsoft\\WinGet\\Packages"), "{script}");
+        assert!(script.contains("Get-Command mise"), "{script}");
+        assert!(script.contains("--version"), "{script}");
+    }
+
+    #[test]
+    fn posix_mise_candidates_include_home_local_bin() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let home = sandbox.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let original_home = env::var_os("HOME");
+        unsafe {
+            env::set_var("HOME", &home);
+        }
+
+        let candidates = super::posix_mise_candidate_paths();
+        assert!(
+            candidates.contains(&home.join(".local").join("bin").join("mise")),
+            "{candidates:?}"
+        );
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn activate_mise_paths_adds_posix_shims_directory() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let home = sandbox.path().join("home");
+        let shims = home.join(".local").join("share").join("mise").join("shims");
+        fs::create_dir_all(&shims).unwrap();
+
+        let original_home = env::var_os("HOME");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("HOME", &home);
+            env::set_var("PATH", sandbox.path().join("path-base"));
+        }
+
+        super::activate_mise_paths_for_current_process();
+        let updated_path = env::var_os("PATH").unwrap();
+        let segments = env::split_paths(&updated_path).collect::<Vec<_>>();
+        assert!(segments.contains(&shims), "{segments:?}");
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+    }
+
+    #[test]
+    fn activates_windows_mise_path_from_winget_package_layout() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let local_app_data = sandbox.path().join("local-app-data");
+        let package_root = local_app_data
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Packages")
+            .join("jdx.mise_Microsoft.Winget.Source_8wekyb3d8bbwe")
+            .join("bin");
+        fs::create_dir_all(&package_root).unwrap();
+        let mise_executable = package_root.join("mise.exe");
+        fs::write(&mise_executable, "stub").unwrap();
+
+        let original_local_app_data = env::var_os("LOCALAPPDATA");
+        let original_user_profile = env::var_os("USERPROFILE");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("LOCALAPPDATA", &local_app_data);
+            env::set_var("USERPROFILE", sandbox.path().join("user-profile"));
+            env::set_var("PATH", "/usr/bin");
+        }
+
+        let resolved = super::activate_windows_mise_on_path();
+        assert_eq!(resolved.as_deref(), Some(mise_executable.as_path()));
+
+        let updated_path = env::var_os("PATH").unwrap();
+        let mut segments = env::split_paths(&updated_path);
+        assert_eq!(segments.next(), Some(package_root));
+
+        match original_local_app_data {
+            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
+            None => unsafe { env::remove_var("LOCALAPPDATA") },
+        }
+        match original_user_profile {
+            Some(value) => unsafe { env::set_var("USERPROFILE", value) },
+            None => unsafe { env::remove_var("USERPROFILE") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+    }
+
+    #[test]
+    fn activate_mise_paths_adds_windows_shim_directory() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let local_app_data = sandbox.path().join("LocalAppData");
+        let mise_bin = local_app_data.join("mise").join("bin");
+        let mise_shims = local_app_data.join("mise").join("shims");
+        fs::create_dir_all(&mise_bin).unwrap();
+        fs::create_dir_all(&mise_shims).unwrap();
+        fs::write(mise_bin.join("mise.exe"), b"").unwrap();
+
+        let original_local_app_data = env::var_os("LOCALAPPDATA");
+        let original_user_profile = env::var_os("USERPROFILE");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("LOCALAPPDATA", &local_app_data);
+            env::set_var("USERPROFILE", sandbox.path().join("UserProfile"));
+            env::set_var("PATH", sandbox.path().join("path-base"));
+        }
+
+        let activated = super::activate_windows_mise_on_path();
+        assert!(activated.is_some());
+        let updated_path = env::var_os("PATH").unwrap();
+        let segments = env::split_paths(&updated_path).collect::<Vec<_>>();
+        assert!(segments.contains(&mise_shims), "{segments:?}");
+
+        match original_local_app_data {
+            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
+            None => unsafe { env::remove_var("LOCALAPPDATA") },
+        }
+        match original_user_profile {
+            Some(value) => unsafe { env::set_var("USERPROFILE", value) },
+            None => unsafe { env::remove_var("USERPROFILE") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+    }
+
+    #[test]
+    fn activates_posix_mise_path_from_home_local_bin() {
+        let _guard = env_mutex_lock();
+        let sandbox = TempDir::new().unwrap();
+        let home = sandbox.path().join("home");
+        let mise_bin = home.join(".local").join("bin");
+        fs::create_dir_all(&mise_bin).unwrap();
+        let mise_executable = mise_bin.join("mise");
+        fs::write(&mise_executable, "stub").unwrap();
+
+        let original_home = env::var_os("HOME");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("HOME", &home);
+            env::set_var("PATH", sandbox.path().join("path-base"));
+        }
+
+        let resolved = super::activate_posix_mise_on_path();
+        assert_eq!(resolved.as_deref(), Some(mise_executable.as_path()));
+
+        let updated_path = env::var_os("PATH").unwrap();
+        let mut segments = env::split_paths(&updated_path);
+        assert_eq!(segments.next(), Some(mise_bin));
+
+        match original_home {
+            Some(value) => unsafe { env::set_var("HOME", value) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+    }
+
+    #[test]
     fn applies_provisioning_request_with_mise_shim() {
         let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("mise.log");
-        make_shim(shim_dir.path(), "mise", &log);
+        let active_marker = shim_dir.path().join("mise-active");
+        let tools_dir = shim_dir.path().join("tools");
+        fs::create_dir_all(&tools_dir).unwrap();
+        let java_executable = tools_dir.join("java");
+        fs::write(&java_executable, "#!/bin/sh\nexit 0\n").unwrap();
+        make_executable(&java_executable);
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"install\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"which\" ]; then\n  if [ -f \"{}\" ]; then\n    printf '%s\\n' \"{}\"\n    exit 0\n  fi\n  echo 'not active' >&2\n  exit 1\nfi\nif [ \"$1\" = \"use\" ] && [ \"$2\" = \"-g\" ]; then\n  : > \"{}\"\n  exit 0\nfi\nexit 0\n",
+            log.display(),
+            active_marker.display(),
+            java_executable.display(),
+            active_marker.display(),
+        );
+        fs::write(shim_dir.path().join("mise"), script).unwrap();
+        make_executable(&shim_dir.path().join("mise"));
 
         let original_path = env::var("PATH").unwrap_or_default();
         let mut new_path = shim_dir.path().display().to_string();
@@ -3819,11 +4485,21 @@ mod tests {
         };
 
         let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
-        assert!(result.stderr.is_empty());
-        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("not active"));
+        assert!(
+            result
+                .stdout
+                .contains(java_executable.to_string_lossy().as_ref())
+        );
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("which"));
+        assert!(log_contents.contains("use"));
         assert!(log_contents.contains("java@22"));
+        let updated_path = env::var_os("PATH").unwrap();
+        let mut segments = env::split_paths(&updated_path);
+        assert_eq!(segments.next(), Some(shim_dir.path().to_path_buf()));
+        assert!(fs::metadata(shim_dir.path().join("java")).is_ok());
 
         unsafe {
             env::set_var("PATH", original_path);
@@ -3863,7 +4539,13 @@ mod tests {
         let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("docker.log");
-        make_shim(shim_dir.path(), "docker", &log);
+        let docker_shim = shim_dir.path().join("docker");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\ncase \"$*\" in\n  *\"mise which java\"*) printf '/tmp/java\\n' ;;\n  *\"mise ls-remote java\"*) printf '[\"22\",\"21\"]\\n' ;;\nesac\nexit 0\n",
+            log.display()
+        );
+        fs::write(&docker_shim, script).unwrap();
+        make_executable(&docker_shim);
 
         let original_path = env::var("PATH").unwrap_or_default();
         let mut new_path = shim_dir.path().display().to_string();
@@ -4099,6 +4781,43 @@ mod tests {
         )
         .unwrap();
         assert!(fs::read_to_string(log).unwrap().contains("version"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn ensure_bootstrap_source_version_accepts_semver_range_from_version_output() {
+        let _guard = env_mutex_lock();
+        let shim_dir = TempDir::new().unwrap();
+        let shim = shim_dir.path().join("mise");
+        fs::write(
+            &shim,
+            "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then\n  printf '%s\\n' '2026.5.6 linux-x64 (2026-05-11)'\nfi\nexit 0\n",
+        )
+        .unwrap();
+        make_executable(&shim);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        ensure_bootstrap_source_version(
+            &ProvisioningExecutionTarget::Native,
+            Path::new("."),
+            "mise",
+            &["version"],
+            &[String::from(">=2024.12")],
+            ProvisioningOutputMode::Capture,
+        )
+        .unwrap();
 
         unsafe {
             env::set_var("PATH", original_path);
@@ -4818,7 +5537,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"E: Version '8.13.0' for 'curl' was not found\" >&2\n  exit 100\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  echo \"E: Version '8.13.0' for 'curl' was not found\" >&2\n  exit 100\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);
@@ -4881,7 +5600,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1; exit 0 ;;\n  esac\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1; exit 0 ;;\n  esac\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);
@@ -4944,7 +5663,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"Err:1 http://deb.debian.org/debian bookworm InRelease\" >&2\n  echo \"  Temporary failure resolving 'deb.debian.org'\" >&2\n  echo \"E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease\" >&2\n  echo \"E: Some index files failed to download. They have been ignored, or old ones used instead.\" >&2\n  exit 100\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  echo \"Err:1 http://deb.debian.org/debian bookworm InRelease\" >&2\n  echo \"  Temporary failure resolving 'deb.debian.org'\" >&2\n  echo \"E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease\" >&2\n  echo \"E: Some index files failed to download. They have been ignored, or old ones used instead.\" >&2\n  exit 100\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);
@@ -5004,7 +5723,7 @@ mod tests {
         let docker = shim_dir.path().join("docker");
         fs::write(
             &docker,
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'Error: No available formula with the name \"node@22\"' >&2\n  exit 1\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  echo 'Error: No available formula with the name \"node@22\"' >&2\n  exit 1\nfi\nexit 1\n",
         )
         .unwrap();
         make_executable(&docker);

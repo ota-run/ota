@@ -40,8 +40,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::execution::{
-    container_engine_candidates, container_engine_candidates_from_backend,
-    matching_declared_execution_context_name, resolve_engine_path, selected_container_engine,
+    container_backend_probe_failure, container_engine_candidates,
+    container_engine_candidates_from_backend, matching_declared_execution_context_name,
+    preferred_container_backend_probe_failure, resolve_engine_path, selected_container_engine,
     selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
@@ -57,9 +58,9 @@ use crate::runner::{
     DeclaredEnvSourceStatus, ExecutionOverrides, HttpReadinessRequest, HttpReadinessStatus,
     LoadedDeclaredEnvSource, ResolvedExecutionBackend, ResolvedNamedReadinessProbe,
     ResolvedNamedReadinessProbeContract, RunError, capture_declared_native_activation_env,
-    combine_readiness_probe_paths, effective_task_execution, host_runtime_readiness_observed,
-    http_readiness_endpoint_status, load_declared_env_sources, parse_http_probe_url,
-    resolve_context_execution_backend, resolve_declared_env_source_value,
+    combine_readiness_probe_paths, effective_execution, effective_task_execution,
+    host_runtime_readiness_observed, http_readiness_endpoint_status, load_declared_env_sources,
+    parse_http_probe_url, resolve_context_execution_backend, resolve_declared_env_source_value,
     resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
     resolve_task_target_binding_url_with_contract_path, run_backend_command_captured,
     task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
@@ -2250,6 +2251,22 @@ pub fn diagnose_preconditions_with_mode_for_workflow(
     mode: DoctorMode,
     workflow_name: Option<&str>,
 ) -> DoctorReport {
+    diagnose_preconditions_with_mode_for_workflow_with_overrides(
+        contract,
+        contract_path,
+        mode,
+        workflow_name,
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn diagnose_preconditions_with_mode_for_workflow_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
         contract_path,
@@ -2257,7 +2274,7 @@ pub fn diagnose_preconditions_with_mode_for_workflow(
         mode,
         None,
         workflow_name,
-        ExecutionOverrides::default(),
+        overrides,
     )
 }
 
@@ -2386,8 +2403,13 @@ fn diagnose_contract_with_scope(
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, mode, selected_lifecycle, &mut findings);
-        let container_probe =
-            diagnose_execution_backend(contract, &mut findings, mode, selected_lifecycle);
+        let container_probe = diagnose_execution_backend(
+            contract,
+            &mut findings,
+            mode,
+            selected_lifecycle,
+            overrides,
+        );
         let declared_env_sources = load_declared_env_sources(contract, contract_path);
         diagnose_env_sources(&declared_env_sources, &mut findings);
         if mode == DoctorMode::Native {
@@ -2779,6 +2801,7 @@ fn diagnose_execution_backend(
     findings: &mut Vec<Finding>,
     mode: DoctorMode,
     lifecycle: Option<Lifecycle>,
+    overrides: ExecutionOverrides,
 ) -> Option<ContainerProbeContext> {
     let Some(execution) = contract.execution.as_ref() else {
         if mode == DoctorMode::Container {
@@ -2798,6 +2821,13 @@ fn diagnose_execution_backend(
                 diagnose_container_backend_cli_for_container(container, findings);
                 return None;
             };
+            if let Some(failure) = preferred_container_backend_probe_failure(Some(container)) {
+                findings.push(container_backend_unavailable_finding(
+                    failure.engine.as_str(),
+                    failure.details.as_str(),
+                ));
+                return None;
+            }
 
             return Some(ContainerProbeContext {
                 image: container.image.clone(),
@@ -2814,6 +2844,19 @@ fn diagnose_execution_backend(
                 diagnose_container_backend_cli(contract, findings);
                 return None;
             };
+            if let Some(failure) = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.backends.as_ref())
+                .and_then(|backends| backends.container.as_ref())
+                .and_then(|container| preferred_container_backend_probe_failure(Some(container)))
+            {
+                findings.push(container_backend_unavailable_finding(
+                    failure.engine.as_str(),
+                    failure.details.as_str(),
+                ));
+                return None;
+            }
 
             return Some(ContainerProbeContext {
                 image: container.image.clone(),
@@ -2905,9 +2948,9 @@ fn diagnose_execution_backend(
         return None;
     }
 
-    match execution.preferred {
-        Some(Backend::Container) => diagnose_container_backend_cli(contract, findings),
-        Some(Backend::Remote) => {
+    match effective_execution(contract, overrides).0 {
+        Backend::Container => diagnose_container_backend_cli(contract, findings),
+        Backend::Remote => {
             let Some(remote) = execution
                 .backends
                 .as_ref()
@@ -2980,7 +3023,20 @@ fn diagnose_execution_backend(
                 );
             }
         }
-        _ => {}
+        Backend::Native => {
+            if let Some(remote) = execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.remote.as_ref())
+            {
+                let provider = remote.provider.trim();
+                if matches!(provider, "ssh" | "tsh" | "kubectl")
+                    && let Some(target) = remote.target.as_deref()
+                {
+                    diagnose_remote_target_shape(provider, target, findings);
+                }
+            }
+        }
     }
 
     None
@@ -4056,6 +4112,9 @@ fn diagnose_env(
         {
             continue;
         }
+        let required_for_selected_path = selected_env_names
+            .map(|names| names.contains(name))
+            .unwrap_or(requirement.required);
         let value = policy_env
             .and_then(|values| values.get(name))
             .cloned()
@@ -4083,10 +4142,14 @@ fn diagnose_env(
                     });
                 }
             }
-            None if requirement.required => findings.push(Finding {
+            None if required_for_selected_path => findings.push(Finding {
                 severity: FindingSeverity::Error,
                 summary: format!("Missing environment variable: {name}"),
-                why: format!("{name} is required by this repo contract"),
+                why: if requirement.required {
+                    format!("{name} is required by this repo contract")
+                } else {
+                    format!("{name} is required by the selected task or workflow path")
+                },
                 next: format!(
                     "run `ota env` to inspect the current precedence, then set {name} in policy env, the shell, or a declared env source before running tasks"
                 ),
@@ -6138,21 +6201,53 @@ fn diagnose_container_backend_cli_for_candidates(
     engines: Vec<String>,
     findings: &mut Vec<Finding>,
 ) {
-    if engines.iter().any(|engine| command_available(engine)) {
+    let available_engines = engines
+        .iter()
+        .filter(|engine| command_available(engine))
+        .cloned()
+        .collect::<Vec<_>>();
+    if available_engines.is_empty() {
+        let supported = engines.join(", ");
+        findings.push(Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Missing container execution backend CLI: {supported}"),
+            why: format!(
+                "container execution requires one of these CLIs to be available on PATH: {supported}"
+            ),
+            next: String::from(
+                "install one of the supported container engines or use `--mode native` if the contract allows it, then rerun `ota doctor`",
+            ),
+        });
         return;
     }
+    let mut first_failure = None;
+    for engine in available_engines {
+        match container_backend_probe_failure(engine.as_str()) {
+            None => return,
+            Some(failure) if first_failure.is_none() => first_failure = Some(failure),
+            Some(_) => {}
+        }
+    }
+    if let Some(failure) = first_failure {
+        findings.push(container_backend_unavailable_finding(
+            failure.engine.as_str(),
+            failure.details.as_str(),
+        ));
+    }
+}
 
-    let supported = engines.join(", ");
-    findings.push(Finding {
+fn container_backend_unavailable_finding(engine: &str, details: &str) -> Finding {
+    Finding {
         severity: FindingSeverity::Error,
-        summary: format!("Missing container execution backend CLI: {supported}"),
+        summary: format!("Container execution backend unavailable: {engine}"),
         why: format!(
-            "container execution requires one of these CLIs to be available on PATH: {supported}"
+            "container execution resolved `{engine}`, but `{} info` could not reach a usable container backend: {details}",
+            engine
         ),
         next: String::from(
-            "install one of the supported container engines or use `--mode native` if the contract allows it, then rerun `ota doctor`",
+            "start or repair the selected container engine, or use `--mode native` if the contract allows it, then rerun `ota doctor`",
         ),
-    });
+    }
 }
 
 fn tool_executable_name(name: &str) -> &str {
@@ -8646,12 +8741,12 @@ tasks:
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_body = if cfg!(windows) {
             format!(
-                "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
                 super::CONTAINER_PROBE_PATH_MARKER
             )
         } else {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo '{}/usr/local/bin/npm' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo '{}/usr/local/bin/npm' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
                 super::CONTAINER_PROBE_PATH_MARKER
             )
         };
@@ -8726,12 +8821,12 @@ tasks:
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_body = if cfg!(windows) {
             format!(
-                "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo ready\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo ready\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
                 super::CONTAINER_PROBE_PATH_MARKER
             )
         } else {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo 'ready'; echo '{}/usr/local/bin/npm' >&2; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo 'ready'; echo '{}/usr/local/bin/npm' >&2; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
                 super::CONTAINER_PROBE_PATH_MARKER
             )
         };
@@ -8805,9 +8900,9 @@ tasks:
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_body = if cfg!(windows) {
-            "@echo off\r\necho daemon unavailable\r\nexit 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\necho daemon unavailable\r\nexit 1\r\n"
         } else {
-            "#!/bin/sh\necho daemon unavailable >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\necho daemon unavailable >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", &docker_body);
 

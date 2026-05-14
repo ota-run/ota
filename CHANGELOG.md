@@ -26,9 +26,85 @@
 
 ## Unreleased
 
+## 1.6.12
+
+- added first-class workflow `prepare.task` for host file-prep before setup: workflows can now
+  declare one native `action` task that `ota up` runs before pre-setup services or setup, so
+  container-backed repos can keep `setup` on the selected backend while deterministic host file
+  actions such as `copy_if_missing` stay explicit; workflow summaries, JSON schemas, docs, and
+  public site guidance were updated to surface the new phase
+- made task-scoped `requirements.env` execution-complete: `ota doctor`, `ota env --task`,
+  `ota run`, workflow-driven `ota up`, and execution/receipt env reporting now all treat
+  `tasks.<name>.requirements.env` as selected-path required env truth without forcing the same
+  `env.vars.<name>` entry to become repo-global `required: true`; docs, JSON reference, and
+  public site env guidance were updated to match the shipped behavior
+- added workflow `notes` support (contract, CLI text, and JSON output): contracts can now declare
+  `workflows.<name>.notes`, surfaced in `ota workflows` and workflow-scoped `ota tasks --workflow`
+  output to provide operator guidance and setup context without overloading `description`
+- refreshed `ota workflows` text output to use the same flat scan-friendly layout as `ota tasks`,
+  including workflow-native `Use` / `Proof` command hints, per-entry `Default` status, and inline
+  workflow notes where declared
+- expanded docs for workflow notes and workflow output contracts: `docs/spec/contract-reference.md`,
+  `docs/spec/command-reference.md`, and `docs/spec/json-output-reference.md` now mention workflow notes
+  in the correct operator/API surfaces
+- added `ota validate` semantic guardrails for Node/Corepack modeling: contracts now fail
+  validation when `tools.node` uses `acquisition.provider: corepack` or when any Corepack
+  acquisition declares `package: node`; diagnostics now direct authors to declare Node under
+  `runtimes.node` and reserve Corepack acquisition for package managers such as `pnpm`/`yarn`
+- hardened Windows `mise-bootstrap` follow-through for native provisioning: after `winget
+  install jdx.mise`, Ota now probes additional real install locations (including WinGet package
+  directories/links), validates `mise --version` from those paths, and activates the resolved
+  `mise.exe` directory on the current process `PATH` so same-run host provisioning can continue
+  instead of failing with `mise executable not found after bootstrap`
+- hardened native `ota up` pre-provisioning sequencing for policy-backed `mise` flows: when
+  adapter bootstrap installs `mise` into standard user-local locations (for example
+  `~/.local/bin`), Ota now activates that path in-process before retrying provisioning, so
+  selected workflow setup paths no longer short-circuit to immediate `Missing tool` /
+  `Version mismatch` precondition blocks in the same run
+- fixed unmanaged native `ota up` backend fulfillment blocking: when a selected setup/run path
+  is missing required runtimes/tools and no org policy pack is active, Ota now surfaces a
+  canonical blocker finding (for example `Tool probe failed: <tool>`) and returns a normal
+  blocked provisioning result with standard `UP SUMMARY` output (`Cause: missing runtime/tool`)
+  instead of aborting with a raw backend-fulfillment policy-pack error
+- corrected unmanaged native `ota up` runtime fallback classification: when no org policy pack
+  is active and a required runtime is missing, fallback findings now use canonical
+  `Runtime probe failed: <runtime>` wording (instead of version-mismatch wording) and still
+  classify `UP SUMMARY` cause as `missing runtime/tool`
+- fixed Windows native runtime/tool version probing shell semantics: Ota now emits a
+  Windows-native probe command shape (`where ...`) for native Windows backends instead of
+  POSIX `command -v ...`, so host runtime checks (for example `node`) no longer fail
+  immediately under Windows native `ota up` / backend fulfillment paths due to shell mismatch
+- fixed `mise` tool activation follow-through after native policy provisioning: after
+  `mise install <tool@version>`, Ota now resolves the installed binary with `mise which`,
+  runs `mise use -g <tool@version>` when the tool is not yet active, and prepends the resolved
+  tool directory to the current process `PATH` so same-run `ota up` precondition checks can
+  observe the provisioned version instead of remaining blocked
+- hardened command startup activation for mise-managed tools: `ota doctor`, `ota up`, and
+  `ota run` now activate detected mise bin/shims directories on process startup so subsequent
+  command invocations can resolve policy-provisioned tools without requiring manual shell
+  activation between steps
+- fixed Windows cross-command native tool visibility for policy-provisioned mise runtimes:
+  command startup activation now adds detected Windows mise shim directories (for example
+  `%LOCALAPPDATA%\\mise\\shims`) alongside `mise.exe` so follow-up commands like `ota doctor`
+  can resolve provisioned tools (such as `bun`) after a successful `ota up`
+- fixed mixed-mode dependency orchestration for `ota up` / `ota run`: when a requested task
+  runs in one backend but a dependency declares its own default mode (for example native
+  `copy_if_missing` setup actions before a container workflow), Ota now resolves that dependency
+  against its declared/default execution mode instead of force-applying the requested task mode
+- fixed container backend trust on Windows and other mixed-host setups: `ota doctor` now treats
+  a declared/preferred container path as blocked when the selected engine CLI exists but `docker
+  info` / equivalent cannot reach a usable backend, `ota up` now preflights that backend before
+  provisioning so Docker connectivity failures are surfaced as backend availability problems
+  instead of misleading `mise` / tool-install diagnosis, and multi-engine contracts now prefer a
+  healthy engine when one candidate is down but another is usable
 - bounded service readiness retries when omitted to prevent `ota doctor` hangs:
   `services.<name>.readiness` checks now default to a finite probe budget (120 attempts) instead
   of waiting indefinitely when `retries` is not explicitly set
+- hardened container task execution for mounted-repo git operations: Ota now injects a
+  container-local `safe.directory=/workspace` git config surface for container command runs
+  (unless the task already provides explicit `GIT_CONFIG_*` overrides), preventing
+  `detected dubious ownership` failures when repo tasks invoke `git` inside the mounted
+  workspace path
 
 ## 1.6.11
 

@@ -1237,6 +1237,17 @@ fn validate_tool_acquisition(
                     "tool `{name}` acquisition `version` must be a shell-safe Corepack version token"
                 )));
             }
+            if name.eq_ignore_ascii_case("node") {
+                errors.push(ValidationError::new(
+                    "tool `node` acquisition `corepack` is invalid; declare Node under `runtimes.node` and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                        .to_string(),
+                ));
+            }
+            if package.eq_ignore_ascii_case("node") && !name.eq_ignore_ascii_case("node") {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` acquisition `corepack` must not declare `package: node`; declare Node under `runtimes.node` and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                )));
+            }
             if acquisition.shell.is_some() {
                 errors.push(ValidationError::new(format!(
                     "tool `{name}` acquisition `corepack` must not declare `shell`"
@@ -4519,6 +4530,9 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
             let Some(dependency_task) = contract.tasks.get(dependency_name) else {
                 continue;
             };
+            if task_is_explicit_host_prepare_action(contract, dependency_task) {
+                continue;
+            }
             let Some(dependency_boundary) =
                 default_task_execution_boundary(contract, dependency_task)
             else {
@@ -4538,6 +4552,13 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
         }
     }
     advisories
+}
+
+fn task_is_explicit_host_prepare_action(contract: &Contract, task: &TaskSpec) -> bool {
+    task.action.is_some()
+        && task.runtime.is_none()
+        && task.requires_services.is_empty()
+        && task_execution_backend(contract, task, Backend::Native) == Backend::Native
 }
 
 fn collect_attachment_use_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -5750,6 +5771,32 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new(format!(
                 "`workflows.{name}.intent` must not be empty"
             )));
+        }
+        if let Some(prepare) = workflow.prepare.as_ref() {
+            validate_task_reference(
+                &format!("workflows.{name}.prepare.task"),
+                Some(prepare.task.as_str()),
+                &contract.tasks,
+                errors,
+            );
+            if let Some(task) = contract.tasks.get(prepare.task.as_str()) {
+                if task.action.is_none() {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.prepare.task` must reference a task with `action`, not `{}`",
+                        prepare.task
+                    )));
+                }
+                if task_execution_backend(contract, task, Backend::Native) != Backend::Native {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.prepare.task` must resolve to native execution so host file preparation stays explicit"
+                    )));
+                }
+                if !task.requires_services.is_empty() || task.runtime.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.prepare.task` must stay a host file-prep task without `requires_services` or `runtime`"
+                    )));
+                }
+            }
         }
         if let Some(setup) = workflow.setup.as_ref() {
             validate_task_reference(
@@ -7089,6 +7136,45 @@ workflows:
             .expect_err("workflow surface expose should reject unattached run-task surfaces");
         assert!(error.to_string().contains(
             "`workflows.frontend.exposes` references surface `backend`, but run task `dev:fe` does not attach that surface for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_prepare_task_that_is_not_action_and_native() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: invalid-prepare
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:24-bookworm
+tasks:
+  prepare:
+    run: echo prepare
+  setup:
+    run: echo setup
+workflows:
+  default: app
+  app:
+    prepare:
+      task: prepare
+    setup:
+      task: setup
+"#,
+        )
+        .expect("contract should parse");
+        let error = validate_contract(&contract).expect_err("prepare task should be validated");
+
+        assert!(error.to_string().contains(
+            "`workflows.app.prepare.task` must reference a task with `action`, not `prepare`"
+        ));
+        assert!(error.to_string().contains(
+            "`workflows.app.prepare.task` must resolve to native execution so host file preparation stays explicit"
         ));
     }
 
@@ -15290,6 +15376,72 @@ tools:
                     "tool `pnpm` acquisition `version` must be a shell-safe Corepack version token",
                 )
             }),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_corepack_acquisition_for_node_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  node:
+    version: ">=20"
+    acquisition:
+      provider: corepack
+      package: node
+      version: "20.0.0"
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message.contains(
+                "tool `node` acquisition `corepack` is invalid; declare Node under `runtimes.node`"
+            )),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_corepack_acquisition_with_node_package() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  npm:
+    version: ">=10"
+    acquisition:
+      provider: corepack
+      package: node
+      version: "20.0.0"
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message.contains(
+                "tool `npm` acquisition `corepack` must not declare `package: node`; declare Node under `runtimes.node`"
+            )),
             "{messages:?}"
         );
     }

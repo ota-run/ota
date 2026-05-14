@@ -704,6 +704,7 @@ Rules:
   selected task/workflow requires it
 - `acquisition.provider`: supported values are `corepack` and `command`
 - `acquisition.package` and `acquisition.version` are required for `provider: corepack`
+- `tool node` cannot use `provider: corepack`; declare Node under `runtimes.node`.
 - `acquisition.shell` and `acquisition.run` are required for `provider: command`
 - `provider: corepack` activates package-manager-managed tools such as `pnpm` through
   `corepack enable && corepack prepare <package>@<version> --activate`
@@ -1279,7 +1280,7 @@ idempotent: if `to` already exists, Ota leaves it untouched.
   or packaged-runtime path
 - use `requirements.native` when a task needs host-native build tools but Ota should diagnose and
   guide instead of silently installing OS packages
-- workflow-aware readiness commands evaluate the selected workflow's `setup.task` / `run.task`
+- workflow-aware readiness commands evaluate the selected workflow's `prepare.task` / `setup.task` / `run.task`
   dependency closure and merge those task-scoped requirements before diagnosing preconditions
 - an explicitly selected workflow with no `setup.task` has no setup prerequisite phase; legacy
   `tasks.setup` fallback is reserved for the unselected default compatibility path
@@ -1290,6 +1291,10 @@ idempotent: if `to` already exists, Ota leaves it untouched.
   that path; reference a check from `requirements.checks` when that task path needs it
 - `requirements.env` must reference declared top-level `env.vars` names; it does not create new env
   requirements inline
+- selected task/workflow evaluation treats `requirements.env` as path-scoped required env truth:
+  the referenced top-level names become required for `ota doctor`, `ota env --task`, `ota up`, and
+  task execution on that selected path even when `env.vars.<name>.required` is not repo-global
+  `true`
 
 `launch` rules:
 
@@ -2029,6 +2034,8 @@ workflows:
   app:
     intent: local_development
     description: Canonical local app workflow
+    prepare:
+      task: setup:env:local
     setup:
       task: setup
     run:
@@ -2051,6 +2058,11 @@ Fields:
 - `default`: required when `workflows` is declared; names the canonical repo workflow
 - `<name>.intent`: optional workflow classification such as `local_development`
 - `<name>.description`: optional operator-facing summary
+- `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
+- `<name>.prepare.task`: optional native `action` task ota should run first as explicit host file preparation for that workflow
+  - must reference a declared task with `action`, not `run`, `script`, `launch`, or `runtime`
+  - must resolve to native execution
+  - intended for deterministic local file preparation such as `copy_if_missing`
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
 - `<name>.services.required`: optional services that belong to that workflow
@@ -2061,9 +2073,30 @@ Fields:
   - literal string form keeps a fixed URL
   - object form `{ surface: <name> }` resolves through the selected workflow run task
 
+Prepare vs setup vs run:
+
+- `prepare`
+  - host-side deterministic bootstrap before setup
+  - must point to one native `action` task
+  - use it for file preparation such as `copy_if_missing`
+- `setup`
+  - repo preparation
+  - use it for dependency install, generated artifacts, and other normal bootstrap work
+- `run`
+  - primary operational path
+  - use it for the app, dev server, worker, packaged command, or packaged container launch the workflow is meant to make useful
+
+Do not blur these boundaries:
+
+- do not put ordinary shell setup or runtime startup in `prepare`
+- do not use `setup` as a hidden runtime phase
+- do not add `prepare` unless the workflow genuinely needs one explicit host bootstrap step before setup
+
 Current behavior:
 
 - workflows do not replace `tasks`, `services`, or `checks`; they compose those primitives into one canonical operational path
+- use `prepare.task` when the workflow needs one explicit host-side bootstrap action before setup, especially when setup itself should stay container-backed
+- do not use `prepare.task` for ordinary shell setup, service startup, or runtime launch; that still belongs in `setup.task`, `services`, or `run.task`
 - `doctor` diagnoses the default workflow by default when it declares workflow readiness probes,
   workflow readiness checks, or workflow services
 - `check` follows the same selected workflow readiness boundary when a workflow declares explicit
@@ -2075,11 +2108,49 @@ Current behavior:
 - use `checks[].probe` when a named check should reuse a named readiness probe outside that
   workflow-scoped path or when the repo does not declare workflows
 - `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
+- if `workflows.<default>.prepare.task` is declared, `ota up` runs that host prepare phase before required service startup or setup
+- execution planning carries `prepare.task` as additive workflow context, but it does not become the concrete execution identity for `ota execution plan`
+- if `setup.task` already depends on the same action task, direct task execution still follows the task graph while workflow `ota up` avoids running the same prepare action twice
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness
 - `tasks.setup` remains the compatibility fallback for the unselected default path; `ota up
   --workflow <name>` does not invent a setup phase when that workflow omits `setup.task`
 - `agent.default_task` and `agent.entrypoint` remain agent-facing hints, but the default workflow is now the canonical repo operational path
+
+Use this shape when a repo needs `.env.local` or another deterministic local file before setup, but
+the actual setup path should still stay in the repo's preferred execution plane:
+
+```yaml
+tasks:
+  setup:env:local:
+    execution:
+      default_mode: native
+    action:
+      kind: copy_if_missing
+      from: .env.example
+      to: .env.local
+
+  setup:
+    run: pnpm install
+    depends_on:
+      - setup:env:local
+
+workflows:
+  default: app
+  app:
+    prepare:
+      task: setup:env:local
+    setup:
+      task: setup
+    run:
+      task: dev
+```
+
+This keeps the boundary honest:
+
+- direct `ota run setup` still follows the task graph and bootstraps the file if needed
+- `ota up` shows and runs one explicit host prepare phase before setup
+- the repo does not need to make all of setup native just to create one local file
 
 ## `checks`
 
