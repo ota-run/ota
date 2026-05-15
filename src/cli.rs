@@ -31081,7 +31081,7 @@ policies:
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
         assert!(
-            text.contains("Primary Blocker Runtime probe failed: node"),
+            text.contains("Primary Blocker Node cannot be provisioned through `mise` in container mode"),
             "{text}"
         );
         assert!(text.contains("ota doctor --mode container"));

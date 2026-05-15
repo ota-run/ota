@@ -5515,6 +5515,36 @@ fn diagnose_command_version(
             });
             return probe_started;
         }
+
+        if mode == DoctorMode::Container
+            && let Some(failure) = container_installability_failure(
+                target_kind,
+                display_name,
+                requirement,
+                container_probe,
+                contract_path,
+                provisioning_actions,
+            )
+        {
+            findings.push(provisioning_installability_finding(
+                &failure,
+                &ProvisioningExecutionTarget::Container {
+                    image: container_probe
+                        .expect("container probe is present in container mode")
+                        .image
+                        .clone(),
+                    engine: container_probe
+                        .expect("container probe is present in container mode")
+                        .engine
+                        .clone(),
+                    lifecycle: selected_lifecycle.unwrap_or(Lifecycle::Ephemeral),
+                    container_name: None,
+                },
+                &rerun_doctor,
+            ));
+            return probe_started;
+        }
+
         if let Some(probe) = version_probe.as_ref() {
             match &probe.outcome {
                 CommandVersionProbeOutcome::Missing => {}
@@ -5665,35 +5695,6 @@ fn diagnose_command_version(
                 }
                 CommandVersionProbeOutcome::Version(_) => {}
             }
-        }
-
-        if mode == DoctorMode::Container
-            && let Some(failure) = container_installability_failure(
-                target_kind,
-                display_name,
-                requirement,
-                container_probe,
-                contract_path,
-                provisioning_actions,
-            )
-        {
-            findings.push(provisioning_installability_finding(
-                &failure,
-                &ProvisioningExecutionTarget::Container {
-                    image: container_probe
-                        .expect("container probe is present in container mode")
-                        .image
-                        .clone(),
-                    engine: container_probe
-                        .expect("container probe is present in container mode")
-                        .engine
-                        .clone(),
-                    lifecycle: selected_lifecycle.unwrap_or(Lifecycle::Ephemeral),
-                    container_name: None,
-                },
-                &rerun_doctor,
-            ));
-            return probe_started;
         }
         if mode == DoctorMode::Remote
             && let Some(failure) = remote_installability_failure(
