@@ -84,25 +84,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo_bin="$(command -v cargo || true)"
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          cargo_bin="${cargo_home}/bin/cargo"
 
+          if [ ! -x "${cargo_bin}" ]; then
+            cargo_bin="$(command -v cargo || true)"
+          fi
           if [ -z "${cargo_bin}" ] && command -v rustup >/dev/null 2>&1; then
-            rustc_bin="$(rustup which rustc 2>/dev/null || true)"
-            if [ -n "${rustc_bin}" ]; then
-              rustc_dir="$(dirname "${rustc_bin}")"
-              if [ -x "${rustc_dir}/cargo" ]; then
-                cargo_bin="${rustc_dir}/cargo"
-              fi
+            cargo_bin="$(rustup which cargo 2>/dev/null || true)"
+          fi
+          if [ -z "${cargo_bin}" ] || [ ! -x "${cargo_bin}" ] || ! "${cargo_bin}" --version 2>&1 | grep -q '^cargo '; then
+            # On macOS, `cargo` can be shadowed by rustup-init; validate by version output.
+            cargo_bin="$(rustup which cargo 2>/dev/null || true)"
+            if [ -z "${cargo_bin}" ] || [ ! -x "${cargo_bin}" ] || ! "${cargo_bin}" --version 2>&1 | grep -q '^cargo '; then
+              echo "cargo not found in PATH or the active rustup toolchain"
+              exit 1
             fi
           fi
 
-          if [ -z "${cargo_bin}" ]; then
-            cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-            if [ -x "${cargo_home}/bin/cargo" ]; then
-              cargo_bin="${cargo_home}/bin/cargo"
-            fi
-          fi
-          if [ -z "${cargo_bin}" ] || [ ! -x "${cargo_bin}" ]; then
+          if [ ! -x "${cargo_bin}" ]; then
             echo "cargo not found in PATH or the active rustup toolchain"
             exit 1
           fi
