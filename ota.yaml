@@ -48,22 +48,23 @@ env:
         - /usr/local/cargo/bin
         - /usr/local/rustup/bin
 tools:
-  cargo: "*"
-checks:
-  - name: rust-installed
-    kind: precondition
-    severity: error
-    run: rustc --version
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+    fulfillment: run
 tasks:
   setup:
     description: Prepare the Rust toolchain and fetch dependencies
     notes: |
       Use this as the first step in a fresh checkout or after dependency changes.
-      It ensures the formatter component exists when rustup is available, then prepares
-      the workspace without compiling the crate.
+      Ota fulfills the declared Rust toolchain on the selected execution path, then
+      prepares the workspace without compiling the crate.
     category: setup
     internal: true
-    run: cargo fetch && (rustup component add rustfmt 2>/dev/null || true)
+    run: cargo fetch
     safe_for_agent: true
   build:
     description: Compile the CLI

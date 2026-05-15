@@ -38,12 +38,13 @@ project:
   name: my-repo
 ```
 
-In practice, most useful contracts also define tasks, runtimes, or checks.
+In practice, most useful contracts also define tasks, runtimes, toolchains, or checks.
 
 ## Primary sections at a glance
 
 - `version` (required): schema version for the contract itself. Today this is `1`.
 - `project` (required): stable repo identity and high-level classification.
+- `toolchains`: managed ecosystem environments such as Rust via Rustup.
 - `runtimes`: required language/runtime versions for the repo to be runnable.
 - `tools`: external CLI and tool dependencies the repo expects on PATH.
 - `env`: required environment variables, defaults, allowed values, and provenance-aware resolution.
@@ -75,6 +76,13 @@ extensions:
     kind: check_provider
     command: ota-ext-demo
     api_version: 1
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+    fulfillment: run
 runtimes:
   node: "22"
 tools:
@@ -592,6 +600,77 @@ Current behavior:
 - `ota up` treats each required service healthcheck as a readiness gate before moving on to dependents
 - ota still does not provide deep service orchestration beyond explicit contract commands
 
+## `toolchains`
+
+Optional.
+
+Use `toolchains` when ota must understand more than "does this executable exist?" This is the
+managed ecosystem layer. It owns provider-backed language environments such as Rust via Rustup,
+including components and targets, without forcing those details into shell setup.
+
+Current shipped scope is intentionally narrow:
+
+- top-level `toolchains`
+- task-scoped `requirements.toolchains`
+- Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
+- duplicate-ownership warnings when the same prerequisite is declared under both `toolchains` and
+  `runtimes` or `tools`
+
+Example:
+
+```yaml
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    profile: minimal
+    components:
+      - rustfmt
+    targets:
+      - x86_64-unknown-linux-musl
+    fulfillment: run
+
+tasks:
+  setup:
+    requirements:
+      toolchains:
+        - rust
+    run: cargo fetch
+```
+
+Rules:
+
+- toolchain names must not be empty
+- `version` must not be empty
+- `provider` is currently `rustup`
+- `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
+- the only shipped toolchain contract today is `toolchains.rust` with `provider: rustup`
+- `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
+- `platforms` may override `version`, `profile`, `components`, and `targets` per OS using
+  `linux`, `macos`, or `windows`
+- `platforms` entries must also appear in `only_on` when `only_on` is declared
+- `profile`, when set, must not be empty
+- `components` and `targets` entries must not be empty
+- `fulfillment` defaults to `none`; `run` allows selected `ota run` / workflow `ota up` execution
+  paths to provision the declared toolchain on the run path
+- for `provider: rustup` with `fulfillment: run`, `version` must be one installable Rustup
+  toolchain reference such as `stable`, `beta`, `nightly`, or `1.94.0`
+- duplicate ownership currently warns; ota does not hard-fail if the same Rust capability is also
+  declared under `runtimes` or `tools`
+
+Ownership boundary:
+
+- use `toolchains` for managed ecosystems
+- use `runtimes` for simple unmanaged runtime version checks
+- use `tools` for standalone commands on PATH
+- use `native_prerequisites` for host-native build bundles and shell activation
+
+If a declared toolchain owns the capability, require the toolchain. Do not also require the same
+runtime or tool unless it is deliberately standalone outside that toolchain.
+
+For the full ownership model and migration examples, see
+[toolchains-runtimes-tools.md](toolchains-runtimes-tools.md).
+
 ## `runtimes`
 
 Optional.
@@ -635,6 +714,8 @@ Rules:
   `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
 - workspace overlays may specialize member runtime requirements, but the winning value must be explainable
+- when a managed ecosystem is already declared under `toolchains`, prefer that owner and avoid
+  repeating the same capability here
 
 Version syntax examples:
 
@@ -657,6 +738,8 @@ Runtime detail fields:
 Use `only_on` to scope where a runtime is required, and use `platforms` only when values change on a matching OS.
 `required: false` keeps the runtime active but downgrades missing/version mismatch findings to warnings.
 Root fields act as the default values, and the matching `platforms.<os>` entry overrides them for that OS.
+Use `runtimes` for simple unmanaged runtime checks. For the ownership boundary with managed
+toolchains and standalone tools, see [toolchains-runtimes-tools.md](toolchains-runtimes-tools.md).
 
 ## `tools`
 
@@ -716,6 +799,8 @@ Rules:
 - command acquisition `shell` may use `sh`, `bash`, `zsh`, `pwsh`, or `cmd`
 - some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
 - workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
+- when a managed ecosystem is already declared under `toolchains`, prefer that owner and avoid
+  repeating the same capability here
 
 Use `only_on` to scope where a tool is required, and use `platforms` only when values change on a matching OS.
 `required: false` keeps the tool active but downgrades missing/version mismatch findings to warnings.
@@ -723,6 +808,9 @@ Root fields act as the default values, and the matching `platforms.<os>` entry o
 `acquisition` is attached to tool truth, while `tasks.<name>.requirements.tools` selects when that
 tool actually applies. Use `tools.<name>.acquisition` for tool availability. Use
 `native_prerequisites` for OS-native build bundles such as compilers or Visual Studio Build Tools.
+Use `tools` for standalone commands, not for toolchain-owned capabilities such as Rustup-managed
+`cargo` or `rustfmt`. For the ownership boundary, see
+[toolchains-runtimes-tools.md](toolchains-runtimes-tools.md).
 
 ## `native_prerequisites`
 
