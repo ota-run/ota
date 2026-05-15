@@ -21992,7 +21992,7 @@ pub fn workspace_validate(
             },
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(render_workspace_validate_failure(
-                    &compact_path_display,
+                    &resolved_path,
                     &errors
                         .errors()
                         .iter()
@@ -22014,7 +22014,7 @@ pub fn workspace_validate(
             },
             Err(WorkspaceProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(render_workspace_validate_failure(
-                    &compact_path_display,
+                    &resolved_path,
                     &[],
                     Some(&error.to_string()),
                 )),
@@ -22053,12 +22053,16 @@ fn invalid_workspace_contract_output(
 ) -> CommandOutput {
     let compact_target = compact_workspace_path(workspace_path);
     let path_display = workspace_path.display().to_string();
+    let compact_why_lines = why_lines
+        .iter()
+        .map(|line| compact_backticked_text_in_context(line, Some(workspace_path)))
+        .collect::<Vec<_>>();
     match format {
         OutputFormat::Text => CommandOutput::failure(structured_error_text(
             command,
             &compact_target,
             "Invalid workspace contract",
-            why_lines,
+            &compact_why_lines,
             &next_steps,
         )),
         OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -22069,10 +22073,7 @@ fn invalid_workspace_contract_output(
                 warn_count: 0,
             }),
             warnings: Vec::new(),
-            errors: why_lines
-                .iter()
-                .map(|line| compact_backticked_paths(line))
-                .collect(),
+            errors: compact_why_lines,
             error: Some(String::from("Invalid workspace contract")),
         })),
     }
@@ -22085,11 +22086,12 @@ fn workspace_contract_load_text(
     error: &str,
     next_steps: &[String],
 ) -> String {
+    let compact_error = compact_backticked_text_in_context(error, Some(workspace_path));
     structured_error_text(
         command,
         &compact_workspace_path(workspace_path),
         summary,
-        &[compact_backticked_paths(error)],
+        &[compact_error],
         next_steps,
     )
 }
@@ -22188,11 +22190,15 @@ fn workspace_repo_contract_invalid_text(
     repo_contract_path: &Path,
     why_lines: &[String],
 ) -> String {
+    let compact_why_lines = why_lines
+        .iter()
+        .map(|line| compact_backticked_text_in_context(line, Some(workspace_path)))
+        .collect::<Vec<_>>();
     structured_error_text(
         command,
         &compact_contract_path(repo_contract_path),
         "Invalid repo contract",
-        why_lines,
+        &compact_why_lines,
         &[
             format!(
                 "fix the failing repo contract with {}",
@@ -22243,11 +22249,12 @@ fn workspace_repo_contract_load_text(
         return text;
     }
 
+    let compact_error = compact_backticked_text_in_context(error, Some(workspace_path));
     structured_error_text(
         command,
         &where_value,
         "Repo contract could not be loaded",
-        &[compact_backticked_paths(error)],
+        &[compact_error],
         &next_steps,
     )
 }
@@ -22267,7 +22274,7 @@ fn workspace_repo_validate_then_rerun_next(
 }
 
 fn render_workspace_validate_failure(
-    workspace_path: &str,
+    workspace_path: &Path,
     errors: &[String],
     load_error: Option<&str>,
 ) -> String {
@@ -22279,12 +22286,12 @@ fn render_workspace_validate_failure(
     out.push_str(&format!(
         "\n{} {}",
         paint_key("Where:"),
-        paint_code(workspace_path)
+        paint_code(&compact_workspace_path(workspace_path))
     ));
 
     match load_error {
         Some(error) => {
-            let compact_error = compact_backticked_paths(error);
+            let compact_error = compact_backticked_text_in_context(error, Some(workspace_path));
             if let Some(missing) = detect_missing_contract_context(&compact_error) {
                 render_missing_contract_guidance(
                     &mut out,
@@ -22294,7 +22301,11 @@ fn render_workspace_validate_failure(
                     false,
                 );
             } else {
-                out.push_str(&format!("\n{} {}", error_key("Why:"), compact_error));
+                out.push_str(&format!(
+                    "\n{} {}",
+                    error_key("Why:"),
+                    render_backticked_text(&compact_error, None)
+                ));
             }
         }
         None if errors.is_empty() => {
@@ -22305,18 +22316,24 @@ fn render_workspace_validate_failure(
         }
         None => {
             if errors.len() == 1 {
+                let compact_error =
+                    compact_backticked_text_in_context(&errors[0], Some(workspace_path));
                 out.push_str(&format!(
                     "\n{} {}",
                     error_key("Why:"),
-                    compact_backticked_paths(&errors[0])
+                    render_backticked_text(&compact_error, None)
                 ));
             } else {
                 let joined = errors
                     .iter()
-                    .map(|error| compact_backticked_paths(error))
+                    .map(|error| compact_backticked_text_in_context(error, Some(workspace_path)))
                     .collect::<Vec<_>>()
                     .join(" | ");
-                out.push_str(&format!("\n{} {}", error_key("Why:"), joined));
+                out.push_str(&format!(
+                    "\n{} {}",
+                    error_key("Why:"),
+                    render_backticked_text(&joined, None)
+                ));
             }
         }
     }
@@ -22332,7 +22349,18 @@ fn compact_backticked_paths(value: &str) -> String {
     render_backticked_text(value, None)
 }
 
+fn compact_backticked_text_in_context(value: &str, contract_path: Option<&Path>) -> String {
+    transform_backticked_text(value, contract_path, |rendered| rendered.to_string())
+}
+
 fn render_backticked_text(value: &str, contract_path: Option<&Path>) -> String {
+    transform_backticked_text(value, contract_path, paint_code)
+}
+
+fn transform_backticked_text<F>(value: &str, contract_path: Option<&Path>, render_code: F) -> String
+where
+    F: Fn(&str) -> String,
+{
     let mut output = String::with_capacity(value.len());
     let mut rest = value;
 
@@ -22349,22 +22377,35 @@ fn render_backticked_text(value: &str, contract_path: Option<&Path>) -> String {
         };
 
         let token = &after_start[..end];
-        let rendered = if let Some(contract_path) = contract_path
-            && let Some(command) = contextualize_repo_command(token, contract_path)
-        {
-            command
-        } else if is_path_token(token) {
-            compact_path(Path::new(token), DEFAULT_CONTRACT_FILE)
-        } else {
-            token.to_string()
-        };
+        let rendered = compact_backticked_token(token, contract_path);
         output.push('`');
-        output.push_str(&paint_code(&rendered));
+        output.push_str(&render_code(&rendered));
         output.push('`');
         rest = &after_start[end + 1..];
     }
 
     output
+}
+
+fn compact_backticked_token(token: &str, contract_path: Option<&Path>) -> String {
+    if let Some(contract_path) = contract_path
+        && let Some(command) = contextualize_repo_command(token, contract_path)
+    {
+        return command;
+    }
+
+    if is_path_token(token) {
+        return match contract_path {
+            Some(contract_path) => compact_path_relative_to(
+                Path::new(token),
+                DEFAULT_CONTRACT_FILE,
+                Some(contract_working_dir(contract_path)),
+            ),
+            None => compact_path(Path::new(token), DEFAULT_CONTRACT_FILE),
+        };
+    }
+
+    token.to_string()
 }
 
 fn is_path_token(token: &str) -> bool {
@@ -49644,6 +49685,27 @@ Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
     }
 
     #[test]
+    fn render_backticked_text_compacts_workspace_member_paths_relative_to_workspace_root() {
+        let workspace = tempfile::tempdir().expect("workspace tempdir");
+        let workspace_path = workspace.path().join("ota.workspace.yaml");
+        let repo_contract = workspace.path().join("apps").join("web").join("ota.yaml");
+        std::fs::create_dir_all(repo_contract.parent().expect("repo contract parent"))
+            .expect("create repo contract parent");
+        std::fs::write(&workspace_path, "version: 1\nworkspace:\n  name: demo\n")
+            .expect("write workspace contract");
+        std::fs::write(&repo_contract, "version: 1\nproject:\n  name: web\n")
+            .expect("write repo contract");
+
+        let rendered = strip_ansi_codes(&super::render_backticked_text(
+            &format!("contract `{}`", repo_contract.display()),
+            Some(&workspace_path),
+        ));
+
+        assert!(rendered.contains("`./apps/web/ota.yaml`"), "{rendered}");
+        assert!(!rendered.contains("/private/"), "{rendered}");
+    }
+
+    #[test]
     fn task_use_details_footer_styles_next_key() {
         let rendered = super::task_use_details_footer(None, None);
         assert!(rendered.contains(&super::paint_next_key()), "{rendered}");
@@ -51542,7 +51604,7 @@ fn command_target_display_path_relative_to(
     current_dir: Option<&Path>,
 ) -> String {
     let Some(current_dir) = current_dir else {
-        return native_path_display_text(path);
+        return compact_path_display_text(path);
     };
     let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
     let absolute = if path.is_absolute() {
@@ -51559,7 +51621,7 @@ fn command_target_display_path_relative_to(
     }
 
     let absolute_display = if absolute.is_absolute() {
-        native_path_display_text(&absolute)
+        compact_path_display_text(&absolute)
     } else {
         String::new()
     };
