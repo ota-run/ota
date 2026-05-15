@@ -19785,8 +19785,10 @@ fn shell_command(command: &str) -> Command {
     if looks_like_powershell_script(command) {
         return powershell_shell_command(command);
     }
-    if looks_like_posix_script(command) && has_bash() {
-        let mut shell = Command::new("bash");
+    if looks_like_posix_script(command)
+        && let Some(bash) = bash_executable()
+    {
+        let mut shell = Command::new(bash);
         shell.arg("-lc").arg(command);
         shell
     } else {
@@ -19829,13 +19831,37 @@ fn looks_like_posix_script(command: &str) -> bool {
 
 #[cfg(windows)]
 fn has_bash() -> bool {
-    static HAS_BASH: OnceLock<bool> = OnceLock::new();
-    *HAS_BASH.get_or_init(|| {
-        Command::new("bash")
-            .arg("--version")
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+    bash_executable().is_some()
+}
+
+#[cfg(windows)]
+fn bash_executable() -> Option<PathBuf> {
+    static BASH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    BASH.get_or_init(find_bash_executable).clone()
+}
+
+#[cfg(windows)]
+fn find_bash_executable() -> Option<PathBuf> {
+    let mut candidates = env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| env::split_paths(&paths))
+        .flat_map(|dir| [dir.join("bash.exe"), dir.join("bash")])
+        .collect::<Vec<_>>();
+    for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(base) = env::var_os(key) {
+            let base = PathBuf::from(base);
+            candidates.push(base.join("Git").join("bin").join("bash.exe"));
+            candidates.push(base.join("Git").join("usr").join("bin").join("bash.exe"));
+        }
+    }
+
+    candidates.into_iter().find(|candidate| {
+        candidate.is_file()
+            && Command::new(candidate)
+                .arg("--version")
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
     })
 }
 

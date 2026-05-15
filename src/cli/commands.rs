@@ -897,7 +897,7 @@ fn infer_failure_where(default: &str, message: &str) -> String {
         if let Some(end_idx) = after_from.find('`') {
             let candidate = &after_from[..end_idx];
             if !candidate.trim().is_empty() {
-                if candidate.starts_with('/') {
+                if is_path_token(candidate) {
                     return compact_path(Path::new(candidate), "path");
                 }
                 return candidate.to_string();
@@ -907,7 +907,7 @@ fn infer_failure_where(default: &str, message: &str) -> String {
 
     for token in backticked_tokens(message) {
         if looks_like_location_token(token) {
-            if token.starts_with('/') {
+            if is_path_token(token) {
                 return compact_path(Path::new(token), "path");
             }
             return token.to_string();
@@ -13720,7 +13720,7 @@ fn policy_reference_path(path: Option<&Path>, file_override: Option<&Path>) -> P
 
 fn compact_policy_path_relative_to_contract(contract_path: &Path, policy_path: &Path) -> String {
     let Some(repo_root) = contract_path.parent() else {
-        return policy_path.display().to_string();
+        return compact_path_display_text(policy_path);
     };
 
     let repo_root = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
@@ -13731,14 +13731,14 @@ fn compact_policy_path_relative_to_contract(contract_path: &Path, policy_path: &
         if relative.as_os_str().is_empty() {
             return String::from(".");
         }
-        return format!("./{}", relative.display());
+        return format!("./{}", compact_relative_path_display_text(relative));
     }
 
     if let Some(relative) = relative_path_from(&repo_root, &absolute) {
-        return relative.display().to_string();
+        return compact_relative_path_display_text(&relative);
     }
 
-    absolute.display().to_string()
+    compact_path_display_text(&absolute)
 }
 
 fn is_org_policy_pack_path(path: &Path) -> bool {
@@ -18741,7 +18741,7 @@ pub fn receipt(
                         Ok(path) => path,
                         Err(error) => return CommandOutput::failure(error),
                     };
-                    let archive_path_display = archive_path.display().to_string();
+                    let archive_path_display = receipt_storage_path_display(&archive_path);
                     let payload = ReceiptSuccess {
                         ok: receipt.ok,
                         path: &path_display,
@@ -25005,7 +25005,7 @@ pub fn workspace_receipt(
                         Ok(path) => path,
                         Err(error) => return CommandOutput::failure(error),
                     };
-                    let archive_path_display = archive_path.display().to_string();
+                    let archive_path_display = receipt_storage_path_display(&archive_path);
                     let payload = WorkspaceReceiptSuccess {
                         ok: report.receipt.ok,
                         path: &path_display,
@@ -26020,6 +26020,10 @@ fn next_receipt_archive_path(root: &Path, prefix: &str) -> Result<PathBuf, Strin
     Ok(archive_dir.join(format!("{prefix}-{stamp}.json")))
 }
 
+fn receipt_storage_path_display(path: &Path) -> String {
+    compact_path_separator_style(&path.display().to_string())
+}
+
 fn read_promoted_repo_receipt_baseline(
     root: &Path,
 ) -> Result<Option<PromotedRepoReceiptBaseline>, String> {
@@ -26091,8 +26095,8 @@ fn write_promoted_repo_receipt_baseline(
     };
     write_receipt_archive(&baseline_path, &payload)?;
     Ok(ReceiptPromotedBaseline {
-        path: baseline_path.display().to_string(),
-        archive_path: archive_path.display().to_string(),
+        path: receipt_storage_path_display(&baseline_path),
+        archive_path: receipt_storage_path_display(archive_path),
         promoted_at,
     })
 }
@@ -26310,7 +26314,7 @@ fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, Str
         match read_repo_receipt_archive_record(&path) {
             Ok(record) => archives.push(record),
             Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
-                archive_path: path.display().to_string(),
+                archive_path: receipt_storage_path_display(&path),
                 error,
             }),
         }
@@ -26329,7 +26333,7 @@ fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, St
             .archives
             .into_iter()
             .map(|archive| ReceiptHistoryEntry {
-                archive_path: archive.archive_path.display().to_string(),
+                archive_path: receipt_storage_path_display(&archive.archive_path),
                 archived_at: archive
                     .archived_at
                     .unwrap_or_else(|| String::from("unknown")),
@@ -26583,7 +26587,7 @@ fn load_promoted_repo_receipt_baseline(
     }
     Ok(ResolvedRepoReceiptBaseline {
         source: String::from("promoted"),
-        selection_path: Some(pointer_path.display().to_string()),
+        selection_path: Some(receipt_storage_path_display(&pointer_path)),
         promoted_at: Some(promoted.promoted_at),
         contract_identity: Some(current_identity),
         record,
@@ -26615,7 +26619,7 @@ fn load_repo_receipt_baseline(
     load_explicit_repo_receipt_baseline(Path::new(baseline)).map(|record| {
         ResolvedRepoReceiptBaseline {
             source: String::from("file"),
-            selection_path: Some(record.archive_path.display().to_string()),
+            selection_path: Some(receipt_storage_path_display(&record.archive_path)),
             promoted_at: None,
             contract_identity: repo_receipt_contract_identity_from_archive_record(&record),
             record,
@@ -26672,7 +26676,7 @@ fn build_repo_receipt_diff_report(
     let baseline = ReceiptDiffBaseline {
         source: baseline.source,
         selection_path: baseline.selection_path,
-        archive_path: Some(baseline.record.archive_path.display().to_string()),
+        archive_path: Some(receipt_storage_path_display(&baseline.record.archive_path)),
         archived_at: baseline.record.archived_at,
         promoted_at: baseline.promoted_at,
         contract_identity: baseline.contract_identity,
@@ -36622,7 +36626,7 @@ fn compact_contract_file_path_relative_to(
             if relative.as_os_str().is_empty() {
                 return String::from(".");
             } else {
-                return format!("./{}", compact_path_display_text(relative));
+                return format!("./{}", compact_relative_path_display_text(relative));
             }
         }
     }
@@ -38174,7 +38178,26 @@ tasks:
     fn compact_path_display_text_strips_windows_extended_prefix() {
         assert_eq!(
             super::compact_path_display_text(Path::new(r"\\?\C:\repo\ota.yaml")),
-            "C:/repo/ota.yaml"
+            r"C:\repo\ota.yaml"
+        );
+    }
+
+    #[test]
+    fn compact_relative_path_display_text_normalizes_windows_separators() {
+        assert_eq!(
+            super::compact_relative_path_display_text(Path::new(r"nested\repo-baseline.json")),
+            "nested/repo-baseline.json"
+        );
+    }
+
+    #[test]
+    fn render_backticked_text_preserves_unix_rooted_tokens() {
+        assert_eq!(
+            strip_ansi_codes(&super::render_backticked_text(
+                "rerun `/tmp/ota-policy-review-missing`",
+                None
+            )),
+            "rerun `/tmp/ota-policy-review-missing`"
         );
     }
 
@@ -51326,7 +51349,7 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
         if relative.as_os_str().is_empty() {
             return String::from(".");
         }
-        return format!("./{}", compact_path_display_text(&relative));
+        return format!("./{}", compact_relative_path_display_text(&relative));
     }
     let absolute_display = if absolute.is_absolute() {
         compact_path_display_text(&absolute)
@@ -51356,7 +51379,7 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
 
 fn shorter_relative_path(base: &Path, target: &Path, absolute_display: &str) -> Option<String> {
     let relative = relative_path_from(base, target)?;
-    let rendered = compact_path_display_text(&relative);
+    let rendered = compact_relative_path_display_text(&relative);
     if rendered.is_empty() || rendered.len() >= absolute_display.len() {
         return None;
     }
@@ -51364,15 +51387,23 @@ fn shorter_relative_path(base: &Path, target: &Path, absolute_display: &str) -> 
 }
 
 fn compact_path_display_text(path: &Path) -> String {
+    strip_windows_extended_prefix(&path.display().to_string())
+}
+
+fn compact_relative_path_display_text(path: &Path) -> String {
     compact_path_separator_style(&path.display().to_string())
 }
 
-fn compact_path_separator_style(value: &str) -> String {
-    let value = value
+fn strip_windows_extended_prefix(value: &str) -> String {
+    value
         .strip_prefix("\\\\?\\")
         .or_else(|| value.strip_prefix("//?/"))
         .unwrap_or(value)
-        .to_string();
+        .to_string()
+}
+
+fn compact_path_separator_style(value: &str) -> String {
+    let value = strip_windows_extended_prefix(value);
     value.replace('\\', "/")
 }
 
@@ -67927,8 +67958,10 @@ fn shell_command(command: &str) -> Command {
     if looks_like_powershell_script(command) {
         return powershell_shell_command(command);
     }
-    if looks_like_posix_script(command) && has_bash() {
-        let mut shell = Command::new("bash");
+    if looks_like_posix_script(command)
+        && let Some(bash) = bash_executable()
+    {
+        let mut shell = Command::new(bash);
         shell.arg("-lc").arg(command);
         return shell;
     }
@@ -68008,13 +68041,37 @@ fn powershell_shell_command(command: &str) -> Command {
 
 #[cfg(windows)]
 fn has_bash() -> bool {
-    static HAS_BASH: OnceLock<bool> = OnceLock::new();
-    *HAS_BASH.get_or_init(|| {
-        Command::new("bash")
-            .arg("--version")
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+    bash_executable().is_some()
+}
+
+#[cfg(windows)]
+fn bash_executable() -> Option<PathBuf> {
+    static BASH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    BASH.get_or_init(find_bash_executable).clone()
+}
+
+#[cfg(windows)]
+fn find_bash_executable() -> Option<PathBuf> {
+    let mut candidates = env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| env::split_paths(&paths))
+        .flat_map(|dir| [dir.join("bash.exe"), dir.join("bash")])
+        .collect::<Vec<_>>();
+    for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(base) = env::var_os(key) {
+            let base = PathBuf::from(base);
+            candidates.push(base.join("Git").join("bin").join("bash.exe"));
+            candidates.push(base.join("Git").join("usr").join("bin").join("bash.exe"));
+        }
+    }
+
+    candidates.into_iter().find(|candidate| {
+        candidate.is_file()
+            && Command::new(candidate)
+                .arg("--version")
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
     })
 }
 

@@ -2169,6 +2169,7 @@ fn load_receipt_baseline_candidates(contract_path: Option<&Path>) -> Vec<String>
                 .unwrap_or(path)
                 .display()
                 .to_string()
+                .replace('\\', "/")
         })
         .collect::<Vec<_>>();
     archived.sort();
@@ -26483,6 +26484,7 @@ project:
 
     #[test]
     fn up_reports_service_start_failure_with_exit_code() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -34295,6 +34297,8 @@ tasks:
 
     #[test]
     fn monorepo_member_json_contract_is_stable() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
