@@ -5828,27 +5828,52 @@ mod tests {
         let Some(remainder) = script.strip_prefix("@echo off\r\n") else {
             return script.to_string();
         };
-        let result = remainder
-            .split("\r\n")
-            .map(|line| {
-                // Version probe line: detect by the "command -v '" pattern + block opener
-                if line.contains("echo %* | findstr /C:\"command -v '")
-                    && line.ends_with(">nul && (")
-                {
-                    let indent = line.split("echo %* |").next().unwrap_or_default();
-                    return format!("{indent}if \"%2\"==\"--rm\" if \"%3\"==\"--name\" (");
+        let lines: Vec<&str> = remainder.split("\r\n").collect();
+        let mut result = Vec::new();
+        let mut needs_extra_close_index: Option<usize> = None;
+
+        for (i, line) in lines.iter().enumerate() {
+            // Check if we need to add extra closing paren from version probe
+            if let Some(idx) = needs_extra_close_index {
+                if idx == i && line.trim() == ")" {
+                    result.push("))".to_string());
+                    needs_extra_close_index = None;
+                    continue;
                 }
-                // Any remaining probe-line that uses echo %* | … >nul && ( is a provisioning
-                // probe. Detect it by the reliable %3==-i flag present on all Ephemeral runs.
-                if line.contains("echo %* |") && line.ends_with(">nul && (") {
-                    let indent = line.split("echo %* |").next().unwrap_or_default();
-                    return format!("{indent}if \"%3\"==\"-i\" (");
+            }
+
+            // Version probe line: detect by the "command -v '" pattern + block opener
+            if line.contains("echo %* | findstr /C:\"command -v '")
+                && line.ends_with(">nul && (")
+            {
+                let indent = line.split("echo %* |").next().unwrap_or_default();
+                result.push(format!("{indent}if \"%2\"==\"--rm\" (if \"%3\"==\"--name\" ("));
+                // Find the matching closing paren for the next iteration
+                let mut paren_depth = 1;
+                for j in (i + 1)..lines.len() {
+                    if lines[j].contains("(") {
+                        paren_depth += lines[j].chars().filter(|&c| c == '(').count();
+                    }
+                    if lines[j].contains(")") {
+                        paren_depth -= lines[j].chars().filter(|&c| c == ')').count();
+                        if paren_depth == 0 {
+                            needs_extra_close_index = Some(j);
+                            break;
+                        }
+                    }
                 }
-                line.to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\r\n");
-        format!("@echo off\r\n{result}")
+            }
+            // Any remaining probe-line that uses echo %* | … >nul && ( is a provisioning
+            // probe. Detect it by the reliable %3==-i flag present on all Ephemeral runs.
+            else if line.contains("echo %* |") && line.ends_with(">nul && (") {
+                let indent = line.split("echo %* |").next().unwrap_or_default();
+                result.push(format!("{indent}if \"%3\"==\"-i\" ("));
+            } else {
+                result.push(line.to_string());
+            }
+        }
+
+        format!("@echo off\r\n{}", result.join("\r\n"))
     }
 
     #[cfg(windows)]
