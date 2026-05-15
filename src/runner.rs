@@ -2534,7 +2534,7 @@ statusfile={statusfile}; \
 logfile={logfile}; \
 interruptfile={interruptfile}; \
 cleanup() {{ rm -f \"$pidfile\" \"$statusfile\" \"$logfile\" \"$interruptfile\"; }}; \
-	read_pidfile() {{ [ -s \"$pidfile\" ] || return 1; read pid started < \"$pidfile\" || return 1; [ -n \"$pid\" ] || return 1; if [ -z \"$started\" ]; then kill -0 \"$pid\" 2>/dev/null; return $?; fi; current=$(cut -d' ' -f22 \"/proc/$pid/stat\" 2>/dev/null || true); [ -n \"$current\" ] && [ \"$current\" = \"$started\" ]; }}; \
+	read_pidfile() {{ [ -s \"$pidfile\" ] || return 1; read pid < \"$pidfile\" || return 1; [ -n \"$pid\" ] || return 1; parent=$(ps -p \"$pid\" -o ppid= 2>/dev/null | tr -d '[:space:]'); [ -n \"$parent\" ] || return 1; [ \"$parent\" = \"$$\" ] || return 1; ps -p \"$pid\" >/dev/null 2>&1; }}; \
 kill_workload() {{ \
   read_pidfile || return 0; \
   kill \"$pid\" 2>/dev/null || true; \
@@ -2550,8 +2550,7 @@ cleanup; : > \"$logfile\"; \
 tailpid=; \
 trap ': > \"$interruptfile\"; kill_workload; [ -n \"$tailpid\" ] && kill \"$tailpid\" 2>/dev/null || true; cleanup; exit 130' INT TERM; \
 nohup sh -c {wrapped_command} </dev/null >> \"$logfile\" 2>&1 & child=$!; \
-started=$(cut -d' ' -f22 \"/proc/$child/stat\" 2>/dev/null || true); \
-printf '%s %s\\n' \"$child\" \"$started\" > \"$pidfile\"; \
+printf '%s\\n' \"$child\" > \"$pidfile\"; \
 tail -n +1 -F \"$logfile\" & tailpid=$!; \
 while read_pidfile; do sleep 0.2; done; \
 kill \"$tailpid\" 2>/dev/null || true; \
