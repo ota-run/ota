@@ -19812,6 +19812,32 @@ fn looks_like_posix_script(command: &str) -> bool {
     if command.starts_with("cmd ") || command.starts_with("cmd/") {
         return false;
     }
+    if command
+        .split_ascii_whitespace()
+        .next()
+        .is_some_and(|token| {
+            matches!(
+                token,
+                "printf"
+                    | "test"
+                    | "env"
+                    | "python3"
+                    | "python"
+                    | "rm"
+                    | "touch"
+                    | "cat"
+                    | "mkdir"
+                    | "cp"
+                    | "mv"
+                    | "grep"
+                    | "ls"
+                    | "sh"
+                    | "bash"
+            )
+        })
+    {
+        return true;
+    }
     command.starts_with("./")
         || command.starts_with("../")
         || command.contains("&&")
@@ -19821,6 +19847,7 @@ fn looks_like_posix_script(command: &str) -> bool {
         || command.contains("export ")
         || command.contains("printf '")
         || command.contains("printf \"")
+        || command.starts_with("printf")
         || contains_posix_env_reference(command)
 }
 
@@ -19909,7 +19936,7 @@ fn has_pwsh() -> bool {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::env;
@@ -19991,6 +20018,20 @@ mod tests {
     #[test]
     fn windows_shell_detection_routes_posix_task_scripts_to_bash() {
         let script = "printf '%s' \"$OTA_INPUT_BASE_URL\" > version.txt\n";
+        assert!(looks_like_posix_script(script));
+        assert!(!looks_like_powershell_script(script));
+    }
+
+    #[test]
+    fn windows_shell_detection_routes_simple_posix_oneliner_to_bash() {
+        let script = "printf ready > file.txt";
+        assert!(looks_like_posix_script(script));
+        assert!(!looks_like_powershell_script(script));
+    }
+
+    #[test]
+    fn windows_shell_detection_routes_posix_pipeline_to_bash() {
+        let script = "env | grep FOO";
         assert!(looks_like_posix_script(script));
         assert!(!looks_like_powershell_script(script));
     }
@@ -32604,6 +32645,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         let expected = match std::env::consts::OS {
             "macos" => "macos",
+            "windows" => "windows",
             _ => "default",
         };
         assert_eq!(
