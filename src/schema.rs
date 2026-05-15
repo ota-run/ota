@@ -129,6 +129,8 @@ pub struct Contract {
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,
     #[serde(default)]
+    pub toolchains: BTreeMap<String, ToolchainSpec>,
+    #[serde(default)]
     pub native_prerequisites: BTreeMap<String, NativePrerequisiteSpec>,
     #[serde(default)]
     pub env: EnvConfig,
@@ -292,6 +294,42 @@ impl Contract {
 
     pub fn task_required_env_names(&self, task_name: &str) -> BTreeSet<String> {
         self.task_closure_required_env_names([task_name.to_string()])
+    }
+
+    pub fn task_closure_required_toolchain_names(
+        &self,
+        roots: impl IntoIterator<Item = String>,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        let mut scoped = false;
+        for task_name in self.task_dependency_closure_names(roots) {
+            let Some(task) = self.tasks.get(task_name.as_str()) else {
+                continue;
+            };
+            if !task.requirements.toolchains.is_empty() {
+                scoped = true;
+                names.extend(task.requirements.toolchains.iter().cloned());
+            }
+        }
+
+        if !scoped {
+            names.extend(self.toolchains.keys().cloned());
+        }
+
+        names
+    }
+
+    pub fn selected_workflow_required_toolchain_names(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> BTreeSet<String> {
+        self.task_closure_required_toolchain_names(
+            self.selected_workflow_task_closure_names(workflow_name),
+        )
+    }
+
+    pub fn task_required_toolchain_names(&self, task_name: &str) -> BTreeSet<String> {
+        self.task_closure_required_toolchain_names([task_name.to_string()])
     }
 
     fn collect_task_dependency_closure(
@@ -933,6 +971,8 @@ pub struct TaskRequirementsSpec {
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,
     #[serde(default)]
+    pub toolchains: Vec<String>,
+    #[serde(default)]
     pub native: Vec<String>,
     #[serde(default)]
     pub env: Vec<String>,
@@ -944,6 +984,7 @@ impl TaskRequirementsSpec {
     pub fn is_empty(&self) -> bool {
         self.runtimes.is_empty()
             && self.tools.is_empty()
+            && self.toolchains.is_empty()
             && self.native.is_empty()
             && self.env.is_empty()
             && self.checks.is_empty()
@@ -1143,6 +1184,119 @@ pub struct ExecutionContextRequirements {
     pub runtimes: BTreeMap<String, RuntimeRequirement>,
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ToolchainSpec {
+    pub provider: ToolchainProvider,
+    pub version: String,
+    #[serde(default = "default_required")]
+    pub required: bool,
+    #[serde(default)]
+    pub only_on: Option<Vec<String>>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub components: Vec<String>,
+    #[serde(default)]
+    pub targets: Vec<String>,
+    #[serde(default)]
+    pub fulfillment: Option<ToolchainFulfillmentMode>,
+    #[serde(default)]
+    pub platforms: BTreeMap<String, ToolchainPlatformSpec>,
+}
+
+impl ToolchainSpec {
+    pub fn active_for_os(&self, os: &str) -> bool {
+        self.only_on
+            .as_ref()
+            .is_none_or(|platforms| platforms.iter().any(|platform| platform == os))
+    }
+
+    pub fn version_for_os(&self, os: &str) -> &str {
+        self.platforms
+            .get(os)
+            .and_then(|platform| platform.version.as_deref())
+            .unwrap_or(&self.version)
+    }
+
+    pub fn required_for_os(&self, os: &str) -> bool {
+        self.active_for_os(os) && self.required
+    }
+
+    pub fn profile_for_os(&self, os: &str) -> Option<&str> {
+        self.platforms
+            .get(os)
+            .and_then(|platform| platform.profile.as_deref())
+            .or(self.profile.as_deref())
+    }
+
+    pub fn components_for_os(&self, os: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        let mut seen = BTreeSet::new();
+        for component in &self.components {
+            if seen.insert(component.clone()) {
+                values.push(component.clone());
+            }
+        }
+        if let Some(platform) = self.platforms.get(os) {
+            for component in &platform.components {
+                if seen.insert(component.clone()) {
+                    values.push(component.clone());
+                }
+            }
+        }
+        values
+    }
+
+    pub fn targets_for_os(&self, os: &str) -> Vec<String> {
+        let mut values = Vec::new();
+        let mut seen = BTreeSet::new();
+        for target in &self.targets {
+            if seen.insert(target.clone()) {
+                values.push(target.clone());
+            }
+        }
+        if let Some(platform) = self.platforms.get(os) {
+            for target in &platform.targets {
+                if seen.insert(target.clone()) {
+                    values.push(target.clone());
+                }
+            }
+        }
+        values
+    }
+
+    pub fn fulfillment_mode(&self) -> ToolchainFulfillmentMode {
+        self.fulfillment.unwrap_or(ToolchainFulfillmentMode::None)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ToolchainPlatformSpec {
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub components: Vec<String>,
+    #[serde(default)]
+    pub targets: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolchainProvider {
+    Rustup,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolchainFulfillmentMode {
+    None,
+    Run,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

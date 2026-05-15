@@ -33,8 +33,9 @@ use crate::schema::{
     ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
     TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolchainFulfillmentMode,
+    ToolchainProvider, ToolchainSpec, parse_memory_size_bytes, parse_readiness_duration_spec,
+    task_target_env_name,
 };
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -103,6 +104,7 @@ pub fn validate_contract_with_path(
         value.version()
     });
     validate_tool_details(&contract.tools, &mut errors);
+    validate_toolchains(&contract.toolchains, &mut errors);
     validate_native_prerequisites(contract, &mut errors);
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
@@ -994,6 +996,109 @@ fn validate_tool_details(
             validate_tool_acquisition(name, acquisition, errors);
         }
     }
+}
+
+fn validate_toolchains(
+    toolchains: &BTreeMap<String, ToolchainSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (name, toolchain) in toolchains {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`toolchains` must not declare an empty toolchain name",
+            ));
+        }
+        if toolchain.version.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "toolchain `{name}` must declare a non-empty version"
+            )));
+        }
+        validate_only_on("toolchain", name, toolchain.only_on.as_ref(), errors);
+        validate_platform_keys("toolchain", name, toolchain.platforms.keys(), errors);
+        validate_platform_scope(
+            "toolchain",
+            name,
+            toolchain.only_on.as_ref(),
+            toolchain.platforms.keys(),
+            errors,
+        );
+
+        if toolchain
+            .profile
+            .as_deref()
+            .is_some_and(|profile| profile.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "toolchain `{name}` must not declare an empty `profile`"
+            )));
+        }
+        if toolchain.components.iter().any(|component| component.trim().is_empty()) {
+            errors.push(ValidationError::new(format!(
+                "toolchain `{name}` must not declare an empty `components` entry"
+            )));
+        }
+        if toolchain.targets.iter().any(|target| target.trim().is_empty()) {
+            errors.push(ValidationError::new(format!(
+                "toolchain `{name}` must not declare an empty `targets` entry"
+            )));
+        }
+
+        for (platform, detail) in &toolchain.platforms {
+            if detail
+                .version
+                .as_deref()
+                .is_some_and(|version| version.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "toolchain `{name}` platform `{platform}` must not declare an empty `version`"
+                )));
+            }
+            if detail
+                .profile
+                .as_deref()
+                .is_some_and(|profile| profile.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "toolchain `{name}` platform `{platform}` must not declare an empty `profile`"
+                )));
+            }
+            if detail
+                .components
+                .iter()
+                .any(|component| component.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "toolchain `{name}` platform `{platform}` must not declare an empty `components` entry"
+                )));
+            }
+            if detail.targets.iter().any(|target| target.trim().is_empty()) {
+                errors.push(ValidationError::new(format!(
+                    "toolchain `{name}` platform `{platform}` must not declare an empty `targets` entry"
+                )));
+            }
+        }
+
+        if toolchain.fulfillment == Some(ToolchainFulfillmentMode::Run)
+            && matches!(toolchain.provider, ToolchainProvider::Rustup)
+            && !rustup_installable_toolchain_ref(toolchain.version.as_str())
+        {
+            errors.push(ValidationError::new(format!(
+                "toolchain `{name}` uses `provider: rustup` with `fulfillment: run`, so `toolchains.{name}.version` must be an installable rustup toolchain reference like `stable`, `beta`, `nightly`, or `1.94.0`"
+            )));
+        }
+    }
+}
+
+fn rustup_installable_toolchain_ref(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && !trimmed.contains(char::is_whitespace)
+        && !trimmed.contains('>')
+        && !trimmed.contains('<')
+        && !trimmed.contains('=')
+        && !trimmed.contains('^')
+        && !trimmed.contains('~')
+        && !trimmed.contains('*')
 }
 
 fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -4383,6 +4488,7 @@ fn backend_mode_name(backend: Backend) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractAdvisory {
     DependsOnBoundary(DependsOnBoundaryAdvisory),
+    DuplicateRequirementOwnership(DuplicateRequirementOwnershipAdvisory),
     LikelyUnusedAttachment(AttachmentUseAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
 }
@@ -4393,6 +4499,14 @@ pub struct DependsOnBoundaryAdvisory {
     pub dependency_task: String,
     pub parent: TaskExecutionBoundary,
     pub dependency: TaskExecutionBoundary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateRequirementOwnershipAdvisory {
+    pub scope: String,
+    pub toolchain_name: String,
+    pub duplicate_kind: String,
+    pub duplicate_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4426,6 +4540,10 @@ impl ContractAdvisory {
                 "task `{}` depends_on `{}` across different execution boundaries",
                 advisory.parent_task, advisory.dependency_task
             ),
+            ContractAdvisory::DuplicateRequirementOwnership(advisory) => format!(
+                "{} declares `{}` alongside toolchain `{}`",
+                advisory.scope, advisory.duplicate_name, advisory.toolchain_name
+            ),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
                 "context `{}` isolates `{}` but no task config points {} at `{}`",
                 advisory.context_name,
@@ -4446,6 +4564,10 @@ impl ContractAdvisory {
                 "execution differs across the dependency edge ({}) so only durable external side effects survive; in-process, session-local, and container-local prep does not carry across",
                 describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", ")
             ),
+            ContractAdvisory::DuplicateRequirementOwnership(advisory) => format!(
+                "toolchain `{}` already owns `{}` in this scope, so declaring both splits the same prerequisite truth across multiple contract layers",
+                advisory.toolchain_name, advisory.duplicate_name
+            ),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
                 "the attached path is durable, but `{}` only benefits if tasks in context `{}` point {} at `{}`",
                 advisory.isolated_path,
@@ -4465,6 +4587,9 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(_) => Some(String::from(
                 "only durable external side effects carry across",
             )),
+            ContractAdvisory::DuplicateRequirementOwnership(_) => Some(String::from(
+                "duplicate ownership makes prerequisite truth drift-prone",
+            )),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
         }
@@ -4475,6 +4600,9 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(advisory) => Some(
                 describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", "),
             ),
+            ContractAdvisory::DuplicateRequirementOwnership(_) => Some(String::from(
+                "ownership duplicated",
+            )),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
         }
@@ -4483,6 +4611,10 @@ impl ContractAdvisory {
     pub fn fix(&self) -> Option<String> {
         match self {
             ContractAdvisory::DependsOnBoundary(_) => None,
+            ContractAdvisory::DuplicateRequirementOwnership(advisory) => Some(format!(
+                "remove `{}` and keep toolchain `{}` as the owner",
+                advisory.duplicate_name, advisory.toolchain_name
+            )),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => Some(format!(
                 "point {} at `{}`",
                 advisory.tool, advisory.effective_path
@@ -4496,6 +4628,13 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(advisory) => format!(
                 "keep `{}` and `{}` on the same execution boundary when the dependency is meant to prepare the parent in place, or make the durable shared surface explicit",
                 advisory.parent_task, advisory.dependency_task
+            ),
+            ContractAdvisory::DuplicateRequirementOwnership(advisory) => format!(
+                "keep `{}` as the owner for `{}` and remove duplicate `{}` declarations in {}",
+                advisory.toolchain_name,
+                advisory.duplicate_name,
+                advisory.duplicate_kind,
+                advisory.scope
             ),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
                 "configure {} to use `{}` or remove `execution.contexts.{}.attachments.isolated_paths: [{}]` if that cache should stay container-local",
@@ -4515,6 +4654,7 @@ impl ContractAdvisory {
 pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
     advisories.extend(collect_depends_on_boundary_advisories(contract));
+    advisories.extend(collect_duplicate_requirement_ownership_advisories(contract));
     advisories.extend(collect_attachment_use_advisories(contract));
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories
@@ -4559,6 +4699,90 @@ fn task_is_explicit_host_prepare_action(contract: &Contract, task: &TaskSpec) ->
         && task.runtime.is_none()
         && task.requires_services.is_empty()
         && task_execution_backend(contract, task, Backend::Native) == Backend::Native
+}
+
+fn collect_duplicate_requirement_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+
+    for (toolchain_name, toolchain) in &contract.toolchains {
+        for (duplicate_kind, duplicate_name) in
+            duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+        {
+            let duplicated = match duplicate_kind.as_str() {
+                "runtime" => contract.runtimes.contains_key(duplicate_name.as_str()),
+                "tool" => contract.tools.contains_key(duplicate_name.as_str()),
+                _ => false,
+            };
+            if duplicated {
+                advisories.push(ContractAdvisory::DuplicateRequirementOwnership(
+                    DuplicateRequirementOwnershipAdvisory {
+                        scope: String::from("contract"),
+                        toolchain_name: toolchain_name.clone(),
+                        duplicate_kind,
+                        duplicate_name,
+                    },
+                ));
+            }
+        }
+    }
+
+    for (task_name, task) in &contract.tasks {
+        for toolchain_name in &task.requirements.toolchains {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            for (duplicate_kind, duplicate_name) in
+                duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+            {
+                let duplicated = match duplicate_kind.as_str() {
+                    "runtime" => task.requirements.runtimes.contains_key(duplicate_name.as_str()),
+                    "tool" => task.requirements.tools.contains_key(duplicate_name.as_str()),
+                    _ => false,
+                };
+                if duplicated {
+                    advisories.push(ContractAdvisory::DuplicateRequirementOwnership(
+                        DuplicateRequirementOwnershipAdvisory {
+                            scope: format!("task `{task_name}`"),
+                            toolchain_name: toolchain_name.clone(),
+                            duplicate_kind,
+                            duplicate_name,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    advisories
+}
+
+fn duplicate_requirement_owners_for_toolchain(
+    toolchain_name: &str,
+    toolchain: &ToolchainSpec,
+) -> Vec<(String, String)> {
+    match (toolchain_name, toolchain.provider) {
+        ("rust", ToolchainProvider::Rustup) => {
+            let mut duplicates = vec![
+                (String::from("runtime"), String::from("rust")),
+                (String::from("tool"), String::from("cargo")),
+            ];
+            for component in toolchain
+                .components
+                .iter()
+                .chain(toolchain.platforms.values().flat_map(|platform| platform.components.iter()))
+            {
+                match component.as_str() {
+                    "rustfmt" => duplicates.push((String::from("tool"), String::from("rustfmt"))),
+                    "clippy" => duplicates.push((String::from("tool"), String::from("clippy"))),
+                    _ => {}
+                }
+            }
+            duplicates
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn collect_attachment_use_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -4904,6 +5128,19 @@ fn validate_task_requirement_references(
         |value| value.version(),
     );
     validate_tool_details(&task.requirements.tools, errors);
+    for toolchain_name in &task.requirements.toolchains {
+        if toolchain_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` must not declare an empty `requirements.toolchains` entry"
+            )));
+            continue;
+        }
+        if !contract.toolchains.contains_key(toolchain_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` references unknown toolchain `{toolchain_name}` in `requirements.toolchains`"
+            )));
+        }
+    }
 
     for env_name in &task.requirements.env {
         if env_name.trim().is_empty() {
@@ -6785,6 +7022,10 @@ checks:
     kind: health
     severity: error
     run: echo ok
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
 tasks:
   dev:
     run: echo dev
@@ -6793,6 +7034,8 @@ tasks:
         node: ""
       tools:
         pnpm: ""
+      toolchains:
+        - missing-toolchain
       env:
         - UNKNOWN_ENV
       checks:
@@ -6828,6 +7071,14 @@ tasks:
             messages.iter().any(|message| {
                 message
                     .contains("task `dev` tool requirement `pnpm` must declare a non-empty version")
+            }),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| {
+                message.contains(
+                    "task `dev` references unknown toolchain `missing-toolchain` in `requirements.toolchains`",
+                )
             }),
             "{messages:?}"
         );
@@ -15978,5 +16229,70 @@ policies:
                 "repo contracts must not declare `policies.adapter_bootstrap`; move approved adapter bootstrap sources to `.ota/org-policy.yaml` under `policies.adapter_bootstrap`",
             )
         }));
+    }
+
+    #[test]
+    fn warns_when_toolchain_ownership_is_duplicated() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  rust: "1.94.0"
+tools:
+  cargo: "*"
+  rustfmt: "*"
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+      runtimes:
+        rust: "1.94.0"
+      tools:
+        cargo: "*"
+        rustfmt: "*"
+"#,
+        )
+        .unwrap();
+
+        let summaries = collect_contract_advisories(&contract)
+            .into_iter()
+            .map(|advisory| advisory.summary())
+            .collect::<Vec<_>>();
+
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary == "contract declares `rust` alongside toolchain `rust`"),
+            "{summaries:?}"
+        );
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary == "contract declares `cargo` alongside toolchain `rust`"),
+            "{summaries:?}"
+        );
+        assert!(
+            summaries.iter().any(|summary| {
+                summary == "task `setup` declares `rust` alongside toolchain `rust`"
+            }),
+            "{summaries:?}"
+        );
+        assert!(
+            summaries.iter().any(|summary| {
+                summary == "task `setup` declares `cargo` alongside toolchain `rust`"
+            }),
+            "{summaries:?}"
+        );
     }
 }

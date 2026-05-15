@@ -69,7 +69,7 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
     ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, ToolRequirement,
+    ToolAcquisitionSpec, ToolRequirement, ToolchainProvider, ToolchainSpec,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
@@ -213,6 +213,7 @@ fn execution_context_for_backend<'a>(
 #[derive(Debug, Default, Clone)]
 struct ScopedPreconditionSelection {
     requirement_surface: RequirementSurface,
+    toolchain_names: BTreeSet<String>,
     native_names: BTreeSet<String>,
     env_names: BTreeSet<String>,
     env_scoped: bool,
@@ -228,6 +229,7 @@ fn scoped_precondition_selection(
     if task_names.is_empty() {
         return ScopedPreconditionSelection {
             requirement_surface: contract.requirement_surface_for_backend(backend),
+            toolchain_names: contract.toolchains.keys().cloned().collect(),
             ..ScopedPreconditionSelection::default()
         };
     }
@@ -236,6 +238,7 @@ fn scoped_precondition_selection(
         requirement_surface: contract
             .selected_workflow_task_requirement_surface(workflow_name)
             .unwrap_or_default(),
+        toolchain_names: contract.selected_workflow_required_toolchain_names(workflow_name),
         ..ScopedPreconditionSelection::default()
     };
 
@@ -1317,6 +1320,16 @@ impl Finding {
             }
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
+            s if s.starts_with("Missing toolchain provider: ") => {
+                "OTA_TOOLCHAIN_PROVIDER_MISSING"
+            }
+            s if s.starts_with("Toolchain provider probe failed: ") => {
+                "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
+            }
+            s if s.starts_with("Missing toolchain component: ") => {
+                "OTA_TOOLCHAIN_COMPONENT_MISSING"
+            }
+            s if s.starts_with("Missing toolchain target: ") => "OTA_TOOLCHAIN_TARGET_MISSING",
             s if s.starts_with("Missing tool activation provider: ") => {
                 "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
             }
@@ -2469,6 +2482,17 @@ fn diagnose_contract_with_scope(
                         &remote_probe.provisioning_actions,
                         &mut findings,
                     );
+                    diagnose_toolchains(
+                        contract,
+                        &precondition_selection.toolchain_names,
+                        &remote_probe.target_os,
+                        contract_path,
+                        mode,
+                        None,
+                        Some(&remote_probe.backend),
+                        remote_probe.context_name.as_deref(),
+                        &mut findings,
+                    );
                 }
             }
             diagnose_remote_org_policy(
@@ -2506,6 +2530,17 @@ fn diagnose_contract_with_scope(
                 &provisioning_actions,
                 &mut findings,
             );
+            let toolchain_probe_started = diagnose_toolchains(
+                contract,
+                &precondition_selection.toolchain_names,
+                policy_target_os_for_mode(mode),
+                contract_path,
+                mode,
+                container_probe.as_ref(),
+                None,
+                None,
+                &mut findings,
+            );
             if mode == DoctorMode::Native {
                 diagnose_native_prerequisites(
                     contract,
@@ -2515,7 +2550,7 @@ fn diagnose_contract_with_scope(
                     &mut findings,
                 );
             }
-            runtime_probe_started || tool_probe_started
+            runtime_probe_started || tool_probe_started || toolchain_probe_started
         };
         if mode == DoctorMode::Native && contract_has_remote_execution_context(contract) {
             findings.push(remote_mode_scope_note_finding());
@@ -2625,6 +2660,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LikelyUnusedAttachment(advisory) => {
                 ContractAdvisory::LikelyUnusedAttachment(advisory)
             }
+            ContractAdvisory::DuplicateRequirementOwnership(advisory) => {
+                ContractAdvisory::DuplicateRequirementOwnership(advisory)
+            }
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => {
                 ContractAdvisory::MutatesManagedIsolatedPath(advisory)
             }
@@ -2648,6 +2686,15 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::LikelyUnusedAttachment(advisory.clone()).why(),
                 next: ContractAdvisory::LikelyUnusedAttachment(advisory).next(),
+            },
+            ContractAdvisory::DuplicateRequirementOwnership(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "{} declares `{}` alongside toolchain `{}`",
+                    advisory.scope, advisory.duplicate_name, advisory.toolchain_name
+                ),
+                why: ContractAdvisory::DuplicateRequirementOwnership(advisory.clone()).why(),
+                next: ContractAdvisory::DuplicateRequirementOwnership(advisory).next(),
             },
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -4359,6 +4406,289 @@ fn diagnose_tools(
         );
     }
     container_probe_started
+}
+
+fn diagnose_toolchains(
+    contract: &Contract,
+    selected_toolchains: &BTreeSet<String>,
+    target_os: &str,
+    contract_path: &Path,
+    mode: DoctorMode,
+    container_probe: Option<&ContainerProbeContext>,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    remote_context_name: Option<&str>,
+    findings: &mut Vec<Finding>,
+) -> bool {
+    let mut probe_started = false;
+    for toolchain_name in selected_toolchains {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if !toolchain.active_for_os(target_os) {
+            continue;
+        }
+
+        probe_started |= diagnose_command_version(
+            "runtime",
+            toolchain_name,
+            toolchain_primary_executable(toolchain_name, toolchain.provider),
+            toolchain.version_for_os(target_os),
+            toolchain.required_for_os(target_os),
+            toolchain_provider_hint(toolchain),
+            None,
+            mode,
+            None,
+            container_probe,
+            remote_probe,
+            remote_context_name,
+            contract_path,
+            None,
+            target_os,
+            &[],
+            findings,
+        );
+
+        match toolchain.provider {
+            ToolchainProvider::Rustup => {
+                let component_names = toolchain.components_for_os(target_os);
+                let target_names = toolchain.targets_for_os(target_os);
+                if component_names.is_empty() && target_names.is_empty() {
+                    continue;
+                }
+                probe_started = true;
+                let mut provider_missing_reported = false;
+
+                match rustup_installed_entries(
+                    "doctor-probe:rustup",
+                    "rustup component list --installed",
+                    mode,
+                    container_probe,
+                    remote_probe,
+                    contract_path,
+                ) {
+                    Ok(Some(installed_components)) => {
+                        for component in component_names {
+                            if installed_components.iter().any(|installed| {
+                                installed == &component
+                                    || installed.starts_with(&format!("{component}-"))
+                            }) {
+                                continue;
+                            }
+                            findings.push(missing_toolchain_component_finding(
+                                toolchain_name,
+                                &component,
+                                mode,
+                            ));
+                        }
+                    }
+                    Ok(None) => {
+                        provider_missing_reported = true;
+                        findings.push(missing_toolchain_provider_finding(
+                            toolchain_name,
+                            "rustup",
+                            mode,
+                            "components",
+                        ));
+                    }
+                    Err(details) => {
+                        findings.push(toolchain_provider_probe_failed_finding(
+                            toolchain_name,
+                            "rustup",
+                            "rustup component list --installed",
+                            details,
+                            mode,
+                        ));
+                    }
+                }
+
+                match rustup_installed_entries(
+                    "doctor-probe:rustup-targets",
+                    "rustup target list --installed",
+                    mode,
+                    container_probe,
+                    remote_probe,
+                    contract_path,
+                ) {
+                    Ok(Some(installed_targets)) => {
+                        for target in target_names {
+                            if installed_targets.contains(target.as_str()) {
+                                continue;
+                            }
+                            findings.push(missing_toolchain_target_finding(
+                                toolchain_name,
+                                &target,
+                                mode,
+                            ));
+                        }
+                    }
+                    Ok(None) if !provider_missing_reported => {
+                        findings.push(missing_toolchain_provider_finding(
+                            toolchain_name,
+                            "rustup",
+                            mode,
+                            "targets",
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(details) => {
+                        findings.push(toolchain_provider_probe_failed_finding(
+                            toolchain_name,
+                            "rustup",
+                            "rustup target list --installed",
+                            details,
+                            mode,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    probe_started
+}
+
+fn toolchain_primary_executable(name: &str, provider: ToolchainProvider) -> &str {
+    match (name, provider) {
+        ("rust", ToolchainProvider::Rustup) => "rustc",
+        _ => name,
+    }
+}
+
+fn toolchain_provider_hint(toolchain: &ToolchainSpec) -> Option<&str> {
+    match toolchain.provider {
+        ToolchainProvider::Rustup => Some("rustup"),
+    }
+}
+
+fn doctor_probe_backend(
+    mode: DoctorMode,
+    container_probe: Option<&ContainerProbeContext>,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+) -> Option<ResolvedExecutionBackend> {
+    match mode {
+        DoctorMode::Native => Some(ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        }),
+        DoctorMode::Container => container_probe.map(|probe| ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: probe.image.clone(),
+            engine: probe.engine.clone(),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        }),
+        DoctorMode::Remote => remote_probe.cloned(),
+    }
+}
+
+fn rustup_installed_entries(
+    probe_name: &str,
+    command: &str,
+    mode: DoctorMode,
+    container_probe: Option<&ContainerProbeContext>,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    contract_path: &Path,
+) -> Result<Option<BTreeSet<String>>, String> {
+    let Some(backend) = doctor_probe_backend(mode, container_probe, remote_probe) else {
+        return Ok(None);
+    };
+    let output = run_backend_command_captured(
+        probe_name,
+        command,
+        contract_working_dir(contract_path),
+        &backend,
+    )
+    .map_err(|error| error.to_string())?;
+    if output.exit_code == 127 {
+        return Ok(None);
+    }
+    if output.exit_code != 0 {
+        let details = format!("`{command}` exited with code {}", output.exit_code);
+        return Err(details);
+    }
+    let mut installed = BTreeSet::new();
+    for line in output.stdout.lines() {
+        let entry = line
+            .split_whitespace()
+            .next()
+            .map(str::trim)
+            .unwrap_or_default();
+        if !entry.is_empty() {
+            installed.insert(entry.to_string());
+        }
+    }
+    Ok(Some(installed))
+}
+
+fn missing_toolchain_provider_finding(
+    toolchain_name: &str,
+    provider: &str,
+    mode: DoctorMode,
+    surface: &str,
+) -> Finding {
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Missing toolchain provider: {provider}"),
+        why: format!(
+            "ota needs `{provider}` to inspect or fulfill {surface} for toolchain `{toolchain_name}` on the selected execution path"
+        ),
+        next: format!(
+            "install `{provider}` or remove provider-managed {surface} from toolchain `{toolchain_name}`, then rerun `{}`",
+            rerun_doctor_command(mode, None)
+        ),
+    }
+}
+
+fn toolchain_provider_probe_failed_finding(
+    toolchain_name: &str,
+    provider: &str,
+    command: &str,
+    details: String,
+    mode: DoctorMode,
+) -> Finding {
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Toolchain provider probe failed: {toolchain_name}"),
+        why: format!(
+            "ota could not inspect toolchain `{toolchain_name}` through `{provider}`; `{command}` failed: {details}"
+        ),
+        next: format!("run `{command}` directly and rerun `{}`", rerun_doctor_command(mode, None)),
+    }
+}
+
+fn missing_toolchain_component_finding(
+    toolchain_name: &str,
+    component: &str,
+    mode: DoctorMode,
+) -> Finding {
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Missing toolchain component: {toolchain_name}.{component}"),
+        why: format!(
+            "ota inspected toolchain `{toolchain_name}` through `rustup`, but component `{component}` is not installed"
+        ),
+        next: format!(
+            "run `rustup component add {component}` and rerun `{}`",
+            rerun_doctor_command(mode, None)
+        ),
+    }
+}
+
+fn missing_toolchain_target_finding(toolchain_name: &str, target: &str, mode: DoctorMode) -> Finding {
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Missing toolchain target: {toolchain_name}.{target}"),
+        why: format!(
+            "ota inspected toolchain `{toolchain_name}` through `rustup`, but target `{target}` is not installed"
+        ),
+        next: format!(
+            "run `rustup target add {target}` and rerun `{}`",
+            rerun_doctor_command(mode, None)
+        ),
+    }
 }
 
 fn diagnose_native_prerequisites(
