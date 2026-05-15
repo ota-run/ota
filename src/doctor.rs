@@ -8132,6 +8132,27 @@ exec /bin/sh -c "$cmd"
         .to_string()
     }
 
+    fn write_fake_remote_backend_provider(bin_dir: &Path) {
+        write_fake_command(
+            bin_dir,
+            "fake-remote-provider",
+            if cfg!(windows) {
+                "@echo off\r\necho %OTA_BACKEND_PROVIDER_COMMAND% | findstr /C:\"uname -s\" >nul && (\r\n  echo {\"ok\":true,\"result\":{\"exit_code\":0,\"stdout\":\"Linux\\n\",\"stderr\":\"\",\"target\":\"sandbox-dev\"},\"errors\":[]}\r\n  exit /b 0\r\n)\r\necho {\"ok\":true,\"result\":{\"exit_code\":0,\"stdout\":\"jq-1.8.1\\n\",\"stderr\":\"__OTA_CONTAINER_PROBE_STARTED__\\n__OTA_RESOLVED_PATH__/usr/bin/jq\\n\",\"target\":\"sandbox-dev\"},\"errors\":[]}\r\n"
+            } else {
+                r#"#!/bin/sh
+case "${OTA_BACKEND_PROVIDER_COMMAND:-}" in
+  *"uname -s"*)
+    printf '%s' '{"ok":true,"result":{"exit_code":0,"stdout":"Linux\n","stderr":"","target":"sandbox-dev"},"errors":[]}'
+    ;;
+  *)
+    printf '%s' '{"ok":true,"result":{"exit_code":0,"stdout":"jq-1.8.1\n","stderr":"__OTA_CONTAINER_PROBE_STARTED__\n__OTA_RESOLVED_PATH__/usr/bin/jq\n","target":"sandbox-dev"},"errors":[]}'
+    ;;
+esac
+"#
+            },
+        );
+    }
+
     #[test]
     fn prioritizes_blocking_env_errors_before_warnings() {
         let contract = parse_contract_str(
@@ -9811,25 +9832,7 @@ tasks:
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        write_fake_command(
-            &bin_dir,
-            "uname",
-            if cfg!(windows) {
-                "@echo off\r\necho Linux\r\n"
-            } else {
-                "#!/bin/sh\necho 'Linux'\n"
-            },
-        );
-        write_fake_command(
-            &bin_dir,
-            "jq",
-            if cfg!(windows) {
-                "@echo off\r\necho jq-1.8.1\r\n"
-            } else {
-                "#!/bin/sh\necho 'jq-1.8.1'\n"
-            },
-        );
-        write_fake_command(&bin_dir, "ssh", &fake_remote_ssh_body("jq-1.8.1"));
+        write_fake_remote_backend_provider(&bin_dir);
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -9847,14 +9850,19 @@ tasks:
 version: 1
 project:
   name: ota
+extensions:
+  remote-fixture:
+    kind: backend_provider
+    command: fake-remote-provider
+    api_version: 1
 execution:
   default_context: remote-app
   contexts:
     remote-app:
       backend: remote
       remote:
-        provider: ssh
-        target: user@host
+        provider: remote-fixture
+        target: sandbox-dev
       requirements:
         tools:
           jq: "jq-1.8.1"
@@ -9912,7 +9920,7 @@ policies:
             .findings
             .iter()
             .find(|finding| finding.summary == "Policy-backed version rules are declared")
-            .expect("expected remote policy version finding");
+            .unwrap_or_else(|| panic!("expected remote policy version finding: {report:?}"));
         assert!(
             version_finding
                 .why
@@ -10161,42 +10169,7 @@ policies:
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        write_fake_command(
-            &bin_dir,
-            "uname",
-            if cfg!(windows) {
-                "@echo off\r\necho Linux\r\n"
-            } else {
-                "#!/bin/sh\necho 'Linux'\n"
-            },
-        );
-        write_fake_command(
-            &bin_dir,
-            "jq",
-            if cfg!(windows) {
-                "@echo off\r\necho jq-1.8.1\r\n"
-            } else {
-                "#!/bin/sh\necho 'jq-1.8.1'\n"
-            },
-        );
-        write_fake_command(
-            &bin_dir,
-            "ssh",
-            r#"#!/bin/sh
-target="$1"
-shift
-[ -n "$target" ] || exit 1
-[ "$#" -ge 1 ] || exit 1
-cmd="$*"
-case "$cmd" in
-  "sh -lc "*)
-    eval "remote_script=${cmd#sh -lc }"
-    exec /bin/sh -c "$remote_script"
-    ;;
-esac
-exec /bin/sh -c "$cmd"
-"#,
-        );
+        write_fake_remote_backend_provider(&bin_dir);
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -10214,14 +10187,19 @@ exec /bin/sh -c "$cmd"
 version: 1
 project:
   name: ota
+extensions:
+  remote-fixture:
+    kind: backend_provider
+    command: fake-remote-provider
+    api_version: 1
 execution:
   default_context: remote-app
   contexts:
     remote-app:
       backend: remote
       remote:
-        provider: ssh
-        target: user@host
+        provider: remote-fixture
+        target: sandbox-dev
       requirements:
         tools:
           jq: "jq-1.8.1"
@@ -10273,7 +10251,7 @@ policies:
             .findings
             .iter()
             .find(|finding| finding.summary == "Repo does not satisfy org policy pack")
-            .expect("expected remote version policy blocker");
+            .unwrap_or_else(|| panic!("expected remote version policy blocker: {report:?}"));
         assert!(finding.why.contains("remote context `remote-app`"));
         assert!(finding.why.contains("version policy violations"));
         assert!(
