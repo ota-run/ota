@@ -32,7 +32,7 @@ Current shipped scope:
 - top-level `toolchains`
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
-- duplicate-ownership warnings when the same prerequisite is declared under both `toolchains` and
+- hard validation errors when the same prerequisite is declared under both `toolchains` and
   `runtimes` or `tools`
 - one supported contract shape today: `toolchains.rust` with `provider: rustup`
 
@@ -155,15 +155,15 @@ tasks:
 
 ## Duplication rules
 
-Ota now warns when the same requirement is split across multiple ownership layers.
+Ota now rejects the same requirement when it is split across multiple ownership layers.
 
-Current Rustup-first warnings include:
+Current Rustup-first invalid combinations include:
 
 - `toolchains.rust` plus `runtimes.rust`
 - `toolchains.rust` plus `tools.cargo`
 - `toolchains.rust.components: [rustfmt]` plus `tools.rustfmt`
 
-Treat those warnings as contract cleanup signals, not as extra truth to maintain.
+Treat those validation errors as contract cleanup signals, not as extra truth to maintain.
 
 ## Fulfillment rules
 
@@ -187,7 +187,7 @@ This slice is intentionally narrow:
 
 - Rustup is the only shipped `toolchains` provider today
 - toolchains are selected at the task path, not through execution-context requirements
-- duplicate ownership currently warns; it does not hard-fail
+- duplicate ownership is invalid and fails validation
 - the current shipped Rustup slice owns diagnosis and run-path fulfillment for the declared
   toolchain and its components/targets
 - contracts that declare any toolchain other than `toolchains.rust` with `provider: rustup` fail

@@ -51,13 +51,13 @@
 - fixed the macOS release-gate install step to invoke the active toolchain's real Cargo binary via
   `rustup which cargo`, avoiding the broken cached proxy/shim path on GitHub-hosted macOS runners
 - added the first shipped `toolchains` contract slice: top-level `toolchains`,
-  task-scoped `requirements.toolchains`, Rustup-backed diagnosis, Rustup-backed run-path
-  fulfillment, and duplicate-ownership warnings when the same Rust capability is split across
-  `toolchains`, `runtimes`, or `tools`; Ota's own contract now declares the Rust toolchain
-  natively instead of hiding `rustfmt` provisioning in shell setup, and the contract/site docs
-  now publish the ownership boundary as a first-class reference surface; validation now also
-  rejects unsupported toolchain declarations so the shipped surface stays explicitly bounded to
-  `toolchains.rust` with `provider: rustup`
+  task-scoped `requirements.toolchains`, Rustup-backed diagnosis, and Rustup-backed run-path
+  fulfillment; duplicate ownership across `toolchains`, `runtimes`, and `tools` is now a hard
+  validation error by default, so one capability must have exactly one owner; Ota's own contract
+  now declares the Rust toolchain natively instead of hiding `rustfmt` provisioning in shell
+  setup, and the contract/site docs publish the ownership boundary as a first-class reference
+  surface; validation also rejects unsupported toolchain declarations so the shipped surface stays
+  explicitly bounded to `toolchains.rust` with `provider: rustup`
 
 ## 1.6.12
 

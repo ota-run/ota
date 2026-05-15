@@ -71,8 +71,8 @@ use crate::schema::{
     TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
     ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
-    format_memory_size_bytes, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
+    task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
@@ -6394,9 +6394,12 @@ fn maybe_fulfill_toolchains_on_run_path(
             continue;
         }
 
-        for command in
-            toolchain_fulfillment_commands(toolchain_name.as_str(), toolchain, target_os_for_toolchain_backend(backend, current_os), backend)
-        {
+        for command in toolchain_fulfillment_commands(
+            toolchain_name.as_str(),
+            toolchain,
+            target_os_for_toolchain_backend(backend, current_os),
+            backend,
+        ) {
             let output = run_backend_command_captured(
                 &format!("toolchain-fulfill:{toolchain_name}"),
                 command.as_str(),
@@ -6436,7 +6439,10 @@ fn toolchain_fulfillment_cache_key(
             engine
         ),
         ResolvedExecutionBackend::Remote {
-            provider, target, cwd, ..
+            provider,
+            target,
+            cwd,
+            ..
         } => format!(
             "remote:{provider}:{target}:{}:{toolchain_name}",
             cwd.as_deref().unwrap_or_default()

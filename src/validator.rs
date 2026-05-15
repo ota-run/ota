@@ -105,6 +105,7 @@ pub fn validate_contract_with_path(
     });
     validate_tool_details(&contract.tools, &mut errors);
     validate_toolchains(&contract.toolchains, &mut errors);
+    validate_duplicate_requirement_ownership(contract, &mut errors);
     validate_native_prerequisites(contract, &mut errors);
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
@@ -1033,12 +1034,20 @@ fn validate_toolchains(
                 "toolchain `{name}` must not declare an empty `profile`"
             )));
         }
-        if toolchain.components.iter().any(|component| component.trim().is_empty()) {
+        if toolchain
+            .components
+            .iter()
+            .any(|component| component.trim().is_empty())
+        {
             errors.push(ValidationError::new(format!(
                 "toolchain `{name}` must not declare an empty `components` entry"
             )));
         }
-        if toolchain.targets.iter().any(|target| target.trim().is_empty()) {
+        if toolchain
+            .targets
+            .iter()
+            .any(|target| target.trim().is_empty())
+        {
             errors.push(ValidationError::new(format!(
                 "toolchain `{name}` must not declare an empty `targets` entry"
             )));
@@ -1095,7 +1104,10 @@ fn validate_supported_toolchain(
     toolchain: &ToolchainSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if matches!((name, toolchain.provider), ("rust", ToolchainProvider::Rustup)) {
+    if matches!(
+        (name, toolchain.provider),
+        ("rust", ToolchainProvider::Rustup)
+    ) {
         return;
     }
 
@@ -4503,7 +4515,6 @@ fn backend_mode_name(backend: Backend) -> &'static str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractAdvisory {
     DependsOnBoundary(DependsOnBoundaryAdvisory),
-    DuplicateRequirementOwnership(DuplicateRequirementOwnershipAdvisory),
     LikelyUnusedAttachment(AttachmentUseAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
 }
@@ -4514,14 +4525,6 @@ pub struct DependsOnBoundaryAdvisory {
     pub dependency_task: String,
     pub parent: TaskExecutionBoundary,
     pub dependency: TaskExecutionBoundary,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DuplicateRequirementOwnershipAdvisory {
-    pub scope: String,
-    pub toolchain_name: String,
-    pub duplicate_kind: String,
-    pub duplicate_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4555,10 +4558,6 @@ impl ContractAdvisory {
                 "task `{}` depends_on `{}` across different execution boundaries",
                 advisory.parent_task, advisory.dependency_task
             ),
-            ContractAdvisory::DuplicateRequirementOwnership(advisory) => format!(
-                "{} declares `{}` alongside toolchain `{}`",
-                advisory.scope, advisory.duplicate_name, advisory.toolchain_name
-            ),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
                 "context `{}` isolates `{}` but no task config points {} at `{}`",
                 advisory.context_name,
@@ -4579,10 +4578,6 @@ impl ContractAdvisory {
                 "execution differs across the dependency edge ({}) so only durable external side effects survive; in-process, session-local, and container-local prep does not carry across",
                 describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", ")
             ),
-            ContractAdvisory::DuplicateRequirementOwnership(advisory) => format!(
-                "toolchain `{}` already owns `{}` in this scope, so declaring both splits the same prerequisite truth across multiple contract layers",
-                advisory.toolchain_name, advisory.duplicate_name
-            ),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
                 "the attached path is durable, but `{}` only benefits if tasks in context `{}` point {} at `{}`",
                 advisory.isolated_path,
@@ -4602,9 +4597,6 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(_) => Some(String::from(
                 "only durable external side effects carry across",
             )),
-            ContractAdvisory::DuplicateRequirementOwnership(_) => Some(String::from(
-                "duplicate ownership makes prerequisite truth drift-prone",
-            )),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
         }
@@ -4615,9 +4607,6 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(advisory) => Some(
                 describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", "),
             ),
-            ContractAdvisory::DuplicateRequirementOwnership(_) => Some(String::from(
-                "ownership duplicated",
-            )),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
         }
@@ -4626,10 +4615,6 @@ impl ContractAdvisory {
     pub fn fix(&self) -> Option<String> {
         match self {
             ContractAdvisory::DependsOnBoundary(_) => None,
-            ContractAdvisory::DuplicateRequirementOwnership(advisory) => Some(format!(
-                "remove `{}` and keep toolchain `{}` as the owner",
-                advisory.duplicate_name, advisory.toolchain_name
-            )),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => Some(format!(
                 "point {} at `{}`",
                 advisory.tool, advisory.effective_path
@@ -4643,13 +4628,6 @@ impl ContractAdvisory {
             ContractAdvisory::DependsOnBoundary(advisory) => format!(
                 "keep `{}` and `{}` on the same execution boundary when the dependency is meant to prepare the parent in place, or make the durable shared surface explicit",
                 advisory.parent_task, advisory.dependency_task
-            ),
-            ContractAdvisory::DuplicateRequirementOwnership(advisory) => format!(
-                "keep `{}` as the owner for `{}` and remove duplicate `{}` declarations in {}",
-                advisory.toolchain_name,
-                advisory.duplicate_name,
-                advisory.duplicate_kind,
-                advisory.scope
             ),
             ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
                 "configure {} to use `{}` or remove `execution.contexts.{}.attachments.isolated_paths: [{}]` if that cache should stay container-local",
@@ -4669,7 +4647,6 @@ impl ContractAdvisory {
 pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
     advisories.extend(collect_depends_on_boundary_advisories(contract));
-    advisories.extend(collect_duplicate_requirement_ownership_advisories(contract));
     advisories.extend(collect_attachment_use_advisories(contract));
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories
@@ -4716,63 +4693,6 @@ fn task_is_explicit_host_prepare_action(contract: &Contract, task: &TaskSpec) ->
         && task_execution_backend(contract, task, Backend::Native) == Backend::Native
 }
 
-fn collect_duplicate_requirement_ownership_advisories(
-    contract: &Contract,
-) -> Vec<ContractAdvisory> {
-    let mut advisories = Vec::new();
-
-    for (toolchain_name, toolchain) in &contract.toolchains {
-        for (duplicate_kind, duplicate_name) in
-            duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
-        {
-            let duplicated = match duplicate_kind.as_str() {
-                "runtime" => contract.runtimes.contains_key(duplicate_name.as_str()),
-                "tool" => contract.tools.contains_key(duplicate_name.as_str()),
-                _ => false,
-            };
-            if duplicated {
-                advisories.push(ContractAdvisory::DuplicateRequirementOwnership(
-                    DuplicateRequirementOwnershipAdvisory {
-                        scope: String::from("contract"),
-                        toolchain_name: toolchain_name.clone(),
-                        duplicate_kind,
-                        duplicate_name,
-                    },
-                ));
-            }
-        }
-    }
-
-    for (task_name, task) in &contract.tasks {
-        for toolchain_name in &task.requirements.toolchains {
-            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
-                continue;
-            };
-            for (duplicate_kind, duplicate_name) in
-                duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
-            {
-                let duplicated = match duplicate_kind.as_str() {
-                    "runtime" => task.requirements.runtimes.contains_key(duplicate_name.as_str()),
-                    "tool" => task.requirements.tools.contains_key(duplicate_name.as_str()),
-                    _ => false,
-                };
-                if duplicated {
-                    advisories.push(ContractAdvisory::DuplicateRequirementOwnership(
-                        DuplicateRequirementOwnershipAdvisory {
-                            scope: format!("task `{task_name}`"),
-                            toolchain_name: toolchain_name.clone(),
-                            duplicate_kind,
-                            duplicate_name,
-                        },
-                    ));
-                }
-            }
-        }
-    }
-
-    advisories
-}
-
 fn duplicate_requirement_owners_for_toolchain(
     toolchain_name: &str,
     toolchain: &ToolchainSpec,
@@ -4783,11 +4703,12 @@ fn duplicate_requirement_owners_for_toolchain(
                 (String::from("runtime"), String::from("rust")),
                 (String::from("tool"), String::from("cargo")),
             ];
-            for component in toolchain
-                .components
-                .iter()
-                .chain(toolchain.platforms.values().flat_map(|platform| platform.components.iter()))
-            {
+            for component in toolchain.components.iter().chain(
+                toolchain
+                    .platforms
+                    .values()
+                    .flat_map(|platform| platform.components.iter()),
+            ) {
                 match component.as_str() {
                     "rustfmt" => duplicates.push((String::from("tool"), String::from("rustfmt"))),
                     "clippy" => duplicates.push((String::from("tool"), String::from("clippy"))),
@@ -4797,6 +4718,93 @@ fn duplicate_requirement_owners_for_toolchain(
             duplicates
         }
         _ => Vec::new(),
+    }
+}
+
+fn validate_duplicate_requirement_ownership(
+    contract: &Contract,
+    errors: &mut Vec<ValidationError>,
+) {
+    let contract_toolchains = contract
+        .toolchains
+        .iter()
+        .collect::<Vec<(&String, &ToolchainSpec)>>();
+
+    for (toolchain_name, toolchain) in &contract.toolchains {
+        for (duplicate_kind, duplicate_name) in
+            duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+        {
+            let invalid_location = match duplicate_kind.as_str() {
+                "runtime" if contract.runtimes.contains_key(duplicate_name.as_str()) => {
+                    Some(format!("`runtimes.{duplicate_name}`"))
+                }
+                "tool" if contract.tools.contains_key(duplicate_name.as_str()) => {
+                    Some(format!("`tools.{duplicate_name}`"))
+                }
+                _ => None,
+            };
+            if let Some(invalid_location) = invalid_location {
+                errors.push(ValidationError::new(format!(
+                    "duplicate ownership is invalid: toolchain `{toolchain_name}` owns {} `{duplicate_name}`, but the contract also declares {invalid_location}; keep `toolchains.{toolchain_name}` as the owner and remove the duplicate {} declaration",
+                    duplicate_kind,
+                    duplicate_kind
+                )));
+            }
+        }
+    }
+
+    for (task_name, task) in &contract.tasks {
+        let selected_task_toolchains = if task.requirements.toolchains.is_empty() {
+            contract_toolchains.clone()
+        } else {
+            task.requirements
+                .toolchains
+                .iter()
+                .filter_map(|toolchain_name| {
+                    contract
+                        .toolchains
+                        .get_key_value(toolchain_name.as_str())
+                        .map(|(name, toolchain)| (name, toolchain))
+                })
+                .collect::<Vec<(&String, &ToolchainSpec)>>()
+        };
+
+        for (toolchain_name, toolchain) in selected_task_toolchains {
+            for (duplicate_kind, duplicate_name) in
+                duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+            {
+                let invalid_location = match duplicate_kind.as_str() {
+                    "runtime"
+                        if task
+                            .requirements
+                            .runtimes
+                            .contains_key(duplicate_name.as_str()) =>
+                    {
+                        Some(format!(
+                            "`tasks.{task_name}.requirements.runtimes.{duplicate_name}`"
+                        ))
+                    }
+                    "tool"
+                        if task
+                            .requirements
+                            .tools
+                            .contains_key(duplicate_name.as_str()) =>
+                    {
+                        Some(format!(
+                            "`tasks.{task_name}.requirements.tools.{duplicate_name}`"
+                        ))
+                    }
+                    _ => None,
+                };
+                if let Some(invalid_location) = invalid_location {
+                    errors.push(ValidationError::new(format!(
+                        "duplicate ownership is invalid: task `{task_name}` requires toolchain `{toolchain_name}`, which owns {} `{duplicate_name}`, but the task also declares {invalid_location}; keep `tasks.{task_name}.requirements.toolchains: [{toolchain_name}]` as the owner and remove the duplicate {} requirement",
+                        duplicate_kind,
+                        duplicate_kind
+                    )));
+                }
+            }
+        }
     }
 }
 
@@ -16247,7 +16255,7 @@ policies:
     }
 
     #[test]
-    fn warns_when_toolchain_ownership_is_duplicated() {
+    fn rejects_duplicate_toolchain_ownership() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -16280,34 +16288,75 @@ tasks:
         )
         .unwrap();
 
-        let summaries = collect_contract_advisories(&contract)
-            .into_iter()
-            .map(|advisory| advisory.summary())
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate ownership should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
             .collect::<Vec<_>>();
 
         assert!(
-            summaries
+            rendered
                 .iter()
-                .any(|summary| summary == "contract declares `rust` alongside toolchain `rust`"),
-            "{summaries:?}"
+                .any(|error| error.contains("toolchain `rust` owns runtime `rust`, but the contract also declares `runtimes.rust`")),
+            "{rendered:?}"
         );
         assert!(
-            summaries
-                .iter()
-                .any(|summary| summary == "contract declares `cargo` alongside toolchain `rust`"),
-            "{summaries:?}"
+            rendered.iter().any(|error| error.contains(
+                "toolchain `rust` owns tool `cargo`, but the contract also declares `tools.cargo`"
+            )),
+            "{rendered:?}"
         );
         assert!(
-            summaries.iter().any(|summary| {
-                summary == "task `setup` declares `rust` alongside toolchain `rust`"
+            rendered.iter().any(|error| {
+                error.contains("task `setup` requires toolchain `rust`, which owns runtime `rust`, but the task also declares `tasks.setup.requirements.runtimes.rust`")
             }),
-            "{summaries:?}"
+            "{rendered:?}"
         );
         assert!(
-            summaries.iter().any(|summary| {
-                summary == "task `setup` declares `cargo` alongside toolchain `rust`"
+            rendered.iter().any(|error| {
+                error.contains("task `setup` requires toolchain `rust`, which owns tool `cargo`, but the task also declares `tasks.setup.requirements.tools.cargo`")
             }),
-            "{summaries:?}"
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_task_level_duplicates_against_declared_toolchain_owner() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  lint:
+    run: cargo fmt --check
+    requirements:
+      tools:
+        cargo: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("task duplicate ownership should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| {
+                error.contains(
+                    "task `lint` requires toolchain `rust`, which owns tool `cargo`, but the task also declares `tasks.lint.requirements.tools.cargo`",
+                )
+            }),
+            "{rendered:?}"
         );
     }
 
