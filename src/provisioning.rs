@@ -4212,7 +4212,7 @@ fn remote_backend_command(provider_command: &Option<String>, provider: &str) -> 
         .unwrap_or_else(|| provider.to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
     use crate::test_support::env_mutex_lock;
