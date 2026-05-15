@@ -50823,36 +50823,58 @@ workflows:
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
         let contract_path = repo.path().join("ota.yaml");
-        let (service_start, service_healthcheck, setup_task) = if cfg!(windows) {
-            (
-                "if exist .env.local (echo service>>run.log) else exit /b 1",
-                "if exist .env.local exit /b 0 else exit /b 1",
-                "run: echo setup>>run.log & echo ready>.env.local",
-            )
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        if cfg!(windows) {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-setup-after"),
+                "@echo off\r\necho setup>>run.log\r\necho ready>.env.local\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-service-after"),
+                "@echo off\r\nif not exist .env.local exit /b 1\r\necho service>>run.log\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-env-ready"),
+                "@echo off\r\nif not exist .env.local exit /b 1\r\n",
+            );
         } else {
-            (
-                "test -f .env.local && echo service >> run.log",
-                "test -f .env.local",
-                "script: |\n      echo setup >> run.log\n      touch .env.local",
-            )
-        };
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-setup-after"),
+                "#!/bin/sh\necho setup >> run.log\ntouch .env.local\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-service-after"),
+                "#!/bin/sh\ntest -f .env.local\necho service >> run.log\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-env-ready"),
+                "#!/bin/sh\ntest -f .env.local\n",
+            );
+        }
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = &original_path {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
         let contract = parse_contract_str(
             contract_path.as_path(),
-            &format!(
-                r#"
+            r#"
 version: 1
 project:
   name: phased-up
 services:
   app:
     required: true
-    start: {service_start}
-    healthcheck: {service_healthcheck}
+    start: phase-service-after
+    healthcheck: phase-env-ready
 tasks:
   setup:
-    {setup_task}
+    run: phase-setup-after
 "#,
-            ),
         )
         .unwrap();
 
@@ -50866,6 +50888,11 @@ tasks:
             RepoExecutionMode::Capture,
         )
         .unwrap();
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         assert!(
             result.ok,
@@ -50887,49 +50914,80 @@ tasks:
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
         let contract_path = repo.path().join("ota.yaml");
-        let (postgres_start, postgres_healthcheck, app_start, app_healthcheck, setup_task) = if cfg!(
-            windows
-        ) {
-            (
-                "echo postgres>>run.log & echo ready>db.ready",
-                "if exist db.ready exit /b 0 else exit /b 1",
-                "if exist .env.local (echo app>>run.log) else exit /b 1",
-                "if exist .env.local exit /b 0 else exit /b 1",
-                "run: if exist db.ready (echo setup>>run.log & echo ready>.env.local) else exit /b 1",
-            )
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        if cfg!(windows) {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-postgres"),
+                "@echo off\r\necho postgres>>run.log\r\necho ready>db.ready\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-db-ready"),
+                "@echo off\r\nif not exist db.ready exit /b 1\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-setup-pre"),
+                "@echo off\r\nif not exist db.ready exit /b 1\r\necho setup>>run.log\r\necho ready>.env.local\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-app"),
+                "@echo off\r\nif not exist .env.local exit /b 1\r\necho app>>run.log\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-env-ready"),
+                "@echo off\r\nif not exist .env.local exit /b 1\r\n",
+            );
         } else {
-            (
-                "echo postgres >> run.log\n      touch db.ready",
-                "test -f db.ready",
-                "test -f .env.local && echo app >> run.log",
-                "test -f .env.local",
-                "script: |\n      test -f db.ready\n      echo setup >> run.log\n      touch .env.local",
-            )
-        };
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-postgres"),
+                "#!/bin/sh\necho postgres >> run.log\ntouch db.ready\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-db-ready"),
+                "#!/bin/sh\ntest -f db.ready\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-setup-pre"),
+                "#!/bin/sh\ntest -f db.ready\necho setup >> run.log\ntouch .env.local\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-app"),
+                "#!/bin/sh\ntest -f .env.local\necho app >> run.log\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-env-ready"),
+                "#!/bin/sh\ntest -f .env.local\n",
+            );
+        }
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = &original_path {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
         let contract = parse_contract_str(
             contract_path.as_path(),
-            &format!(
-                r#"
+            r#"
 version: 1
 project:
   name: phased-up
 services:
   postgres:
     required: true
-    start: |
-      {postgres_start}
-    healthcheck: {postgres_healthcheck}
+    start: phase-postgres
+    healthcheck: phase-db-ready
   app:
     required: true
-    start: {app_start}
-    healthcheck: {app_healthcheck}
+    start: phase-app
+    healthcheck: phase-env-ready
 tasks:
   setup:
     requires_services:
       - postgres
-    {setup_task}
+    run: phase-setup-pre
 "#,
-            ),
         )
         .unwrap();
 
@@ -50943,6 +51001,11 @@ tasks:
             RepoExecutionMode::Capture,
         )
         .unwrap();
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         assert!(
             result.ok,
