@@ -5843,11 +5843,11 @@ mod tests {
             }
 
             // Version probe line: detect by the "command -v '" pattern + block opener
-            if line.contains("echo %* | findstr /C:\"command -v '")
-                && line.ends_with(">nul && (")
-            {
+            if line.contains("echo %* | findstr /C:\"command -v '") && line.ends_with(">nul && (") {
                 let indent = line.split("echo %* |").next().unwrap_or_default();
-                result.push(format!("{indent}if \"%2\"==\"--rm\" (if \"%3\"==\"--name\" ("));
+                result.push(format!(
+                    "{indent}if \"%2\"==\"--rm\" (if \"%3\"==\"--name\" ("
+                ));
                 // Find the matching closing paren for the next iteration
                 let mut paren_depth = 1;
                 for j in (i + 1)..lines.len() {
