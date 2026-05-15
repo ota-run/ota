@@ -36606,7 +36606,7 @@ fn compact_contract_file_path_relative_to(
         return compact_path_relative_to(path, fallback, current_dir);
     }
     let Some(current_dir) = current_dir else {
-        return path.display().to_string();
+        return compact_path_display_text(path);
     };
 
     let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
@@ -36622,11 +36622,11 @@ fn compact_contract_file_path_relative_to(
             if relative.as_os_str().is_empty() {
                 return String::from(".");
             } else {
-                return format!("./{}", relative.display());
+                return format!("./{}", compact_path_display_text(relative));
             }
         }
     }
-    absolute.display().to_string()
+    compact_path_display_text(&absolute)
 }
 
 fn prune_yaml_nulls(value: &mut YamlValue) {
@@ -38167,6 +38167,14 @@ tasks:
         assert_eq!(
             compact_contract_file_path_relative_to(&contract_path, "ota.yaml", Some(outer.path())),
             outer_contract.display().to_string()
+        );
+    }
+
+    #[test]
+    fn compact_path_display_text_strips_windows_extended_prefix() {
+        assert_eq!(
+            super::compact_path_display_text(Path::new(r"\\?\C:\repo\ota.yaml")),
+            "C:/repo/ota.yaml"
         );
     }
 
@@ -49551,6 +49559,26 @@ tasks:
     }
 
     #[test]
+    fn windows_shell_detection_routes_posix_scripts_to_bash() {
+        let script = "printf '%s' \"$OTA_INPUT_BASE_URL\" > version.txt\n";
+        assert!(super::looks_like_posix_script(script));
+        assert!(!super::looks_like_powershell_script(script));
+    }
+
+    #[test]
+    fn windows_shell_detection_keeps_powershell_scripts_out_of_bash_path() {
+        let script = r#"$cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+if (-not (Test-Path $cargoBin)) {
+  throw "cargo bin path not found"
+}
+Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
+"#;
+
+        assert!(super::looks_like_powershell_script(script));
+        assert!(!super::looks_like_posix_script(script));
+    }
+
+    #[test]
     fn render_backticked_text_preserves_urls() {
         let rendered = strip_ansi_codes(&super::render_backticked_text(
             "endpoint `http://127.0.0.1:3001/`",
@@ -51285,7 +51313,7 @@ policies:
 
 fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Path>) -> String {
     let Some(current_dir) = current_dir else {
-        return path.display().to_string();
+        return compact_path_display_text(path);
     };
     let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
     let absolute = if path.is_absolute() {
@@ -51298,10 +51326,10 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
         if relative.as_os_str().is_empty() {
             return String::from(".");
         }
-        return format!("./{}", relative.display());
+        return format!("./{}", compact_path_display_text(&relative));
     }
     let absolute_display = if absolute.is_absolute() {
-        absolute.display().to_string()
+        compact_path_display_text(&absolute)
     } else {
         String::new()
     };
@@ -51328,11 +51356,24 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
 
 fn shorter_relative_path(base: &Path, target: &Path, absolute_display: &str) -> Option<String> {
     let relative = relative_path_from(base, target)?;
-    let rendered = relative.display().to_string();
+    let rendered = compact_path_display_text(&relative);
     if rendered.is_empty() || rendered.len() >= absolute_display.len() {
         return None;
     }
     Some(rendered)
+}
+
+fn compact_path_display_text(path: &Path) -> String {
+    compact_path_separator_style(&path.display().to_string())
+}
+
+fn compact_path_separator_style(value: &str) -> String {
+    let value = value
+        .strip_prefix("\\\\?\\")
+        .or_else(|| value.strip_prefix("//?/"))
+        .unwrap_or(value)
+        .to_string();
+    value.replace('\\', "/")
 }
 
 fn relative_path_from(base: &Path, target: &Path) -> Option<PathBuf> {
@@ -67883,9 +67924,110 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(windows)]
 fn shell_command(command: &str) -> Command {
+    if looks_like_powershell_script(command) {
+        return powershell_shell_command(command);
+    }
+    if looks_like_posix_script(command) && has_bash() {
+        let mut shell = Command::new("bash");
+        shell.arg("-lc").arg(command);
+        return shell;
+    }
     let mut shell = Command::new("cmd");
     shell.arg("/C").arg(command);
     shell
+}
+
+#[cfg(any(windows, test))]
+fn looks_like_posix_script(command: &str) -> bool {
+    let command = command.trim();
+    if command.is_empty() || looks_like_powershell_script(command) {
+        return false;
+    }
+
+    const POSIX_MARKERS: [&str; 8] = [
+        "command -v ",
+        "; then",
+        " fi",
+        "&& ",
+        " || ",
+        "<<'PY'",
+        "sh -lc ",
+        "bash -lc ",
+    ];
+
+    if command.starts_with("cmd ") || command.starts_with("cmd/") {
+        return false;
+    }
+
+    command.starts_with("./")
+        || command.starts_with("../")
+        || command.contains("&&")
+        || command.contains("||")
+        || command.contains('\n')
+        || command.contains("export ")
+        || command.contains("printf '")
+        || command.contains("printf \"")
+        || POSIX_MARKERS.iter().any(|marker| command.contains(marker))
+        || contains_posix_env_reference(command)
+}
+
+#[cfg(any(windows, test))]
+fn looks_like_powershell_script(command: &str) -> bool {
+    let command = command.trim_start();
+    command.starts_with("powershell ")
+        || command.starts_with("pwsh ")
+        || command.contains("$LASTEXITCODE")
+        || command.contains("$env:")
+        || command.contains("Join-Path ")
+        || command.contains("Test-Path ")
+        || command.contains("Add-Content ")
+        || command.contains("Set-Content ")
+        || command.contains("Get-ChildItem ")
+        || command.contains("New-Item ")
+        || command.contains("Write-Host ")
+        || command.contains("Write-Error ")
+        || command.contains("throw ")
+}
+
+#[cfg(any(windows, test))]
+fn contains_posix_env_reference(command: &str) -> bool {
+    let bytes = command.as_bytes();
+    bytes.windows(2).any(|window| {
+        window[0] == b'$'
+            && (window[1] == b'{' || window[1] == b'_' || window[1].is_ascii_alphabetic())
+    })
+}
+
+#[cfg(windows)]
+fn powershell_shell_command(command: &str) -> Command {
+    let executable = if has_pwsh() { "pwsh" } else { "powershell" };
+    let mut shell = Command::new(executable);
+    shell.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+    shell
+}
+
+#[cfg(windows)]
+fn has_bash() -> bool {
+    static HAS_BASH: OnceLock<bool> = OnceLock::new();
+    *HAS_BASH.get_or_init(|| {
+        Command::new("bash")
+            .arg("--version")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(windows)]
+fn has_pwsh() -> bool {
+    static HAS_PWSH: OnceLock<bool> = OnceLock::new();
+    *HAS_PWSH.get_or_init(|| {
+        Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
 }
 
 fn shell_single_quote(command: &str) -> String {
