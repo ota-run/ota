@@ -5815,10 +5815,10 @@ mod tests {
 
     #[cfg(windows)]
     fn normalize_windows_fake_container_probe_matchers(script: &str) -> String {
-        script
+        let script = script
             .split("\r\n")
             .map(|line| {
-                if line.contains("echo %* | findstr /C:\"command -v '")
+                let line = if line.contains("echo %* | findstr /C:\"command -v '")
                     && line.contains("\" >nul && (")
                 {
                     let indent = line.split("echo %* |").next().unwrap_or_default();
@@ -5827,10 +5827,18 @@ mod tests {
                     )
                 } else {
                     line.to_string()
-                }
+                };
+                line.replace("echo %* |", "echo(!__OTA_ARGS! |")
             })
             .collect::<Vec<_>>()
-            .join("\r\n")
+            .join("\r\n");
+        if let Some(remainder) = script.strip_prefix("@echo off\r\n") {
+            format!(
+                "@echo off\r\nsetlocal EnableDelayedExpansion\r\nset \"__OTA_ARGS=%*\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:^=^^!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:&=^&!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:|=^|!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:<=^<!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:>=^>!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:(=^(!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:)=^)!\"\r\n{remainder}"
+            )
+        } else {
+            script
+        }
     }
 
     #[cfg(windows)]
