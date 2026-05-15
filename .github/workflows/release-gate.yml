@@ -84,18 +84,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo_bin=""
-          if command -v rustup >/dev/null 2>&1; then
-            cargo_bin="$(rustup which cargo 2>/dev/null || true)"
+          cargo_bin="$(command -v cargo || true)"
+
+          if [ -z "${cargo_bin}" ] && command -v rustup >/dev/null 2>&1; then
+            rustc_bin="$(rustup which rustc 2>/dev/null || true)"
+            if [ -n "${rustc_bin}" ]; then
+              rustc_dir="$(dirname "${rustc_bin}")"
+              if [ -x "${rustc_dir}/cargo" ]; then
+                cargo_bin="${rustc_dir}/cargo"
+              fi
+            fi
           fi
+
           if [ -z "${cargo_bin}" ]; then
-            cargo_bin="$(command -v cargo || true)"
+            cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+            if [ -x "${cargo_home}/bin/cargo" ]; then
+              cargo_bin="${cargo_home}/bin/cargo"
+            fi
           fi
           if [ -z "${cargo_bin}" ] || [ ! -x "${cargo_bin}" ]; then
             echo "cargo not found in PATH or the active rustup toolchain"
             exit 1
           fi
 
+          "${cargo_bin}" -vV
           "${cargo_bin}" install --path . --locked
 
       - name: Ensure cargo is on PATH (Windows)
