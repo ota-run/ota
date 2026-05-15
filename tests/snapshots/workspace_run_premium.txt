@@ -6,7 +6,7 @@
 Path: ./apps/web
 Contract: <TMP>/apps/web/ota.yaml
 Task: setup
-Command: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
+Command: echo ok > ready.txt
 
 
 🦦 WORKSPACE RUN SUMMARY

@@ -24330,9 +24330,11 @@ pub fn workspace_explain(
                 let summary = workspace_explain_summary(&report);
 
                 match format {
-                    OutputFormat::Text => {
-                        render_workspace_explain_text(&compact_path_display, &report)
-                    }
+                    OutputFormat::Text => render_workspace_explain_text(
+                        &compact_path_display,
+                        &report,
+                        &resolved_path,
+                    ),
                     OutputFormat::Json => CommandOutput {
                         stdout: to_json(&WorkspaceExplainSuccess {
                             ok: report.ok,
@@ -26024,6 +26026,10 @@ fn receipt_storage_path_display(path: &Path) -> String {
     compact_path_separator_style(&path.display().to_string())
 }
 
+fn native_path_display_text(path: &Path) -> String {
+    strip_windows_extended_prefix(&path.display().to_string())
+}
+
 fn read_promoted_repo_receipt_baseline(
     root: &Path,
 ) -> Result<Option<PromotedRepoReceiptBaseline>, String> {
@@ -26619,7 +26625,7 @@ fn load_repo_receipt_baseline(
     load_explicit_repo_receipt_baseline(Path::new(baseline)).map(|record| {
         ResolvedRepoReceiptBaseline {
             source: String::from("file"),
-            selection_path: Some(receipt_storage_path_display(&record.archive_path)),
+            selection_path: Some(native_path_display_text(&record.archive_path)),
             promoted_at: None,
             contract_identity: repo_receipt_contract_identity_from_archive_record(&record),
             record,
@@ -26673,10 +26679,15 @@ fn build_repo_receipt_diff_report(
         }
     }
 
+    let baseline_archive_path = if baseline.source == "file" {
+        native_path_display_text(&baseline.record.archive_path)
+    } else {
+        receipt_storage_path_display(&baseline.record.archive_path)
+    };
     let baseline = ReceiptDiffBaseline {
         source: baseline.source,
         selection_path: baseline.selection_path,
-        archive_path: Some(receipt_storage_path_display(&baseline.record.archive_path)),
+        archive_path: Some(baseline_archive_path),
         archived_at: baseline.record.archived_at,
         promoted_at: baseline.promoted_at,
         contract_identity: baseline.contract_identity,
@@ -38175,10 +38186,10 @@ tasks:
     }
 
     #[test]
-    fn compact_path_display_text_strips_windows_extended_prefix() {
+    fn compact_path_display_text_normalizes_windows_separators_after_stripping_prefix() {
         assert_eq!(
             super::compact_path_display_text(Path::new(r"\\?\C:\repo\ota.yaml")),
-            r"C:\repo\ota.yaml"
+            "C:/repo/ota.yaml"
         );
     }
 
@@ -38187,6 +38198,14 @@ tasks:
         assert_eq!(
             super::compact_relative_path_display_text(Path::new(r"nested\repo-baseline.json")),
             "nested/repo-baseline.json"
+        );
+    }
+
+    #[test]
+    fn native_path_display_text_strips_windows_extended_prefix() {
+        assert_eq!(
+            super::native_path_display_text(Path::new(r"\\?\C:\repo\ota.yaml")),
+            r"C:\repo\ota.yaml"
         );
     }
 
@@ -51387,7 +51406,7 @@ fn shorter_relative_path(base: &Path, target: &Path, absolute_display: &str) -> 
 }
 
 fn compact_path_display_text(path: &Path) -> String {
-    strip_windows_extended_prefix(&path.display().to_string())
+    compact_path_separator_style(&path.display().to_string())
 }
 
 fn compact_relative_path_display_text(path: &Path) -> String {
@@ -51454,10 +51473,7 @@ fn command_for_contract(command: &str, contract_path: &Path) -> String {
     if contract_path_matches_current_dir(contract_path) {
         command.to_string()
     } else {
-        let display_path = compact_path(
-            &normalized_display_path(contract_path),
-            DEFAULT_CONTRACT_FILE,
-        );
+        let display_path = command_target_display_path(contract_path, DEFAULT_CONTRACT_FILE);
         format!("{command} {display_path}")
     }
 }
@@ -51500,7 +51516,7 @@ fn command_for_repo(command: &str, repo_path: &Path) -> String {
     }) {
         command.to_string()
     } else {
-        format!("{command} {}", compact_repo_path(repo_path))
+        format!("{command} {}", command_target_display_path(repo_path, "."))
     }
 }
 
@@ -51508,7 +51524,63 @@ fn command_for_workspace(command: &str, workspace_path: &Path) -> String {
     if workspace_path_matches_current_dir(workspace_path) {
         command.to_string()
     } else {
-        format!("{command} {}", compact_workspace_path(workspace_path))
+        format!(
+            "{command} {}",
+            command_target_display_path(workspace_path, DEFAULT_WORKSPACE_FILE)
+        )
+    }
+}
+
+fn command_target_display_path(path: &Path, fallback: &str) -> String {
+    let current_dir = std::env::current_dir().ok();
+    command_target_display_path_relative_to(path, fallback, current_dir.as_deref())
+}
+
+fn command_target_display_path_relative_to(
+    path: &Path,
+    fallback: &str,
+    current_dir: Option<&Path>,
+) -> String {
+    let Some(current_dir) = current_dir else {
+        return native_path_display_text(path);
+    };
+    let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        current_dir.join(path)
+    };
+    let absolute = fs::canonicalize(&absolute).unwrap_or(absolute);
+    if let Ok(relative) = absolute.strip_prefix(&current_dir) {
+        if relative.as_os_str().is_empty() {
+            return String::from(".");
+        }
+        return format!("./{}", compact_relative_path_display_text(relative));
+    }
+
+    let absolute_display = if absolute.is_absolute() {
+        native_path_display_text(&absolute)
+    } else {
+        String::new()
+    };
+    if let Some(relative) = shorter_relative_path(&current_dir, &absolute, &absolute_display) {
+        return relative;
+    }
+    if absolute.is_absolute() {
+        return absolute_display;
+    }
+
+    let tail = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(fallback);
+    match path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+    {
+        Some(parent) => format!("./{parent}/{tail}"),
+        None => tail.to_string(),
     }
 }
 
@@ -61278,7 +61350,7 @@ fn render_repo_receipt(
                 let archive_path = report
                     .archive_path
                     .as_ref()
-                    .map(|path| path.display().to_string());
+                    .map(|path| receipt_storage_path_display(path));
                 let payload = ReceiptSuccess {
                     ok: report.receipt.ok,
                     path: json_path,
