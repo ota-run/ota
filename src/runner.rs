@@ -49,8 +49,8 @@ use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_backend_probe_failure,
     container_engine_candidates, container_engine_candidates_from_backend,
-    context_dependency_isolation_paths, execution_image, format_lifecycle,
-    matching_execution_context_name, resolve_engine_path, selected_container_engine,
+    container_engine_command, context_dependency_isolation_paths, execution_image,
+    format_lifecycle, matching_execution_context_name, selected_container_engine,
     selected_container_engine_from_backend,
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
@@ -2658,10 +2658,6 @@ fn signal_forwarding_shell_script(command: String) -> String {
 #[cfg(windows)]
 fn signal_forwarding_shell_script(command: String) -> String {
     command
-}
-
-fn container_engine_command(engine: &str) -> Command {
-    Command::new(resolve_engine_path(engine))
 }
 
 fn ephemeral_container_stream_command(engine: &str, container_name: &str) -> Command {

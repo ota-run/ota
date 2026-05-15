@@ -344,6 +344,24 @@ pub(crate) fn resolve_engine_path(name: &str) -> PathBuf {
     resolve_command_path(name).unwrap_or_else(|| PathBuf::from(name))
 }
 
+#[cfg(windows)]
+fn command_uses_cmd_wrapper(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat"))
+}
+
+pub(crate) fn container_engine_command(name: &str) -> Command {
+    let path = resolve_engine_path(name);
+    #[cfg(windows)]
+    if command_uses_cmd_wrapper(&path) {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(path);
+        return command;
+    }
+    Command::new(path)
+}
+
 pub(crate) fn matching_execution_context_name<'a>(
     execution: Option<&'a Execution>,
     backend: Backend,

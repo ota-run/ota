@@ -41,9 +41,9 @@ use serde_json::Value as JsonValue;
 
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
-    container_engine_candidates_from_backend, matching_declared_execution_context_name,
-    preferred_container_backend_probe_failure, resolve_engine_path, selected_container_engine,
-    selected_container_engine_from_backend,
+    container_engine_candidates_from_backend, container_engine_command,
+    matching_declared_execution_context_name, preferred_container_backend_probe_failure,
+    selected_container_engine, selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
     LoadPolicyPackError, LoadedOrgPolicyPack, ProvisioningAction, ProvisioningBackendRequest,
@@ -6106,7 +6106,7 @@ fn version_command_in_container(
     working_dir: &Path,
 ) -> Command {
     let container_name = crate::runner::ephemeral_container_name(working_dir, image, engine);
-    let mut command = Command::new(resolve_engine_path(engine));
+    let mut command = container_engine_command(engine);
     command
         .arg("run")
         .arg("--rm")
