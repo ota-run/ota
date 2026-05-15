@@ -127,7 +127,22 @@ jobs:
 
       - name: Run release gate (non-Windows)
         if: runner.os != 'Windows'
-        run: ota run release-gate --backend native --stream
+        run: |
+          set -euo pipefail
+          if command -v rustup >/dev/null 2>&1; then
+            CARGO_PATH="$(rustup which cargo)"
+          elif command -v cargo >/dev/null 2>&1; then
+            CARGO_PATH="$(command -v cargo)"
+          else
+            echo "cargo not found after install"
+            exit 1
+          fi
+          CARGO_DIR="$(dirname "$CARGO_PATH")"
+          export PATH="${CARGO_DIR}:$PATH"
+          echo "Using cargo at $CARGO_PATH"
+          command -v cargo
+          "$CARGO_PATH" --version
+          ota run release-gate --backend native --stream
 
       - name: Run release gate (Windows) - cargo version
         if: runner.os == 'Windows'
