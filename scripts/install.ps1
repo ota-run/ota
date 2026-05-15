@@ -25,7 +25,8 @@
 param(
     [switch]$FromSource,
     [switch]$FromGit,
-    [switch]$FromRelease
+    [switch]$FromRelease,
+    [switch]$SetupPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,6 +83,10 @@ elseif ($FromGit.IsPresent)
 elseif ($FromRelease.IsPresent)
 {
     $bootstrapArgs += "-FromRelease"
+}
+if ($SetupPath.IsPresent)
+{
+    $bootstrapArgs += "-SetupPath"
 }
 
 try {

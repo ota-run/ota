@@ -25,7 +25,8 @@
 param(
     [switch]$FromSource,
     [switch]$FromGit,
-    [switch]$FromRelease
+    [switch]$FromRelease,
+    [switch]$SetupPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -175,18 +176,45 @@ function Download-OtaFile {
     }
 }
 
-function Ensure-OtaOnPath {
+function Test-OtaUserPathContains {
     param([string]$Dir)
+
+    if (-not (Test-OtaWindows)) {
+        return $true
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ([string]::IsNullOrWhiteSpace($userPath)) {
+        return $false
+    }
+
+    $parts = $userPath -split ";" | Where-Object { $_ -and $_.Trim() -ne "" }
+    return $parts -contains $Dir
+}
+
+function Ensure-OtaOnPath {
+    param(
+        [string]$Dir,
+        [switch]$Persist
+    )
 
     if ([string]::IsNullOrWhiteSpace($Dir)) {
         return
     }
 
     $separator = [System.IO.Path]::PathSeparator
-    if ([string]::IsNullOrWhiteSpace($env:Path)) {
-        $env:Path = $Dir
-    } else {
-        $env:Path = "$Dir$separator$env:Path"
+    $pathParts = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:Path)) {
+        $pathParts = $env:Path -split [System.Text.RegularExpressions.Regex]::Escape($separator) |
+            Where-Object { $_ -and $_.Trim() -ne "" }
+    }
+
+    if ($pathParts -notcontains $Dir) {
+        if ([string]::IsNullOrWhiteSpace($env:Path)) {
+            $env:Path = $Dir
+        } else {
+            $env:Path = "$Dir$separator$env:Path"
+        }
     }
 
     try {
@@ -194,16 +222,17 @@ function Ensure-OtaOnPath {
             return
         }
 
-        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        $parts = @()
-        if (-not [string]::IsNullOrWhiteSpace($userPath)) {
-            $parts = $userPath -split ";" | Where-Object { $_ -and $_.Trim() -ne "" }
-        }
-
-        if ($parts -contains $Dir) {
+        if (Test-OtaUserPathContains $Dir) {
             return
         }
 
+        if (-not $Persist.IsPresent) {
+            Write-OtaWarn "warning: add $Dir to PATH to run 'ota' directly from new shells"
+            Write-OtaWarn "next: rerun with -SetupPath to persist it automatically"
+            return
+        }
+
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
         $updatedPath = if ([string]::IsNullOrWhiteSpace($userPath)) { $Dir } else { "$userPath;$Dir" }
         [Environment]::SetEnvironmentVariable("Path", $updatedPath, "User")
     } catch {
@@ -467,11 +496,18 @@ function Install-ReleaseBinary {
                 $actual = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
                 if ($actual -ne $expected) {
                     Write-OtaError "error: checksum verification failed for $asset"
-                    return $false
+                    return "failed"
                 }
+            } else {
+                Write-OtaError "error: checksum file does not include $asset"
+                return "failed"
             }
         } else {
-            Write-OtaWarn "warning: checksums not found; skipping checksum verification"
+            if ($releaseBase -eq "https://github.com/ota-run/ota/releases" -and -not $env:OTA_ALLOW_MISSING_CHECKSUMS) {
+                Write-OtaError "error: checksums not found for official ota release asset"
+                return "failed"
+            }
+            Write-OtaWarn "warning: checksums not found; skipping checksum verification by explicit/custom policy"
         }
 
         if ($asset.EndsWith(".zip")) {
@@ -519,7 +555,7 @@ function Install-ReleaseBinary {
                 throw
             }
 
-            Ensure-OtaOnPath $binDir
+            Ensure-OtaOnPath $binDir -Persist:$SetupPath.IsPresent
             Write-OtaInfo "installed ota to $destination"
             $script:InstalledBinaryPath = $destination
             return "installed"
@@ -590,6 +626,10 @@ else
     if ($releaseInstallStatus -eq "pending")
     {
         exit 0
+    }
+    if ($releaseInstallStatus -eq "failed")
+    {
+        exit 1
     }
     if ($releaseInstallStatus -ne "installed")
     {

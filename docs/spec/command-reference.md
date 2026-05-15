@@ -107,6 +107,7 @@ ota currently ships these commands:
 - `ota policy review`
 - `ota uninstall`
 - `ota self-update` / `ota upgrade`
+- `ota skills install`
 - `ota workspace init`
 - `ota workspace detect`
 - `ota workspace validate`
@@ -1803,6 +1804,34 @@ JSON output:
 - `findings`
 
 Use this when you need to understand what policy ota enforced, why a repo-contract request is outside the approved policy boundary, or whether the org policy pack itself needs to change.
+
+## `ota skills install`
+
+Install the canonical Ota skill for an agent tool after the `ota` binary is available.
+
+```bash
+ota skills install --agent codex
+ota skills install --agent claude
+ota skills install --agent codex --json
+```
+
+Current behavior:
+
+- installs the first-party `ota` skill embedded in the Ota binary
+- requires `--agent codex` or `--agent claude` so Ota writes to the correct tool-specific skill directory
+- writes Codex installs to `$CODEX_HOME/skills/ota` when `CODEX_HOME` is set, otherwise `~/.codex/skills/ota`
+- writes Claude Code installs to `~/.claude/skills/ota`
+- stages and validates the complete skill tree before replacing an existing install
+- keeps skill lifecycle ownership in the CLI instead of installer scripts
+
+JSON output:
+
+- `ok`
+- `skill`
+- `agent`
+- `path`
+
+Use this after installing or updating Ota when you want Codex or Claude Code to use Ota-specific contract authoring and repo-readiness guidance.
 
 ## `ota completion`
 

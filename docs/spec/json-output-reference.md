@@ -75,6 +75,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota assist wire-setup --json` when you want a deterministic setup-wiring proposal or apply result without scraping review text
 - use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
+- use `ota skills install --json --agent <agent>` when you want the installed first-party skill target path
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
 - use `ota policy init --json` when you want the starter org policy pack preview or write result
 - use `ota policy review --json` when you need policy-authority review over a repo contract
@@ -95,6 +96,7 @@ human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
+- `ota skills install --json`: use `ok`, `skill`, `agent`, and `path`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `surfaces`, `services`, and `tasks`
 - `ota proof runtime --json`: use `mode`, `workflow`, `phase`, `summary`, and `artifacts`; inspect the referenced `doctor.json` and `topology.json` artifacts instead of expecting the proof wrapper to duplicate those payloads

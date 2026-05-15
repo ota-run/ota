@@ -195,6 +195,10 @@ const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 const DEFAULT_POLICY_DIR: &str = ".ota";
 const DEFAULT_POLICY_FILE: &str = "org-policy.yaml";
 const DEFAULT_RECEIPT_BASELINE_FILE: &str = "repo-baseline.json";
+const OTA_SKILL_NAME: &str = "ota";
+const OTA_SKILL_MD: &str = include_str!("../../skills/ota/SKILL.md");
+const OTA_SKILL_OFFICIAL_SOURCES_MD: &str =
+    include_str!("../../skills/ota/references/official-sources.md");
 thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
@@ -13322,6 +13326,185 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) ->
         debug,
         vec![String::from("DEBUG command=self-update")],
     )
+}
+
+pub fn skills_install(agent: &str, format: OutputFormat, debug: bool) -> CommandOutput {
+    let target_dir = match skill_target_dir(agent) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure_with_code(error, 2),
+                debug,
+                vec![String::from("DEBUG command=skills install")],
+            );
+        }
+    };
+
+    let output = match install_embedded_ota_skill(&target_dir) {
+        Ok(()) => match format {
+            OutputFormat::Text => {
+                CommandOutput::success(render_skills_install_text(agent, target_dir.as_path()))
+            }
+            OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                "ok": true,
+                "skill": OTA_SKILL_NAME,
+                "agent": agent,
+                "path": target_dir,
+            }))),
+        },
+        Err(error) => CommandOutput::failure(format!(
+            "failed to install `{OTA_SKILL_NAME}` skill for `{agent}`: {error}"
+        )),
+    };
+
+    finalize_debug(
+        output,
+        debug,
+        vec![
+            String::from("DEBUG command=skills install"),
+            format!("DEBUG agent={agent}"),
+            format!("DEBUG target={}", target_dir.display()),
+        ],
+    )
+}
+
+fn render_skills_install_text(agent: &str, target_dir: &Path) -> String {
+    format!(
+        "READY\n- {skill} skill -> {target}\n- agent -> {agent}",
+        skill = OTA_SKILL_NAME,
+        target = target_dir.display()
+    )
+}
+
+fn skill_target_dir(agent: &str) -> Result<PathBuf, String> {
+    match agent {
+        "codex" => {
+            if let Some(home) = env::var_os("CODEX_HOME") {
+                return Ok(PathBuf::from(home).join("skills").join(OTA_SKILL_NAME));
+            }
+            home_dir()
+                .map(|home| home.join(".codex").join("skills").join(OTA_SKILL_NAME))
+                .ok_or_else(|| {
+                    String::from("could not resolve home directory for Codex skill install")
+                })
+        }
+        "claude" => home_dir()
+            .map(|home| home.join(".claude").join("skills").join(OTA_SKILL_NAME))
+            .ok_or_else(|| {
+                String::from("could not resolve home directory for Claude Code skill install")
+            }),
+        _ => Err(format!("unsupported skill agent `{agent}`")),
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn install_embedded_ota_skill(target_dir: &Path) -> Result<(), String> {
+    let parent = target_dir
+        .parent()
+        .ok_or_else(|| format!("invalid target path `{}`", target_dir.display()))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "could not create skill parent directory `{}`: {error}",
+            parent.display()
+        )
+    })?;
+
+    let temp_dir = unique_sibling_path(parent, ".ota.tmp");
+    let backup_dir = unique_sibling_path(parent, ".ota.backup");
+
+    write_embedded_skill_tree(&temp_dir).inspect_err(|_| {
+        let _ = remove_path_all(&temp_dir);
+    })?;
+
+    if !skill_tree_is_complete(&temp_dir) {
+        let _ = remove_path_all(&temp_dir);
+        return Err(String::from("embedded skill tree was incomplete"));
+    }
+
+    let had_existing = target_dir.exists() || target_dir.is_symlink();
+    if had_existing {
+        fs::rename(target_dir, &backup_dir).map_err(|error| {
+            let _ = remove_path_all(&temp_dir);
+            format!(
+                "could not move existing skill install `{}` aside: {error}",
+                target_dir.display()
+            )
+        })?;
+    }
+
+    if let Err(error) = fs::rename(&temp_dir, target_dir) {
+        if had_existing {
+            let _ = fs::rename(&backup_dir, target_dir);
+        }
+        let _ = remove_path_all(&temp_dir);
+        return Err(format!(
+            "could not move staged skill into `{}`: {error}",
+            target_dir.display()
+        ));
+    }
+
+    if had_existing {
+        let _ = remove_path_all(&backup_dir);
+    }
+
+    Ok(())
+}
+
+fn write_embedded_skill_tree(temp_dir: &Path) -> Result<(), String> {
+    let references_dir = temp_dir.join("references");
+    fs::create_dir_all(&references_dir).map_err(|error| {
+        format!(
+            "could not create staged skill directory `{}`: {error}",
+            references_dir.display()
+        )
+    })?;
+    fs::write(temp_dir.join("SKILL.md"), OTA_SKILL_MD).map_err(|error| {
+        format!(
+            "could not write staged skill file `{}`: {error}",
+            temp_dir.join("SKILL.md").display()
+        )
+    })?;
+    fs::write(
+        references_dir.join("official-sources.md"),
+        OTA_SKILL_OFFICIAL_SOURCES_MD,
+    )
+    .map_err(|error| {
+        format!(
+            "could not write staged skill reference `{}`: {error}",
+            references_dir.join("official-sources.md").display()
+        )
+    })?;
+    Ok(())
+}
+
+fn skill_tree_is_complete(path: &Path) -> bool {
+    path.join("SKILL.md").is_file()
+        && path
+            .join("references")
+            .join("official-sources.md")
+            .is_file()
+}
+
+fn unique_sibling_path(parent: &Path, prefix: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    parent.join(format!("{prefix}.{}.{}", std::process::id(), nonce))
+}
+
+fn remove_path_all(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
+        Ok(_) => fs::remove_file(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn policy_init_target_error(path: &Path) -> String {
