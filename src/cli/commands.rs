@@ -49464,8 +49464,8 @@ tasks:
         ) {
             "windows" => (
                 "windows",
-                "activation:\n          kind: command\n          shell: cmd\n          run: type nul > native.ready",
-                "cmd /d /s /c \"if not exist native.ready exit /b 1\"",
+                "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
+                "if not defined OTA_NATIVE_ACTIVATED exit /b 1",
             ),
             "macos" => (
                 "macos",
@@ -50825,9 +50825,9 @@ workflows:
         let contract_path = repo.path().join("ota.yaml");
         let (service_start, service_healthcheck, setup_task) = if cfg!(windows) {
             (
-                "cmd /d /s /c \"if exist .env.local (echo service>>run.log) else exit /b 1\"",
-                "cmd /d /s /c \"if exist .env.local exit /b 0 else exit /b 1\"",
-                "run: cmd /d /s /c \"echo setup>>run.log && type nul > .env.local\"",
+                "if exist .env.local (echo service>>run.log) else exit /b 1",
+                "if exist .env.local exit /b 0 else exit /b 1",
+                "run: echo setup>>run.log & echo ready>.env.local",
             )
         } else {
             (
@@ -50891,11 +50891,11 @@ tasks:
             windows
         ) {
             (
-                "cmd /d /s /c \"echo postgres>>run.log && type nul > db.ready\"",
-                "cmd /d /s /c \"if exist db.ready exit /b 0 else exit /b 1\"",
-                "cmd /d /s /c \"if exist .env.local (echo app>>run.log) else exit /b 1\"",
-                "cmd /d /s /c \"if exist .env.local exit /b 0 else exit /b 1\"",
-                "run: cmd /d /s /c \"if not exist db.ready exit /b 1 && echo setup>>run.log && type nul > .env.local\"",
+                "echo postgres>>run.log & echo ready>db.ready",
+                "if exist db.ready exit /b 0 else exit /b 1",
+                "if exist .env.local (echo app>>run.log) else exit /b 1",
+                "if exist .env.local exit /b 0 else exit /b 1",
+                "run: if exist db.ready (echo setup>>run.log & echo ready>.env.local) else exit /b 1",
             )
         } else {
             (
@@ -51104,9 +51104,9 @@ workflows:
         let contract_path = repo.path().join("ota.yaml");
         let (backend_ready, frontend_ready, setup_task) = if cfg!(windows) {
             (
-                "cmd /d /s /c \"if exist .env.local exit /b 0 else exit /b 1\"",
-                "cmd /d /s /c exit /b 1",
-                "run: cmd /d /s /c \"type nul > .env.local\"",
+                "if exist .env.local exit /b 0 else exit /b 1",
+                "exit /b 1",
+                "run: echo ready>.env.local",
             )
         } else {
             ("test -f .env.local", "exit 1", "script: touch .env.local")
