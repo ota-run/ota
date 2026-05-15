@@ -29,7 +29,7 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value;
 use thiserror::Error;
 
-use crate::execution::container_backend_probe_failure;
+use crate::execution::{container_backend_probe_failure, container_engine_command};
 use crate::policy_pack::{
     ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest, ProvisioningTargetKind,
     evaluate_actual_version_policy_match,
@@ -3920,16 +3920,14 @@ fn provisioning_loader_label(target: &ProvisioningExecutionTarget) -> String {
     }
 }
 
-fn command_output(
+fn command_output_from_child(
+    mut child: Command,
     command: &str,
-    args: &[&str],
     working_dir: &Path,
     mode: ProvisioningOutputMode,
     loader_label: Option<&str>,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    let mut child = Command::new(command);
-    child.args(args).current_dir(working_dir);
-
+    child.current_dir(working_dir);
     match mode {
         ProvisioningOutputMode::Capture => {
             let output = child
@@ -4001,6 +3999,18 @@ fn command_output(
     }
 }
 
+fn command_output(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+    mode: ProvisioningOutputMode,
+    loader_label: Option<&str>,
+) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+    let mut child = Command::new(command);
+    child.args(args);
+    command_output_from_child(child, command, working_dir, mode, loader_label)
+}
+
 fn container_command_output(
     engine: &str,
     args: &[&str],
@@ -4008,7 +4018,9 @@ fn container_command_output(
     mode: ProvisioningOutputMode,
     loader_label: Option<&str>,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    command_output(engine, args, working_dir, mode, loader_label)
+    let mut child = container_engine_command(engine);
+    child.args(args);
+    command_output_from_child(child, engine, working_dir, mode, loader_label)
 }
 
 fn run_container_command(

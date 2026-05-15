@@ -6720,6 +6720,7 @@ exec /bin/sh -lc "$1"
     fn normalize_snapshot_dynamic_fields(name: &str, value: &str) -> String {
         let mut normalized = value.to_string();
         if matches!(name, "doctor_premium.txt" | "doctor_plain_premium.txt") {
+            normalized = normalized.replace("./bin/node.cmd", "./bin/node");
             normalized = normalized.replace(
                 "`./bin/node` with\n     `node --version`",
                 "`./bin/node` with `node --version`",
