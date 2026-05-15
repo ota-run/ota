@@ -1720,12 +1720,7 @@ repos:
             errors.errors()[0].to_string(),
             format!(
                 "workspace repo `web` workflow `backend` is not declared in contract `{}`",
-                fixture
-                    .path()
-                    .join("apps")
-                    .join("web")
-                    .join("ota.yaml")
-                    .display()
+                fixture.path().join("apps/web").join("ota.yaml").display()
             )
         );
     }
