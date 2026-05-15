@@ -68053,10 +68053,12 @@ fn bash_executable() -> Option<PathBuf> {
 #[cfg(windows)]
 fn find_bash_executable() -> Option<PathBuf> {
     let mut candidates = env::var_os("PATH")
-        .into_iter()
-        .flat_map(|paths| env::split_paths(&paths))
-        .flat_map(|dir| [dir.join("bash.exe"), dir.join("bash")])
-        .collect::<Vec<_>>();
+        .map(|paths| {
+            env::split_paths(&paths)
+                .flat_map(|dir| [dir.join("bash.exe"), dir.join("bash")])
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
         if let Some(base) = env::var_os(key) {
             let base = PathBuf::from(base);
