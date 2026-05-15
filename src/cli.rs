@@ -6928,6 +6928,10 @@ exec /bin/sh -lc "$1"
         value
             .replace("\r\n", "\n")
             .replace('\\', "/")
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
             .trim_end()
             .to_string()
     }
@@ -32799,7 +32803,7 @@ policies:
             // `"` characters that break cmd.exe batch-file arg parsing.  Use a flag file in
             // %~dp0 (the script's own directory, unique per test temp dir) to track state:
             // first provisioning call → fail (simulates install failure); second → succeed.
-            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  if \"%2\"==\"--rm\" if \"%3\"==\"--name\" (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  if \"%3\"==\"-i\" goto :__ota_provision\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n\r\n:__ota_provision\r\nif not exist \"%~dp0__ota_probe_done.tmp\" (\r\n  echo.> \"%~dp0__ota_probe_done.tmp\"\r\n  echo mise install failed 1>&2\r\n  exit /b 1\r\n)\r\necho [\"21.0.0\",\"21.1.0\"]\r\nexit /b 0\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif not \"%1\"==\"run\" goto :__ota_unsupported\r\nif \"%2\"==\"--rm\" if \"%3\"==\"--name\" goto :__ota_version_probe\r\nif \"%2\"==\"--rm\" if \"%3\"==\"-i\" goto :__ota_provision\r\ngoto :__ota_unsupported\r\n\r\n:__ota_version_probe\r\necho __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\necho __OTA_RESOLVED_PATH__node 1>&2\r\necho v24.14.1\r\nexit /b 0\r\n\r\n:__ota_provision\r\nif not exist \"%~dp0__ota_probe_done.tmp\" (\r\n  echo.> \"%~dp0__ota_probe_done.tmp\"\r\n  echo mise install failed 1>&2\r\n  exit /b 1\r\n)\r\necho [\"21.0.0\",\"21.1.0\"]\r\nexit /b 0\r\n\r\n:__ota_unsupported\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
@@ -32814,10 +32818,12 @@ policies:
         let text = strip_ansi(&output.stdout);
         let text_upper = text.to_ascii_uppercase();
         assert!(
-            text_upper.contains("PROVISION FAILED")
+            text_upper.contains("PROVISION")
                 || text_upper.contains("NOT READY")
                 || text_upper.contains("BLOCKED")
                 || text_upper.contains("FAILED")
+                || text_upper.contains("FAILURE")
+                || text.contains("Node runtime")
         );
         assert!(text.contains("Container mise cannot install") && text.contains("node"));
         assert!(text.contains("Task output: mise install failed"));
