@@ -30846,7 +30846,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container pacman cannot locate required package: jq"));
+        assert!(text.contains(
+            "Primary Blocker Jq cannot be provisioned through `pacman` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing tool: jq"));
     }
@@ -32620,7 +32622,7 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("FAILED"));
+        assert!(text.contains("PROVISION FAILED"));
         assert!(text.contains("Container mise cannot install pinned version: node"));
         assert!(text.contains("Task output: mise install failed"));
         assert!(text.contains("ota execution plan --mode container"));
