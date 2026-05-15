@@ -85,45 +85,19 @@ jobs:
         run: |
           set -euo pipefail
           if command -v rustup >/dev/null 2>&1; then
-            CARGO_CMD=""
-            if cargo_candidate="$(rustup which cargo 2>/dev/null || true)"; then
-              if [ -x "$cargo_candidate" ]; then
-                CARGO_CMD="$cargo_candidate"
-              fi
-            fi
-
-            if [ -z "$CARGO_CMD" ] && active_toolchain="$(rustup default 2>/dev/null | awk '{print $1}' || true)"; then
-              rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
-              candidate="$rustup_home/toolchains/$active_toolchain/bin/cargo"
-              if [ ! -x "$candidate" ]; then
-                candidate="$rustup_home/toolchains/$active_toolchain/bin/cargo.exe"
-              fi
-              if [ -x "$candidate" ]; then
-                CARGO_CMD="$candidate"
-              fi
-            fi
-
-            if [ -z "$CARGO_CMD" ] && cargo_candidate="$(command -v cargo || true)"; then
-              if [ -x "$cargo_candidate" ]; then
-                CARGO_CMD="$cargo_candidate"
-              fi
-            fi
-
-            if [ -z "$CARGO_CMD" ]; then
-              echo "cargo not found in PATH or the active rustup toolchain"
-              exit 1
-            fi
+            rustup run stable cargo -vV
+            rustup run stable rustc -vV
+            rustup run stable cargo install --path . --locked
           else
             cargo_candidate="$(command -v cargo || true)"
             if [ -z "${cargo_candidate}" ]; then
               echo "cargo not found in PATH"
               exit 1
             fi
-            CARGO_CMD="${cargo_candidate}"
+            "${cargo_candidate}" -vV
+            rustc -vV
+            "${cargo_candidate}" install --path . --locked
           fi
-
-          "$CARGO_CMD" -vV
-          "$CARGO_CMD" install --path . --locked
 
       - name: Ensure cargo is on PATH (Windows)
         if: runner.os == 'Windows'

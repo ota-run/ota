@@ -8051,7 +8051,12 @@ mod tests {
 
     fn write_fake_command(bin_dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = if cfg!(windows) {
-            bin_dir.join(format!("{name}.cmd"))
+            let name_path = Path::new(name);
+            if name_path.extension().is_some() {
+                bin_dir.join(name_path)
+            } else {
+                bin_dir.join(format!("{name}.cmd"))
+            }
         } else {
             bin_dir.join(name)
         };
@@ -8080,6 +8085,51 @@ mod tests {
         }
 
         path
+    }
+
+    #[cfg(windows)]
+    fn assert_windows_path_eq(actual: Option<&Path>, expected: &Path) {
+        assert_eq!(
+            actual.map(|path| path.display().to_string().to_ascii_lowercase()),
+            Some(expected.display().to_string().to_ascii_lowercase())
+        );
+    }
+
+    #[cfg(windows)]
+    fn assert_windows_path_text_contains(text: &str, path: &Path) {
+        assert!(
+            text.to_ascii_lowercase()
+                .contains(&path.display().to_string().to_ascii_lowercase()),
+            "{text}"
+        );
+    }
+
+    #[cfg(windows)]
+    fn fake_remote_ssh_body(version: &str) -> String {
+        format!(
+            "@echo off\r\necho Linux\r\necho {started} 1>&2\r\necho {path}/usr/bin/jq 1>&2\r\necho {version}\r\nexit /b 0\r\n",
+            started = super::CONTAINER_PROBE_STARTED_MARKER,
+            path = super::CONTAINER_PROBE_PATH_MARKER,
+        )
+    }
+
+    #[cfg(unix)]
+    fn fake_remote_ssh_body(_: &str) -> String {
+        r#"#!/bin/sh
+target="$1"
+shift
+[ -n "$target" ] || exit 1
+[ "$#" -ge 1 ] || exit 1
+cmd="$*"
+case "$cmd" in
+  "sh -lc "*)
+    eval "remote_script=${cmd#sh -lc }"
+    exec /bin/sh -c "$remote_script"
+    ;;
+esac
+exec /bin/sh -c "$cmd"
+"#
+        .to_string()
     }
 
     #[test]
@@ -8752,6 +8802,9 @@ tasks:
             },
         }
 
+        #[cfg(windows)]
+        assert_windows_path_eq(resolved.as_deref(), local_npm.as_path());
+        #[cfg(not(windows))]
         assert_eq!(resolved.as_deref(), Some(local_npm.as_path()));
     }
 
@@ -8785,6 +8838,9 @@ tasks:
             },
         }
 
+        #[cfg(windows)]
+        assert_windows_path_eq(resolved.as_deref(), ext_path.as_path());
+        #[cfg(not(windows))]
         assert_eq!(resolved.as_deref(), Some(ext_path.as_path()));
     }
 
@@ -8826,6 +8882,9 @@ tasks:
             },
         }
 
+        #[cfg(windows)]
+        assert_windows_path_eq(resolved.as_deref(), npm_path.as_path());
+        #[cfg(not(windows))]
         assert_eq!(resolved.as_deref(), Some(npm_path.as_path()));
     }
 
@@ -8887,11 +8946,20 @@ tasks:
             .iter()
             .find(|finding| finding.summary == "Tool probe failed: npm")
             .expect("expected tool probe failure finding");
+        #[cfg(windows)]
+        assert_windows_path_text_contains(&finding.why, npm_path.as_path());
+        #[cfg(not(windows))]
         assert!(finding.why.contains(&format!(
             "ota probed `{}` with `npm --version`",
             npm_path.display()
         )));
         assert_eq!(finding.evidence().command, "npm --version");
+        #[cfg(windows)]
+        assert_eq!(
+            finding.evidence().path.to_ascii_lowercase(),
+            npm_path.display().to_string().to_ascii_lowercase()
+        );
+        #[cfg(not(windows))]
         assert_eq!(finding.evidence().path, npm_path.display().to_string());
     }
 
@@ -8953,11 +9021,20 @@ tasks:
             .iter()
             .find(|finding| finding.summary == "Unparseable version for tool: npm")
             .expect("expected unparseable tool version finding");
+        #[cfg(windows)]
+        assert_windows_path_text_contains(&finding.why, npm_path.as_path());
+        #[cfg(not(windows))]
         assert!(finding.why.contains(&format!(
             "ota probed `{}` with `npm --version`",
             npm_path.display()
         )));
         assert_eq!(finding.evidence().command, "npm --version");
+        #[cfg(windows)]
+        assert_eq!(
+            finding.evidence().path.to_ascii_lowercase(),
+            npm_path.display().to_string().to_ascii_lowercase()
+        );
+        #[cfg(not(windows))]
         assert_eq!(finding.evidence().path, npm_path.display().to_string());
     }
 
@@ -9734,26 +9811,25 @@ tasks:
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        write_fake_command(&bin_dir, "uname", "#!/bin/sh\necho 'Linux'\n");
-        write_fake_command(&bin_dir, "jq", "#!/bin/sh\necho 'jq-1.8.1'\n");
         write_fake_command(
             &bin_dir,
-            "ssh",
-            r#"#!/bin/sh
-target="$1"
-shift
-[ -n "$target" ] || exit 1
-[ "$#" -ge 1 ] || exit 1
-cmd="$*"
-case "$cmd" in
-  "sh -lc "*)
-    eval "remote_script=${cmd#sh -lc }"
-    exec /bin/sh -c "$remote_script"
-    ;;
-esac
-exec /bin/sh -c "$cmd"
-"#,
+            "uname",
+            if cfg!(windows) {
+                "@echo off\r\necho Linux\r\n"
+            } else {
+                "#!/bin/sh\necho 'Linux'\n"
+            },
         );
+        write_fake_command(
+            &bin_dir,
+            "jq",
+            if cfg!(windows) {
+                "@echo off\r\necho jq-1.8.1\r\n"
+            } else {
+                "#!/bin/sh\necho 'jq-1.8.1'\n"
+            },
+        );
+        write_fake_command(&bin_dir, "ssh", &fake_remote_ssh_body("jq-1.8.1"));
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -9904,24 +9980,7 @@ tasks:
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         write_fake_command(&bin_dir, "jq", "#!/bin/sh\necho 'jq-1.7.0'\n");
-        write_fake_command(
-            &bin_dir,
-            "ssh",
-            r#"#!/bin/sh
-target="$1"
-shift
-[ -n "$target" ] || exit 1
-[ "$#" -ge 1 ] || exit 1
-cmd="$*"
-case "$cmd" in
-  "sh -lc "*)
-    eval "remote_script=${cmd#sh -lc }"
-    exec /bin/sh -c "$remote_script"
-    ;;
-esac
-exec /bin/sh -c "$cmd"
-"#,
-        );
+        write_fake_command(&bin_dir, "ssh", &fake_remote_ssh_body("jq-1.8.1"));
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -10001,24 +10060,7 @@ case " $* " in
 esac
 "#,
         );
-        write_fake_command(
-            &bin_dir,
-            "ssh",
-            r#"#!/bin/sh
-target="$1"
-shift
-[ -n "$target" ] || exit 1
-[ "$#" -ge 1 ] || exit 1
-cmd="$*"
-case "$cmd" in
-  "sh -lc "*)
-    eval "remote_script=${cmd#sh -lc }"
-    exec /bin/sh -c "$remote_script"
-    ;;
-esac
-exec /bin/sh -c "$cmd"
-"#,
-        );
+        write_fake_command(&bin_dir, "ssh", &fake_remote_ssh_body("jq-1.8.1"));
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -10119,8 +10161,24 @@ policies:
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        write_fake_command(&bin_dir, "uname", "#!/bin/sh\necho 'Linux'\n");
-        write_fake_command(&bin_dir, "jq", "#!/bin/sh\necho 'jq-1.8.1'\n");
+        write_fake_command(
+            &bin_dir,
+            "uname",
+            if cfg!(windows) {
+                "@echo off\r\necho Linux\r\n"
+            } else {
+                "#!/bin/sh\necho 'Linux'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            "jq",
+            if cfg!(windows) {
+                "@echo off\r\necho jq-1.8.1\r\n"
+            } else {
+                "#!/bin/sh\necho 'jq-1.8.1'\n"
+            },
+        );
         write_fake_command(
             &bin_dir,
             "ssh",
