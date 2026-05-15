@@ -3733,12 +3733,18 @@ fn completion_setup_snippet(shell: CompletionShell, support_target: Option<&Path
         CompletionShell::Bash => String::from(
             "if command -v ota >/dev/null 2>&1; then\n  source <(COMPLETE=bash ota)\nfi",
         ),
-        CompletionShell::Zsh => render_zsh_completion_setup_snippet(&shell_double_quote(
-            &support_target
+        CompletionShell::Zsh => {
+            let support_target = support_target
                 .expect("zsh completion setup requires a support target")
                 .display()
-                .to_string(),
-        )),
+                .to_string();
+            let support_target = if cfg!(windows) {
+                support_target.replace('\\', "/")
+            } else {
+                support_target
+            };
+            render_zsh_completion_setup_snippet(&shell_double_quote(&support_target))
+        }
         CompletionShell::Fish => {
             String::from("if type -q ota\n    COMPLETE=fish ota | source\nend")
         }
@@ -5808,6 +5814,26 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn normalize_windows_fake_container_probe_matchers(script: &str) -> String {
+        script
+            .split("\r\n")
+            .map(|line| {
+                if line.contains("echo %* | findstr /C:\"command -v '")
+                    && line.contains("\" >nul && (")
+                {
+                    let indent = line.split("echo %* |").next().unwrap_or_default();
+                    format!(
+                        "{indent}echo %* | findstr /C:\"__OTA_CONTAINER_PROBE_STARTED__\" >nul && ("
+                    )
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\r\n")
+    }
+
+    #[cfg(windows)]
     fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = bin_dir.join(format!("{name}.cmd"));
         let script = if (name == "docker" || name == "podman") && !body.contains("\"%1\"==\"info\"")
@@ -5817,12 +5843,7 @@ mod tests {
         } else {
             body.to_string()
         };
-        let script = script
-            .replace(
-                "findstr /C:\"command -v '",
-                "findstr /C:\"command -v\" | findstr /C:\"",
-            )
-            .replace("'\" >nul && (", "\" >nul && (");
+        let script = normalize_windows_fake_container_probe_matchers(&script);
         fs::write(&path, script).expect("write fake command");
         path
     }
@@ -8375,10 +8396,8 @@ execution:
     container:
       image: receipt/test:latest
       engines: [docker]
-env:
-  vars:
-    CAPTION_SPEED_SECONDS:
-      default: "30"
+tools:
+  cargo: "*"
 tasks:
   setup:
     run: echo ready
@@ -8386,6 +8405,12 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'cargo'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'cargo'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
         let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with([
@@ -8398,7 +8423,7 @@ tasks:
             fixture.path(),
         ]);
 
-        assert_ne!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let archive_path = json["archive_path"].as_str().unwrap();
         let archived: Value =
@@ -26957,7 +26982,10 @@ tools:
         let expected_path = std::path::Path::new(fixture.path()).canonicalize().unwrap();
         assert_eq!(
             json["next"],
-            format!("ota detect --write {}", expected_path.display())
+            format!(
+                "ota detect --write {}",
+                compact_path_display_value(&expected_path)
+            )
         );
     }
 

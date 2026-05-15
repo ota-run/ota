@@ -7985,12 +7985,46 @@ mod tests {
         .as_path()
     }
 
+    #[cfg(windows)]
+    fn normalize_windows_fake_container_probe_matchers(script: &str) -> String {
+        script
+            .split("\r\n")
+            .map(|line| {
+                if line.contains("echo %* | findstr /C:\"command -v '")
+                    && line.contains("\" >nul && (")
+                {
+                    let indent = line.split("echo %* |").next().unwrap_or_default();
+                    format!(
+                        "{indent}echo %* | findstr /C:\"__OTA_CONTAINER_PROBE_STARTED__\" >nul && ("
+                    )
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\r\n")
+    }
+
     fn write_fake_command(bin_dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = if cfg!(windows) {
             bin_dir.join(format!("{name}.cmd"))
         } else {
             bin_dir.join(name)
         };
+
+        #[cfg(windows)]
+        let body = if (name == "docker" || name == "podman") && !body.contains("\"%1\"==\"info\"") {
+            let remainder = body.strip_prefix("@echo off\r\n").unwrap_or(body);
+            format!("@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\n{remainder}")
+        } else {
+            body.to_string()
+        };
+
+        #[cfg(windows)]
+        let body = normalize_windows_fake_container_probe_matchers(&body);
+
+        #[cfg(not(windows))]
+        let body = body.to_string();
 
         fs::write(&path, body).unwrap();
 
