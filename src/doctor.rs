@@ -11971,6 +11971,7 @@ tasks:
 
     #[test]
     fn reports_contextual_service_readiness_failures_with_projected_endpoint() {
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"

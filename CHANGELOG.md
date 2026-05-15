@@ -28,10 +28,11 @@
 
 - fixed the release gate path/render regressions from the recent path-normalization refactor:
   backticked URLs and commands are no longer rewritten as filesystem paths, and Windows native
-  task execution now routes POSIX-style `script:` bodies through Bash when available instead of
-  mis-running them under `cmd`
-- fixed the macOS release-gate install step to invoke Cargo directly after toolchain setup instead
-  of wrapping the Cargo proxy through `rustup run`
+  task execution now routes POSIX-style `script:` bodies through Git Bash even when the runner only
+  exposes the Git-for-Windows install path, while receipt/archive paths and repo follow-up commands
+  keep their expected Windows-vs-contract path formatting
+- fixed the macOS release-gate install step to invoke the active toolchain's real Cargo binary via
+  `rustup which cargo`, avoiding the broken cached proxy/shim path on GitHub-hosted macOS runners
 - documented the planned `toolchains` contract layer and its ownership boundary with existing
   `runtimes`, `tools`, and `native_prerequisites`, including duplication rules, provider behavior,
   and the intended Rustup-first migration path; the public site now has a standalone reference
