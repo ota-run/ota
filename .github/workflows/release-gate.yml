@@ -85,9 +85,11 @@ jobs:
         run: |
           set -euo pipefail
           if command -v rustup >/dev/null 2>&1; then
-            rustup run stable cargo -vV
-            rustup run stable rustc -vV
-            rustup run stable cargo install --path . --locked
+            CARGO_CMD="$(rustup which cargo)"
+            RUSTC_CMD="$(rustup which rustc)"
+            "$CARGO_CMD" -vV
+            "$RUSTC_CMD" -vV
+            env -u RUSTC_WRAPPER RUSTC="$RUSTC_CMD" "$CARGO_CMD" install --path . --locked
           else
             cargo_candidate="$(command -v cargo || true)"
             if [ -z "${cargo_candidate}" ]; then
@@ -96,7 +98,7 @@ jobs:
             fi
             "${cargo_candidate}" -vV
             rustc -vV
-            "${cargo_candidate}" install --path . --locked
+            env -u RUSTC_WRAPPER "${cargo_candidate}" install --path . --locked
           fi
 
       - name: Ensure cargo is on PATH (Windows)
