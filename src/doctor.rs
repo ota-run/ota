@@ -13408,6 +13408,79 @@ tasks:
     }
 
     #[test]
+    fn reports_missing_toolchain_component_for_rustup_toolchain() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "rustc",
+            if cfg!(windows) {
+                "@echo off\r\necho rustc 1.94.0 (abc123 2026-01-01)\r\n"
+            } else {
+                "#!/bin/sh\necho 'rustc 1.94.0 (abc123 2026-01-01)'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            "rustup",
+            if cfg!(windows) {
+                "@echo off\r\nif \"%1\"==\"component\" if \"%2\"==\"list\" if \"%3\"==\"--installed\" (\r\n  echo clippy-x86_64-pc-windows-msvc (installed)\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"$1\" = \"component\" ] && [ \"$2\" = \"list\" ] && [ \"$3\" = \"--installed\" ]; then\n  echo 'clippy-x86_64-unknown-linux-gnu (installed)'\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Missing toolchain component: rust.rustfmt")
+            .expect("expected rustfmt component finding");
+        assert_eq!(finding.severity, FindingSeverity::Error);
+        assert!(finding.next.contains("rustup component add rustfmt"));
+    }
+
+    #[test]
     fn composes_docker_compose_healthcheck_command_inside_container() {
         assert_eq!(
             compose_service_healthcheck_command("postgres", "pg_isready -U qredex -d qredex"),

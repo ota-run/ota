@@ -1013,6 +1013,7 @@ fn validate_toolchains(
                 "toolchain `{name}` must declare a non-empty version"
             )));
         }
+        validate_supported_toolchain(name, toolchain, errors);
         validate_only_on("toolchain", name, toolchain.only_on.as_ref(), errors);
         validate_platform_keys("toolchain", name, toolchain.platforms.keys(), errors);
         validate_platform_scope(
@@ -1087,6 +1088,20 @@ fn validate_toolchains(
             )));
         }
     }
+}
+
+fn validate_supported_toolchain(
+    name: &str,
+    toolchain: &ToolchainSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if matches!((name, toolchain.provider), ("rust", ToolchainProvider::Rustup)) {
+        return;
+    }
+
+    errors.push(ValidationError::new(format!(
+        "toolchain `{name}` is not supported today; the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`"
+    )));
 }
 
 fn rustup_installable_toolchain_ref(value: &str) -> bool {
@@ -16293,6 +16308,38 @@ tasks:
                 summary == "task `setup` declares `cargo` alongside toolchain `rust`"
             }),
             "{summaries:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_toolchain_contracts() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: rustup
+    version: "1.94.0"
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let rendered = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered.iter().any(|error| {
+                error.contains(
+                    "toolchain `node` is not supported today; the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`",
+                )
+            }),
+            "{rendered:?}"
         );
     }
 }

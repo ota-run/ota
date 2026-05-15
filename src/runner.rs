@@ -20088,7 +20088,7 @@ mod tests {
     use std::fs::{self, File};
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -42458,6 +42458,109 @@ tasks:
                 .contains("source `.env.example` is not a file"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn run_path_toolchain_fulfillment_runs_rustup_once_per_backend() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("rustup.log");
+        let rustup_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho %*>>\"{}\"\r\nexit /b 0\r\n",
+                log_path.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                log_path.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "rustup", &rustup_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let mut state = TaskRunState::default();
+        super::maybe_fulfill_toolchains_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &backend,
+            TaskExecutionMode::Capture,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+        super::maybe_fulfill_toolchains_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &backend,
+            TaskExecutionMode::Capture,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let log = fs::read_to_string(&log_path).unwrap();
+        let lines = log.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1, "{log}");
+        assert!(lines[0].contains("toolchain install 1.94.0"), "{log}");
+        assert!(lines[0].contains("--component rustfmt"), "{log}");
+    }
+
+    fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = if cfg!(windows) {
+            dir.join(format!("{name}.cmd"))
+        } else {
+            dir.join(name)
+        };
+        fs::write(&path, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).unwrap();
+        }
+        path
     }
 
     struct ContractFixture {
