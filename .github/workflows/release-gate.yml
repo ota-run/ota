@@ -85,18 +85,33 @@ jobs:
         run: |
           set -euo pipefail
           if command -v rustup >/dev/null 2>&1; then
-            if rustup run stable cargo -vV >/dev/null 2>&1; then
-              CARGO_CMD=(rustup run stable cargo)
-            else
-              cargo_candidate="$(command -v cargo || true)"
-              if [ -n "${cargo_candidate}" ]; then
-                CARGO_CMD=("${cargo_candidate}")
-              elif cargo_candidate="$(rustup which cargo 2>/dev/null || true)"; then
-                CARGO_CMD=("${cargo_candidate}")
-              else
-                echo "cargo not found in PATH or the active rustup toolchain"
-                exit 1
+            CARGO_CMD=""
+            if cargo_candidate="$(rustup which cargo 2>/dev/null || true)"; then
+              if [ -x "$cargo_candidate" ]; then
+                CARGO_CMD="$cargo_candidate"
               fi
+            fi
+
+            if [ -z "$CARGO_CMD" ] && active_toolchain="$(rustup default 2>/dev/null | awk '{print $1}' || true)"; then
+              rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+              candidate="$rustup_home/toolchains/$active_toolchain/bin/cargo"
+              if [ ! -x "$candidate" ]; then
+                candidate="$rustup_home/toolchains/$active_toolchain/bin/cargo.exe"
+              fi
+              if [ -x "$candidate" ]; then
+                CARGO_CMD="$candidate"
+              fi
+            fi
+
+            if [ -z "$CARGO_CMD" ] && cargo_candidate="$(command -v cargo || true)"; then
+              if [ -x "$cargo_candidate" ]; then
+                CARGO_CMD="$cargo_candidate"
+              fi
+            fi
+
+            if [ -z "$CARGO_CMD" ]; then
+              echo "cargo not found in PATH or the active rustup toolchain"
+              exit 1
             fi
           else
             cargo_candidate="$(command -v cargo || true)"
@@ -104,11 +119,11 @@ jobs:
               echo "cargo not found in PATH"
               exit 1
             fi
-            CARGO_CMD=("${cargo_candidate}")
+            CARGO_CMD="${cargo_candidate}"
           fi
 
-          "${CARGO_CMD[@]}" -vV
-          "${CARGO_CMD[@]}" install --path . --locked
+          "$CARGO_CMD" -vV
+          "$CARGO_CMD" install --path . --locked
 
       - name: Ensure cargo is on PATH (Windows)
         if: runner.os == 'Windows'
