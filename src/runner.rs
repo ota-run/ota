@@ -70,7 +70,8 @@ use crate::schema::{
     TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol,
     TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, format_memory_size_bytes, parse_memory_size_bytes,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
+    format_memory_size_bytes, parse_memory_size_bytes,
     parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
@@ -932,6 +933,12 @@ pub enum RunError {
         backend_unit: String,
         details: String,
         evidence: BackendFulfillmentEvidence,
+    },
+    #[error("task `{task}` toolchain `{toolchain}` failed run-path fulfillment: {details}")]
+    ToolchainFulfillmentFailed {
+        task: String,
+        toolchain: String,
+        details: String,
     },
 }
 
@@ -3798,6 +3805,7 @@ struct TaskRunState {
     fulfilled_backend_units: BTreeMap<String, BackendFulfillmentEvidence>,
     fulfilled_backend_source_managed_actions: BTreeMap<String, Vec<ProvisioningAction>>,
     native_activation_env_cache: BTreeMap<String, BTreeMap<String, String>>,
+    fulfilled_toolchain_keys: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -5168,6 +5176,16 @@ fn execute_task_with_hooks(
         }
     }
 
+    maybe_fulfill_toolchains_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        &backend,
+        mode.clone(),
+        current_os,
+        state,
+    )?;
+
     apply_task_target_activations(
         contract,
         contract_path,
@@ -6350,6 +6368,133 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         deferred_ephemeral_container: None,
         source_managed_actions,
     })
+}
+
+fn maybe_fulfill_toolchains_on_run_path(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    _mode: TaskExecutionMode,
+    current_os: &str,
+    state: &mut TaskRunState,
+) -> Result<(), RunError> {
+    for toolchain_name in contract.task_required_toolchain_names(task_name) {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if !toolchain.active_for_os(current_os)
+            || toolchain.fulfillment_mode() != ToolchainFulfillmentMode::Run
+        {
+            continue;
+        }
+
+        let cache_key = toolchain_fulfillment_cache_key(toolchain_name.as_str(), backend);
+        if !state.fulfilled_toolchain_keys.insert(cache_key) {
+            continue;
+        }
+
+        for command in
+            toolchain_fulfillment_commands(toolchain_name.as_str(), toolchain, target_os_for_toolchain_backend(backend, current_os), backend)
+        {
+            let output = run_backend_command_captured(
+                &format!("toolchain-fulfill:{toolchain_name}"),
+                command.as_str(),
+                contract_working_dir(contract_path),
+                backend,
+            )?;
+            state.stdout.push_str(&output.stdout);
+            state.stderr.push_str(&output.stderr);
+            if output.exit_code != 0 {
+                return Err(RunError::ToolchainFulfillmentFailed {
+                    task: task_name.to_string(),
+                    toolchain: toolchain_name,
+                    details: format!("`{command}` exited with code {}", output.exit_code),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn toolchain_fulfillment_cache_key(
+    toolchain_name: &str,
+    backend: &ResolvedExecutionBackend,
+) -> String {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => format!("native:{toolchain_name}"),
+        ResolvedExecutionBackend::Container {
+            context_name,
+            image,
+            engine,
+            ..
+        } => format!(
+            "container:{}:{}:{}:{toolchain_name}",
+            context_name.as_deref().unwrap_or_default(),
+            image,
+            engine
+        ),
+        ResolvedExecutionBackend::Remote {
+            provider, target, cwd, ..
+        } => format!(
+            "remote:{provider}:{target}:{}:{toolchain_name}",
+            cwd.as_deref().unwrap_or_default()
+        ),
+        ResolvedExecutionBackend::BackendProvider {
+            provider,
+            command,
+            target,
+            cwd,
+            ..
+        } => format!(
+            "backend_provider:{provider}:{command}:{target}:{}:{toolchain_name}",
+            cwd.as_deref().unwrap_or_default()
+        ),
+    }
+}
+
+fn toolchain_fulfillment_commands(
+    toolchain_name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+    backend: &ResolvedExecutionBackend,
+) -> Vec<String> {
+    match (toolchain_name, toolchain.provider) {
+        ("rust", ToolchainProvider::Rustup) => {
+            let mut args = vec![
+                String::from("toolchain"),
+                String::from("install"),
+                toolchain.version_for_os(target_os).to_string(),
+            ];
+            if let Some(profile) = toolchain.profile_for_os(target_os) {
+                args.push(String::from("--profile"));
+                args.push(profile.to_string());
+            }
+            for component in toolchain.components_for_os(target_os) {
+                args.push(String::from("--component"));
+                args.push(component);
+            }
+            for target in toolchain.targets_for_os(target_os) {
+                args.push(String::from("--target"));
+                args.push(target);
+            }
+            vec![shell_quote_command_argv(backend, "rustup", &args)]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn target_os_for_toolchain_backend<'a>(
+    backend: &ResolvedExecutionBackend,
+    current_os: &'a str,
+) -> &'a str {
+    match backend {
+        ResolvedExecutionBackend::Container { .. } => "linux",
+        ResolvedExecutionBackend::Remote { .. }
+        | ResolvedExecutionBackend::BackendProvider { .. }
+        | ResolvedExecutionBackend::Native { .. } => current_os,
+    }
 }
 
 fn backend_fulfillment_plan(
