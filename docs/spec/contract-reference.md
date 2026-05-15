@@ -613,8 +613,8 @@ Current shipped scope is intentionally narrow:
 - top-level `toolchains`
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
-- duplicate-ownership warnings when the same prerequisite is declared under both `toolchains` and
-  `runtimes` or `tools`
+- duplicate ownership is invalid when the same prerequisite is declared under both `toolchains`
+  and `runtimes` or `tools`
 
 Example:
 
@@ -655,8 +655,8 @@ Rules:
   paths to provision the declared toolchain on the run path
 - for `provider: rustup` with `fulfillment: run`, `version` must be one installable Rustup
   toolchain reference such as `stable`, `beta`, `nightly`, or `1.94.0`
-- duplicate ownership currently warns; ota does not hard-fail if the same Rust capability is also
-  declared under `runtimes` or `tools`
+- duplicate ownership is invalid; if the same Rust capability is also declared under `runtimes`
+  or `tools`, validation fails and the duplicate must be removed
 
 Ownership boundary:
 

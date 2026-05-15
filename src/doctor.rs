@@ -1320,9 +1320,7 @@ impl Finding {
             }
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
-            s if s.starts_with("Missing toolchain provider: ") => {
-                "OTA_TOOLCHAIN_PROVIDER_MISSING"
-            }
+            s if s.starts_with("Missing toolchain provider: ") => "OTA_TOOLCHAIN_PROVIDER_MISSING",
             s if s.starts_with("Toolchain provider probe failed: ") => {
                 "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
             }
@@ -2660,9 +2658,6 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LikelyUnusedAttachment(advisory) => {
                 ContractAdvisory::LikelyUnusedAttachment(advisory)
             }
-            ContractAdvisory::DuplicateRequirementOwnership(advisory) => {
-                ContractAdvisory::DuplicateRequirementOwnership(advisory)
-            }
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => {
                 ContractAdvisory::MutatesManagedIsolatedPath(advisory)
             }
@@ -2686,15 +2681,6 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::LikelyUnusedAttachment(advisory.clone()).why(),
                 next: ContractAdvisory::LikelyUnusedAttachment(advisory).next(),
-            },
-            ContractAdvisory::DuplicateRequirementOwnership(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "{} declares `{}` alongside toolchain `{}`",
-                    advisory.scope, advisory.duplicate_name, advisory.toolchain_name
-                ),
-                why: ContractAdvisory::DuplicateRequirementOwnership(advisory.clone()).why(),
-                next: ContractAdvisory::DuplicateRequirementOwnership(advisory).next(),
             },
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -4655,7 +4641,10 @@ fn toolchain_provider_probe_failed_finding(
         why: format!(
             "ota could not inspect toolchain `{toolchain_name}` through `{provider}`; `{command}` failed: {details}"
         ),
-        next: format!("run `{command}` directly and rerun `{}`", rerun_doctor_command(mode, None)),
+        next: format!(
+            "run `{command}` directly and rerun `{}`",
+            rerun_doctor_command(mode, None)
+        ),
     }
 }
 
@@ -4677,7 +4666,11 @@ fn missing_toolchain_component_finding(
     }
 }
 
-fn missing_toolchain_target_finding(toolchain_name: &str, target: &str, mode: DoctorMode) -> Finding {
+fn missing_toolchain_target_finding(
+    toolchain_name: &str,
+    target: &str,
+    mode: DoctorMode,
+) -> Finding {
     Finding {
         severity: FindingSeverity::Error,
         summary: format!("Missing toolchain target: {toolchain_name}.{target}"),

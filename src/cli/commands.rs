@@ -1179,17 +1179,6 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
-        ContractAdvisory::DuplicateRequirementOwnership(_value) => format!(
-            "{} {}\n  {} {}\n  {} {}\n  {} {}",
-            list_bullet(),
-            render_validate_warning_detail(&advisory.summary()),
-            paint_key("Boundary:"),
-            render_validate_warning_detail(&advisory.drift().unwrap_or_default()),
-            paint_key("Why:"),
-            render_validate_warning_detail(&advisory.why()),
-            paint_key("Next:"),
-            render_validate_warning_detail(&advisory.next()),
-        ),
         ContractAdvisory::LikelyUnusedAttachment(value) => format!(
             "{} context `{}` cache `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
