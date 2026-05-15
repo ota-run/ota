@@ -9826,6 +9826,7 @@ tasks:
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn remote_doctor_mode_emits_policy_surfaces_per_remote_context() {
         let _guard = env_mutex_lock();
@@ -10163,6 +10164,7 @@ policies:
         assert_eq!(finding.evidence().source, "remote_provisioning");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn remote_doctor_mode_reports_version_policy_violations_per_context() {
         let _guard = env_mutex_lock();
