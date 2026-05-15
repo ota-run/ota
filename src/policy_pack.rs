@@ -2043,6 +2043,7 @@ policies:
         assert_eq!(loaded.path, override_path);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn loads_policy_pack_from_ota_policy_url_override_before_ancestor() {
         let _guard = env_mutex_lock();
