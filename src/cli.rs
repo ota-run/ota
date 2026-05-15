@@ -5817,6 +5817,12 @@ mod tests {
         } else {
             body.to_string()
         };
+        let script = script
+            .replace(
+                "findstr /C:\"command -v '",
+                "findstr /C:\"command -v\" | findstr /C:\"",
+            )
+            .replace("'\" >nul && (", "\" >nul && (");
         fs::write(&path, script).expect("write fake command");
         path
     }
@@ -6638,6 +6644,10 @@ exec /bin/sh -lc "$1"
         value.replace('\\', "/")
     }
 
+    fn normalize_text_paths(value: &str) -> String {
+        compact_path_separator_style(&strip_ansi(value))
+    }
+
     fn strip_ansi(value: &str) -> String {
         let mut out = String::with_capacity(value.len());
         let mut chars = value.chars().peekable();
@@ -6832,11 +6842,8 @@ tasks:
             output.stdout,
             output.stderr.as_deref().unwrap_or_default()
         );
-        let stdout = strip_ansi(&output.stdout);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(stdout.contains(&format!("ota doctor {repo_path}")));
         assert!(stdout.contains(&format!("ota tasks --use {repo_path}")));
     }
@@ -6887,11 +6894,8 @@ agent:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(stdout.contains(&format!("ota run ci {repo_path}")));
         assert!(!stdout.contains(&format!("ota run ci {repo_path}/ota.yaml")));
         assert!(!stdout.contains(&format!("ota up {repo_path}")));
@@ -8382,7 +8386,7 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with([
             "ota",
@@ -13715,10 +13719,11 @@ tasks:
         let output = run_with(["ota", "run", "missing", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let stderr = normalize_text_paths(output.stderr.as_deref().unwrap_or_default());
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(stderr.contains("Next:"));
         assert!(stderr.contains("ota tasks --use"));
-        assert!(stderr.contains(fixture.path()));
+        assert!(stderr.contains(&repo_path));
     }
 
     #[test]
@@ -13744,13 +13749,14 @@ tasks:
         let output = run_with(["ota", "run", "fail", fixture.path()]);
 
         assert_eq!(output.exit_code, 7);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let stderr = normalize_text_paths(output.stderr.as_deref().unwrap_or_default());
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(stderr.contains("Task Failed"));
         assert!(stderr.contains("`fail` exited with code 7"));
         assert!(stderr.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(stderr.contains("Next:"));
         assert!(stderr.contains("ota tasks --use"));
-        assert!(stderr.contains(fixture.path()));
+        assert!(stderr.contains(&repo_path));
         assert!(stderr.contains("Context: app\nWhere:"));
         assert!(stderr.contains("Why: task `fail` returned a non-zero exit code\n"));
         assert!(
@@ -14417,9 +14423,10 @@ tasks:
         let output = run_with(["ota", "run", "fail", fixture.path()]);
 
         assert_eq!(output.exit_code, 7);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let stderr = normalize_text_paths(output.stderr.as_deref().unwrap_or_default());
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(stderr.contains("ota tasks --use"));
-        assert!(stderr.contains(fixture.path()));
+        assert!(stderr.contains(&repo_path));
         assert!(stderr.contains("RUN SUMMARY"));
         assert!(!stderr.contains("Task output:"));
     }
@@ -14546,12 +14553,9 @@ tasks:
         let output = run_with(["ota", "run", "ci", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let stderr = normalize_text_paths(output.stderr.as_deref().unwrap_or_default());
         let normalized_stderr = normalize_inline_whitespace(&stderr);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(normalized_stderr.contains(&format!(
             "run `ota tasks --use {repo_path}` to inspect runnable task usage"
         )));
@@ -14590,14 +14594,11 @@ agent:
 "#,
         );
 
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
 
         let validate = run_with(["ota", "validate", fixture.path()]);
         assert_eq!(validate.exit_code, 0);
-        let validate_stdout = strip_ansi(&validate.stdout);
+        let validate_stdout = normalize_text_paths(&validate.stdout);
         assert!(validate_stdout.contains(&format!("ota doctor {repo_path}")));
         assert!(validate_stdout.contains(&format!("ota tasks --use {repo_path}")));
         assert!(!validate_stdout.contains(&format!("ota doctor {repo_path}/ota.yaml")));
@@ -14607,7 +14608,7 @@ agent:
         if doctor.exit_code != 0 {
             panic!("{doctor:?}");
         }
-        let doctor_stdout = strip_ansi(&doctor.stdout);
+        let doctor_stdout = normalize_text_paths(&doctor.stdout);
         assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
         assert!(!doctor_stdout.contains(&format!("ota up {repo_path}")));
         assert!(!doctor_stdout.contains(&format!("ota up {repo_path}/ota.yaml")));
@@ -14615,7 +14616,7 @@ agent:
 
         let check = run_with(["ota", "check", "--concise", fixture.path()]);
         assert_eq!(check.exit_code, 0);
-        let check_stdout = strip_ansi(&check.stdout);
+        let check_stdout = normalize_text_paths(&check.stdout);
         assert!(check_stdout.contains(&format!("ota up {repo_path}")));
         assert!(check_stdout.contains(&format!("ota tasks --use {repo_path}")));
         assert!(!check_stdout.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
@@ -14628,7 +14629,7 @@ agent:
 
         let run = run_with(["ota", "run", "ci", fixture.path()]);
         assert_eq!(run.exit_code, 0);
-        let run_stderr = strip_ansi(run.stderr.as_deref().unwrap_or_default());
+        let run_stderr = normalize_text_paths(run.stderr.as_deref().unwrap_or_default());
         assert!(run_stderr.contains("RUN SUMMARY"));
         assert!(run_stderr.contains(&format!("run `ota tasks --use {repo_path}`")));
         assert!(!run_stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
@@ -14696,14 +14697,11 @@ agent:
         write_fake_command(&bin_dir, "docker", docker_body);
         let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
 
         let validate = run_with(["ota", "validate", fixture.path()]);
         assert_eq!(validate.exit_code, 0);
-        let validate_stdout = strip_ansi(&validate.stdout);
+        let validate_stdout = normalize_text_paths(&validate.stdout);
         assert!(validate_stdout.contains(&format!("ota doctor {repo_path}")));
         assert!(validate_stdout.contains(&format!("ota tasks --use {repo_path}")));
 
@@ -14716,7 +14714,7 @@ agent:
             fixture.path(),
         ]);
         assert_eq!(doctor.exit_code, 0);
-        let doctor_stdout = strip_ansi(&doctor.stdout);
+        let doctor_stdout = normalize_text_paths(&doctor.stdout);
         assert!(doctor_stdout.contains("Mode: `container`"));
         assert!(doctor_stdout.contains("Image: `alpine:3.20`"));
         assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
@@ -15007,11 +15005,12 @@ env:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let receipt_next = json["receipt"]["next"].as_str().unwrap();
         let finding_next = json["findings"][0]["next"].as_str().unwrap();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
 
         assert!(receipt_next.contains("ota doctor"));
-        assert!(receipt_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(receipt_next).contains(&repo_path));
         assert!(finding_next.contains("ota doctor"));
-        assert!(finding_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(finding_next).contains(&repo_path));
     }
 
     #[test]
@@ -15048,11 +15047,12 @@ env:
             .filter_map(|finding| finding["next"].as_str())
             .find(|next| next.contains("ota doctor --mode container"))
             .unwrap();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
 
         assert!(receipt_next.contains("ota doctor --mode container"));
-        assert!(receipt_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(receipt_next).contains(&repo_path));
         assert!(finding_next.contains("ota doctor --mode container"));
-        assert!(finding_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(finding_next).contains(&repo_path));
     }
 
     #[test]
@@ -15104,13 +15104,14 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let receipt_next = json["receipt"]["next"].as_str().unwrap();
         let finding_next = json["findings"][0]["next"].as_str().unwrap();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
 
         assert!(receipt_next.contains("ota doctor --mode native"));
         assert!(receipt_next.contains("ota run <task> --mode container"));
-        assert!(receipt_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(receipt_next).contains(&repo_path));
         assert!(finding_next.contains("ota doctor --mode native"));
         assert!(finding_next.contains("ota run <task> --mode container"));
-        assert!(finding_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(finding_next).contains(&repo_path));
     }
 
     #[test]
@@ -15163,11 +15164,12 @@ policies:
             })
             .and_then(|finding| finding["next"].as_str())
             .unwrap();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
 
         assert!(provisioning_next.contains("ota policy review"));
-        assert!(provisioning_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(provisioning_next).contains(&repo_path));
         assert!(bootstrap_next.contains("ota policy review"));
-        assert!(bootstrap_next.contains(fixture.path()));
+        assert!(compact_path_separator_style(bootstrap_next).contains(&repo_path));
     }
 
     #[test]
@@ -18666,7 +18668,7 @@ runtimes:
         };
         write_fake_command(&bin_dir, "node", node_body);
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'v22.0.0\\n'\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
@@ -20135,16 +20137,13 @@ project:
         let output = run_with(["ota", "agents", fixture.file_path().to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        let contract_path = fs::canonicalize(fixture.file_path())
-            .unwrap()
-            .display()
-            .to_string();
-        let agents_path = fs::canonicalize(fixture.dir.path())
-            .unwrap()
-            .join("AGENTS.md")
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let contract_path = compact_contract(fixture.file_path());
+        let agents_path = compact_path_display_value(
+            &fs::canonicalize(fixture.dir.path())
+                .unwrap()
+                .join("AGENTS.md"),
+        );
         assert!(stdout.contains(&format!("AGENTS {contract_path}")));
         assert!(stdout.contains(&agents_path));
         assert!(stdout.contains(&format!("ota detect --dry-run {contract_path}")));
@@ -20970,11 +20969,8 @@ policies:
         let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert!(stdout.contains(&format!("run `ota validate {repo_path}`")));
         assert!(stdout.contains(&format!("run `ota tasks --use {repo_path}`")));
         assert!(stdout.contains(&format!("run `ota doctor {repo_path}`")));
@@ -23436,11 +23432,8 @@ policies:
         let output = run_with(["ota", "check", fixture.path().to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let repo_path = compact_path(fixture.path(), ".");
         assert!(stdout.contains("Invalid contract"));
         assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
         assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
@@ -23486,11 +23479,8 @@ policies:
         let output = run_with(["ota", "explain", fixture.path().to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let repo_path = compact_path(fixture.path(), ".");
         assert!(stdout.contains("Invalid contract"));
         assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
         assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
@@ -23534,11 +23524,8 @@ policies:
         let output = run_with(["ota", "receipt", fixture.path().to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let repo_path = compact_path(fixture.path(), ".");
         assert!(stdout.contains("Invalid contract"));
         assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
         assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
@@ -23574,11 +23561,8 @@ policies:
         let output = run_with(["ota", "up", fixture.path().to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let repo_path = compact_path(fixture.path(), ".");
         assert!(stdout.contains(&format!("rerun `ota validate {repo_path}`")));
         assert!(stdout.contains(&format!("rerun `ota up {repo_path}`")));
     }
@@ -24230,7 +24214,9 @@ tasks:
 
     #[test]
     fn bootstrap_powershell_defers_locked_binary_replacement_for_wrapped_copy_item_errors() {
-        let script = fs::read_to_string("scripts/bootstrap.ps1").expect("read bootstrap.ps1");
+        let script = fs::read_to_string("scripts/bootstrap.ps1")
+            .expect("read bootstrap.ps1")
+            .replace("\r\n", "\n");
 
         assert!(script.contains("function Test-OtaWindows"), "{script}");
         assert!(!script.contains("$IsWindows"), "{script}");
@@ -24492,7 +24478,9 @@ tasks:
 
     #[test]
     fn install_sh_defers_locked_windows_binary_replacement() {
-        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let script = fs::read_to_string("scripts/install.sh")
+            .expect("read install.sh")
+            .replace("\r\n", "\n");
 
         assert!(
             script.contains("schedule_windows_replacement_after_exit()"),
@@ -24524,7 +24512,9 @@ tasks:
 
     #[test]
     fn install_sh_uses_unicode_header_when_windows_shell_supports_utf8() {
-        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let script = fs::read_to_string("scripts/install.sh")
+            .expect("read install.sh")
+            .replace("\r\n", "\n");
 
         assert!(script.contains("use_ascii_output()"), "{script}");
         assert!(script.contains("locale charmap"), "{script}");
@@ -24795,6 +24785,10 @@ agent:
         #[cfg(unix)]
         {
             install_fake_npm(&bin_dir.path().join("npm"));
+        }
+        #[cfg(windows)]
+        {
+            write_fake_command(bin_dir.path(), "npm", "@echo off\r\necho 10.9.0\r\n");
         }
         let original_path = std::env::var_os("PATH");
         let _cwd = CurrentDirGuard::enter(fixture.path());
@@ -28232,11 +28226,8 @@ project:
         let output = run_with(["ota", "detect", "--write", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap_or_else(|_| fixture.file_path().parent().unwrap().to_path_buf())
-            .display()
-            .to_string();
+        let stderr = normalize_text_paths(output.stderr.as_deref().unwrap_or_default());
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         let expected_dry_run = format!("run `ota detect --dry-run {repo_path}`");
         let expected_contract = format!("run `ota detect --contract {repo_path}`");
         let expected_init = format!("run `ota init --dry-run {repo_path}`");
@@ -28269,10 +28260,7 @@ project:
             .filter(|text| !text.trim().is_empty())
             .unwrap_or(&output.stdout);
         let json: Value = serde_json::from_str(payload).unwrap();
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap_or_else(|_| fixture.file_path().parent().unwrap().to_path_buf())
-            .display()
-            .to_string();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert_eq!(
             json["next"],
             Value::String(format!("ota detect --dry-run {repo_path}"))
@@ -28296,10 +28284,7 @@ project:
         let json: Value = serde_json::from_str(payload).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["written"], false);
-        let repo_path = fs::canonicalize(fixture.path())
-            .unwrap_or_else(|_| fixture.file_path().parent().unwrap().to_path_buf())
-            .display()
-            .to_string();
+        let repo_path = compact_path(Path::new(fixture.path()), ".");
         assert_eq!(
             json["next"],
             Value::String(format!("ota detect --dry-run {repo_path}"))
@@ -28785,7 +28770,9 @@ edition = "2024"
         assert!(strip_ansi(&output.stdout).contains("COMPLETION"));
         assert!(output.stdout.contains("Shell: zsh"));
         let profile = dir.path().join(".zshrc");
-        let written = fs::read_to_string(&profile).expect("completion profile should exist");
+        let written = compact_path_separator_style(
+            &fs::read_to_string(&profile).expect("completion profile should exist"),
+        );
         assert!(written.contains(COMPLETION_SETUP_MARKER_START));
         assert!(written.contains("_ota_completion_dir"));
         assert!(written.contains("_comps[ota]=_ota"));
@@ -28828,7 +28815,7 @@ edition = "2024"
             completion_file.exists(),
             "stable zsh completion file should exist"
         );
-        assert!(written.contains(&completion_file.display().to_string()));
+        assert!(written.contains(&compact_path_display_value(&completion_file)));
         assert!(!written.contains("XDG_CONFIG_HOME"));
         assert!(
             !custom_xdg_config_home
@@ -30434,7 +30421,7 @@ runtimes:
         };
         write_fake_command(&bin_dir, "node", node_body);
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
@@ -31608,11 +31595,8 @@ tasks:
         let _path_guard = EnvVarGuard::set("PATH", path);
 
         let output = run_with(["ota", "doctor", fixture.file_path().to_str().unwrap()]);
-        let stdout = strip_ansi(&output.stdout);
-        let contract_path = fs::canonicalize(fixture.file_path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let contract_path = compact_contract(fixture.file_path());
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("rerun"));
@@ -31655,11 +31639,8 @@ tasks:
         let _path_guard = EnvVarGuard::set("PATH", path);
 
         let output = run_with(["ota", "explain", fixture.file_path().to_str().unwrap()]);
-        let stdout = strip_ansi(&output.stdout);
-        let contract_path = fs::canonicalize(fixture.file_path())
-            .unwrap()
-            .display()
-            .to_string();
+        let stdout = normalize_text_paths(&output.stdout);
+        let contract_path = compact_contract(fixture.file_path());
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("rerun"));
@@ -32371,7 +32352,7 @@ tasks:
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let podman_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
@@ -35751,12 +35732,14 @@ tasks:
         let output = run_with(["ota", "workspace", "validate", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let stderr = normalize_text_paths(output.stderr.as_deref().unwrap_or_default());
+        let repo_contract =
+            compact_contract(&fixture.dir.path().join("apps").join("web").join("ota.yaml"));
         assert!(stderr.contains("ERROR"));
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why:"));
         assert!(stderr.contains("workspace repo `web` contract"));
-        assert!(!stderr.contains("/Users/"));
+        assert!(!stderr.contains(&repo_contract));
     }
 
     #[test]
