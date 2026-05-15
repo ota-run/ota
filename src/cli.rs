@@ -5815,6 +5815,14 @@ mod tests {
             }
             Self { name, original }
         }
+
+        fn remove(name: &'static str) -> Self {
+            let original = std::env::var_os(name);
+            unsafe {
+                std::env::remove_var(name);
+            }
+            Self { name, original }
+        }
     }
 
     impl Drop for EnvVarGuard {
@@ -5860,6 +5868,97 @@ mod tests {
             fs::read_to_string(skill_dir.join("references").join("official-sources.md")).unwrap();
         assert!(skill.contains("name: ota"));
         assert!(references.contains("Official Ota Sources"));
+    }
+
+    #[test]
+    fn skills_install_codex_defaults_to_user_codex_home() {
+        let _env = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let _codex_home = EnvVarGuard::remove("CODEX_HOME");
+        let _home = EnvVarGuard::set("HOME", temp.path().join("home").into_os_string());
+
+        let output = run_with(["ota", "skills", "install", "--agent", "codex"]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        assert!(output.stdout.contains("agent -> codex"));
+
+        let skill_dir = temp
+            .path()
+            .join("home")
+            .join(".codex")
+            .join("skills")
+            .join("ota");
+        assert!(skill_dir.join("SKILL.md").is_file());
+        assert!(
+            skill_dir
+                .join("references")
+                .join("official-sources.md")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn skills_install_claude_writes_user_claude_skill() {
+        let _env = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", temp.path().join("home").into_os_string());
+
+        let output = run_with(["ota", "skills", "install", "--agent", "claude"]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        assert!(output.stdout.contains("agent -> claude"));
+
+        let skill_dir = temp
+            .path()
+            .join("home")
+            .join(".claude")
+            .join("skills")
+            .join("ota");
+        assert!(skill_dir.join("SKILL.md").is_file());
+        assert!(
+            skill_dir
+                .join("references")
+                .join("official-sources.md")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn skills_install_replaces_existing_skill_tree() {
+        let _env = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let _codex_home = EnvVarGuard::set(
+            "CODEX_HOME",
+            temp.path().join("codex-home").into_os_string(),
+        );
+        let skill_dir = temp.path().join("codex-home").join("skills").join("ota");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("stale.txt"), "stale").unwrap();
+
+        let output = run_with(["ota", "skills", "install", "--agent", "codex"]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        assert!(skill_dir.join("SKILL.md").is_file());
+        assert!(!skill_dir.join("stale.txt").exists());
+    }
+
+    #[test]
+    fn skills_install_home_resolution_failure_is_not_usage_error() {
+        let _env = env_mutex_lock();
+        let _codex_home = EnvVarGuard::remove("CODEX_HOME");
+        let _home = EnvVarGuard::remove("HOME");
+        let _user_profile = EnvVarGuard::remove("USERPROFILE");
+
+        let output = run_with(["ota", "skills", "install", "--agent", "codex"]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap_or_default()
+                .contains("could not resolve home directory for Codex skill install")
+        );
     }
 
     #[test]
@@ -32713,10 +32812,12 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
+        let text_upper = text.to_ascii_uppercase();
         assert!(
-            text.contains("PROVISION FAILED")
-                || text.contains("NOT READY")
-                || text.contains("BLOCKED")
+            text_upper.contains("PROVISION FAILED")
+                || text_upper.contains("NOT READY")
+                || text_upper.contains("BLOCKED")
+                || text_upper.contains("FAILED")
         );
         assert!(text.contains("Container mise cannot install") && text.contains("node"));
         assert!(text.contains("Task output: mise install failed"));

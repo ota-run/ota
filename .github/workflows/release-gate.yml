@@ -84,31 +84,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-          cargo_bin="${cargo_home}/bin/cargo"
-
-          if [ ! -x "${cargo_bin}" ]; then
-            cargo_bin="$(command -v cargo || true)"
-          fi
-          if [ -z "${cargo_bin}" ] && command -v rustup >/dev/null 2>&1; then
-            cargo_bin="$(rustup which cargo 2>/dev/null || true)"
-          fi
-          if [ -z "${cargo_bin}" ] || [ ! -x "${cargo_bin}" ] || ! "${cargo_bin}" --version 2>&1 | grep -q '^cargo '; then
-            # On macOS, `cargo` can be shadowed by rustup-init; validate by version output.
-            cargo_bin="$(rustup which cargo 2>/dev/null || true)"
-            if [ -z "${cargo_bin}" ] || [ ! -x "${cargo_bin}" ] || ! "${cargo_bin}" --version 2>&1 | grep -q '^cargo '; then
-              echo "cargo not found in PATH or the active rustup toolchain"
+          if command -v rustup >/dev/null 2>&1; then
+            if rustup run stable cargo -vV >/dev/null 2>&1; then
+              CARGO_CMD=(rustup run stable cargo)
+            else
+              cargo_candidate="$(command -v cargo || true)"
+              if [ -n "${cargo_candidate}" ]; then
+                CARGO_CMD=("${cargo_candidate}")
+              elif cargo_candidate="$(rustup which cargo 2>/dev/null || true)"; then
+                CARGO_CMD=("${cargo_candidate}")
+              else
+                echo "cargo not found in PATH or the active rustup toolchain"
+                exit 1
+              fi
+            fi
+          else
+            cargo_candidate="$(command -v cargo || true)"
+            if [ -z "${cargo_candidate}" ]; then
+              echo "cargo not found in PATH"
               exit 1
             fi
+            CARGO_CMD=("${cargo_candidate}")
           fi
 
-          if [ ! -x "${cargo_bin}" ]; then
-            echo "cargo not found in PATH or the active rustup toolchain"
-            exit 1
-          fi
-
-          "${cargo_bin}" -vV
-          "${cargo_bin}" install --path . --locked
+          "${CARGO_CMD[@]}" -vV
+          "${CARGO_CMD[@]}" install --path . --locked
 
       - name: Ensure cargo is on PATH (Windows)
         if: runner.os == 'Windows'
