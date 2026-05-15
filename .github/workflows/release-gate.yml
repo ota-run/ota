@@ -78,6 +78,7 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust artifacts
+        if: runner.os != 'Windows'
         uses: Swatinem/rust-cache@v2
 
       - name: Install ota
@@ -392,6 +393,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust artifacts
+        if: runner.os != 'Windows'
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
@@ -437,6 +439,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust artifacts
+        if: runner.os != 'Windows'
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
@@ -482,6 +485,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust artifacts
+        if: runner.os != 'Windows'
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
