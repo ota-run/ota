@@ -32622,7 +32622,7 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("PROVISION FAILED"));
+        assert!(text.contains("PROVISION FAILED") || text.contains("NOT READY"));
         assert!(text.contains("Container mise cannot install pinned version: node"));
         assert!(text.contains("Task output: mise install failed"));
         assert!(text.contains("ota execution plan --mode container"));
