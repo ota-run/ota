@@ -13333,7 +13333,7 @@ pub fn skills_install(agent: &str, format: OutputFormat, debug: bool) -> Command
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure_with_code(error, 2),
+                CommandOutput::failure(error),
                 debug,
                 vec![String::from("DEBUG command=skills install")],
             );

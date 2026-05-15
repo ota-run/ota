@@ -116,3 +116,9 @@
 - Pattern: User-visible Ota feature work can drift if `ota` code/spec changes land without the matching `ota-site` public docs update.
 - Correction: Carry `ota-site` alongside every user-visible contract, command, or behavior change in `ota`, updating the relevant public docs/changelog in the same workstream.
 - Rule: When a feature changes the shipped Ota surface, update `ota-site` in the same task by default; do not wait to be asked.
+
+## 2026-05-15
+
+- Pattern: A product-direction discussion about CLI shape can be mistaken for approval to implement the command immediately.
+- Correction: Treat strategic agreement as direction only; wait for an explicit implementation request before changing CLI code.
+- Rule: Do not implement a new command from design discussion alone. First confirm the user has asked for code changes, then keep edits to the requested surface.
