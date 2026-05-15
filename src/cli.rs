@@ -6688,6 +6688,21 @@ exec /bin/sh -lc "$1"
             );
         }
 
+        if name == "workspace_explain_premium.txt" {
+            normalized = normalized.replace(
+                "Next: run `ota detect --dry-run` to review inferred tasks before writing, or run\n      `ota assist add-task --name dev --kind command` when you want one explicit runnable task",
+                "Next: run `ota detect --dry-run` to review inferred\n      tasks before writing, or run\n      `ota assist add-task --name dev --kind command`\n      when you want one explicit runnable task",
+            );
+            normalized = normalized.replace(
+                "`ota detect --dry-run ./apps/web`",
+                "`ota detect --dry-run`",
+            );
+            normalized = normalized.replace(
+                "to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one\n    explicit runnable task",
+                "to review inferred tasks before writing, or run\n    `ota assist add-task --name dev --kind command`\n    when you want one explicit runnable task",
+            );
+        }
+
         if name != "help_root.txt" {
             return normalized;
         }
@@ -15653,6 +15668,7 @@ tasks:
     #[test]
     fn validate_discovers_contract_from_nested_directory() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -16068,6 +16084,10 @@ tasks:
             "macos" => {
                 assert_eq!(task["run"], "./scripts/setup-macos.sh");
                 assert_eq!(task["selected_variant_os"], "macos");
+            }
+            "windows" => {
+                assert_eq!(task["run"], r".\scripts\setup.ps1");
+                assert_eq!(task["selected_variant_os"], "windows");
             }
             _ => {
                 assert_eq!(task["run"], "./scripts/setup.sh");
@@ -24100,6 +24120,7 @@ tasks:
             std::fs::read_to_string(fixture.dir.path().join("run.log"))
                 .unwrap()
                 .lines()
+                .map(str::trim_end)
                 .collect::<Vec<_>>(),
             vec!["build"]
         );
@@ -24343,7 +24364,9 @@ tasks:
 
     #[test]
     fn install_sh_uses_zip_release_asset_for_windows_targets() {
-        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let script = fs::read_to_string("scripts/install.sh")
+            .expect("read install.sh")
+            .replace("\r\n", "\n");
 
         assert!(
             script.contains("*-pc-windows-msvc) asset=\"ota-${target}.zip\""),
@@ -26347,8 +26370,7 @@ tools:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(
-            stdout
-                .contains("➤ Primary Blocker Cargo is missing from the configured container image")
+            stdout.contains("Primary Blocker Cargo is missing from the configured container image")
         );
         assert!(!stdout.contains("Blocked by"));
         assert!(stdout.contains("Contract"));
@@ -31958,9 +31980,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"curl --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"apt-get\" >nul && (\r\n    echo E: Version '8.13.0' for 'curl' was not found 1>&2\r\n    exit /b 100\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'curl'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/curl 1>&2\r\n    echo curl 8.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"apt-get\" >nul && (\r\n    echo E: Version '8.13.0' for 'curl' was not found 1>&2\r\n    exit /b 100\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"curl --version\"*) exit 1 ;;\n    *\"apt-get\"*) echo \"E: Version '8.13.0' for 'curl' was not found\" >&2; exit 100 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'curl'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' '/usr/bin/curl' >&2; printf '%s\\n' 'curl 8.14.1'; exit 0 ;;\n    *\"apt-get\"*) echo \"E: Version '8.13.0' for 'curl' was not found\" >&2; exit 100 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -32404,9 +32426,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -32521,9 +32543,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -32545,6 +32567,7 @@ policies:
     #[test]
     fn up_text_snapshot_is_stable() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -32554,7 +32577,7 @@ execution:
   lifecycle: ephemeral
 tasks:
   setup:
-    run: python3 -c "from pathlib import Path; Path('prepared.txt').write_text('ready')"
+    run: echo ready > prepared.txt
 "#,
         );
 
@@ -32642,7 +32665,7 @@ project:
   name: web
 tasks:
   setup:
-    run: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
+    run: echo ok > ready.txt
 "#,
         )
         .unwrap();
@@ -32696,6 +32719,7 @@ project:
     #[test]
     fn workspace_explain_text_snapshot_is_stable() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -32733,6 +32757,7 @@ project:
     #[test]
     fn workspace_up_text_snapshot_is_stable() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -32757,7 +32782,7 @@ project:
   name: web
 tasks:
   setup:
-    run: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
+    run: echo ok > ready.txt
 "#,
         )
         .unwrap();
@@ -32776,6 +32801,7 @@ tasks:
     #[test]
     fn workspace_run_text_snapshot_is_stable() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -32800,7 +32826,7 @@ project:
   name: web
 tasks:
   setup:
-    run: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
+    run: echo ok > ready.txt
 "#,
         )
         .unwrap();

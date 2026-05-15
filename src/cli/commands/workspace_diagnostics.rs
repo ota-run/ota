@@ -171,6 +171,7 @@ pub(crate) fn render_workspace_doctor_text(
 pub(crate) fn render_workspace_explain_text(
     path: &str,
     report: &crate::workspace::WorkspaceDoctorReport,
+    workspace_path: &Path,
 ) -> CommandOutput {
     let action_count = report
         .repos
@@ -209,6 +210,7 @@ pub(crate) fn render_workspace_explain_text(
         }
     }
 
+    let workspace_root = workspace_path.parent().unwrap_or_else(|| Path::new("."));
     for repo in &report.repos {
         stdout.push_str(&format!(
             "\n\n{} {} [{}] ({})",
@@ -236,7 +238,7 @@ pub(crate) fn render_workspace_explain_text(
 
         stdout.push_str(&render_explain_steps_text(
             &repo.findings,
-            Path::new(&repo.contract_path),
+            &workspace_root.join(&repo.contract_path),
         ));
     }
     stdout.push_str(&render_workspace_explain_summary_text(
