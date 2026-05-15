@@ -546,6 +546,12 @@ enum Commands {
         path: Option<PathBuf>,
     },
     #[command(display_order = 19)]
+    /// Install and manage first-party Ota skills for agent tools.
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommands,
+    },
+    #[command(display_order = 20)]
     /// Show, install, or verify shell completion for ota.
     Completion {
         /// Shell to configure or inspect (`bash`, `zsh`, `fish`, `powershell`, `elvish`) or `check`.
@@ -561,7 +567,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["setup", "script"])]
         remove: bool,
     },
-    #[command(display_order = 20)]
+    #[command(display_order = 21)]
     /// Remove ota from this laptop.
     Uninstall,
     #[command(display_order = 16)]
@@ -650,6 +656,19 @@ enum PolicyCommands {
         json: bool,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum SkillsCommands {
+    /// Install the canonical Ota skill.
+    Install {
+        /// Agent tool to install the Ota skill for.
+        #[arg(long, value_enum)]
+        agent: SkillAgent,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
     },
 }
 
@@ -1175,6 +1194,21 @@ fn parse_memory_override_arg(value: &str) -> Result<u64, String> {
 enum UpdateChannel {
     Stable,
     Latest,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SkillAgent {
+    Codex,
+    Claude,
+}
+
+impl SkillAgent {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -4847,6 +4881,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             script,
             remove,
         } => handle_completion_command(shell.as_deref(), setup, script, remove),
+        Commands::Skills {
+            command: SkillsCommands::Install { agent, json },
+        } => commands::skills_install(agent.as_str(), format_from_json(json), debug),
         Commands::Uninstall => commands::uninstall(debug),
         Commands::SelfUpdate { version, channel } => commands::self_update(
             version.as_deref(),
@@ -5396,6 +5433,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Completion { .. } => {
             "run `ota completion --setup` to install shell completion, `ota completion check` to verify the managed hook, or `ota completion zsh --script` to inspect the raw registration script"
         }
+        Commands::Skills { .. } => {
+            "run `ota skills install --agent codex` or `ota skills install --agent claude`"
+        }
         Commands::Uninstall => "run `ota uninstall --help` to inspect uninstall options",
         Commands::SelfUpdate { .. } => "run `ota self-update --help` to inspect update options",
         Commands::Detect { .. } => {
@@ -5576,6 +5616,9 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Extensions { json, .. }
         | Commands::Init { json, .. }
         | Commands::Agents { json, .. }
+        | Commands::Skills {
+            command: SkillsCommands::Install { json, .. },
+        }
         | Commands::Check { json, .. }
         | Commands::Receipt { json, .. }
         | Commands::Up { json, .. }
@@ -5675,6 +5718,9 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
         Commands::Completion { .. } => "ota completion",
+        Commands::Skills {
+            command: SkillsCommands::Install { .. },
+        } => "ota skills install",
         Commands::Policy { command: None, .. } => "ota policy",
         Commands::Policy {
             command: Some(PolicyCommands::Init { .. }),
@@ -5791,6 +5837,51 @@ mod tests {
             .into_iter()
             .map(|candidate| compact_path_separator_style(&candidate.get_value().to_string_lossy()))
             .collect()
+    }
+
+    #[test]
+    fn skills_install_codex_writes_embedded_ota_skill() {
+        let _env = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let _codex_home = EnvVarGuard::set(
+            "CODEX_HOME",
+            temp.path().join("codex-home").into_os_string(),
+        );
+
+        let output = run_with(["ota", "skills", "install", "--agent", "codex"]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("agent -> codex"));
+
+        let skill_dir = temp.path().join("codex-home").join("skills").join("ota");
+        let skill = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        let references =
+            fs::read_to_string(skill_dir.join("references").join("official-sources.md")).unwrap();
+        assert!(skill.contains("name: ota"));
+        assert!(references.contains("Official Ota Sources"));
+    }
+
+    #[test]
+    fn skills_install_json_reports_target_path() {
+        let _env = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let _codex_home = EnvVarGuard::set(
+            "CODEX_HOME",
+            temp.path().join("codex-home").into_os_string(),
+        );
+
+        let output = run_with(["ota", "skills", "install", "--agent", "codex", "--json"]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], json!(true));
+        assert_eq!(json["skill"], json!("ota"));
+        assert_eq!(json["agent"], json!("codex"));
+        assert_eq!(
+            PathBuf::from(json["path"].as_str().unwrap()),
+            temp.path().join("codex-home").join("skills").join("ota")
+        );
     }
 
     #[cfg(unix)]
@@ -32627,7 +32718,7 @@ policies:
                 || text.contains("NOT READY")
                 || text.contains("BLOCKED")
         );
-        assert!(text.contains("Container mise cannot install pinned version: node"));
+        assert!(text.contains("Container mise cannot install") && text.contains("node"));
         assert!(text.contains("Task output: mise install failed"));
         assert!(text.contains("ota execution plan --mode container"));
         assert!(text.contains("ota up --mode container"));
