@@ -673,3 +673,11 @@ fi
 
 ota_receipt "READY"
 ota_receipt_line "${version_text}"
+ota_info ""
+ota_info "Optional next steps"
+ota_receipt_line "Install the Ota skill for Codex:"
+ota_info "   ota skills install --agent codex"
+ota_receipt_line "Install the Ota skill for Claude Code:"
+ota_info "   ota skills install --agent claude"
+ota_receipt_line "Docs:"
+ota_info "   https://ota.run/docs/install"

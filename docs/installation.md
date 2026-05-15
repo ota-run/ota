@@ -71,12 +71,32 @@ The shell installer also supports `OTA_RELEASE_BASE` if you host the release ass
 If a prebuilt release is not published for the detected target, the installer now says so explicitly before trying the cargo fallback.
 `--setup-path` is opt-in: ota will not silently modify shell startup files unless you ask it to.
 
+### Install the Ota skill
+
+After `ota` is installed, install the optional Ota skill for Codex:
+
+```bash
+ota skills install --agent codex
+```
+
+Install the optional Ota skill for Claude Code:
+
+```bash
+ota skills install --agent claude
+```
+
 ## Windows (PowerShell)
 
 Install the latest release binary:
 
 ```powershell
 irm https://dist.ota.run/install.ps1 | iex
+```
+
+Persist the install directory on `PATH` explicitly:
+
+```powershell
+& ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -SetupPath
 ```
 
 Pin a release:
@@ -92,8 +112,29 @@ From a cloned ota repository:
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
 ```
 
+Persist the source-install binary directory on `PATH` explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource -SetupPath
+```
+
 The PowerShell installer also supports `OTA_RELEASE_BASE` for a mirror or CDN.
 If a prebuilt release is not published for the detected target, the installer now says so explicitly before trying the cargo fallback.
+Official release installs require published checksums; custom mirrors can set `OTA_ALLOW_MISSING_CHECKSUMS=1` if they intentionally host assets without checksum files.
+
+### Install the Ota skill
+
+After `ota` is installed, install the optional Ota skill for Codex:
+
+```powershell
+ota skills install --agent codex
+```
+
+Install the optional Ota skill for Claude Code:
+
+```powershell
+ota skills install --agent claude
+```
 
 ## Windows (Git Bash / MSYS / MinGW / Cygwin)
 

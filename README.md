@@ -106,6 +106,19 @@ Windows PowerShell:
 irm https://dist.ota.run/install.ps1 | iex
 ```
 
+Persist the Windows install directory on `PATH` explicitly:
+
+```powershell
+& ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -SetupPath
+```
+
+Install the optional Ota skill after `ota` is installed:
+
+```bash
+ota skills install --agent codex
+ota skills install --agent claude
+```
+
 Windows Git Bash, MSYS, MinGW, or Cygwin:
 
 ```bash
@@ -155,6 +168,12 @@ Windows PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
+```
+
+Persist the source-install binary directory on `PATH` explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource -SetupPath
 ```
 
 See [Install](https://ota.run/docs/install) for the public install path and

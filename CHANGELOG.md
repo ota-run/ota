@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- hardened the PowerShell bootstrap installer: checksum mismatches and missing official checksum
+  manifests now fail closed instead of falling back to git installs, and Windows user PATH
+  persistence now requires explicit `-SetupPath`
 - fixed 22 Windows CI test failures in container-mode tests: replaced the broken
   `set "__OTA_ARGS=%*"` / delayed-expansion approach in the Windows fake-docker probe
   normalizer with stable positional-arg checks (`%2==--rm && %3==--name` for version
@@ -36,17 +39,10 @@
   contract authoring/review, doctor-first workflow guidance, Ota gap detection, and Studio
   local/cloud boundary judgment, plus a bundled reference file with official install/docs/GitHub
   sources for public-facing setup and examples
-- extended the shell and PowerShell installers with explicit skill installation support:
-  `install.sh skill --agent codex|claude` and `install.ps1 skill --agent codex|claude` now
-  install the Ota skill into the official Codex / Claude Code skill directories, preferring the
-  local repo skill files when run from an Ota checkout and otherwise downloading the canonical
-  skill files from GitHub
-- updated the shell installer receipt to print optional next-step commands for installing the Ota
-  skill into Codex or Claude Code after a successful CLI install, while keeping skill setup
-  explicit and separate from the normal `ota` install path
-- made skill installation stage and validate the complete skill tree before replacing an existing
-  skill install, and documented the optional Codex / Claude Code skill setup commands in the README
-  and installation docs
+- added `ota skills install --agent codex|claude` as the canonical first-party skill lifecycle
+  surface; the installed binary embeds the Ota skill files, stages and validates the complete skill
+  tree before replacing an existing install, and the shell installer receipt now points users to the
+  CLI command instead of teaching installer-managed skill setup
 - fixed the release gate path/render regressions from the recent path-normalization refactor:
   backticked URLs and commands are no longer rewritten as filesystem paths, and Windows native
   task execution now routes POSIX-style `script:` bodies through Git Bash even when the runner only
