@@ -33121,6 +33121,16 @@ fn container_provisioning_backend_and_name(summary: &str) -> Option<(&str, &str)
     {
         return Some((backend, name));
     }
+    if let Some(rest) = summary.strip_prefix("Container ")
+        && let Some((backend, name)) = rest.split_once(" cannot locate required package: ")
+    {
+        return Some((backend, name));
+    }
+    if let Some(rest) = summary.strip_prefix("Container ")
+        && let Some((backend, name)) = rest.split_once(" cannot refresh configured sources: ")
+    {
+        return Some((backend, name));
+    }
     None
 }
 
