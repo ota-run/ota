@@ -123,6 +123,17 @@ jobs:
       - name: Validate contract
         run: ota validate
 
+      - name: Clean up test lock files
+        run: |
+          rm -rf /tmp/ota-test-locks 2>/dev/null || true
+        shell: bash
+
+      - name: Clean up test lock files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Remove-Item -Path "$env:TEMP\ota-test-locks" -Recurse -Force -ErrorAction SilentlyContinue
+
       - name: Run release gate (non-Windows)
         if: runner.os != 'Windows'
         run: ota run release-gate --backend native --stream
