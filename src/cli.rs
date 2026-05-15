@@ -5815,30 +5815,40 @@ mod tests {
 
     #[cfg(windows)]
     fn normalize_windows_fake_container_probe_matchers(script: &str) -> String {
-        let script = script
+        // Replace `echo %* | findstr` probe matchers with cmd.exe positional-arg checks.
+        //
+        // The old approach captured %* into a variable via `set "__OTA_ARGS=%*"`, which
+        // breaks when %* contains embedded `"` characters (as the version probe script does).
+        //
+        // Instead we use stable positional args:
+        //   version probe:      docker run --rm --name <n> --entrypoint sh <img> -c <script>
+        //                       → %2=--rm, %3=--name  (always stable)
+        //   provisioning probe: docker run --rm -i --entrypoint sh -v ... <img> -lc <shell>
+        //                       → %3=-i               (always stable)
+        let Some(remainder) = script.strip_prefix("@echo off\r\n") else {
+            return script.to_string();
+        };
+        let result = remainder
             .split("\r\n")
             .map(|line| {
-                let line = if line.contains("echo %* | findstr /C:\"command -v '")
-                    && line.contains("\" >nul && (")
+                // Version probe line: detect by the "command -v '" pattern + block opener
+                if line.contains("echo %* | findstr /C:\"command -v '")
+                    && line.ends_with(">nul && (")
                 {
                     let indent = line.split("echo %* |").next().unwrap_or_default();
-                    format!(
-                        "{indent}echo %* | findstr /C:\"__OTA_CONTAINER_PROBE_STARTED__\" >nul && ("
-                    )
-                } else {
-                    line.to_string()
-                };
-                line.replace("echo %* |", "echo(!__OTA_ARGS! |")
+                    return format!("{indent}if \"%2\"==\"--rm\" if \"%3\"==\"--name\" (");
+                }
+                // Any remaining probe-line that uses echo %* | … >nul && ( is a provisioning
+                // probe. Detect it by the reliable %3==-i flag present on all Ephemeral runs.
+                if line.contains("echo %* |") && line.ends_with(">nul && (") {
+                    let indent = line.split("echo %* |").next().unwrap_or_default();
+                    return format!("{indent}if \"%3\"==\"-i\" (");
+                }
+                line.to_string()
             })
             .collect::<Vec<_>>()
             .join("\r\n");
-        if let Some(remainder) = script.strip_prefix("@echo off\r\n") {
-            format!(
-                "@echo off\r\nsetlocal EnableDelayedExpansion\r\nset \"__OTA_ARGS=%*\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:^=^^!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:&=^&!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:|=^|!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:<=^<!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:>=^>!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:(=^(!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:)=^)!\"\r\n{remainder}"
-            )
-        } else {
-            script
-        }
+        format!("@echo off\r\n{result}")
     }
 
     #[cfg(windows)]
@@ -6717,6 +6727,10 @@ exec /bin/sh -lc "$1"
         }
 
         if name == "explain_narrow_premium.txt" {
+            // On Windows, write_fake_command creates `node.cmd`; resolve_command_path returns the
+            // absolute path including the `.cmd` extension, which compact_path then renders as
+            // `./bin/node.cmd`.  Strip the extension so the snapshot matches on all platforms.
+            normalized = normalized.replace("./bin/node.cmd", "./bin/node");
             normalized = normalized.replace(
                 "    » ota probed\n      `./bin/node`\n      with `node --version`",
                 "    » ota probed `./bin/node` with\n      `node --version`",
@@ -32560,7 +32574,12 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            // Two sequential provisioning calls (mise install then mise ls-remote) cannot be
+            // distinguished by parsing %* because the shell command string contains embedded
+            // `"` characters that break cmd.exe batch-file arg parsing.  Use a flag file in
+            // %~dp0 (the script's own directory, unique per test temp dir) to track state:
+            // first provisioning call → fail (simulates install failure); second → succeed.
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  if \"%2\"==\"--rm\" if \"%3\"==\"--name\" (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  if \"%3\"==\"-i\" goto :__ota_provision\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n\r\n:__ota_provision\r\nif not exist \"%~dp0__ota_probe_done.tmp\" (\r\n  echo.> \"%~dp0__ota_probe_done.tmp\"\r\n  echo mise install failed 1>&2\r\n  exit /b 1\r\n)\r\necho [\"21.0.0\",\"21.1.0\"]\r\nexit /b 0\r\n"
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };

@@ -7987,30 +7987,40 @@ mod tests {
 
     #[cfg(windows)]
     fn normalize_windows_fake_container_probe_matchers(script: &str) -> String {
-        let script = script
+        // Replace `echo %* | findstr` probe matchers with cmd.exe positional-arg checks.
+        //
+        // The old approach captured %* into a variable via `set "__OTA_ARGS=%*"`, which
+        // breaks when %* contains embedded `"` characters (as the version probe script does).
+        //
+        // Instead we use stable positional args:
+        //   version probe:      docker run --rm --name <n> --entrypoint sh <img> -c <script>
+        //                       → %2=--rm, %3=--name  (always stable)
+        //   provisioning probe: docker run --rm -i --entrypoint sh -v ... <img> -lc <shell>
+        //                       → %3=-i               (always stable)
+        let Some(remainder) = script.strip_prefix("@echo off\r\n") else {
+            return script.to_string();
+        };
+        let result = remainder
             .split("\r\n")
             .map(|line| {
-                let line = if line.contains("echo %* | findstr /C:\"command -v '")
-                    && line.contains("\" >nul && (")
+                // Version probe line: detect by the "command -v '" pattern + block opener
+                if line.contains("echo %* | findstr /C:\"command -v '")
+                    && line.ends_with(">nul && (")
                 {
                     let indent = line.split("echo %* |").next().unwrap_or_default();
-                    format!(
-                        "{indent}echo %* | findstr /C:\"__OTA_CONTAINER_PROBE_STARTED__\" >nul && ("
-                    )
-                } else {
-                    line.to_string()
-                };
-                line.replace("echo %* |", "echo(!__OTA_ARGS! |")
+                    return format!("{indent}if \"%2\"==\"--rm\" if \"%3\"==\"--name\" (");
+                }
+                // Any remaining probe-line that uses echo %* | … >nul && ( is a provisioning
+                // probe. Detect it by the reliable %3==-i flag present on all Ephemeral runs.
+                if line.contains("echo %* |") && line.ends_with(">nul && (") {
+                    let indent = line.split("echo %* |").next().unwrap_or_default();
+                    return format!("{indent}if \"%3\"==\"-i\" (");
+                }
+                line.to_string()
             })
             .collect::<Vec<_>>()
             .join("\r\n");
-        if let Some(remainder) = script.strip_prefix("@echo off\r\n") {
-            format!(
-                "@echo off\r\nsetlocal EnableDelayedExpansion\r\nset \"__OTA_ARGS=%*\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:^=^^!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:&=^&!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:|=^|!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:<=^<!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:>=^>!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:(=^(!\"\r\nset \"__OTA_ARGS=!__OTA_ARGS:)=^)!\"\r\n{remainder}"
-            )
-        } else {
-            script
-        }
+        format!("@echo off\r\n{result}")
     }
 
     fn write_fake_command(bin_dir: &Path, name: &str, body: &str) -> std::path::PathBuf {

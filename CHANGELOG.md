@@ -26,6 +26,27 @@
 
 ## Unreleased
 
+- fixed 22 Windows CI test failures in container-mode tests: replaced the broken
+  `set "__OTA_ARGS=%*"` / delayed-expansion approach in the Windows fake-docker probe
+  normalizer with stable positional-arg checks (`%2==--rm && %3==--name` for version
+  probes, `%3==-i` for provisioning probes), and added `./bin/node.cmd` → `./bin/node`
+  normalization for the `explain_narrow_premium.txt` snapshot to handle the Windows
+  `.cmd` extension on fake commands
+- added the first canonical `ota` skill under `skills/ota`, covering Ota-specific bootstrap,
+  contract authoring/review, doctor-first workflow guidance, Ota gap detection, and Studio
+  local/cloud boundary judgment, plus a bundled reference file with official install/docs/GitHub
+  sources for public-facing setup and examples
+- extended the shell and PowerShell installers with explicit skill installation support:
+  `install.sh skill --agent codex|claude` and `install.ps1 skill --agent codex|claude` now
+  install the Ota skill into the official Codex / Claude Code skill directories, preferring the
+  local repo skill files when run from an Ota checkout and otherwise downloading the canonical
+  skill files from GitHub
+- updated the shell installer receipt to print optional next-step commands for installing the Ota
+  skill into Codex or Claude Code after a successful CLI install, while keeping skill setup
+  explicit and separate from the normal `ota` install path
+- made skill installation stage and validate the complete skill tree before replacing an existing
+  skill install, and documented the optional Codex / Claude Code skill setup commands in the README
+  and installation docs
 - fixed the release gate path/render regressions from the recent path-normalization refactor:
   backticked URLs and commands are no longer rewritten as filesystem paths, and Windows native
   task execution now routes POSIX-style `script:` bodies through Git Bash even when the runner only
