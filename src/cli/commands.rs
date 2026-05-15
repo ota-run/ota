@@ -38415,7 +38415,7 @@ tasks:
         let outer_contract = std::fs::canonicalize(&contract_path).expect("canonical contract");
         assert_eq!(
             compact_contract_file_path_relative_to(&contract_path, "ota.yaml", Some(outer.path())),
-            outer_contract.display().to_string()
+            super::compact_path_display_text(&outer_contract)
         );
     }
 
@@ -38747,7 +38747,7 @@ env:
         );
         let logs = result.logs.expect("logs should be captured");
         assert!(result.warning.is_none());
-        assert!(logs.dir.starts_with(".ota/state/logs/"));
+        assert!(super::compact_path_separator_style(&logs.dir).starts_with(".ota/state/logs/"));
         assert_eq!(
             fs::read_to_string(repo.path().join(&logs.stdout)).expect("read stdout log"),
             "stdout line\n"
@@ -38898,6 +38898,7 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn streamed_run_command_persists_logs_when_interrupted() {
         let _guard = crate::test_support::env_mutex_lock();
@@ -49463,8 +49464,8 @@ tasks:
         ) {
             "windows" => (
                 "windows",
-                "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
-                "cmd /d /s /c \"if not defined OTA_NATIVE_ACTIVATED exit /b 1\"",
+                "activation:\n          kind: command\n          shell: cmd\n          run: type nul > native.ready",
+                "cmd /d /s /c \"if not exist native.ready exit /b 1\"",
             ),
             "macos" => (
                 "macos",
@@ -50076,6 +50077,7 @@ project:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn up_bootstraps_missing_adapter_before_repo_provisioning() {
         let _guard = env_mutex_lock();
@@ -50388,6 +50390,7 @@ policies:
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn up_post_setup_diagnosis_keeps_container_scope_for_host_bound_checks() {
         let _guard = env_mutex_lock();
@@ -50820,23 +50823,36 @@ workflows:
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
         let contract_path = repo.path().join("ota.yaml");
+        let (service_start, service_healthcheck, setup_task) = if cfg!(windows) {
+            (
+                "cmd /d /s /c \"if exist .env.local (echo service>>run.log) else exit /b 1\"",
+                "cmd /d /s /c \"if exist .env.local exit /b 0 else exit /b 1\"",
+                "run: cmd /d /s /c \"echo setup>>run.log && type nul > .env.local\"",
+            )
+        } else {
+            (
+                "test -f .env.local && echo service >> run.log",
+                "test -f .env.local",
+                "script: |\n      echo setup >> run.log\n      touch .env.local",
+            )
+        };
         let contract = parse_contract_str(
             contract_path.as_path(),
-            r#"
+            &format!(
+                r#"
 version: 1
 project:
   name: phased-up
 services:
   app:
     required: true
-    start: test -f .env.local && echo service >> run.log
-    healthcheck: test -f .env.local
+    start: {service_start}
+    healthcheck: {service_healthcheck}
 tasks:
   setup:
-    script: |
-      echo setup >> run.log
-      touch .env.local
+    {setup_task}
 "#,
+            ),
         )
         .unwrap();
 
@@ -50871,9 +50887,29 @@ tasks:
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
         let contract_path = repo.path().join("ota.yaml");
+        let (postgres_start, postgres_healthcheck, app_start, app_healthcheck, setup_task) = if cfg!(
+            windows
+        ) {
+            (
+                "cmd /d /s /c \"echo postgres>>run.log && type nul > db.ready\"",
+                "cmd /d /s /c \"if exist db.ready exit /b 0 else exit /b 1\"",
+                "cmd /d /s /c \"if exist .env.local (echo app>>run.log) else exit /b 1\"",
+                "cmd /d /s /c \"if exist .env.local exit /b 0 else exit /b 1\"",
+                "run: cmd /d /s /c \"if not exist db.ready exit /b 1 && echo setup>>run.log && type nul > .env.local\"",
+            )
+        } else {
+            (
+                "echo postgres >> run.log\n      touch db.ready",
+                "test -f db.ready",
+                "test -f .env.local && echo app >> run.log",
+                "test -f .env.local",
+                "script: |\n      test -f db.ready\n      echo setup >> run.log\n      touch .env.local",
+            )
+        };
         let contract = parse_contract_str(
             contract_path.as_path(),
-            r#"
+            &format!(
+                r#"
 version: 1
 project:
   name: phased-up
@@ -50881,22 +50917,19 @@ services:
   postgres:
     required: true
     start: |
-      echo postgres >> run.log
-      touch db.ready
-    healthcheck: test -f db.ready
+      {postgres_start}
+    healthcheck: {postgres_healthcheck}
   app:
     required: true
-    start: test -f .env.local && echo app >> run.log
-    healthcheck: test -f .env.local
+    start: {app_start}
+    healthcheck: {app_healthcheck}
 tasks:
   setup:
     requires_services:
       - postgres
-    script: |
-      test -f db.ready
-      echo setup >> run.log
-      touch .env.local
+    {setup_task}
 "#,
+            ),
         )
         .unwrap();
 
@@ -51069,9 +51102,19 @@ workflows:
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
         let contract_path = repo.path().join("ota.yaml");
+        let (backend_ready, frontend_ready, setup_task) = if cfg!(windows) {
+            (
+                "cmd /d /s /c \"if exist .env.local exit /b 0 else exit /b 1\"",
+                "cmd /d /s /c exit /b 1",
+                "run: cmd /d /s /c \"type nul > .env.local\"",
+            )
+        } else {
+            ("test -f .env.local", "exit 1", "script: touch .env.local")
+        };
         let contract = parse_contract_str(
             contract_path.as_path(),
-            r#"
+            &format!(
+                r#"
 version: 1
 project:
   name: workflow-up
@@ -51079,14 +51122,14 @@ checks:
   - name: backend-ready
     kind: health
     severity: error
-    run: test -f .env.local
+    run: {backend_ready}
   - name: frontend-ready
     kind: health
     severity: error
-    run: exit 1
+    run: {frontend_ready}
 tasks:
   setup:
-    script: touch .env.local
+    {setup_task}
   dev:
     run: echo dev
 workflows:
@@ -51100,6 +51143,7 @@ workflows:
       checks:
         - backend-ready
 "#,
+            ),
         )
         .unwrap();
 
@@ -51558,6 +51602,7 @@ policies:
         assert_eq!(bootstrap_request.actions[0].source, "sdkman-bootstrap");
     }
 
+    #[cfg(unix)]
     #[test]
     fn up_bootstraps_missing_source_manager_before_repo_provisioning() {
         let _guard = env_mutex_lock();
