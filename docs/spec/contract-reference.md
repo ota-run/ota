@@ -642,10 +642,14 @@ Rules:
 
 - toolchain names must not be empty
 - `version` must not be empty
+- shared provider-agnostic toolchain fields are currently `provider`, `version`,
+  `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
 - `provider` is currently `rustup`
 - `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
 - the only shipped toolchain contract today is `toolchains.rust` with `provider: rustup`
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
+- `profile`, `components`, and `targets` are currently Rustup-specific compatibility fields, not a
+  generic ecosystem-wide toolchain schema
 - `platforms` may override `version`, `profile`, `components`, and `targets` per OS using
   `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
@@ -664,6 +668,8 @@ Ownership boundary:
 - use `runtimes` for simple unmanaged runtime version checks
 - use `tools` for standalone commands on PATH
 - use `native_prerequisites` for host-native build bundles and shell activation
+- current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
+  ownership from `toolchains.rust` with `provider: rustup`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.

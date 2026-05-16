@@ -70,11 +70,11 @@ use crate::schema::{
     TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol,
     TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
-    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
-    task_target_env_name,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
+use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_provider};
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
 #[derive(Clone)]
@@ -6464,29 +6464,22 @@ fn toolchain_fulfillment_commands(
     target_os: &str,
     backend: &ResolvedExecutionBackend,
 ) -> Vec<String> {
-    match (toolchain_name, toolchain.provider) {
-        ("rust", ToolchainProvider::Rustup) => {
-            let mut args = vec![
-                String::from("toolchain"),
-                String::from("install"),
-                toolchain.version_for_os(target_os).to_string(),
-            ];
-            if let Some(profile) = toolchain.profile_for_os(target_os) {
-                args.push(String::from("--profile"));
-                args.push(profile.to_string());
-            }
-            for component in toolchain.components_for_os(target_os) {
-                args.push(String::from("--component"));
-                args.push(component);
-            }
-            for target in toolchain.targets_for_os(target_os) {
-                args.push(String::from("--target"));
-                args.push(target);
-            }
-            vec![shell_quote_command_argv(backend, "rustup", &args)]
-        }
-        _ => Vec::new(),
-    }
+    declared_toolchain_provider(toolchain_name, toolchain)
+        .map(|provider| {
+            provider
+                .fulfillment_commands(toolchain, target_os)
+                .into_iter()
+                .map(|command| render_toolchain_command(backend, command))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn render_toolchain_command(
+    backend: &ResolvedExecutionBackend,
+    command: ToolchainCommandSpec,
+) -> String {
+    shell_quote_command_argv(backend, command.program, &command.args)
 }
 
 fn target_os_for_toolchain_backend<'a>(

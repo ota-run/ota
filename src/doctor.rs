@@ -69,9 +69,10 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
     ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, ToolRequirement, ToolchainProvider, ToolchainSpec,
+    ToolAcquisitionSpec, ToolRequirement, ToolchainProvider,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
+use crate::toolchains::declared_toolchain_provider;
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -4651,6 +4652,9 @@ fn diagnose_toolchains(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
+        let Some(provider) = declared_toolchain_provider(toolchain_name, toolchain) else {
+            continue;
+        };
         if !toolchain.active_for_os(target_os) {
             continue;
         }
@@ -4658,10 +4662,10 @@ fn diagnose_toolchains(
         probe_started |= diagnose_command_version(
             "runtime",
             toolchain_name,
-            toolchain_primary_executable(toolchain_name, toolchain.provider),
+            provider.primary_executable(),
             toolchain.version_for_os(target_os),
             toolchain.required_for_os(target_os),
-            toolchain_provider_hint(toolchain),
+            Some(provider.provider_hint()),
             None,
             mode,
             None,
@@ -4684,10 +4688,14 @@ fn diagnose_toolchains(
                 }
                 probe_started = true;
                 let mut provider_missing_reported = false;
+                let provider_label = provider.label();
+                let component_probe_command =
+                    format!("{provider_label} component list --installed");
+                let target_probe_command = format!("{provider_label} target list --installed");
 
                 match rustup_installed_entries(
                     "doctor-probe:rustup",
-                    "rustup component list --installed",
+                    component_probe_command.as_str(),
                     mode,
                     container_probe,
                     remote_probe,
@@ -4712,7 +4720,7 @@ fn diagnose_toolchains(
                         provider_missing_reported = true;
                         findings.push(missing_toolchain_provider_finding(
                             toolchain_name,
-                            "rustup",
+                            provider_label,
                             mode,
                             "components",
                         ));
@@ -4720,8 +4728,8 @@ fn diagnose_toolchains(
                     Err(details) => {
                         findings.push(toolchain_provider_probe_failed_finding(
                             toolchain_name,
-                            "rustup",
-                            "rustup component list --installed",
+                            provider_label,
+                            component_probe_command.as_str(),
                             details,
                             mode,
                         ));
@@ -4730,7 +4738,7 @@ fn diagnose_toolchains(
 
                 match rustup_installed_entries(
                     "doctor-probe:rustup-targets",
-                    "rustup target list --installed",
+                    target_probe_command.as_str(),
                     mode,
                     container_probe,
                     remote_probe,
@@ -4751,7 +4759,7 @@ fn diagnose_toolchains(
                     Ok(None) if !provider_missing_reported => {
                         findings.push(missing_toolchain_provider_finding(
                             toolchain_name,
-                            "rustup",
+                            provider_label,
                             mode,
                             "targets",
                         ));
@@ -4760,8 +4768,8 @@ fn diagnose_toolchains(
                     Err(details) => {
                         findings.push(toolchain_provider_probe_failed_finding(
                             toolchain_name,
-                            "rustup",
-                            "rustup target list --installed",
+                            provider_label,
+                            target_probe_command.as_str(),
                             details,
                             mode,
                         ));
@@ -4773,20 +4781,6 @@ fn diagnose_toolchains(
 
     probe_started
 }
-
-fn toolchain_primary_executable(name: &str, provider: ToolchainProvider) -> &str {
-    match (name, provider) {
-        ("rust", ToolchainProvider::Rustup) => "rustc",
-        _ => name,
-    }
-}
-
-fn toolchain_provider_hint(toolchain: &ToolchainSpec) -> Option<&str> {
-    match toolchain.provider {
-        ToolchainProvider::Rustup => Some("rustup"),
-    }
-}
-
 fn doctor_probe_backend(
     mode: DoctorMode,
     container_probe: Option<&ContainerProbeContext>,

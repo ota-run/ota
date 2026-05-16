@@ -44,6 +44,8 @@ Pick the highest useful owner and do not repeat the same capability below it.
 - `runtimes` own simple unmanaged runtime version checks
 - `tools` own standalone commands on PATH
 - `native_prerequisites` own host-native build bundles and shell activations
+- current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
+  ownership from `toolchains.rust` with `provider: rustup`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
@@ -59,6 +61,10 @@ Examples:
 Current parser boundary:
 
 - the only shipped toolchain contract today is `toolchains.rust` with `provider: rustup`
+- the shared provider-agnostic toolchain fields are currently `provider`, `version`,
+  `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
+- `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic
+  ecosystem-wide toolchain schema
 - future-fit examples for Node, Python, .NET, or Java are ownership-model examples only; they are
   not valid contract entries until ota ships those provider adapters and schema fields
 
