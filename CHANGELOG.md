@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- fixed Windows native `launch.kind: command` task startup parity by resolving launch executables
+  through the same command-path resolver used by doctor/probes before spawn, so workflows that
+  run commands like `npx` no longer fail with Windows-specific program-not-found spawn errors
+- fixed workflow-scoped doctor/check selection for selected workflow task-requirement surfaces:
+  when a workflow/task path is explicitly scoped but does not declare readiness checks, Ota no
+  longer falls back to unrelated global checks (for example monorepo `node_modules` file checks)
+  that contradict the selected workflow path
+- improved `ota proof runtime` failure prioritization so deterministic doctor primary blockers are
+  now surfaced before generic up-process timeout/exit messages in proof text and JSON wrappers;
+  runtime process failures still surface when no primary blocker exists
 - redesigned the shared `AGENT` summary block used by `ota tasks`, `ota doctor`, and `ota check`
   into grouped `Overview`, `Execution`, and `Boundary` sections, with counted wrapped lists and
   writable-path root/exception collapsing so large agent boundaries stay readable in terminal

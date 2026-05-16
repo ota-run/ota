@@ -4456,7 +4456,8 @@ fn execute_native_launch_command(
     mode: TaskExecutionMode,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
-    let mut process = Command::new(exe);
+    let resolved_executable = resolve_native_launch_executable(exe);
+    let mut process = Command::new(&resolved_executable);
     process
         .args(args)
         .current_dir(working_dir)
@@ -4652,6 +4653,10 @@ fn execute_native_launch_command(
             })
         }
     }
+}
+
+fn resolve_native_launch_executable(exe: &str) -> PathBuf {
+    crate::doctor::resolve_command_path(exe).unwrap_or_else(|| PathBuf::from(exe))
 }
 
 fn task_launch_container_shape_seed(
@@ -20211,6 +20216,41 @@ Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
         assert!(looks_like_powershell_script(script));
         assert!(!looks_like_posix_script(script));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_launch_resolves_windows_command_from_path() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let npx_path = bin_dir.join("npx.cmd");
+        fs::write(&npx_path, "@echo off\r\necho npx\r\n").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_pathext = env::var_os("PATHEXT");
+        let mut entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+        }
+
+        let resolved = super::resolve_native_launch_executable("npx");
+        assert_eq!(resolved, npx_path);
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_pathext {
+            Some(value) => unsafe { env::set_var("PATHEXT", value) },
+            None => unsafe { env::remove_var("PATHEXT") },
+        }
     }
 
     #[cfg(unix)]
