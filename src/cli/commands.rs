@@ -149,9 +149,10 @@ use crate::schema::{
     ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
 };
 use crate::toolchains::{
-    ToolchainOwnedCapabilityKind, declared_toolchain_contract, declared_toolchain_preview_action,
-    declared_toolchain_provider_label, declared_toolchain_requirement_clause,
-    requirement_surface_with_toolchain_owned_runtimes,
+    ToolchainOwnedCapabilityKind, declared_toolchain_contract,
+    declared_toolchain_fulfillment_attempt_summary, declared_toolchain_preview_action,
+    fallback_toolchain_fulfillment_attempt_summary,
+    requirement_surface_with_toolchain_owned_runtimes, toolchain_fulfillment_status_detail,
 };
 use crate::update;
 use crate::validator::{
@@ -34904,17 +34905,10 @@ fn render_toolchain_summary_text(toolchains: &[ToolchainSelectionSummary]) -> St
             paint_backticked_code(&toolchain.owns_runtime)
         ));
         if let Some(fulfilled) = toolchain.fulfilled {
-            let fulfillment_detail = if fulfilled {
-                "applied on this execution path"
-            } else if toolchain.fulfillment == "run" {
-                "selected on this execution path; no provider fulfillment command ran"
-            } else {
-                "check-only on this execution path"
-            };
             stdout.push_str(&format!(
                 "\n  {} {}",
                 paint_key("Fulfilled:"),
-                fulfillment_detail
+                toolchain_fulfillment_status_detail(&toolchain.fulfillment, fulfilled)
             ));
             for command in &toolchain.commands {
                 stdout.push_str(&format!(
@@ -55942,19 +55936,6 @@ fn selected_toolchain_target_os_for_task(
     requirement_target_os_for_backend(backend)
 }
 
-fn toolchain_requirement_summary(
-    contract: &Contract,
-    toolchain_name: &str,
-    target_os: &str,
-) -> Option<String> {
-    let toolchain = contract.toolchains.get(toolchain_name)?;
-    Some(declared_toolchain_requirement_clause(
-        toolchain_name,
-        toolchain,
-        target_os,
-    ))
-}
-
 fn toolchain_summary_backend_for_mode(mode: DoctorMode) -> Backend {
     match mode {
         DoctorMode::Native => Backend::Native,
@@ -56024,8 +56005,16 @@ fn selected_toolchain_summary(
         fulfilled: None,
         commands: Vec::new(),
         owns_tools,
-        components: toolchain.components_for_os(target_os),
-        targets: toolchain.targets_for_os(target_os),
+        components: provider.managed_surface_entries(
+            crate::toolchains::ToolchainManagedSurfaceKind::Component,
+            toolchain,
+            target_os,
+        ),
+        targets: provider.managed_surface_entries(
+            crate::toolchains::ToolchainManagedSurfaceKind::Target,
+            toolchain,
+            target_os,
+        ),
     })
 }
 
@@ -56173,6 +56162,18 @@ fn fallback_toolchain_summaries_for_backend(
         ExecutionOverrides::default(),
         backend,
     )
+}
+
+fn resolved_toolchain_fulfillment_attempt_summary(
+    contract: &Contract,
+    toolchain_name: &str,
+    target_os: &str,
+) -> crate::toolchains::ToolchainFulfillmentAttemptSummary {
+    contract
+        .toolchains
+        .get(toolchain_name)
+        .map(|spec| declared_toolchain_fulfillment_attempt_summary(toolchain_name, spec, target_os))
+        .unwrap_or_else(|| fallback_toolchain_fulfillment_attempt_summary(toolchain_name))
 }
 
 fn toolchain_fulfillment_next_steps(
@@ -56580,22 +56581,21 @@ fn render_run_structured_error_text(
             details,
         } => {
             let target_os = selected_toolchain_target_os_for_task(contract, task, overrides);
-            let provider = contract
-                .toolchains
-                .get(toolchain.as_str())
-                .map(|spec| declared_toolchain_provider_label(toolchain.as_str(), spec))
-                .unwrap_or("toolchain provider");
-            let requirement =
-                toolchain_requirement_summary(contract, toolchain.as_str(), target_os)
-                    .unwrap_or_else(|| format!("check toolchain `{toolchain}` via `{provider}`"));
+            let summary = resolved_toolchain_fulfillment_attempt_summary(
+                contract,
+                toolchain.as_str(),
+                target_os,
+            );
+            let provider = summary.provider_label.as_str();
             (
                 String::from("Toolchain fulfillment failed"),
                 vec![
                     format!("task `{task}` selected toolchain `{toolchain}`"),
+                    summary.allowance_clause,
                     format!(
-                        "`toolchains.{toolchain}.fulfillment: run` allowed ota to attempt run-path provisioning via `{provider}`"
+                        "{}; provisioning attempt failed: {details}",
+                        summary.requirement_clause
                     ),
-                    format!("{requirement}; provisioning attempt failed: {details}"),
                 ],
                 toolchain_fulfillment_next_steps(
                     &repo_run_stream_command(task_name, member),
@@ -70552,14 +70552,12 @@ fn render_up_run_error(
             };
             let target_os =
                 selected_toolchain_target_os_for_task(&contract, task.as_str(), overrides);
-            let provider = contract
-                .toolchains
-                .get(toolchain.as_str())
-                .map(|spec| declared_toolchain_provider_label(toolchain.as_str(), spec))
-                .unwrap_or("toolchain provider");
-            let requirement =
-                toolchain_requirement_summary(&contract, toolchain.as_str(), target_os)
-                    .unwrap_or_else(|| format!("check toolchain `{toolchain}` via `{provider}`"));
+            let summary = resolved_toolchain_fulfillment_attempt_summary(
+                &contract,
+                toolchain.as_str(),
+                target_os,
+            );
+            let provider = summary.provider_label.as_str();
             render_field_error_with_tail(
                 "UP",
                 &where_value,
@@ -70567,10 +70565,11 @@ fn render_up_run_error(
                 "Toolchain fulfillment failed",
                 &[
                     format!("task `{task}` selected toolchain `{toolchain}`"),
+                    summary.allowance_clause,
                     format!(
-                        "`toolchains.{toolchain}.fulfillment: run` allowed ota to attempt run-path provisioning via `{provider}`"
+                        "{}; provisioning attempt failed: {details}",
+                        summary.requirement_clause
                     ),
-                    format!("{requirement}; provisioning attempt failed: {details}"),
                 ],
                 &[
                     format!(
