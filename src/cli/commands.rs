@@ -147,6 +147,7 @@ use crate::schema::{
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
     ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
 };
+use crate::toolchains::declared_toolchain_provider;
 use crate::update;
 use crate::validator::{
     ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract_with_path,
@@ -55570,7 +55571,7 @@ fn render_run_structured_error_text(
             let provider = contract
                 .toolchains
                 .get(toolchain.as_str())
-                .map(|spec| toolchain_provider_label(spec.provider))
+                .map(|spec| toolchain_provider_label(toolchain.as_str(), spec))
                 .unwrap_or("toolchain provider");
             let requirement =
                 toolchain_requirement_summary(contract, toolchain.as_str(), target_os)
@@ -63362,10 +63363,13 @@ fn requirement_target_os_for_backend(backend: Backend) -> &'static str {
     }
 }
 
-fn toolchain_provider_label(provider: crate::schema::ToolchainProvider) -> &'static str {
-    match provider {
-        crate::schema::ToolchainProvider::Rustup => "rustup",
-    }
+fn toolchain_provider_label(
+    toolchain_name: &str,
+    toolchain: &crate::schema::ToolchainSpec,
+) -> &'static str {
+    declared_toolchain_provider(toolchain_name, toolchain)
+        .map(|provider| provider.label())
+        .unwrap_or("toolchain provider")
 }
 
 fn toolchain_preview_requirement_clause(
@@ -63384,7 +63388,7 @@ fn toolchain_preview_requirement_clause(
     }
     format!(
         "check toolchain `{toolchain_name}` via `{}` ({})",
-        toolchain_provider_label(toolchain.provider),
+        toolchain_provider_label(toolchain_name, toolchain),
         parts.join(", ")
     )
 }
@@ -69502,7 +69506,7 @@ fn render_up_run_error(
             let provider = contract
                 .toolchains
                 .get(toolchain.as_str())
-                .map(|spec| toolchain_provider_label(spec.provider))
+                .map(|spec| toolchain_provider_label(toolchain.as_str(), spec))
                 .unwrap_or("toolchain provider");
             let requirement =
                 toolchain_requirement_summary(&contract, toolchain.as_str(), target_os)

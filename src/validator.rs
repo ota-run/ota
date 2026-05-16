@@ -37,6 +37,9 @@ use crate::schema::{
     ToolchainProvider, ToolchainSpec, parse_memory_size_bytes, parse_readiness_duration_spec,
     task_target_env_name,
 };
+use crate::toolchains::{
+    SHARED_TOOLCHAIN_CORE_SUMMARY, declared_rustup_specific_fields, declared_toolchain_provider,
+};
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1104,15 +1107,25 @@ fn validate_supported_toolchain(
     toolchain: &ToolchainSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if matches!(
-        (name, toolchain.provider),
-        ("rust", ToolchainProvider::Rustup)
-    ) {
+    if declared_toolchain_provider(name, toolchain).is_some() {
         return;
     }
 
+    let declared_provider_fields = declared_rustup_specific_fields(toolchain);
+    if declared_provider_fields.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "toolchain `{name}` is not supported today; the shared provider-agnostic toolchain fields are {SHARED_TOOLCHAIN_CORE_SUMMARY}, and the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`"
+        )));
+        return;
+    }
+
+    let declared_fields = declared_provider_fields
+        .iter()
+        .map(|field| format!("`{field}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
     errors.push(ValidationError::new(format!(
-        "toolchain `{name}` is not supported today; the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`"
+        "toolchain `{name}` is not supported today; the shared provider-agnostic toolchain fields are {SHARED_TOOLCHAIN_CORE_SUMMARY}, and Rustup-specific fields {declared_fields} are only valid for `toolchains.rust` with `provider: rustup`"
     )));
 }
 
@@ -4697,28 +4710,20 @@ fn duplicate_requirement_owners_for_toolchain(
     toolchain_name: &str,
     toolchain: &ToolchainSpec,
 ) -> Vec<(String, String)> {
-    match (toolchain_name, toolchain.provider) {
-        ("rust", ToolchainProvider::Rustup) => {
-            let mut duplicates = vec![
-                (String::from("runtime"), String::from("rust")),
-                (String::from("tool"), String::from("cargo")),
-            ];
-            for component in toolchain.components.iter().chain(
-                toolchain
-                    .platforms
-                    .values()
-                    .flat_map(|platform| platform.components.iter()),
-            ) {
-                match component.as_str() {
-                    "rustfmt" => duplicates.push((String::from("tool"), String::from("rustfmt"))),
-                    "clippy" => duplicates.push((String::from("tool"), String::from("clippy"))),
-                    _ => {}
-                }
-            }
-            duplicates
-        }
-        _ => Vec::new(),
-    }
+    declared_toolchain_provider(toolchain_name, toolchain)
+        .map(|provider| {
+            provider
+                .owned_capabilities(toolchain)
+                .into_iter()
+                .map(|capability| {
+                    (
+                        capability.kind.as_str().to_string(),
+                        capability.name.to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn validate_duplicate_requirement_ownership(
@@ -16385,9 +16390,42 @@ toolchains:
         assert!(
             rendered.iter().any(|error| {
                 error.contains(
-                    "toolchain `node` is not supported today; the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`",
+                    "toolchain `node` is not supported today; the shared provider-agnostic toolchain fields are `provider`, `version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`, and the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`",
                 )
             }),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_rustup_specific_fields_outside_the_shipped_rust_toolchain() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("unsupported provider-specific fields should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "Rustup-specific fields `components` are only valid for `toolchains.rust` with `provider: rustup`",
+            )),
             "{rendered:?}"
         );
     }

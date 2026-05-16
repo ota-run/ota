@@ -68,6 +68,14 @@
   execution boundary instead of being flattened into one doctor mode; native selected-path
   toolchains now diagnose on the host even when setup runs in a container, and the dry-run preview
   matches that backend-aware preflight
+- consolidated the shipped Rust toolchain ownership model behind one internal provider definition
+  so validation, diagnosis, dry-run preview, and run-path fulfillment all derive ownership,
+  provider labels, primary executables, and fulfillment commands from the same Rustup-backed
+  registry slice instead of repeating Rust-specific assumptions in each command layer
+- tightened the provider-boundary contract for `toolchains`: the validator now teaches the shared
+  core (`provider`, `version`, `fulfillment`) vs Rustup-specific compatibility fields
+  (`profile`, `components`, `targets`), and the built-in `examples/basic-rust` contract now uses
+  `toolchains.rust` instead of teaching duplicate `runtimes.rust` / `tools.cargo` ownership
 
 ## 1.6.12
 
