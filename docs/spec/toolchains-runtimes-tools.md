@@ -48,9 +48,8 @@ Pick the highest useful owner and do not repeat the same capability below it.
 - `tools` own standalone commands on PATH
 - `native_prerequisites` own host-native build bundles and shell activations
 - current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
-  ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable ownership
-  from `toolchains.node` with `provider: corepack`; package managers such as `pnpm` remain
-  standalone tools unless a future provider contract explicitly owns them
+  ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable plus
+  declared Corepack package-manager ownership from `toolchains.node` with `provider: corepack`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
@@ -62,8 +61,8 @@ Use `toolchains` when Ota must understand more than "does this executable exist?
 Examples:
 
 - Rust via Rustup, including components such as `rustfmt`
-- Node via Corepack, when the repo wants one owner for the Node runtime and `node` executable while package-manager
-  activation stays explicit under `tools`
+- Node via Corepack, when the repo wants one owner for the Node runtime, `node` executable, and
+  declared Corepack package-manager activation
 
 Current parser boundary:
 
@@ -79,9 +78,8 @@ Current parser boundary:
 - that provider contract also owns Rustup field-shape validation, so empty `profile`,
   `components`, or `targets` entries fail as provider-contract violations rather than generic
   schema drift
-- Corepack-backed Node toolchains currently use only the shared provider-agnostic field set and
-  stay check-only; package-manager activation such as `pnpm` still belongs under
-  `tools.<package-manager>.acquisition.provider: corepack`
+- Corepack-backed Node toolchains currently support one provider-specific field:
+  `package_managers` (plus `platforms.<os>.package_managers`) and stay check-only
 - `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic
   ecosystem-wide toolchain schema
 - future-fit examples for Python, .NET, or Java are ownership-model examples only; they are not
@@ -220,10 +218,9 @@ This slice is intentionally narrow:
 - org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
   so approved runtime versions and approved install sources can govern `toolchains.rust` or
   `toolchains.node` without re-declaring duplicate runtime ownership
-- Corepack-backed Node toolchains are currently diagnosis-only and use only the shared
-  provider-agnostic field set; `tools.node` is invalid duplicate ownership, while package-manager
-  activation such as `pnpm` still belongs under
-  `tools.<package-manager>.acquisition.provider: corepack`
+- Corepack-backed Node toolchains are currently diagnosis-only; `tools.node` is invalid duplicate
+  ownership, and package managers declared under `toolchains.node.package_managers` must not be
+  redeclared under `tools`
 - contracts that declare any other toolchain/provider combination fail validation today
 
 That is enough to remove shell-based Rust component workarounds cleanly without introducing a new

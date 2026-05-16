@@ -1200,6 +1200,8 @@ pub struct ToolchainSpec {
     #[serde(default)]
     pub components: Vec<String>,
     #[serde(default)]
+    pub package_managers: BTreeMap<String, String>,
+    #[serde(default)]
     pub targets: Vec<String>,
     #[serde(default)]
     pub fulfillment: Option<ToolchainFulfillmentMode>,
@@ -1250,6 +1252,14 @@ impl ToolchainSpec {
         values
     }
 
+    pub fn package_managers_for_os(&self, os: &str) -> BTreeMap<String, String> {
+        let mut values = self.package_managers.clone();
+        if let Some(platform) = self.platforms.get(os) {
+            values.extend(platform.package_managers.clone());
+        }
+        values
+    }
+
     pub fn targets_for_os(&self, os: &str) -> Vec<String> {
         let mut values = Vec::new();
         let mut seen = BTreeSet::new();
@@ -1282,6 +1292,8 @@ pub struct ToolchainPlatformSpec {
     pub profile: Option<String>,
     #[serde(default)]
     pub components: Vec<String>,
+    #[serde(default)]
+    pub package_managers: BTreeMap<String, String>,
     #[serde(default)]
     pub targets: Vec<String>,
 }

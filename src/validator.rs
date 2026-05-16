@@ -16405,7 +16405,7 @@ toolchains:
     }
 
     #[test]
-    fn supports_corepack_node_toolchain_with_shared_fields_only() {
+    fn supports_corepack_node_toolchain_with_package_managers() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -16418,9 +16418,13 @@ toolchains:
     version: "22"
     only_on:
       - linux
+    package_managers:
+      pnpm: "10.22.0"
     platforms:
       linux:
         version: "22.2.0"
+        package_managers:
+          yarn: "4.6.0"
 "#,
         )
         .unwrap();
@@ -16621,7 +16625,7 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `node` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.node.fulfillment: none` and use `tools.<package-manager>.acquisition.provider: corepack` for package-manager activation",
+                "toolchain `node` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.node.fulfillment: none` and declare package-manager activation under `toolchains.node.package_managers`",
             )),
             "{rendered:?}"
         );
@@ -16654,7 +16658,7 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `node` with `provider: corepack` must not declare `components`; current `toolchains.node` only supports the shared provider-agnostic fields",
+                "toolchain `node` with `provider: corepack` must not declare `components`; valid provider-specific fields for `toolchains.node` are `package_managers` and `platforms.<os>.package_managers`",
             )),
             "{rendered:?}"
         );
@@ -16686,7 +16690,81 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `node` with `provider: corepack` must not declare `profile`; current `toolchains.node` only supports the shared provider-agnostic fields",
+                "toolchain `node` with `provider: corepack` must not declare `profile`; valid provider-specific fields for `toolchains.node` are `package_managers` and `platforms.<os>.package_managers`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_corepack_package_manager_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
+tools:
+  pnpm: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate package-manager tool ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` owns tool `pnpm`, but the contract also declares `tools.pnpm`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_corepack_package_manager_tokens() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      "pnpm;echo nope": ">=10"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid corepack package manager tokens should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` package manager `pnpm;echo nope` must be a shell-safe Corepack package token",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` package manager `pnpm;echo nope` version must be a shell-safe Corepack version token",
             )),
             "{rendered:?}"
         );

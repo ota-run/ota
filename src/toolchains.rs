@@ -20,10 +20,11 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
     Contract, RequirementSurface, RuntimeDetail, RuntimePlatformDetail, RuntimeRequirement,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolDetail, ToolPlatformDetail, ToolRequirement,
     ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
 };
 
@@ -37,10 +38,12 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
     ToolchainProviderSpecificField::Components,
     ToolchainProviderSpecificField::Targets,
 ];
-const COREPACK_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[];
+const COREPACK_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] =
+    &[ToolchainProviderSpecificField::PackageManagers];
 const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides";
-const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str = "no provider-specific fields; current Corepack-backed Node toolchains use only the shared provider-agnostic fields";
+const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
+    "`package_managers` and `platforms.<os>.package_managers`";
 pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
     toolchain_name: RUSTUP_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Rustup,
@@ -51,6 +54,7 @@ pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = Toolchai
     provider_specific_field_summary: RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY,
     requirement_detail_parts_fn: rustup_requirement_detail_parts,
     owned_capabilities_fn: rustup_owned_capabilities,
+    owned_tool_requirements_fn: rustup_owned_tool_requirements,
     fulfillment_commands_fn: rustup_fulfillment_commands,
     owned_runtime_remediation_command_fn: rustup_owned_runtime_remediation_command,
     run_fulfillment_validation_error_fn: rustup_run_fulfillment_validation_error,
@@ -69,6 +73,7 @@ pub(crate) const COREPACK_TOOLCHAIN_CONTRACT: ToolchainProviderContract =
         provider_specific_field_summary: COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY,
         requirement_detail_parts_fn: corepack_requirement_detail_parts,
         owned_capabilities_fn: corepack_owned_capabilities,
+        owned_tool_requirements_fn: corepack_owned_tool_requirements,
         fulfillment_commands_fn: corepack_fulfillment_commands,
         owned_runtime_remediation_command_fn: corepack_owned_runtime_remediation_command,
         run_fulfillment_validation_error_fn: corepack_run_fulfillment_validation_error,
@@ -144,6 +149,7 @@ pub(crate) struct ToolchainDiagnosticNarrative {
 pub(crate) enum ToolchainProviderSpecificField {
     Profile,
     Components,
+    PackageManagers,
     Targets,
 }
 
@@ -152,6 +158,7 @@ impl ToolchainProviderSpecificField {
         match self {
             Self::Profile => "profile",
             Self::Components => "components",
+            Self::PackageManagers => "package_managers",
             Self::Targets => "targets",
         }
     }
@@ -176,6 +183,16 @@ impl ToolchainProviderSpecificField {
                 for (platform, detail) in &toolchain.platforms {
                     if !detail.components.is_empty() {
                         fields.push(format!("platforms.{platform}.components"));
+                    }
+                }
+            }
+            Self::PackageManagers => {
+                if !toolchain.package_managers.is_empty() {
+                    fields.push(String::from("package_managers"));
+                }
+                for (platform, detail) in &toolchain.platforms {
+                    if !detail.package_managers.is_empty() {
+                        fields.push(format!("platforms.{platform}.package_managers"));
                     }
                 }
             }
@@ -240,6 +257,56 @@ impl ToolchainProviderSpecificField {
                     }
                 }
             }
+            Self::PackageManagers => {
+                if toolchain
+                    .package_managers
+                    .iter()
+                    .any(|(name, version)| name.trim().is_empty() || version.trim().is_empty())
+                {
+                    errors.push(format!(
+                        "toolchain `{name}` must not declare empty `package_managers` names or versions"
+                    ));
+                }
+                for (package_name, version) in &toolchain.package_managers {
+                    if !package_name.trim().is_empty()
+                        && !is_shell_safe_corepack_token(package_name)
+                    {
+                        errors.push(format!(
+                            "toolchain `{name}` package manager `{package_name}` must be a shell-safe Corepack package token"
+                        ));
+                    }
+                    if !version.trim().is_empty() && !is_shell_safe_corepack_token(version) {
+                        errors.push(format!(
+                            "toolchain `{name}` package manager `{package_name}` version must be a shell-safe Corepack version token"
+                        ));
+                    }
+                }
+                for (platform, detail) in &toolchain.platforms {
+                    if detail
+                        .package_managers
+                        .iter()
+                        .any(|(name, version)| name.trim().is_empty() || version.trim().is_empty())
+                    {
+                        errors.push(format!(
+                            "toolchain `{name}` platform `{platform}` must not declare empty `package_managers` names or versions"
+                        ));
+                    }
+                    for (package_name, version) in &detail.package_managers {
+                        if !package_name.trim().is_empty()
+                            && !is_shell_safe_corepack_token(package_name)
+                        {
+                            errors.push(format!(
+                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` must be a shell-safe Corepack package token"
+                            ));
+                        }
+                        if !version.trim().is_empty() && !is_shell_safe_corepack_token(version) {
+                            errors.push(format!(
+                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` version must be a shell-safe Corepack version token"
+                            ));
+                        }
+                    }
+                }
+            }
             Self::Targets => {
                 if toolchain
                     .targets
@@ -275,6 +342,8 @@ pub(crate) struct ToolchainProviderContract {
     requirement_detail_parts_fn: fn(ToolchainProviderContract, &ToolchainSpec, &str) -> Vec<String>,
     owned_capabilities_fn:
         fn(ToolchainProviderContract, &ToolchainSpec) -> Vec<ToolchainOwnedCapability>,
+    owned_tool_requirements_fn:
+        fn(ToolchainProviderContract, &ToolchainSpec, &str) -> BTreeMap<String, ToolRequirement>,
     fulfillment_commands_fn:
         fn(ToolchainProviderContract, &ToolchainSpec, &str) -> Vec<ToolchainCommandSpec>,
     owned_runtime_remediation_command_fn: fn(ToolchainProviderContract, &str) -> Option<String>,
@@ -402,6 +471,14 @@ impl ToolchainProviderContract {
         target_os: &str,
     ) -> Vec<ToolchainCommandSpec> {
         (self.fulfillment_commands_fn)(self, toolchain, target_os)
+    }
+
+    pub(crate) fn owned_tool_requirements(
+        self,
+        toolchain: &ToolchainSpec,
+        target_os: &str,
+    ) -> BTreeMap<String, ToolRequirement> {
+        (self.owned_tool_requirements_fn)(self, toolchain, target_os)
     }
 
     pub(crate) fn run_fulfillment_validation_error(
@@ -720,6 +797,50 @@ pub(crate) fn requirement_surface_with_toolchain_owned_runtimes(
     merged
 }
 
+pub(crate) fn requirement_surface_with_toolchain_owned_tools(
+    contract: &Contract,
+    base: &RequirementSurface,
+    toolchain_names: &BTreeSet<String>,
+    target_os: &str,
+) -> RequirementSurface {
+    let mut merged = base.clone();
+
+    for toolchain_name in toolchain_names {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        let Some(provider) = declared_toolchain_contract(toolchain_name, toolchain) else {
+            continue;
+        };
+        for (tool_name, requirement) in provider.owned_tool_requirements(toolchain, target_os) {
+            let merged_requirement = merged
+                .tools
+                .get(tool_name.as_str())
+                .map(|base_requirement| base_requirement.merged_with_overlay(&requirement))
+                .unwrap_or(requirement);
+            merged.tools.insert(tool_name, merged_requirement);
+        }
+    }
+
+    merged
+}
+
+pub(crate) fn requirement_surface_with_toolchain_owned_capabilities(
+    contract: &Contract,
+    base: &RequirementSurface,
+    toolchain_names: &BTreeSet<String>,
+    target_os: &str,
+) -> RequirementSurface {
+    let with_runtimes =
+        requirement_surface_with_toolchain_owned_runtimes(contract, base, toolchain_names);
+    requirement_surface_with_toolchain_owned_tools(
+        contract,
+        &with_runtimes,
+        toolchain_names,
+        target_os,
+    )
+}
+
 fn base_requirement_detail_parts(
     provider: ToolchainProviderContract,
     toolchain: &ToolchainSpec,
@@ -753,7 +874,16 @@ fn corepack_requirement_detail_parts(
     toolchain: &ToolchainSpec,
     target_os: &str,
 ) -> Vec<String> {
-    base_requirement_detail_parts(provider, toolchain, target_os)
+    let mut parts = base_requirement_detail_parts(provider, toolchain, target_os);
+    let package_managers = toolchain.package_managers_for_os(target_os);
+    if !package_managers.is_empty() {
+        let rendered = package_managers
+            .iter()
+            .map(|(name, version)| format!("{name}@{version}"))
+            .collect::<Vec<_>>();
+        parts.push(format!("package managers `{}`", rendered.join("`, `")));
+    }
+    parts
 }
 
 fn rustup_owned_capabilities(
@@ -794,9 +924,9 @@ fn rustup_owned_capabilities(
 
 fn corepack_owned_capabilities(
     provider: ToolchainProviderContract,
-    _toolchain: &ToolchainSpec,
+    toolchain: &ToolchainSpec,
 ) -> Vec<ToolchainOwnedCapability> {
-    vec![
+    let mut owned = vec![
         ToolchainOwnedCapability {
             kind: ToolchainOwnedCapabilityKind::Runtime,
             name: provider.owned_runtime().to_string(),
@@ -805,7 +935,56 @@ fn corepack_owned_capabilities(
             kind: ToolchainOwnedCapabilityKind::Tool,
             name: provider.owned_runtime().to_string(),
         },
-    ]
+    ];
+    let mut package_managers = BTreeSet::new();
+    package_managers.extend(toolchain.package_managers.keys().cloned());
+    for detail in toolchain.platforms.values() {
+        package_managers.extend(detail.package_managers.keys().cloned());
+    }
+    for package_manager in package_managers {
+        owned.push(ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: package_manager,
+        });
+    }
+    owned
+}
+
+fn rustup_owned_tool_requirements(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> BTreeMap<String, ToolRequirement> {
+    BTreeMap::new()
+}
+
+fn corepack_owned_tool_requirements(
+    _provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> BTreeMap<String, ToolRequirement> {
+    toolchain
+        .package_managers_for_os(target_os)
+        .into_iter()
+        .map(|(name, version)| {
+            (
+                name.clone(),
+                ToolRequirement::Detailed(ToolDetail {
+                    version: version.clone(),
+                    required: toolchain.required_for_os(target_os),
+                    only_on: toolchain.only_on.clone(),
+                    platforms: BTreeMap::<String, ToolPlatformDetail>::new(),
+                    acquisition: Some(ToolAcquisitionSpec {
+                        provider: ToolAcquisitionProvider::Corepack,
+                        package: Some(name.clone()),
+                        version: Some(version),
+                        shell: None,
+                        run: None,
+                    }),
+                }),
+            )
+        })
+        .collect()
 }
 
 fn rustup_fulfillment_commands(
@@ -885,7 +1064,7 @@ fn corepack_run_fulfillment_validation_error(
     _toolchain: &ToolchainSpec,
 ) -> Option<String> {
     Some(format!(
-        "toolchain `{name}` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and use `tools.<package-manager>.acquisition.provider: corepack` for package-manager activation"
+        "toolchain `{name}` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare package-manager activation under `toolchains.{name}.package_managers`"
     ))
 }
 
@@ -941,6 +1120,15 @@ fn corepack_managed_surface_entries(
     _target_os: &str,
 ) -> Vec<String> {
     Vec::new()
+}
+
+fn is_shell_safe_corepack_token(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed == value
+        && trimmed.chars().all(|ch| {
+            ch.is_ascii_alphanumeric() || matches!(ch, '@' | '/' | '.' | '_' | '-' | '+' | '~')
+        })
 }
 
 fn rustup_managed_surface_remediation_command(
@@ -1061,6 +1249,8 @@ toolchains:
   node:
     provider: corepack
     version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 "#,
         );
         let toolchain = contract.toolchains.get("node").unwrap();
@@ -1080,6 +1270,20 @@ toolchains:
             provider
                 .managed_surface_entries(ToolchainManagedSurfaceKind::Component, toolchain, "linux")
                 .is_empty()
+        );
+        assert!(
+            provider
+                .requirement_detail_parts(toolchain, "linux")
+                .iter()
+                .any(|part| part.contains("package managers `pnpm@10.22.0`"))
+        );
+        let tool_requirements = provider.owned_tool_requirements(toolchain, "linux");
+        assert_eq!(
+            tool_requirements
+                .get("pnpm")
+                .expect("projected pnpm requirement")
+                .version(),
+            "10.22.0"
         );
         assert!(
             provider
