@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use crate::schema::{ToolchainProvider, ToolchainSpec};
+use crate::schema::{ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec};
 
 pub(crate) const SHARED_TOOLCHAIN_CORE_SUMMARY: &str =
     "`provider`, `version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`";
@@ -549,6 +549,46 @@ pub(crate) fn declared_toolchain_contract(
     toolchain: &ToolchainSpec,
 ) -> Option<ToolchainProviderContract> {
     toolchain_provider_contract(name, toolchain.provider)
+}
+
+pub(crate) fn declared_toolchain_provider_label(
+    name: &str,
+    toolchain: &ToolchainSpec,
+) -> &'static str {
+    declared_toolchain_contract(name, toolchain)
+        .map(|provider| provider.label())
+        .unwrap_or("toolchain provider")
+}
+
+pub(crate) fn declared_toolchain_requirement_clause(
+    name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> String {
+    let parts = declared_toolchain_contract(name, toolchain)
+        .map(|provider| provider.requirement_detail_parts(toolchain, target_os))
+        .unwrap_or_else(|| vec![format!("version `{}`", toolchain.version_for_os(target_os))]);
+    format!(
+        "check toolchain `{name}` via `{}` ({})",
+        declared_toolchain_provider_label(name, toolchain),
+        parts.join(", ")
+    )
+}
+
+pub(crate) fn declared_toolchain_preview_action(
+    name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> String {
+    let base = declared_toolchain_requirement_clause(name, toolchain, target_os);
+    match toolchain.fulfillment_mode() {
+        ToolchainFulfillmentMode::None => {
+            format!("{base}; fulfillment: none (diagnose only, no provisioning)")
+        }
+        ToolchainFulfillmentMode::Run => format!(
+            "{base}; fulfillment: run (ota may provision the selected toolchain on the selected run path)"
+        ),
+    }
 }
 
 pub(crate) fn declared_known_provider_specific_fields(toolchain: &ToolchainSpec) -> Vec<String> {
