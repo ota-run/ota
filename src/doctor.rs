@@ -7128,6 +7128,10 @@ fn diagnose_checks(
         selected_task_requirement_check_names(contract, workflow_name);
     let selected_probes = selected_workflow_probe_names(contract, workflow_name, scope);
     let selected_surfaces = selected_workflow_surface_names(contract, workflow_name, scope);
+    let scoped_workflow_targets = selected_checks.is_some()
+        || selected_precondition_checks.is_some()
+        || selected_probes.is_some()
+        || selected_surfaces.is_some();
     let mut probes_executed_via_checks = BTreeSet::new();
 
     for check in &contract.checks {
@@ -7152,6 +7156,9 @@ fn diagnose_checks(
                 if check.kind == CheckKind::Precondition {
                     continue;
                 }
+                if scoped_workflow_targets && selected_checks.is_none() {
+                    continue;
+                }
                 if let Some(selected) = selected_checks.as_ref()
                     && !selected.contains(check.name.as_str())
                 {
@@ -7165,6 +7172,8 @@ fn diagnose_checks(
                 {
                     continue;
                 }
+            } else if scoped_workflow_targets && selected_checks.is_none() {
+                continue;
             } else if let Some(selected) = selected_checks.as_ref()
                 && !selected.contains(check.name.as_str())
             {
@@ -11614,6 +11623,51 @@ tasks:
         assert_eq!(
             report.findings[0].next,
             "run `ota up` or `ota run setup` to satisfy `node_modules`, then rerun `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn workflow_scoped_checks_do_not_run_unselected_global_checks() {
+        let dir = TempDir::new().unwrap();
+        let contract_path = dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+tasks:
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      tools:
+        node: "20"
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let report =
+            super::diagnose_checks_only_for_workflow(&contract, &contract_path, Some("instant"));
+
+        assert!(report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary
+                    != "File check failed: workspace-dependencies-installed"),
+            "{report:?}"
         );
     }
 

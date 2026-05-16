@@ -1906,14 +1906,26 @@ pub fn proof_runtime(
                         command_for_repo_contract_target("ota clean", &target.contract_path)
                     )
                 });
-                let proof_error = cleanup_error.as_deref().or(up_process_failure);
-                let proof_next = match (&cleanup_next, up_process_failure) {
-                    (Some(next), _) => Some(next.clone()),
-                    (None, Some(failure_message)) => Some(format!(
+                let primary_blocker_error = proof_summary
+                    .primary_blocker
+                    .as_ref()
+                    .map(|blocker| blocker.summary.clone());
+                let primary_blocker_next = proof_summary
+                    .primary_blocker
+                    .as_ref()
+                    .map(|blocker| blocker.next.clone());
+                let proof_error = cleanup_error
+                    .clone()
+                    .or(primary_blocker_error)
+                    .or_else(|| up_process_failure.map(str::to_string));
+                let proof_next = match (&cleanup_next, primary_blocker_next, up_process_failure) {
+                    (Some(next), _, _) => Some(next.clone()),
+                    (None, Some(next), _) => Some(next),
+                    (None, None, Some(failure_message)) => Some(format!(
                         "inspect `{}` and rerun `ota proof runtime` ({failure_message})",
                         up_log_artifact_display
                     )),
-                    (None, None) => None,
+                    (None, None, None) => None,
                 };
                 let status = proof_runtime_status_word(
                     proof_summary.verdict,
@@ -1966,7 +1978,7 @@ pub fn proof_runtime(
                                 doctor: &doctor_artifact_display,
                                 up_log: &up_log_artifact_display,
                             }),
-                            error: proof_error,
+                            error: proof_error.as_deref(),
                             next: proof_next.as_deref(),
                         }),
                         stderr: None,
@@ -37855,7 +37867,7 @@ workflows:
     }
 
     #[test]
-    fn render_proof_runtime_text_prioritizes_up_process_failure() {
+    fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
         let contract_path = contract_dir.path().join("ota.yaml");
@@ -37897,6 +37909,37 @@ workflows:
             "./ota.yaml",
             Some("default"),
             &contract_path,
+            "service readiness",
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            &summary,
+            Some("up process exited with code 1"),
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            None,
+            None,
+        ));
+
+        assert!(rendered.contains("missing-check-command"));
+        assert!(rendered.contains("rerun `ota doctor`"));
+        assert!(!rendered.contains("Up process exited unexpectedly"));
+    }
+
+    #[test]
+    fn render_proof_runtime_text_uses_up_process_failure_when_no_primary_blocker() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("default"),
+            Path::new("./ota.yaml"),
             "service readiness",
             super::proof_runtime_status_word(summary.verdict, "service readiness", false),
             &summary,
@@ -52918,6 +52961,72 @@ workflows:
     }
 
     #[test]
+    fn up_selected_workflow_does_not_fail_on_unrelated_global_checks() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: workflow-up
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+tasks:
+  quickstart:
+    run: echo quickstart
+    requirements:
+      tools:
+        node: "20"
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("instant"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(!result.report.findings.iter().any(
+            |finding| finding.summary == "File check failed: workspace-dependencies-installed"
+        ));
+        assert!(
+            result
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Version mismatch for tool: node"),
+            "status={} phase={} findings={:?} stdout=\n{}\nstderr=\n{}",
+            result.status,
+            result.phase,
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.as_str())
+                .collect::<Vec<_>>(),
+            result.stdout,
+            result.stderr
+        );
+    }
+
+    #[test]
     fn up_native_override_does_not_require_container_backend_cli_in_preflight() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -60422,6 +60531,16 @@ fn render_proof_runtime_text(
                     None,
                 )
             ));
+        } else if let Some(primary) = summary.primary_blocker.as_ref() {
+            stdout.push_str(&format!(
+                "\n{}  {}\n{} {}\n{} {}",
+                render_severity(primary.severity),
+                render_finding_summary_with_count(primary.severity, &primary.summary, 1,),
+                finding_detail_key(primary.severity, "Why:"),
+                render_backticked_text(&primary.why, None),
+                finding_detail_key(primary.severity, "Next:"),
+                render_backticked_text(&primary.next, None)
+            ));
         } else if let Some(process_failure) = up_process_failure {
             stdout.push_str(&format!(
                 "\n{}  {}\n{} {}\n{} {}",
@@ -60438,16 +60557,6 @@ fn render_proof_runtime_text(
                     &format!("inspect {} and rerun `ota proof runtime`", up_log_artifact),
                     None,
                 )
-            ));
-        } else if let Some(primary) = summary.primary_blocker.as_ref() {
-            stdout.push_str(&format!(
-                "\n{}  {}\n{} {}\n{} {}",
-                render_severity(primary.severity),
-                render_finding_summary_with_count(primary.severity, &primary.summary, 1),
-                finding_detail_key(primary.severity, "Why:"),
-                render_backticked_text(&primary.why, None),
-                finding_detail_key(primary.severity, "Next:"),
-                render_backticked_text(&primary.next, None)
             ));
         }
     }
