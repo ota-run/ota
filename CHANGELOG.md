@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- fixed native backend version probing to resolve and execute the concrete runtime/tool binary
+  directly (with Windows `.cmd`/`.bat` wrapper handling) instead of relying on shell-shaped
+  probe commands, so backend-fulfillment checks now match doctor-style command resolution and no
+  longer drift under shell/path differences
+- improved workflow-surface readiness diagnostics in `ota doctor`: readiness probes now retry
+  briefly before failing, and surface blocker details now include backend, endpoint, timeout, and
+  probe-attempt context so false early failures are reduced and real failures are easier to
+  diagnose
 - fixed Windows native `launch.kind: command` task startup parity by resolving launch executables
   through the same command-path resolver used by doctor/probes before spawn, so workflows that
   run commands like `npx` no longer fail with Windows-specific program-not-found spawn errors

@@ -7399,11 +7399,8 @@ fn probe_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    if cfg!(windows)
-        && matches!(backend, ResolvedExecutionBackend::Native { .. })
-        && windows_native_shell_prefers_posix()
-    {
-        return probe_posix_shell_command_version(working_dir, command_name);
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return probe_native_backend_command_version(working_dir, command_name);
     }
     let probe_command = backend_runtime_version_probe_command(command_name, backend);
     let output = run_backend_command_captured(
@@ -7431,65 +7428,105 @@ fn probe_backend_command_version(
     ))
 }
 
-fn windows_native_shell_prefers_posix() -> bool {
-    std::env::var("MSYSTEM").is_ok()
-        || std::env::var("SHELL")
-            .ok()
-            .map(|shell| {
-                let lowered = shell.to_ascii_lowercase();
-                lowered.contains("bash") || lowered.contains("sh")
-            })
-            .unwrap_or(false)
-}
-
-fn probe_posix_shell_command_version(
+fn probe_native_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    let quoted = shell_quote(command_name);
-    let probe_command = format!(
-        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
-    );
-    let shell_program = std::env::var("SHELL")
-        .ok()
-        .filter(|shell| !shell.trim().is_empty())
-        .unwrap_or_else(|| String::from("sh"));
-    let output = Command::new(shell_program)
-        .arg("-lc")
-        .arg(probe_command)
-        .current_dir(working_dir)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .and_then(|child| child.wait_with_output())
-        .map(|output| TaskCommandOutput {
-            exit_code: output.status.code().unwrap_or(1),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            target: None,
-            runtime: None,
-            service_termination: None,
-            execution_note: None,
-            interrupted: false,
-        })
-        .map_err(|error| error.to_string())?;
-    if output.exit_code == 127 {
+    let Some(resolved) = crate::doctor::resolve_command_path(command_name) else {
         return Ok(None);
+    };
+
+    let mut attempted_exit_code = None;
+    let mut attempted_error = None;
+    let mut parseable_attempt_observed = false;
+
+    for args in native_backend_version_probe_args(command_name) {
+        let output = native_backend_probe_output(resolved.as_path(), args, working_dir);
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    let combined = format!(
+                        "{} {}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+                        return Ok(Some(version));
+                    }
+                    parseable_attempt_observed = true;
+                    continue;
+                }
+                attempted_exit_code = output.status.code();
+            }
+            Err(error) => {
+                attempted_error = Some(error.to_string());
+            }
+        }
     }
-    let combined = format!("{} {}", output.stdout, output.stderr);
-    if let Some(version) = extract_probe_version_token(combined.as_str()) {
-        return Ok(Some(version));
-    }
-    if output.exit_code != 0 {
-        return Err(format!(
-            "version probe command exited with code {}",
-            output.exit_code
+
+    if parseable_attempt_observed {
+        return Err(String::from(
+            "version probe did not return a parseable version",
         ));
     }
+
+    if let Some(error) = attempted_error {
+        return Err(format!("version probe command could not execute: {error}"));
+    }
+
+    if let Some(exit_code) = attempted_exit_code {
+        return Err(format!(
+            "version probe command exited with code {exit_code}"
+        ));
+    }
+
     Err(String::from(
-        "version probe did not return a parseable version",
+        "version probe command failed before ota could read a version",
     ))
+}
+
+fn native_backend_version_probe_args(command_name: &str) -> Vec<&'static str> {
+    if command_name == "go" {
+        vec!["version"]
+    } else {
+        vec!["--version", "version", "-version"]
+    }
+}
+
+fn native_backend_probe_output(
+    resolved_path: &Path,
+    args: &str,
+    working_dir: &Path,
+) -> std::io::Result<std::process::Output> {
+    let mut command = native_backend_probe_command(resolved_path);
+    command
+        .arg(args)
+        .current_dir(working_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+}
+
+#[cfg(windows)]
+fn native_backend_probe_command(resolved_path: &Path) -> Command {
+    let is_wrapper = resolved_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat")
+        });
+    if is_wrapper {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(resolved_path);
+        return command;
+    }
+    Command::new(resolved_path)
+}
+
+#[cfg(not(windows))]
+fn native_backend_probe_command(resolved_path: &Path) -> Command {
+    Command::new(resolved_path)
 }
 
 fn backend_runtime_version_probe_command(
@@ -20112,6 +20149,7 @@ mod tests {
     use std::fs::{self, File};
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
@@ -26268,6 +26306,54 @@ tasks:
             .expect("version token should parse");
         assert_eq!(version, "1.22.4");
         assert!(version_matches_requirement("1.22", version.as_str()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn native_backend_requirement_probe_uses_resolved_binary_not_login_shell_path() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\nprintf 'v24.8.0\\n'\n");
+
+        let shell_path = temp.path().join("fake-shell.sh");
+        fs::write(&shell_path, "#!/bin/sh\nprintf 'v22.22.2\\n'\nexit 0\n").unwrap();
+        let mut shell_permissions = fs::metadata(&shell_path).unwrap().permissions();
+        shell_permissions.set_mode(0o755);
+        fs::set_permissions(&shell_path, shell_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_shell = env::var_os("SHELL");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("SHELL", &shell_path);
+        }
+
+        let version = super::probe_backend_command_version(
+            &super::ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            Path::new("."),
+            "node",
+        )
+        .expect("native probe should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_shell {
+            Some(shell) => unsafe { env::set_var("SHELL", shell) },
+            None => unsafe { env::remove_var("SHELL") },
+        }
+
+        assert_eq!(version.as_deref(), Some("24.8.0"));
     }
 
     #[test]

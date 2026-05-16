@@ -998,6 +998,8 @@ struct RemoteProbeContext {
 const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
 const CONTAINER_PROBE_STARTED_MARKER: &str = "__OTA_CONTAINER_PROBE_STARTED__";
 const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES: u32 = 5;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandVersionProbe {
@@ -7240,54 +7242,51 @@ fn diagnose_checks(
 
     if let Some(selected_surface_names) = selected_surfaces {
         for surface_name in selected_surface_names {
+            let rerun_command = rerun_selected_workflow_doctor_command(workflow_name);
             match run_workflow_surface_readiness(
                 contract,
                 contract_path,
                 workflow_name,
                 surface_name,
             ) {
-                Ok(CheckStatus::Passed) => continue,
-                Ok(CheckStatus::Failed) => findings.push(Finding {
+                Ok(observation) if observation.status == CheckStatus::Passed => continue,
+                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
                     severity: FindingSeverity::Error,
                     summary: format!("Surface readiness failed: {surface_name}"),
                     why: format!(
-                        "the selected workflow surface `{surface_name}` on run task `{}` did not become ready",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-")
+                        "the selected workflow surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready after {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.attempts
                     ),
                     next: format!(
-                        "start or repair workflow run task `{}` and rerun `{}`",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-"),
-                        rerun_selected_workflow_doctor_command(workflow_name)
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
                     ),
                 }),
-                Ok(CheckStatus::TimedOut(timeout)) => findings.push(Finding {
+                Ok(observation) => findings.push(Finding {
                     severity: FindingSeverity::Error,
                     summary: format!("Surface readiness timed out: {surface_name}"),
                     why: format!(
-                        "the selected workflow surface `{surface_name}` on run task `{}` did not become ready within {}ms",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-"),
-                        timeout
+                        "the selected workflow surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready within {}ms across {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.timeout_ms,
+                        observation.attempts
                     ),
                     next: format!(
-                        "start or repair workflow run task `{}` and rerun `{}`",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-"),
-                        rerun_selected_workflow_doctor_command(workflow_name)
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
                     ),
                 }),
                 Err(error) => findings.push(Finding {
@@ -7308,7 +7307,7 @@ fn diagnose_checks(
                             .and_then(|(_, workflow)| workflow.run.as_ref())
                             .map(|run| run.task.as_str())
                             .unwrap_or("-"),
-                        rerun_selected_workflow_doctor_command(workflow_name)
+                        rerun_command
                     ),
                 }),
             }
@@ -7495,6 +7494,7 @@ fn selected_workflow_service_names<'a>(
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CheckStatus {
     Passed,
     Failed,
@@ -7653,7 +7653,7 @@ fn run_workflow_surface_readiness(
     contract_path: &Path,
     workflow_name: Option<&str>,
     surface_name: &str,
-) -> Result<CheckStatus, String> {
+) -> Result<WorkflowSurfaceReadinessObservation, String> {
     let (_, workflow) = contract
         .selected_workflow(workflow_name)
         .ok_or_else(|| String::from("selected workflow is not declared"))?;
@@ -7681,29 +7681,66 @@ fn run_workflow_surface_readiness(
     };
     let probe =
         task_surface_host_readiness_probe_for_backend(contract, task, backend, surface_name)?;
+    let resolved_timeout = probe.default_timeout.unwrap_or(Duration::from_millis(200));
+    let resolved_timeout_ms = resolved_timeout.as_millis() as u64;
     let spinner = CheckSpinner::start();
-    let status = match probe.request.as_ref() {
-        Some(request) => http_readiness_endpoint_status(
-            probe.address.as_str(),
-            probe.port,
-            request,
-            probe.default_timeout,
-        ),
-        None => {
-            tcp_readiness_endpoint_status(probe.address.as_str(), probe.port, probe.default_timeout)
+    let mut status = CheckStatus::Failed;
+    let mut attempts_performed = 0u32;
+    for attempt in 0..DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES {
+        attempts_performed = attempt + 1;
+        let observed = match probe.request.as_ref() {
+            Some(request) => http_readiness_endpoint_status(
+                probe.address.as_str(),
+                probe.port,
+                request,
+                Some(resolved_timeout),
+            ),
+            None => tcp_readiness_endpoint_status(
+                probe.address.as_str(),
+                probe.port,
+                Some(resolved_timeout),
+            ),
+        };
+        status = match observed {
+            HttpReadinessStatus::Passed => CheckStatus::Passed,
+            HttpReadinessStatus::Failed => CheckStatus::Failed,
+            HttpReadinessStatus::TimedOut => CheckStatus::TimedOut(resolved_timeout_ms),
+        };
+        if status == CheckStatus::Passed {
+            break;
         }
-    };
+        if attempt + 1 < DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES {
+            thread::sleep(Duration::from_millis(
+                DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS,
+            ));
+        }
+    }
     spinner.stop();
-    Ok(match status {
-        HttpReadinessStatus::Passed => CheckStatus::Passed,
-        HttpReadinessStatus::Failed => CheckStatus::Failed,
-        HttpReadinessStatus::TimedOut => CheckStatus::TimedOut(
-            probe
-                .default_timeout
-                .map(|timeout| timeout.as_millis() as u64)
-                .unwrap_or(200),
-        ),
+    Ok(WorkflowSurfaceReadinessObservation {
+        status,
+        attempts: attempts_performed,
+        run_task_name: run_task_name.to_string(),
+        backend_label: match backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        }
+        .to_string(),
+        address: probe.address.clone(),
+        port: probe.port,
+        timeout_ms: resolved_timeout_ms,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkflowSurfaceReadinessObservation {
+    status: CheckStatus,
+    attempts: u32,
+    run_task_name: String,
+    backend_label: String,
+    address: String,
+    port: u16,
+    timeout_ms: u64,
 }
 
 fn probe_uses_task_observer(probe: &crate::schema::ReadinessProbeSpec) -> bool {
@@ -11781,6 +11818,70 @@ workflows:
     }
 
     #[test]
+    fn workflow_readiness_surfaces_retry_until_ready() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let server = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(250));
+            let listener = TcpListener::bind(("127.0.0.1", port)).expect("listener should bind");
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 100
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
     fn workflow_surface_failure_preserves_selected_workflow_in_next_step() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -11829,6 +11930,75 @@ workflows:
                 .any(|finding| finding.next.contains("ota doctor --workflow backend")),
             "{report:?}"
         );
+        assert!(
+            report.findings.iter().any(|finding| finding
+                .why
+                .contains("backend `native`; endpoint `127.0.0.1:6551`")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_surface_timeout_uses_effective_default_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            for _ in 0..super::DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES {
+                let (_stream, _) = listener.accept().expect("probe should connect");
+                thread::sleep(Duration::from_millis(350));
+            }
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(!report.ok, "{report:?}");
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Surface readiness timed out: backend")
+            .expect("surface timeout finding should be present");
+        assert!(finding.why.contains("within 200ms across"), "{report:?}");
+        assert!(!finding.why.contains("within 0ms"), "{report:?}");
     }
 
     #[test]
