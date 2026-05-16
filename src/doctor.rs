@@ -74,7 +74,7 @@ use crate::schema::{
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
     ToolchainManagedSurfaceKind, declared_toolchain_contract,
-    requirement_surface_with_toolchain_owned_runtimes,
+    requirement_surface_with_toolchain_owned_runtimes, shipped_toolchain_contract_by_label,
 };
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
@@ -4752,12 +4752,10 @@ fn diagnose_toolchains(
         }
         probe_started = true;
         let mut provider_missing_reported = BTreeSet::new();
-        let provider_label = provider.label();
-
         for surface_probe in surface_probes {
             let probe_name = format!(
                 "doctor-probe:{}:{}",
-                provider_label,
+                provider.label(),
                 surface_probe.kind.label()
             );
             match provider_installed_entries(
@@ -4792,7 +4790,7 @@ fn diagnose_toolchains(
                     if provider_missing_reported.insert(surface_probe.kind.label()) {
                         findings.push(missing_toolchain_provider_finding(
                             toolchain_name,
-                            provider_label,
+                            provider,
                             mode,
                             surface_probe.kind.label(),
                         ));
@@ -4801,7 +4799,7 @@ fn diagnose_toolchains(
                 Err(details) => {
                     findings.push(toolchain_provider_probe_failed_finding(
                         toolchain_name,
-                        provider_label,
+                        provider,
                         surface_probe.command.as_str(),
                         details,
                         mode,
@@ -4878,40 +4876,41 @@ fn provider_installed_entries(
 
 fn missing_toolchain_provider_finding(
     toolchain_name: &str,
-    provider: &str,
+    provider: crate::toolchains::ToolchainProviderContract,
     mode: DoctorMode,
     surface: &str,
 ) -> Finding {
+    let narrative = provider.missing_provider_diagnostic(
+        toolchain_name,
+        surface,
+        &rerun_doctor_command(mode, None),
+    );
     Finding {
         severity: FindingSeverity::Error,
-        summary: format!("Missing toolchain provider: {provider}"),
-        why: format!(
-            "ota needs `{provider}` to inspect or fulfill {surface} for toolchain `{toolchain_name}` on the selected execution path"
-        ),
-        next: format!(
-            "install `{provider}` or remove provider-managed {surface} from toolchain `{toolchain_name}`, then rerun `{}`",
-            rerun_doctor_command(mode, None)
-        ),
+        summary: narrative.summary,
+        why: narrative.why,
+        next: narrative.next,
     }
 }
 
 fn toolchain_provider_probe_failed_finding(
     toolchain_name: &str,
-    provider: &str,
+    provider: crate::toolchains::ToolchainProviderContract,
     command: &str,
     details: String,
     mode: DoctorMode,
 ) -> Finding {
+    let narrative = provider.probe_failed_diagnostic(
+        toolchain_name,
+        command,
+        &details,
+        &rerun_doctor_command(mode, None),
+    );
     Finding {
         severity: FindingSeverity::Error,
-        summary: format!("Toolchain provider probe failed: {toolchain_name}"),
-        why: format!(
-            "ota could not inspect toolchain `{toolchain_name}` through `{provider}`; `{command}` failed: {details}"
-        ),
-        next: format!(
-            "run `{command}` directly and rerun `{}`",
-            rerun_doctor_command(mode, None)
-        ),
+        summary: narrative.summary,
+        why: narrative.why,
+        next: narrative.next,
     }
 }
 
@@ -4922,22 +4921,17 @@ fn missing_toolchain_managed_surface_finding(
     entry: &str,
     mode: DoctorMode,
 ) -> Finding {
+    let narrative = provider.missing_managed_surface_diagnostic(
+        toolchain_name,
+        kind,
+        entry,
+        &rerun_doctor_command(mode, None),
+    );
     Finding {
         severity: FindingSeverity::Error,
-        summary: format!(
-            "Missing toolchain {}: {toolchain_name}.{entry}",
-            kind.label().trim_end_matches('s')
-        ),
-        why: format!(
-            "ota inspected toolchain `{toolchain_name}` through `{}`, but {} `{entry}` is not installed",
-            provider.label(),
-            kind.label().trim_end_matches('s')
-        ),
-        next: format!(
-            "run `{}` and rerun `{}`",
-            provider.managed_surface_remediation_command(kind, entry),
-            rerun_doctor_command(mode, None)
-        ),
+        summary: narrative.summary,
+        why: narrative.why,
+        next: narrative.next,
     }
 }
 
@@ -5827,6 +5821,30 @@ fn provider_hint_remediation(
 ) -> Option<String> {
     let provider = provider_hint?.trim().to_ascii_lowercase();
 
+    if target_kind == ProvisioningTargetKind::Runtime
+        && let Some(contract) = shipped_toolchain_contract_by_label(provider.as_str())
+        && contract.owned_runtime() == name
+        && let Some(command) = contract.owned_runtime_remediation_command(requirement)
+    {
+        return Some(command);
+    }
+
+    provider_hint_remediation_without_toolchains(
+        target_kind,
+        name,
+        requirement,
+        Some(provider.as_str()),
+    )
+}
+
+fn provider_hint_remediation_without_toolchains(
+    target_kind: ProvisioningTargetKind,
+    name: &str,
+    requirement: &str,
+    provider_hint: Option<&str>,
+) -> Option<String> {
+    let provider = provider_hint?.trim().to_ascii_lowercase();
+
     match (target_kind, name, provider.as_str()) {
         (ProvisioningTargetKind::Runtime, "node", "volta") => {
             Some(format!("volta install node@{requirement}"))
@@ -5848,9 +5866,6 @@ fn provider_hint_remediation(
         }
         (ProvisioningTargetKind::Runtime, "go", "goenv") => {
             Some(format!("goenv install {requirement}"))
-        }
-        (ProvisioningTargetKind::Runtime, "rust", "rustup") => {
-            Some(format!("rustup toolchain install {requirement}"))
         }
         (ProvisioningTargetKind::Runtime, "ruby", "rbenv") => {
             Some(format!("rbenv install {requirement}"))
@@ -8543,6 +8558,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::parser::parse_contract_str;
+    use crate::policy_pack::ProvisioningTargetKind;
     use crate::runner::HttpReadinessRequest;
     use crate::schema::ServiceSpec;
     #[cfg(windows)]
@@ -8554,8 +8570,8 @@ mod tests {
         Backend, CheckStatus, DoctorMode, FindingSeverity, compose_service_healthcheck_command,
         diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode,
         diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
-        diagnose_preconditions, diagnose_preconditions_with_mode, tool_executable_name,
-        version_matches,
+        diagnose_preconditions, diagnose_preconditions_with_mode, provider_hint_remediation,
+        tool_executable_name, version_matches,
     };
 
     #[cfg(unix)]
@@ -13966,6 +13982,28 @@ policies:
                 .why
                 .contains("runtime rust 1.94.0 via mise"),
             "{provisioning_finding:?}"
+        );
+    }
+
+    #[test]
+    fn provider_hint_remediation_uses_toolchain_owned_runtime_contracts() {
+        assert_eq!(
+            provider_hint_remediation(
+                ProvisioningTargetKind::Runtime,
+                "rust",
+                "1.94.0",
+                Some("rustup")
+            ),
+            Some(String::from("rustup toolchain install 1.94.0"))
+        );
+        assert_eq!(
+            provider_hint_remediation(
+                ProvisioningTargetKind::Runtime,
+                "node",
+                "22",
+                Some("corepack")
+            ),
+            None
         );
     }
 
