@@ -37,6 +37,9 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
     ToolchainProviderSpecificField::Targets,
 ];
 const COREPACK_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[];
+const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
+    "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides";
+const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str = "no provider-specific fields; current Corepack-backed Node toolchains use only the shared provider-agnostic fields";
 pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
     toolchain_name: RUSTUP_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Rustup,
@@ -44,6 +47,13 @@ pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = Toolchai
     primary_executable: "rustc",
     owned_runtime: "rust",
     provider_specific_fields: RUSTUP_PROVIDER_SPECIFIC_FIELDS,
+    provider_specific_field_summary: RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY,
+    requirement_detail_parts_fn: rustup_requirement_detail_parts,
+    owned_capabilities_fn: rustup_owned_capabilities,
+    fulfillment_commands_fn: rustup_fulfillment_commands,
+    run_fulfillment_validation_error_fn: rustup_run_fulfillment_validation_error,
+    managed_surface_probes_fn: rustup_managed_surface_probes,
+    managed_surface_remediation_command_fn: rustup_managed_surface_remediation_command,
 };
 pub(crate) const COREPACK_TOOLCHAIN_CONTRACT: ToolchainProviderContract =
     ToolchainProviderContract {
@@ -53,6 +63,13 @@ pub(crate) const COREPACK_TOOLCHAIN_CONTRACT: ToolchainProviderContract =
         primary_executable: "node",
         owned_runtime: "node",
         provider_specific_fields: COREPACK_PROVIDER_SPECIFIC_FIELDS,
+        provider_specific_field_summary: COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY,
+        requirement_detail_parts_fn: corepack_requirement_detail_parts,
+        owned_capabilities_fn: corepack_owned_capabilities,
+        fulfillment_commands_fn: corepack_fulfillment_commands,
+        run_fulfillment_validation_error_fn: corepack_run_fulfillment_validation_error,
+        managed_surface_probes_fn: corepack_managed_surface_probes,
+        managed_surface_remediation_command_fn: corepack_managed_surface_remediation_command,
     };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +244,7 @@ impl ToolchainProviderSpecificField {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ToolchainProviderContract {
     toolchain_name: &'static str,
     provider: ToolchainProvider,
@@ -235,6 +252,18 @@ pub(crate) struct ToolchainProviderContract {
     primary_executable: &'static str,
     owned_runtime: &'static str,
     provider_specific_fields: &'static [ToolchainProviderSpecificField],
+    provider_specific_field_summary: &'static str,
+    requirement_detail_parts_fn: fn(ToolchainProviderContract, &ToolchainSpec, &str) -> Vec<String>,
+    owned_capabilities_fn:
+        fn(ToolchainProviderContract, &ToolchainSpec) -> Vec<ToolchainOwnedCapability>,
+    fulfillment_commands_fn:
+        fn(ToolchainProviderContract, &ToolchainSpec, &str) -> Vec<ToolchainCommandSpec>,
+    run_fulfillment_validation_error_fn:
+        fn(ToolchainProviderContract, &str, &ToolchainSpec) -> Option<String>,
+    managed_surface_probes_fn:
+        fn(ToolchainProviderContract, &ToolchainSpec, &str) -> Vec<ToolchainManagedSurfaceProbe>,
+    managed_surface_remediation_command_fn:
+        fn(ToolchainProviderContract, ToolchainManagedSurfaceKind, &str) -> Option<String>,
 }
 
 impl ToolchainProviderContract {
@@ -263,11 +292,7 @@ impl ToolchainProviderContract {
     }
 
     pub(crate) const fn provider_specific_field_summary(self) -> &'static str {
-        if self.provider_specific_fields.is_empty() {
-            "no provider-specific fields; current Corepack-backed Node toolchains use only the shared provider-agnostic fields"
-        } else {
-            "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides"
-        }
+        self.provider_specific_field_summary
     }
 
     pub(crate) fn declared_provider_specific_fields(
@@ -327,73 +352,14 @@ impl ToolchainProviderContract {
         toolchain: &ToolchainSpec,
         target_os: &str,
     ) -> Vec<String> {
-        let mut parts = vec![format!("owns runtime `{}`", self.owned_runtime())];
-        parts.push(format!("version `{}`", toolchain.version_for_os(target_os)));
-        match self.provider {
-            ToolchainProvider::Rustup => {
-                let components = toolchain.components_for_os(target_os);
-                if !components.is_empty() {
-                    parts.push(format!("components `{}`", components.join("`, `")));
-                }
-                let targets = toolchain.targets_for_os(target_os);
-                if !targets.is_empty() {
-                    parts.push(format!("targets `{}`", targets.join("`, `")));
-                }
-            }
-            ToolchainProvider::Corepack => {}
-        }
-        parts
+        (self.requirement_detail_parts_fn)(self, toolchain, target_os)
     }
 
     pub(crate) fn owned_capabilities(
         self,
         toolchain: &ToolchainSpec,
     ) -> Vec<ToolchainOwnedCapability> {
-        match self.provider {
-            ToolchainProvider::Rustup => {
-                let mut owned = vec![
-                    ToolchainOwnedCapability {
-                        kind: ToolchainOwnedCapabilityKind::Runtime,
-                        name: self.owned_runtime().to_string(),
-                    },
-                    ToolchainOwnedCapability {
-                        kind: ToolchainOwnedCapabilityKind::Tool,
-                        name: String::from("cargo"),
-                    },
-                ];
-                for component in toolchain.components.iter().chain(
-                    toolchain
-                        .platforms
-                        .values()
-                        .flat_map(|platform| platform.components.iter()),
-                ) {
-                    let Some(tool_name) = rustup_component_tool_name(component.as_str()) else {
-                        continue;
-                    };
-                    if owned.iter().any(|capability| {
-                        capability.kind == ToolchainOwnedCapabilityKind::Tool
-                            && capability.name == tool_name
-                    }) {
-                        continue;
-                    }
-                    owned.push(ToolchainOwnedCapability {
-                        kind: ToolchainOwnedCapabilityKind::Tool,
-                        name: tool_name.to_string(),
-                    });
-                }
-                owned
-            }
-            ToolchainProvider::Corepack => vec![
-                ToolchainOwnedCapability {
-                    kind: ToolchainOwnedCapabilityKind::Runtime,
-                    name: self.owned_runtime().to_string(),
-                },
-                ToolchainOwnedCapability {
-                    kind: ToolchainOwnedCapabilityKind::Tool,
-                    name: self.owned_runtime().to_string(),
-                },
-            ],
-        }
+        (self.owned_capabilities_fn)(self, toolchain)
     }
 
     pub(crate) fn fulfillment_commands(
@@ -401,32 +367,7 @@ impl ToolchainProviderContract {
         toolchain: &ToolchainSpec,
         target_os: &str,
     ) -> Vec<ToolchainCommandSpec> {
-        match self.provider {
-            ToolchainProvider::Rustup => {
-                let mut args = vec![
-                    String::from("toolchain"),
-                    String::from("install"),
-                    toolchain.version_for_os(target_os).to_string(),
-                ];
-                if let Some(profile) = toolchain.profile_for_os(target_os) {
-                    args.push(String::from("--profile"));
-                    args.push(profile.to_string());
-                }
-                for component in toolchain.components_for_os(target_os) {
-                    args.push(String::from("--component"));
-                    args.push(component);
-                }
-                for target in toolchain.targets_for_os(target_os) {
-                    args.push(String::from("--target"));
-                    args.push(target);
-                }
-                vec![ToolchainCommandSpec {
-                    program: "rustup",
-                    args,
-                }]
-            }
-            ToolchainProvider::Corepack => Vec::new(),
-        }
+        (self.fulfillment_commands_fn)(self, toolchain, target_os)
     }
 
     pub(crate) fn run_fulfillment_validation_error(
@@ -434,27 +375,7 @@ impl ToolchainProviderContract {
         name: &str,
         toolchain: &ToolchainSpec,
     ) -> Option<String> {
-        match self.provider {
-            ToolchainProvider::Rustup => {
-                let trimmed = toolchain.version.trim();
-                let installable = !trimmed.is_empty()
-                    && !trimmed.contains(char::is_whitespace)
-                    && !trimmed.contains('>')
-                    && !trimmed.contains('<')
-                    && !trimmed.contains('=')
-                    && !trimmed.contains('^')
-                    && !trimmed.contains('~')
-                    && !trimmed.contains('*');
-                (!installable).then(|| {
-                    format!(
-                        "toolchain `{name}` uses `provider: rustup` with `fulfillment: run`, so `toolchains.{name}.version` must be an installable rustup toolchain reference like `stable`, `beta`, `nightly`, or `1.94.0`"
-                    )
-                })
-            }
-            ToolchainProvider::Corepack => Some(format!(
-                "toolchain `{name}` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and use `tools.<package-manager>.acquisition.provider: corepack` for package-manager activation"
-            )),
-        }
+        (self.run_fulfillment_validation_error_fn)(self, name, toolchain)
     }
 
     pub(crate) fn managed_surface_probes(
@@ -462,29 +383,7 @@ impl ToolchainProviderContract {
         toolchain: &ToolchainSpec,
         target_os: &str,
     ) -> Vec<ToolchainManagedSurfaceProbe> {
-        match self.provider {
-            ToolchainProvider::Rustup => {
-                let mut probes = Vec::new();
-                let components = toolchain.components_for_os(target_os);
-                if !components.is_empty() {
-                    probes.push(ToolchainManagedSurfaceProbe {
-                        kind: ToolchainManagedSurfaceKind::Component,
-                        command: format!("{} component list --installed", self.label),
-                        required_entries: components,
-                    });
-                }
-                let targets = toolchain.targets_for_os(target_os);
-                if !targets.is_empty() {
-                    probes.push(ToolchainManagedSurfaceProbe {
-                        kind: ToolchainManagedSurfaceKind::Target,
-                        command: format!("{} target list --installed", self.label),
-                        required_entries: targets,
-                    });
-                }
-                probes
-            }
-            ToolchainProvider::Corepack => Vec::new(),
-        }
+        (self.managed_surface_probes_fn)(self, toolchain, target_os)
     }
 
     pub(crate) fn managed_surface_remediation_command(
@@ -492,15 +391,7 @@ impl ToolchainProviderContract {
         kind: ToolchainManagedSurfaceKind,
         entry: &str,
     ) -> String {
-        match self.provider {
-            ToolchainProvider::Rustup => match kind {
-                ToolchainManagedSurfaceKind::Component => {
-                    format!("rustup component add {entry}")
-                }
-                ToolchainManagedSurfaceKind::Target => format!("rustup target add {entry}"),
-            },
-            ToolchainProvider::Corepack => String::new(),
-        }
+        (self.managed_surface_remediation_command_fn)(self, kind, entry).unwrap_or_default()
     }
 }
 
@@ -674,6 +565,213 @@ pub(crate) fn requirement_surface_with_toolchain_owned_runtimes(
     merged
 }
 
+fn base_requirement_detail_parts(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<String> {
+    vec![
+        format!("owns runtime `{}`", provider.owned_runtime()),
+        format!("version `{}`", toolchain.version_for_os(target_os)),
+    ]
+}
+
+fn rustup_requirement_detail_parts(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<String> {
+    let mut parts = base_requirement_detail_parts(provider, toolchain, target_os);
+    let components = toolchain.components_for_os(target_os);
+    if !components.is_empty() {
+        parts.push(format!("components `{}`", components.join("`, `")));
+    }
+    let targets = toolchain.targets_for_os(target_os);
+    if !targets.is_empty() {
+        parts.push(format!("targets `{}`", targets.join("`, `")));
+    }
+    parts
+}
+
+fn corepack_requirement_detail_parts(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<String> {
+    base_requirement_detail_parts(provider, toolchain, target_os)
+}
+
+fn rustup_owned_capabilities(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+) -> Vec<ToolchainOwnedCapability> {
+    let mut owned = vec![
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Runtime,
+            name: provider.owned_runtime().to_string(),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: String::from("cargo"),
+        },
+    ];
+    for component in toolchain.components.iter().chain(
+        toolchain
+            .platforms
+            .values()
+            .flat_map(|platform| platform.components.iter()),
+    ) {
+        let Some(tool_name) = rustup_component_tool_name(component.as_str()) else {
+            continue;
+        };
+        if owned.iter().any(|capability| {
+            capability.kind == ToolchainOwnedCapabilityKind::Tool && capability.name == tool_name
+        }) {
+            continue;
+        }
+        owned.push(ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: tool_name.to_string(),
+        });
+    }
+    owned
+}
+
+fn corepack_owned_capabilities(
+    provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+) -> Vec<ToolchainOwnedCapability> {
+    vec![
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Runtime,
+            name: provider.owned_runtime().to_string(),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: provider.owned_runtime().to_string(),
+        },
+    ]
+}
+
+fn rustup_fulfillment_commands(
+    _provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    let mut args = vec![
+        String::from("toolchain"),
+        String::from("install"),
+        toolchain.version_for_os(target_os).to_string(),
+    ];
+    if let Some(profile) = toolchain.profile_for_os(target_os) {
+        args.push(String::from("--profile"));
+        args.push(profile.to_string());
+    }
+    for component in toolchain.components_for_os(target_os) {
+        args.push(String::from("--component"));
+        args.push(component);
+    }
+    for target in toolchain.targets_for_os(target_os) {
+        args.push(String::from("--target"));
+        args.push(target);
+    }
+    vec![ToolchainCommandSpec {
+        program: "rustup",
+        args,
+    }]
+}
+
+fn corepack_fulfillment_commands(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    Vec::new()
+}
+
+fn rustup_run_fulfillment_validation_error(
+    _provider: ToolchainProviderContract,
+    name: &str,
+    toolchain: &ToolchainSpec,
+) -> Option<String> {
+    let trimmed = toolchain.version.trim();
+    let installable = !trimmed.is_empty()
+        && !trimmed.contains(char::is_whitespace)
+        && !trimmed.contains('>')
+        && !trimmed.contains('<')
+        && !trimmed.contains('=')
+        && !trimmed.contains('^')
+        && !trimmed.contains('~')
+        && !trimmed.contains('*');
+    (!installable).then(|| {
+        format!(
+            "toolchain `{name}` uses `provider: rustup` with `fulfillment: run`, so `toolchains.{name}.version` must be an installable rustup toolchain reference like `stable`, `beta`, `nightly`, or `1.94.0`"
+        )
+    })
+}
+
+fn corepack_run_fulfillment_validation_error(
+    _provider: ToolchainProviderContract,
+    name: &str,
+    _toolchain: &ToolchainSpec,
+) -> Option<String> {
+    Some(format!(
+        "toolchain `{name}` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and use `tools.<package-manager>.acquisition.provider: corepack` for package-manager activation"
+    ))
+}
+
+fn rustup_managed_surface_probes(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<ToolchainManagedSurfaceProbe> {
+    let mut probes = Vec::new();
+    let components = toolchain.components_for_os(target_os);
+    if !components.is_empty() {
+        probes.push(ToolchainManagedSurfaceProbe {
+            kind: ToolchainManagedSurfaceKind::Component,
+            command: format!("{} component list --installed", provider.label()),
+            required_entries: components,
+        });
+    }
+    let targets = toolchain.targets_for_os(target_os);
+    if !targets.is_empty() {
+        probes.push(ToolchainManagedSurfaceProbe {
+            kind: ToolchainManagedSurfaceKind::Target,
+            command: format!("{} target list --installed", provider.label()),
+            required_entries: targets,
+        });
+    }
+    probes
+}
+
+fn corepack_managed_surface_probes(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainManagedSurfaceProbe> {
+    Vec::new()
+}
+
+fn rustup_managed_surface_remediation_command(
+    _provider: ToolchainProviderContract,
+    kind: ToolchainManagedSurfaceKind,
+    entry: &str,
+) -> Option<String> {
+    Some(match kind {
+        ToolchainManagedSurfaceKind::Component => format!("rustup component add {entry}"),
+        ToolchainManagedSurfaceKind::Target => format!("rustup target add {entry}"),
+    })
+}
+
+fn corepack_managed_surface_remediation_command(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _entry: &str,
+) -> Option<String> {
+    None
+}
+
 fn rustup_component_tool_name(component: &str) -> Option<&'static str> {
     match component {
         "rustfmt" => Some("rustfmt"),
@@ -688,4 +786,94 @@ const fn known_provider_specific_fields() -> &'static [ToolchainProviderSpecific
         ToolchainProviderSpecificField::Components,
         ToolchainProviderSpecificField::Targets,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse_contract_str;
+    use std::path::Path;
+
+    fn contract(yaml: &str) -> Contract {
+        parse_contract_str(Path::new("./ota.yaml"), yaml).unwrap()
+    }
+
+    #[test]
+    fn rustup_contract_exposes_provider_specific_behavior_without_provider_match_fallback() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    profile: minimal
+    components:
+      - rustfmt
+    targets:
+      - x86_64-unknown-linux-musl
+"#,
+        );
+        let toolchain = contract.toolchains.get("rust").unwrap();
+        let provider = declared_toolchain_contract("rust", toolchain).unwrap();
+
+        assert_eq!(
+            provider.provider_specific_field_summary(),
+            RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY
+        );
+        assert!(
+            provider
+                .requirement_detail_parts(toolchain, "linux")
+                .iter()
+                .any(|part| part.contains("components `rustfmt`"))
+        );
+        assert!(
+            provider
+                .managed_surface_probes(toolchain, "linux")
+                .iter()
+                .any(|probe| probe.command == "rustup component list --installed")
+        );
+        assert_eq!(
+            provider.managed_surface_remediation_command(
+                ToolchainManagedSurfaceKind::Target,
+                "x86_64-unknown-linux-musl"
+            ),
+            "rustup target add x86_64-unknown-linux-musl"
+        );
+    }
+
+    #[test]
+    fn corepack_contract_stays_check_only_through_provider_contract_hooks() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+"#,
+        );
+        let toolchain = contract.toolchains.get("node").unwrap();
+        let provider = declared_toolchain_contract("node", toolchain).unwrap();
+
+        assert_eq!(
+            provider.provider_specific_field_summary(),
+            COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY
+        );
+        assert!(provider.fulfillment_commands(toolchain, "linux").is_empty());
+        assert!(
+            provider
+                .managed_surface_probes(toolchain, "linux")
+                .is_empty()
+        );
+        assert!(
+            provider
+                .run_fulfillment_validation_error("node", toolchain)
+                .is_some()
+        );
+    }
 }
