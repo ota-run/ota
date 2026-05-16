@@ -1893,6 +1893,7 @@ pub struct InitSelectedPackOptions {
 
 #[derive(Debug, Serialize)]
 pub struct InitPackSeeds {
+    pub toolchains: Vec<String>,
     pub runtimes: Vec<String>,
     pub tools: Vec<String>,
     pub checks: Vec<String>,

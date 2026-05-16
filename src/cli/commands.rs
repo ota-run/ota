@@ -155,7 +155,7 @@ use crate::toolchains::{
     fallback_toolchain_fulfillment_attempt_summary,
     requirement_surface_with_toolchain_owned_capabilities,
     requirement_surface_with_toolchain_owned_tools, toolchain_fulfillment_status_detail,
-    unsupported_toolchain_opportunity_context, unsupported_toolchain_repo_signals,
+    toolchain_repo_signals, unsupported_toolchain_opportunity_context,
 };
 use crate::update;
 use crate::validator::{
@@ -17846,6 +17846,7 @@ fn append_contractless_repo_findings(
     }
 
     if report.contract.runtimes.is_empty()
+        && report.contract.toolchains.is_empty()
         && report.contract.tools.is_empty()
         && report.contract.services.is_empty()
         && report.contract.tasks.is_empty()
@@ -20104,6 +20105,11 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                         .map(|value| (*value).to_string())
                         .collect(),
                     seeds: InitPackSeeds {
+                        toolchains: entry
+                            .toolchains
+                            .iter()
+                            .map(|value| (*value).to_string())
+                            .collect(),
                         runtimes: entry
                             .runtimes
                             .iter()
@@ -27744,7 +27750,7 @@ struct DetectedToolchainOpportunity {
 }
 
 fn detect_toolchain_opportunities(report: &DetectReport) -> Vec<DetectedToolchainOpportunity> {
-    ["java", "python"]
+    ["python"]
         .into_iter()
         .filter_map(|ecosystem| {
             let context = unsupported_toolchain_opportunity_context(ecosystem)?;
@@ -27752,7 +27758,7 @@ fn detect_toolchain_opportunities(report: &DetectReport) -> Vec<DetectedToolchai
                 return None;
             }
 
-            let repo_signals = unsupported_toolchain_repo_signals(&report.root, ecosystem);
+            let repo_signals = toolchain_repo_signals(&report.root, ecosystem);
             if repo_signals.is_empty() {
                 return None;
             }
@@ -30419,6 +30425,13 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     if contract.project.is_some() {
         fields.push(String::from("project.name"));
     }
+    for (name, toolchain) in &contract.toolchains {
+        fields.push(format!("toolchains.{name}.provider"));
+        fields.push(format!("toolchains.{name}.version"));
+        if toolchain.fulfillment.is_some() {
+            fields.push(format!("toolchains.{name}.fulfillment"));
+        }
+    }
     for name in contract.runtimes.keys() {
         fields.push(format!("runtimes.{name}"));
     }
@@ -30566,6 +30579,31 @@ fn init_contract_provenance(
             format!("runtimes.{name}"),
             starter_contract_source,
         );
+    }
+    for (name, toolchain) in &contract.toolchains {
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            &detected_fields,
+            format!("toolchains.{name}.provider"),
+            "ota.detect#toolchain_provider",
+        );
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            &detected_fields,
+            format!("toolchains.{name}.version"),
+            starter_contract_source,
+        );
+        if toolchain.fulfillment.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("toolchains.{name}.fulfillment"),
+                "ota.detect#toolchain_fulfillment",
+            );
+        }
     }
     for name in contract.tools.keys() {
         push_init_field_provenance(
@@ -39143,6 +39181,48 @@ env:
     fn detect_dry_run_json_includes_toolchain_opportunity_metadata() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
+            repo.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+        )
+        .expect("write pyproject");
+        fs::write(repo.path().join("uv.lock"), "version = 1\n").expect("write uv.lock");
+        fs::write(repo.path().join(".python-version"), "3.12\n").expect("write .python-version");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            true,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect json");
+        assert_eq!(
+            json["toolchain_opportunities"][0]["ecosystem"],
+            serde_json::Value::String(String::from("python"))
+        );
+        assert_eq!(
+            json["toolchain_opportunities"][0]["candidate_providers"][0],
+            serde_json::Value::String(String::from("uv"))
+        );
+        assert_eq!(
+            json["toolchain_opportunities"][0]["candidate_providers"][1],
+            serde_json::Value::String(String::from("mise"))
+        );
+    }
+
+    #[test]
+    fn detect_dry_run_json_prefers_java_toolchain_contract_when_provider_is_shipped() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
             repo.path().join("pom.xml"),
             r#"<project>
   <modelVersion>4.0.0</modelVersion>
@@ -39174,17 +39254,12 @@ env:
         assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("parse detect json");
-        assert_eq!(
-            json["toolchain_opportunities"][0]["ecosystem"],
-            serde_json::Value::String(String::from("java"))
-        );
-        assert_eq!(
-            json["toolchain_opportunities"][0]["candidate_providers"][0],
-            serde_json::Value::String(String::from("sdkman"))
-        );
-        assert_eq!(
-            json["toolchain_opportunities"][0]["candidate_providers"][1],
-            serde_json::Value::String(String::from("mise"))
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "21");
+        assert!(json["config"]["runtimes"]["java"].is_null(), "{json}");
+        assert!(
+            json["toolchain_opportunities"].as_array().is_none(),
+            "{json}"
         );
     }
 
@@ -39192,19 +39267,12 @@ env:
     fn init_preview_text_surfaces_user_safe_toolchain_opportunity_guidance() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
-            repo.path().join("pom.xml"),
-            r#"<project>
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>dev.ota</groupId>
-  <artifactId>demo</artifactId>
-  <version>1.0.0</version>
-  <properties>
-    <maven.compiler.release>21</maven.compiler.release>
-  </properties>
-</project>
-"#,
+            repo.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
         )
-        .expect("write pom.xml");
+        .expect("write pyproject");
+        fs::write(repo.path().join("uv.lock"), "version = 1\n").expect("write uv.lock");
+        fs::write(repo.path().join(".python-version"), "3.12\n").expect("write .python-version");
 
         let output = super::init(
             Some(repo.path()),
@@ -39219,12 +39287,11 @@ env:
         assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let stdout = super::strip_ansi_codes(&output.stdout);
         assert!(stdout.contains("Toolchain Opportunities"), "{stdout}");
-        assert!(stdout.contains("Ecosystem: java"), "{stdout}");
+        assert!(stdout.contains("Ecosystem: python"), "{stdout}");
         assert!(
-            stdout.contains("keep `runtimes.java` and `tools.maven` for now"),
+            stdout.contains("keep `runtimes.python` and `tools.uv` for now"),
             "{stdout}"
         );
-        assert!(!stdout.contains("sdkman"), "{stdout}");
         assert!(!stdout.contains("mise"), "{stdout}");
     }
 

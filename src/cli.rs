@@ -22072,8 +22072,10 @@ name = "fastapi"
             .find(|entry| entry["name"] == "java-maven")
             .expect("java-maven pack");
         assert_eq!(java_maven["command"], "ota init --pack java-maven");
+        assert_eq!(java_maven["seeds"]["toolchains"][0], "java");
+        assert_eq!(java_maven["seeds"]["runtimes"], json!([]));
         assert_eq!(java_maven["seeds"]["tools"], json!([]));
-        assert_eq!(java_maven["seeds"]["checks"][0], "java-installed");
+        assert_eq!(java_maven["seeds"]["checks"], json!([]));
         assert!(
             java_maven["does_not_infer"][0]
                 .as_str()
@@ -22088,6 +22090,8 @@ name = "fastapi"
             java_gradle["next"],
             "ota init --pack java-gradle --dry-run ."
         );
+        assert_eq!(java_gradle["seeds"]["toolchains"][0], "java");
+        assert_eq!(java_gradle["seeds"]["runtimes"], json!([]));
         assert_eq!(java_gradle["seeds"]["tools"], json!([]));
         assert_eq!(java_gradle["seeds"]["tasks"][0], "setup");
         assert!(
@@ -22604,7 +22608,9 @@ requires-python = ">=3.12"
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Pack: java-maven"));
-        assert!(stdout.contains("java: '22'"));
+        assert!(stdout.contains("toolchains:"));
+        assert!(stdout.contains("provider: sdkman"));
+        assert!(stdout.contains("version: '22'") || stdout.contains("version: \"22\""));
         assert!(stdout.contains("maven: '3.9'"));
         assert!(stdout.contains("name: maven-installed"));
         assert!(stdout.contains("run: mvn package"));
@@ -22633,8 +22639,9 @@ requires-python = ">=3.12"
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./mvnw package");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./mvnw test");
-        assert_eq!(json["config"]["checks"][0]["name"], "java-installed");
-        assert_eq!(json["config"]["checks"].as_array().unwrap().len(), 1);
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
+        assert!(json["config"]["checks"].is_null());
         assert!(json["config"]["tools"]["maven"].is_null());
     }
 
@@ -22895,8 +22902,10 @@ requires-python = ">=3.12"
         assert_eq!(json["ok"], true);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "java-gradle");
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
         assert_eq!(json["config"]["tools"]["gradle"], "8");
-        assert_eq!(json["config"]["checks"][1]["name"], "gradle-installed");
+        assert_eq!(json["config"]["checks"][0]["name"], "gradle-installed");
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],
             "Build the default Gradle outputs."
@@ -22936,8 +22945,9 @@ requires-python = ">=3.12"
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./gradlew build");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./gradlew test");
-        assert_eq!(json["config"]["checks"][0]["name"], "java-installed");
-        assert_eq!(json["config"]["checks"].as_array().unwrap().len(), 1);
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
+        assert!(json["config"]["checks"].is_null());
         assert!(json["config"]["tools"]["gradle"].is_null());
     }
 

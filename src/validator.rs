@@ -16340,7 +16340,26 @@ tasks:
     }
 
     #[test]
-    fn rejects_unsupported_toolchain_contracts() {
+    fn supports_sdkman_java_toolchain() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    provider: sdkman
+    version: "21.0.2-tem"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("sdkman-backed java toolchain should validate");
+    }
+
+    #[test]
+    fn rejects_wrong_provider_for_shipped_java_toolchain_name() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -16355,8 +16374,8 @@ toolchains:
         )
         .unwrap();
 
-        let errors = validate_contract(&contract).unwrap_err();
-        let rendered = errors
+        let rendered = validate_contract(&contract)
+            .expect_err("java toolchain must reject the wrong shipped provider")
             .errors()
             .iter()
             .map(ToString::to_string)
@@ -16364,7 +16383,7 @@ toolchains:
         assert!(
             rendered.iter().any(|error| {
                 error.contains(
-                    "toolchain `java` is not supported today; the shared provider-agnostic toolchain fields are `provider`, `version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`, and the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup` and `toolchains.node` with `provider: corepack`",
+                    "toolchain `java` is only supported with `provider: sdkman`; `provider: rustup` is not valid for `toolchains.java` and currently belongs to `toolchains.rust`",
                 )
             }),
             "{rendered:?}"
@@ -16380,7 +16399,7 @@ version: 1
 project:
   name: ota
 toolchains:
-  java:
+  python:
     provider: rustup
     version: "1.94.0"
     components:
@@ -16489,6 +16508,72 @@ toolchains:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "toolchain `node` is only supported with `provider: corepack`; `provider: rustup` is not valid for `toolchains.node` and currently belongs to `toolchains.rust`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_sdkman_java_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    provider: sdkman
+    version: "21.0.2-tem"
+runtimes:
+  java: "21"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate java runtime ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `java` owns runtime `java`, but the contract also declares `runtimes.java`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_sdkman_javac_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    provider: sdkman
+    version: "21.0.2-tem"
+tools:
+  javac: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate javac ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `java` owns tool `javac`, but the contract also declares `tools.javac`",
             )),
             "{rendered:?}"
         );
@@ -16626,6 +16711,38 @@ toolchains:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "toolchain `node` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.node.fulfillment: none` and declare package-manager activation under `toolchains.node.package_managers`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_sdkman_toolchain_run_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    provider: sdkman
+    version: "21.0.2-tem"
+    fulfillment: run
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("sdkman java toolchain must stay check-only")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `java` uses `provider: sdkman` with `fulfillment: run`, but SDKMAN-backed Java toolchains are currently check-only; keep `toolchains.java.fulfillment: none` and declare build tools such as Maven or Gradle separately under `tools`",
             )),
             "{rendered:?}"
         );
