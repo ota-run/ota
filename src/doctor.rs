@@ -72,7 +72,10 @@ use crate::schema::{
     ToolAcquisitionSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
-use crate::toolchains::{ToolchainManagedSurfaceKind, declared_toolchain_contract};
+use crate::toolchains::{
+    ToolchainManagedSurfaceKind, declared_toolchain_contract,
+    requirement_surface_with_toolchain_owned_runtimes,
+};
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -421,8 +424,8 @@ fn precondition_requirement_surface(
 
 #[derive(Debug, Clone, Default)]
 struct RemoteTaskRequirementSelection {
-    by_context: BTreeMap<String, RequirementSurface>,
-    fallback: Option<RequirementSurface>,
+    by_context: BTreeMap<String, ScopedPreconditionSelection>,
+    fallback: Option<ScopedPreconditionSelection>,
 }
 
 fn selected_remote_task_requirement_selection(
@@ -437,8 +440,10 @@ fn selected_remote_task_requirement_selection(
     #[derive(Debug, Default, Clone)]
     struct Entry {
         surface: RequirementSurface,
+        toolchain_names: BTreeSet<String>,
         scoped_runtimes: bool,
         scoped_tools: bool,
+        scoped_toolchains: bool,
     }
 
     let mut by_context = BTreeMap::<String, Entry>::new();
@@ -464,6 +469,12 @@ fn selected_remote_task_requirement_selection(
         if !task.requirements.tools.is_empty() {
             target.scoped_tools = true;
         }
+        if !task.requirements.toolchains.is_empty() {
+            target.scoped_toolchains = true;
+            target
+                .toolchain_names
+                .extend(task.requirements.toolchains.iter().cloned());
+        }
         for (name, requirement) in &task.requirements.runtimes {
             target.surface.runtimes.insert(
                 name.clone(),
@@ -482,7 +493,7 @@ fn selected_remote_task_requirement_selection(
         return None;
     }
 
-    let finalize_entry = |entry: Entry| -> RequirementSurface {
+    let finalize_entry = |entry: Entry| -> ScopedPreconditionSelection {
         let mut surface = entry.surface;
         if !entry.scoped_runtimes {
             surface.runtimes = contract.runtimes.clone();
@@ -490,7 +501,18 @@ fn selected_remote_task_requirement_selection(
         if !entry.scoped_tools {
             surface.tools = contract.tools.clone();
         }
-        surface
+        let toolchain_names = if entry.scoped_toolchains {
+            entry.toolchain_names
+        } else {
+            contract.toolchains.keys().cloned().collect()
+        };
+        ScopedPreconditionSelection {
+            requirement_surface: surface,
+            toolchain_names,
+            native_names: BTreeSet::new(),
+            env_names: BTreeSet::new(),
+            env_scoped: false,
+        }
     };
 
     let by_context = by_context
@@ -503,6 +525,18 @@ fn selected_remote_task_requirement_selection(
         by_context,
         fallback,
     })
+}
+
+fn policy_requirement_surface_for_toolchains(
+    contract: &Contract,
+    requirement_surface: &RequirementSurface,
+    toolchain_names: &BTreeSet<String>,
+) -> RequirementSurface {
+    requirement_surface_with_toolchain_owned_runtimes(
+        contract,
+        requirement_surface,
+        toolchain_names,
+    )
 }
 
 fn corepack_activation_command(acquisition: &ToolAcquisitionSpec) -> String {
@@ -720,10 +754,10 @@ fn remote_doctor_probe_contexts(
         .filter(|(_, context)| context.backend == Backend::Remote)
     {
         let selected_task_surface = if let Some(selection) = selected_task_requirements.as_ref() {
-            let Some(surface) = selection.by_context.get(name.as_str()) else {
+            let Some(scoped) = selection.by_context.get(name.as_str()) else {
                 continue;
             };
-            Some(surface)
+            Some(scoped)
         } else {
             None
         };
@@ -748,24 +782,31 @@ fn remote_doctor_probe_contexts(
                 continue;
             }
         };
-        let mut requirement_surface =
-            selected_task_surface
-                .cloned()
-                .unwrap_or_else(|| RequirementSurface {
-                    runtimes: contract.runtimes.clone(),
-                    tools: contract.tools.clone(),
-                });
+        let mut requirement_surface = selected_task_surface
+            .map(|selection| selection.requirement_surface.clone())
+            .unwrap_or_else(|| RequirementSurface {
+                runtimes: contract.runtimes.clone(),
+                tools: contract.tools.clone(),
+            });
         requirement_surface.merge(&RequirementSurface {
             runtimes: context.requirements.runtimes.clone(),
             tools: context.requirements.tools.clone(),
         });
+        let selected_toolchain_names = selected_task_surface
+            .map(|selection| selection.toolchain_names.clone())
+            .unwrap_or_else(|| contract.toolchains.keys().cloned().collect());
+        let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+            contract,
+            &requirement_surface,
+            &selected_toolchain_names,
+        );
         let provisioning_actions = loaded_policy
             .map(|loaded| {
                 loaded
                     .pack
                     .selected_provisioning_actions_for_requirement_surface_os(
                         &target_os,
-                        &requirement_surface,
+                        &policy_requirement_surface,
                     )
             })
             .unwrap_or_default();
@@ -774,6 +815,7 @@ fn remote_doctor_probe_contexts(
             backend,
             target_os,
             requirement_surface,
+            policy_requirement_surface,
             provisioning_actions,
         });
     }
@@ -837,18 +879,28 @@ fn remote_doctor_probe_contexts(
     let requirement_surface = selected_task_requirements
         .as_ref()
         .and_then(|selection| selection.fallback.as_ref())
-        .cloned()
+        .map(|selection| selection.requirement_surface.clone())
         .unwrap_or_else(|| RequirementSurface {
             runtimes: contract.runtimes.clone(),
             tools: contract.tools.clone(),
         });
+    let selected_toolchain_names = selected_task_requirements
+        .as_ref()
+        .and_then(|selection| selection.fallback.as_ref())
+        .map(|selection| selection.toolchain_names.clone())
+        .unwrap_or_else(|| contract.toolchains.keys().cloned().collect());
+    let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+        contract,
+        &requirement_surface,
+        &selected_toolchain_names,
+    );
     let provisioning_actions = loaded_policy
         .map(|loaded| {
             loaded
                 .pack
                 .selected_provisioning_actions_for_requirement_surface_os(
                     &target_os,
-                    &requirement_surface,
+                    &policy_requirement_surface,
                 )
         })
         .unwrap_or_default();
@@ -858,6 +910,7 @@ fn remote_doctor_probe_contexts(
         backend,
         target_os,
         requirement_surface,
+        policy_requirement_surface,
         provisioning_actions,
     });
 
@@ -932,6 +985,7 @@ struct RemoteProbeContext {
     backend: ResolvedExecutionBackend,
     target_os: String,
     requirement_surface: RequirementSurface,
+    policy_requirement_surface: RequirementSurface,
     provisioning_actions: Vec<ProvisioningAction>,
 }
 
@@ -2353,12 +2407,14 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
 
     if let Some(loaded_policy_ref) = loaded_policy.as_ref() {
         let requirement_surface = contract.all_requirement_surface();
+        let toolchain_names = contract.toolchains.keys().cloned().collect();
         diagnose_org_policy(
             contract,
             contract_path,
             Some(loaded_policy_ref),
             current_os(),
             &requirement_surface,
+            &toolchain_names,
             &mut findings,
         );
         diagnose_adapter_bootstrap(Some(loaded_policy_ref), &mut findings);
@@ -2542,11 +2598,16 @@ fn diagnose_contract_with_scope(
         loaded_policy
             .as_ref()
             .map(|loaded| {
+                let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+                    contract,
+                    &requirement_surface,
+                    &precondition_selection.toolchain_names,
+                );
                 loaded
                     .pack
                     .selected_provisioning_actions_for_requirement_surface_os(
                         policy_target_os_for_mode(mode),
-                        &requirement_surface,
+                        &policy_requirement_surface,
                     )
             })
             .unwrap_or_default()
@@ -2722,11 +2783,16 @@ fn diagnose_contract_with_scope(
                 let additional_provisioning_actions = loaded_policy
                     .as_ref()
                     .map(|loaded| {
+                        let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+                            contract,
+                            &additional_selection.requirement_surface,
+                            &additional_selection.toolchain_names,
+                        );
                         loaded
                             .pack
                             .selected_provisioning_actions_for_requirement_surface_os(
                                 policy_target_os_for_mode(additional_mode),
-                                &additional_selection.requirement_surface,
+                                &policy_requirement_surface,
                             )
                     })
                     .unwrap_or_default();
@@ -2819,6 +2885,7 @@ fn diagnose_contract_with_scope(
                 loaded_policy.as_ref(),
                 policy_target_os_for_mode(mode),
                 &requirement_surface,
+                &precondition_selection.toolchain_names,
                 &mut findings,
             );
         }
@@ -5138,6 +5205,7 @@ fn diagnose_org_policy(
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     policy_os: &str,
     requirement_surface: &RequirementSurface,
+    toolchain_names: &BTreeSet<String>,
     findings: &mut Vec<Finding>,
 ) -> Option<ProvisioningDiagnostics> {
     let Some(loaded_policy) = loaded_policy else {
@@ -5145,13 +5213,17 @@ fn diagnose_org_policy(
     };
     let policy_pack = &loaded_policy.pack;
     let policy_path = &loaded_policy.path;
+    let policy_requirement_surface =
+        policy_requirement_surface_for_toolchains(contract, requirement_surface, toolchain_names);
 
     let contract_root = contract_working_dir(contract_path);
 
     let missing_sections = policy_pack.missing_required_sections(contract);
     let missing_files = policy_pack.missing_required_files(contract_root);
-    let version_violations = policy_pack
-        .version_policy_violations_for_requirement_surface_os(policy_os, requirement_surface);
+    let version_violations = policy_pack.version_policy_violations_for_requirement_surface_os(
+        policy_os,
+        &policy_requirement_surface,
+    );
     if missing_sections.is_empty() && missing_files.is_empty() && version_violations.is_empty() {
         if !policy_pack.policies.version_policy.runtimes.is_empty()
             || !policy_pack.policies.version_policy.tools.is_empty()
@@ -5203,11 +5275,11 @@ fn diagnose_org_policy(
         }
 
         let provisioning_plan = policy_pack
-            .provisioning_plan_for_requirement_surface_os(policy_os, requirement_surface);
+            .provisioning_plan_for_requirement_surface_os(policy_os, &policy_requirement_surface);
         let provisioning_request = ProvisioningBackendRequest {
             actions: policy_pack.selected_provisioning_actions_for_requirement_surface_os(
                 policy_os,
-                requirement_surface,
+                &policy_requirement_surface,
             ),
         };
 
@@ -5269,7 +5341,7 @@ fn diagnose_org_policy(
             let matched_targets: Vec<String> = policy_pack
                 .selected_provisioning_actions_for_requirement_surface_os(
                     policy_os,
-                    requirement_surface,
+                    &policy_requirement_surface,
                 )
                 .into_iter()
                 .map(|entry| provisioning_action_audit_summary(&entry))
@@ -5446,7 +5518,7 @@ fn diagnose_remote_org_policy(
         let context_label = remote_policy_subject(remote_probe.context_name.as_deref());
         let version_violations = policy_pack.version_policy_violations_for_requirement_surface_os(
             &remote_probe.target_os,
-            &remote_probe.requirement_surface,
+            &remote_probe.policy_requirement_surface,
         );
         if !version_violations.is_empty() {
             findings.push(Finding {
@@ -5468,7 +5540,7 @@ fn diagnose_remote_org_policy(
         let version_rules = policy_version_rules_for_requirement_surface_os(
             policy_pack,
             &remote_probe.target_os,
-            &remote_probe.requirement_surface,
+            &remote_probe.policy_requirement_surface,
         );
         if !version_rules.is_empty() {
             findings.push(Finding {
@@ -5487,7 +5559,7 @@ fn diagnose_remote_org_policy(
 
         let provisioning_plan = policy_pack.provisioning_plan_for_requirement_surface_os(
             &remote_probe.target_os,
-            &remote_probe.requirement_surface,
+            &remote_probe.policy_requirement_surface,
         );
         let missing_packages: Vec<String> = provisioning_plan
             .blocked
@@ -10038,8 +10110,18 @@ workflows:
             .by_context
             .get("instant-remote")
             .expect("instant context should be selected");
-        assert!(instant_surface.tools.contains_key("npx"));
-        assert!(!instant_surface.tools.contains_key("pnpm"));
+        assert!(
+            instant_surface
+                .requirement_surface
+                .tools
+                .contains_key("npx")
+        );
+        assert!(
+            !instant_surface
+                .requirement_surface
+                .tools
+                .contains_key("pnpm")
+        );
         assert!(selection.fallback.is_none());
     }
 
@@ -13745,7 +13827,7 @@ unexpected: true
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
-        assert!(!report.ok);
+        assert!(!report.ok, "{report:?}");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].summary, "Invalid org policy pack");
         assert!(report.findings[0].why.contains("org-policy.yaml"));
@@ -13798,7 +13880,6 @@ policies:
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
-        assert!(!report.ok);
         let finding = report
             .findings
             .iter()
@@ -13808,6 +13889,84 @@ policies:
         assert!(finding.why.contains("java via org-mirror"));
         assert!(finding.why.contains("runtime java 22 via org-mirror"));
         assert!(finding.why.contains("tool maven 3.9 via approved-manager"));
+    }
+
+    #[test]
+    fn policy_surfaces_include_toolchain_owned_runtime_requirements() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+  version_policy:
+    runtimes:
+      rust:
+        approved_versions:
+          - "1.94.0"
+  provisioning:
+    rust:
+      source: mise
+      approved_versions:
+        - "1.94.0"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        assert!(report.ok, "{report:?}");
+
+        let version_finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Policy-backed version rules are declared")
+            .expect("policy-backed version finding should be present");
+        assert!(
+            version_finding
+                .why
+                .contains("runtime rust (versions 1.94.0)"),
+            "{version_finding:?}"
+        );
+
+        let provisioning_finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Policy-backed provisioning sources are declared")
+            .expect("policy-backed provisioning finding should be present");
+        assert!(
+            provisioning_finding
+                .why
+                .contains("runtime rust 1.94.0 via mise"),
+            "{provisioning_finding:?}"
+        );
     }
 
     #[test]

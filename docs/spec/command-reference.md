@@ -1067,6 +1067,8 @@ Current behavior:
 - when the selected task path uses `requirements.toolchains`, ota treats that toolchain as the owner for the selected path instead of describing its owned capabilities as standalone `runtimes` or `tools`
 - toolchain run-path fulfillment is opt-in: `toolchains.<name>.fulfillment: none` keeps `ota run` on diagnosis/check-only behavior, while `fulfillment: run` lets ota attempt provider-backed run-path provisioning for the selected toolchain only
 - when toolchain fulfillment fails, run output names the selected toolchain, the owning provider, the declared requirement slice ota checked, and the rerun lane instead of reducing the failure to a generic tool install error
+- `ota run --json` and receipt-backed run summaries now expose additive `toolchains[]` evidence for the selected task path, including provider, backend, target OS, version, fulfillment mode, owned runtime, and any owned tools/components/targets ota selected on that path
+- when ota actually runs provider fulfillment commands on that path, the same `toolchains[]` entry also records `fulfilled` plus additive `commands[]` evidence
 - on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - on non-interactive text success, large task output is shown as a bounded excerpt before the compact `RUN SUMMARY`
 - on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
@@ -1215,6 +1217,10 @@ ota doctor --member api --member web --json [PATH]
 - doctor never provisions toolchains: `toolchains.<name>.fulfillment: none` and `fulfillment: run`
   both stay diagnosis-only here; duplicate ownership between `toolchains`, `runtimes`, and `tools`
   fails early as an invalid contract instead of degrading into an advisory finding
+- org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
+  so `toolchains.rust` can participate in approved-version and approved-source findings without
+  re-declaring `runtimes.rust`
+- `ota doctor --json` now exposes additive `toolchains[]` entries for the selected workflow/task path, including the provider, effective backend, target OS, version, fulfillment mode, and the owned runtime/tool capabilities ota checked on that path
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path
@@ -1489,6 +1495,9 @@ JSON output:
 - `ok`
 - `path`
 - `findings`
+- additive `toolchains[]` evidence can appear for the selected workflow path even though `ota check`
+  itself still stays on the configured readiness/check surface instead of broadening into toolchain
+  diagnosis or fulfillment
 - monorepo root summaries include grouped per-member results in `members`
 
 ## `ota receipt`
@@ -1530,6 +1539,11 @@ Current behavior:
 - includes repo contract drift findings from the same `ota detect` comparison path used by `ota doctor`
 - captures the current repo state as an execution receipt with one `readiness` step
 - when a lifecycle override is selected, the receipt preserves that selected lifecycle, image, target, and rerun path instead of falling back to the default doctor container lifecycle
+- receipt JSON now includes additive `receipt.toolchains[]` evidence for the selected readiness
+  path, mirroring the same provider/backend/target OS/fulfillment shape used by `ota run --json`
+  and `ota up --json`
+- when a recorded execution path actually ran provider fulfillment commands, `receipt.toolchains[]`
+  can also include additive `fulfilled` and `commands[]` evidence there
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
@@ -1614,6 +1628,14 @@ Current behavior:
   instead of pretending owned capabilities are standalone setup tools, and the preview now names
   the owned runtime capability alongside the provider so `toolchains.node` reads as Node via
   Corepack rather than implying that Corepack itself is the runtime
+- policy-backed version/provisioning previews now include selected toolchain-owned runtime lanes
+  too, so a repo that declares only `toolchains.rust` can still show governed runtime install
+  paths without reintroducing duplicate `runtimes` ownership
+- `ota up --json` and preview/final execution receipts now expose additive `receipt.toolchains[]`
+  evidence so the selected workflow path's toolchain/provider/backend decisions stay
+  machine-readable alongside readiness findings
+- when ota actually runs provider fulfillment commands on the selected run path, the final receipt
+  can also include additive `fulfilled` and `commands[]` evidence for that toolchain entry
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
   activation lane before setup when it is safe and selected; shipped paths now cover both
   Corepack-managed tools and explicit shell-command acquisition

@@ -20,7 +20,12 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use crate::schema::{ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec};
+use std::collections::BTreeSet;
+
+use crate::schema::{
+    Contract, RequirementSurface, RuntimeDetail, RuntimePlatformDetail, RuntimeRequirement,
+    ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
+};
 
 pub(crate) const SHARED_TOOLCHAIN_CORE_SUMMARY: &str =
     "`provider`, `version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`";
@@ -616,6 +621,57 @@ pub(crate) const fn toolchain_provider_label(provider: ToolchainProvider) -> &'s
         ToolchainProvider::Rustup => "rustup",
         ToolchainProvider::Corepack => "corepack",
     }
+}
+
+fn owned_runtime_requirement_from_toolchain(toolchain: &ToolchainSpec) -> RuntimeRequirement {
+    RuntimeRequirement::Detailed(RuntimeDetail {
+        version: toolchain.version.clone(),
+        required: toolchain.required,
+        only_on: toolchain.only_on.clone(),
+        provider: None,
+        distribution: None,
+        platforms: toolchain
+            .platforms
+            .iter()
+            .map(|(platform, detail)| {
+                (
+                    platform.clone(),
+                    RuntimePlatformDetail {
+                        version: detail.version.clone(),
+                        provider: None,
+                        distribution: None,
+                    },
+                )
+            })
+            .collect(),
+    })
+}
+
+pub(crate) fn requirement_surface_with_toolchain_owned_runtimes(
+    contract: &Contract,
+    base: &RequirementSurface,
+    toolchain_names: &BTreeSet<String>,
+) -> RequirementSurface {
+    let mut merged = base.clone();
+
+    for toolchain_name in toolchain_names {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        let Some(provider) = declared_toolchain_contract(toolchain_name, toolchain) else {
+            continue;
+        };
+        let runtime_name = provider.owned_runtime().to_string();
+        let runtime_requirement = owned_runtime_requirement_from_toolchain(toolchain);
+        let merged_requirement = merged
+            .runtimes
+            .get(runtime_name.as_str())
+            .map(|base_requirement| base_requirement.merged_with_overlay(&runtime_requirement))
+            .unwrap_or(runtime_requirement);
+        merged.runtimes.insert(runtime_name, merged_requirement);
+    }
+
+    merged
 }
 
 fn rustup_component_tool_name(component: &str) -> Option<&'static str> {

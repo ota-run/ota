@@ -29,6 +29,10 @@
 - tightened the shipped toolchain provider boundary so `toolchains.rust` must use
   `provider: rustup` and `toolchains.node` must use `provider: corepack`, with validator errors
   driven by the shipped provider contract registry instead of a Rust-first fallback
+- `ota run` receipts now keep actual toolchain fulfillment explicit: selected `receipt.toolchains[]`
+  entries can record additive `fulfilled` and `commands[]` evidence when ota ran provider
+  fulfillment commands on that execution path, instead of forcing users or automation to infer
+  that from stdout/stderr
 - hardened the PowerShell bootstrap installer: checksum mismatches and missing official checksum
   manifests now fail closed instead of falling back to git installs, and Windows user PATH
   persistence now requires explicit `-SetupPath`
@@ -95,6 +99,15 @@
 - sharpened toolchain preview wording so dry-run and fulfillment-facing output now names the owned
   runtime capability alongside the provider contract, which keeps `toolchains.node` honest as
   “Node via Corepack” instead of reading like Corepack itself is the runtime being checked
+- exposed selected toolchain decisions as first-class machine-readable evidence: `ota doctor --json`
+  now emits top-level `toolchains[]`, and receipt-bearing surfaces such as `ota run --json`,
+  `ota up --json`, and `ota receipt --json` now emit additive `receipt.toolchains[]` entries with
+  provider, backend, target OS, version, fulfillment mode, owned runtime, and owned
+  tools/components/targets for the selected path
+- bridged selected toolchain-owned runtime lanes into org-policy version/provisioning reasoning, so
+  `ota doctor`, `ota up`, and execution-policy previews can show approved runtime versions and
+  approved install sources for `toolchains.rust` / `toolchains.node` without re-declaring
+  duplicate runtime ownership
 
 ## 1.6.12
 

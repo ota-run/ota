@@ -62,7 +62,7 @@ Use `toolchains` when Ota must understand more than "does this executable exist?
 Examples:
 
 - Rust via Rustup, including components such as `rustfmt`
-- Node via Corepack, when the repo wants one owner for the Node runtime while package-manager
+- Node via Corepack, when the repo wants one owner for the Node runtime and `node` executable while package-manager
   activation stays explicit under `tools`
 
 Current parser boundary:
@@ -217,6 +217,9 @@ This slice is intentionally narrow:
 - duplicate ownership is invalid and fails validation
 - Rustup currently owns diagnosis plus run-path fulfillment for the declared toolchain and its
   components/targets
+- org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
+  so approved runtime versions and approved install sources can govern `toolchains.rust` or
+  `toolchains.node` without re-declaring duplicate runtime ownership
 - Corepack-backed Node toolchains are currently diagnosis-only and use only the shared
   provider-agnostic field set; `tools.node` is invalid duplicate ownership, while package-manager
   activation such as `pnpm` still belongs under
