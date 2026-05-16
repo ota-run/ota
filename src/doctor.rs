@@ -73,9 +73,11 @@ use crate::schema::{
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
-    ToolchainManagedSurfaceKind, declared_toolchain_contract,
+    ToolchainManagedSurfaceKind, ToolchainOpportunityContext, declared_toolchain_contract,
     requirement_surface_with_toolchain_owned_capabilities,
     requirement_surface_with_toolchain_owned_tools, shipped_toolchain_contract_by_label,
+    tool_versions_entry, unsupported_toolchain_opportunity_context,
+    unsupported_toolchain_repo_signals,
 };
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
@@ -1515,6 +1517,9 @@ impl Finding {
             }
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
+            s if s.starts_with("Managed toolchain opportunity: ") => {
+                "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
+            }
             s if s.starts_with("Missing toolchain provider: ") => "OTA_TOOLCHAIN_PROVIDER_MISSING",
             s if s.starts_with("Toolchain provider probe failed: ") => {
                 "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
@@ -1674,7 +1679,7 @@ impl Finding {
             | "OTA_CHECK_TIMED_OUT"
             | "OTA_FILE_CHECK_FAILED"
             | "OTA_FILE_CHECK_TIMED_OUT" => "execution",
-            "OTA_CONTRACT_DRIFT" => "contract",
+            "OTA_CONTRACT_DRIFT" | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => "contract",
             "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "contract",
             _ => "contract",
         }
@@ -1702,6 +1707,7 @@ impl Finding {
             | "OTA_RUNTIME_VERSION_UNPARSEABLE"
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING"
+            | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
             | "OTA_TOOL_PROBE_FAILED"
             | "OTA_TOOL_VERSION_UNPARSEABLE"
             | "OTA_NATIVE_PREREQUISITE_MISSING"
@@ -1865,6 +1871,13 @@ impl Finding {
                 } else {
                     "host".to_string()
                 },
+                String::new(),
+                String::new(),
+            ),
+            "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => (
+                "the selected repo path is using fallback runtime/tool declarations for an ecosystem Ota does not yet ship as a managed toolchain".to_string(),
+                "a shipped toolchain provider exists for that ecosystem or the repo intentionally stays on the fallback runtime/tool model".to_string(),
+                "repo_signals".to_string(),
                 String::new(),
                 String::new(),
             ),
@@ -2152,11 +2165,25 @@ impl Finding {
         }
     }
 
+    fn toolchain_opportunity_context(&self) -> Option<ToolchainOpportunityContext<'static>> {
+        let ecosystem = self
+            .summary
+            .strip_prefix("Managed toolchain opportunity: ")?;
+        unsupported_toolchain_opportunity_context(ecosystem.trim())
+    }
+
     fn provenance_context(&self) -> Option<FindingProvenanceContext<'_>> {
         if self.policy_context().is_some() {
             return Some(FindingProvenanceContext {
                 provenance: "org policy",
                 provenance_key: "org_policy",
+            });
+        }
+
+        if self.code() == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
+            return Some(FindingProvenanceContext {
+                provenance: "repo signals",
+                provenance_key: "repo_signals",
             });
         }
 
@@ -2263,11 +2290,13 @@ impl Serialize for Finding {
     {
         let policy = self.policy_context();
         let drift = self.drift_context();
+        let toolchain_opportunity = self.toolchain_opportunity_context();
         let provenance = self.provenance_context();
         let mut state = serializer.serialize_struct(
             "Finding",
             8 + policy.map(|_| 5).unwrap_or_default()
                 + drift.map(|_| 2).unwrap_or_default()
+                + toolchain_opportunity.map(|_| 1).unwrap_or_default()
                 + provenance.map(|_| 2).unwrap_or_default(),
         )?;
 
@@ -2291,6 +2320,30 @@ impl Serialize for Finding {
         if let Some(drift) = drift {
             state.serialize_field("owner_kind", drift.owner_kind)?;
             state.serialize_field("ownership", drift.ownership)?;
+        }
+
+        if let Some(toolchain_opportunity) = toolchain_opportunity {
+            #[derive(Serialize)]
+            struct ToolchainOpportunityJson<'a> {
+                ecosystem: &'a str,
+                fallback_runtime: &'a str,
+                fallback_tools: &'a [&'a str],
+                candidate_providers: &'a [&'a str],
+                shipped: bool,
+                agent_note: &'a str,
+            }
+
+            state.serialize_field(
+                "toolchain_opportunity",
+                &ToolchainOpportunityJson {
+                    ecosystem: toolchain_opportunity.ecosystem,
+                    fallback_runtime: toolchain_opportunity.fallback_runtime,
+                    fallback_tools: toolchain_opportunity.fallback_tools,
+                    candidate_providers: toolchain_opportunity.candidate_providers,
+                    shipped: false,
+                    agent_note: toolchain_opportunity.agent_note,
+                },
+            )?;
         }
 
         if let Some(provenance) = provenance {
@@ -2903,6 +2956,12 @@ fn diagnose_contract_with_scope(
                 ),
             });
         }
+        diagnose_unsupported_toolchain_opportunities(
+            contract,
+            contract_path,
+            &requirement_surface,
+            &mut findings,
+        );
         if mode != DoctorMode::Remote {
             provisioning = diagnose_org_policy(
                 contract,
@@ -5911,6 +5970,92 @@ fn provider_hint_remediation_without_toolchains(
     }
 }
 
+fn unsupported_toolchain_fallback_tools(
+    requirement_surface: &RequirementSurface,
+    names: &[&str],
+) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| requirement_surface.tools.contains_key(**name))
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
+fn unsupported_toolchain_opportunity_finding(
+    ecosystem: &str,
+    contract_root: &Path,
+    requirement_surface: &RequirementSurface,
+) -> Option<Finding> {
+    let context = unsupported_toolchain_opportunity_context(ecosystem)?;
+    if !requirement_surface
+        .runtimes
+        .contains_key(context.fallback_runtime)
+    {
+        return None;
+    }
+
+    let repo_signals = unsupported_toolchain_repo_signals(contract_root, ecosystem);
+    if repo_signals.is_empty() {
+        return None;
+    }
+
+    let fallback_tools =
+        unsupported_toolchain_fallback_tools(requirement_surface, context.fallback_tools);
+    let fallback_model = if fallback_tools.is_empty() {
+        format!("`runtimes.{}`", context.fallback_runtime)
+    } else {
+        format!(
+            "`runtimes.{}` and {}",
+            context.fallback_runtime,
+            fallback_tools
+                .iter()
+                .map(|tool| format!("`tools.{tool}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let signal_summary = repo_signals
+        .iter()
+        .map(|signal| format!("`{signal}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ecosystem_label = match ecosystem {
+        "java" => "a JVM build surface",
+        "python" => "a Python project surface",
+        _ => "a managed ecosystem surface",
+    };
+
+    Some(Finding {
+        severity: FindingSeverity::Warn,
+        summary: format!("Managed toolchain opportunity: {ecosystem}"),
+        why: format!(
+            "this repo uses {ecosystem_label} and currently models it through {fallback_model}; repo signals: {signal_summary}; ota does not ship a {ecosystem} toolchain provider yet"
+        ),
+        next: format!(
+            "keep {fallback_model} for now; ota can model this more cleanly once {ecosystem} toolchain support is shipped"
+        ),
+    })
+}
+
+fn diagnose_unsupported_toolchain_opportunities(
+    contract: &Contract,
+    contract_path: &Path,
+    requirement_surface: &RequirementSurface,
+    findings: &mut Vec<Finding>,
+) {
+    let contract_root = contract_working_dir(contract_path);
+    for ecosystem in ["java", "python"] {
+        if contract.toolchains.contains_key(ecosystem) {
+            continue;
+        }
+        if let Some(finding) =
+            unsupported_toolchain_opportunity_finding(ecosystem, contract_root, requirement_surface)
+        {
+            findings.push(finding);
+        }
+    }
+}
+
 fn provider_tool_versions_remediation(
     manager: ToolVersionsManager,
     name: &str,
@@ -5946,30 +6091,6 @@ fn tool_versions_remediation(
         ToolVersionsManager::Asdf => Some(format!("asdf install {tool_name} {requirement}")),
         ToolVersionsManager::Mise => Some(format!("mise install {tool_name}@{requirement}")),
     }
-}
-
-fn tool_versions_entry(contract_root: &Path, candidate_names: &[&str]) -> Option<String> {
-    let path = contract_root.join(".tool-versions");
-    let contents = std::fs::read_to_string(path).ok()?;
-
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let mut parts = trimmed.split_whitespace();
-        let Some(tool_name) = parts.next() else {
-            continue;
-        };
-        if candidate_names
-            .iter()
-            .any(|candidate| candidate == &tool_name)
-        {
-            return Some(tool_name.to_string());
-        }
-    }
-
-    None
 }
 
 fn tool_versions_manager(contract_root: &Path) -> Option<ToolVersionsManager> {
@@ -8596,8 +8717,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        Backend, CheckStatus, DoctorMode, FindingSeverity, compose_service_healthcheck_command,
-        diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode,
+        Backend, CheckStatus, DoctorMode, Finding, FindingSeverity,
+        compose_service_healthcheck_command, diagnose_checks_only, diagnose_contract,
+        diagnose_contract_in_mode,
         diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
         diagnose_preconditions, diagnose_preconditions_with_mode, provider_hint_remediation,
         tool_executable_name, version_matches,
@@ -13930,6 +14052,83 @@ policies:
         assert!(finding.why.contains("java via org-mirror"));
         assert!(finding.why.contains("runtime java 22 via org-mirror"));
         assert!(finding.why.contains("tool maven 3.9 via approved-manager"));
+    }
+
+    #[test]
+    fn reports_java_managed_toolchain_opportunity_without_provider_advice_in_text() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java: "21"
+tools:
+  maven: "*"
+tasks:
+  test:
+    run: mvn test
+"#,
+        )
+        .unwrap();
+        fs::write(fixture.path().join("pom.xml"), "<project />\n").unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Managed toolchain opportunity: java")
+            .expect("toolchain opportunity finding should be present");
+        assert_eq!(finding.severity, FindingSeverity::Warn);
+        assert!(finding.why.contains("`runtimes.java` and `tools.maven`"));
+        assert!(finding.why.contains("repo signals: `pom.xml`"));
+        assert!(!finding.next.contains("sdkman"));
+        assert!(!finding.next.contains("mise"));
+        assert_eq!(finding.provenance().as_deref(), Some("repo signals"));
+        assert_eq!(finding.provenance_key().as_deref(), Some("repo_signals"));
+    }
+
+    #[test]
+    fn doctor_json_includes_toolchain_opportunity_agent_metadata() {
+        let finding = Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Managed toolchain opportunity: java"),
+            why: String::from("fallback model"),
+            next: String::from("keep runtimes.java and tools.maven for now"),
+        };
+
+        let json = serde_json::to_value(&finding).expect("finding should serialize");
+        assert_eq!(
+            json["code"],
+            serde_json::Value::String(String::from("OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"))
+        );
+        assert_eq!(json["provenance_key"], "repo_signals");
+        assert_eq!(json["toolchain_opportunity"]["ecosystem"], "java");
+        assert_eq!(json["toolchain_opportunity"]["fallback_runtime"], "java");
+        assert_eq!(
+            json["toolchain_opportunity"]["candidate_providers"][0],
+            "sdkman"
+        );
+        assert_eq!(
+            json["toolchain_opportunity"]["candidate_providers"][1],
+            "mise"
+        );
+        assert_eq!(json["toolchain_opportunity"]["shipped"], false);
+        assert!(
+            json["toolchain_opportunity"]["agent_note"]
+                .as_str()
+                .expect("agent note")
+                .contains("toolchains.java")
+        );
     }
 
     #[test]

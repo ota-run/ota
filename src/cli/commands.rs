@@ -92,17 +92,18 @@ use crate::output::{
     ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
     ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
     ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
-    TasksFailure, TasksSuccess, ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan,
-    UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkflowSummary,
-    WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
-    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
-    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
-    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskLaunchSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskLaunchSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -154,6 +155,7 @@ use crate::toolchains::{
     fallback_toolchain_fulfillment_attempt_summary,
     requirement_surface_with_toolchain_owned_capabilities,
     requirement_surface_with_toolchain_owned_tools, toolchain_fulfillment_status_detail,
+    unsupported_toolchain_opportunity_context, unsupported_toolchain_repo_signals,
 };
 use crate::update;
 use crate::validator::{
@@ -19858,11 +19860,20 @@ pub fn init(
         );
     }
 
-    let pack_advisory = pack.and_then(|selected_pack| {
+    let detected_pack_context = pack.and_then(|selected_pack| {
         detect_repo(&root)
             .ok()
-            .and_then(|detected| build_pack_advisory(selected_pack.pack, &detected, &root))
+            .map(|detected| (selected_pack, detected))
     });
+    let pack_advisory = detected_pack_context
+        .as_ref()
+        .and_then(|(selected_pack, detected)| {
+            build_pack_advisory(selected_pack.pack, detected, &root)
+        });
+    let pack_toolchain_opportunities = detected_pack_context
+        .as_ref()
+        .map(|(_, detected)| detect_toolchain_opportunities(detected))
+        .unwrap_or_default();
 
     finalize_debug(
         match if let Some(pack) = pack {
@@ -19874,15 +19885,23 @@ pub fn init(
         } else {
             detect_repo(&root)
         } {
-            Ok(report) => render_init(
-                report,
-                &contract_path,
-                write,
-                bootstrap,
-                pack,
-                pack_advisory,
-                format,
-            ),
+            Ok(report) => {
+                let toolchain_opportunities = if pack.is_some() {
+                    pack_toolchain_opportunities
+                } else {
+                    detect_toolchain_opportunities(&report)
+                };
+                render_init(
+                    report,
+                    &contract_path,
+                    write,
+                    bootstrap,
+                    pack,
+                    pack_advisory,
+                    toolchain_opportunities,
+                    format,
+                )
+            }
             Err(error) => {
                 let error = error.to_string();
                 match format {
@@ -22153,6 +22172,7 @@ pub fn detect(
                 let mut preview_contract = report.contract.clone();
                 apply_detected_starter_contract_defaults(&mut preview_contract, &report);
                 let agent_boundary = starter_agent_boundary_outcome_from_detect_report(&report);
+                let toolchain_opportunities = detect_toolchain_opportunities(&report);
                 let yaml = serde_yaml::to_string(&preview_contract)
                     .expect("serializing detected contract should not fail");
                 match format {
@@ -22183,6 +22203,7 @@ pub fn detect(
                             "Annotations",
                             report.inferences.iter(),
                         );
+                        render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                         if !comparison_first {
                             render_detect_comparison_section(
                                 &mut stdout,
@@ -22211,6 +22232,10 @@ pub fn detect(
                         written: false,
                         config: detect_json_config_value(&preview_contract),
                         inferred: &report.inferences,
+                        toolchain_opportunities: toolchain_opportunities
+                            .iter()
+                            .map(|opportunity| opportunity.advisory.clone())
+                            .collect(),
                         comparison: comparison.as_ref(),
                     })),
                 }
@@ -25599,6 +25624,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
     let compact_root_display = compact_repo_path(&report.root);
+    let toolchain_opportunities = detect_toolchain_opportunities(&report);
     if contract_path.exists() {
         let next = format!("ota detect --merge --dry-run {}", compact_root_display);
         let highlighted_path = paint_code(&compact_path_display);
@@ -25713,6 +25739,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     "Excluded from automatic write",
                     excluded_write_inferences(&report),
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -25721,6 +25748,10 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 written: true,
                 config,
                 inferred: &report.inferences,
+                toolchain_opportunities: toolchain_opportunities
+                    .iter()
+                    .map(|opportunity| opportunity.advisory.clone())
+                    .collect(),
                 comparison: None,
             })),
         },
@@ -25776,6 +25807,7 @@ fn write_detected_merge(
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
+    let toolchain_opportunities = detect_toolchain_opportunities(&report);
     let existing_contract = match load_contract(&contract_path) {
         Ok(contract) => contract,
         Err(error) => {
@@ -25898,6 +25930,7 @@ fn write_detected_merge(
                     Some(&comparison),
                     DetectComparisonMode::MergePreview,
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -25906,6 +25939,10 @@ fn write_detected_merge(
                 written: false,
                 config: detect_json_config_value(&report.contract),
                 inferred: &report.inferences,
+                toolchain_opportunities: toolchain_opportunities
+                    .iter()
+                    .map(|opportunity| opportunity.advisory.clone())
+                    .collect(),
                 comparison: Some(&comparison),
             })),
         };
@@ -26122,6 +26159,7 @@ fn write_detected_merge(
                     post_write_comparison.as_ref(),
                     DetectComparisonMode::MergeResult,
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 stdout.push_str(&format_next_timeline(&next_steps));
                 CommandOutput::success(stdout)
             }
@@ -26134,6 +26172,10 @@ fn write_detected_merge(
                     written: true,
                     config,
                     inferred: &report.inferences,
+                    toolchain_opportunities: toolchain_opportunities
+                        .iter()
+                        .map(|opportunity| opportunity.advisory.clone())
+                        .collect(),
                     comparison: post_write_comparison.as_ref(),
                 }))
             }
@@ -26158,6 +26200,7 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
+    let toolchain_opportunities = detect_toolchain_opportunities(&report);
     let existing_contract = match load_contract(&contract_path) {
         Ok(contract) => contract,
         Err(error) => {
@@ -26318,6 +26361,7 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     comparison.as_ref(),
                     DetectComparisonMode::RewriteResult,
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 stdout.push_str(&format_next_timeline(&repo_contract_write_next_steps(
                     &contract_path,
                 )));
@@ -26329,6 +26373,10 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                 written: true,
                 config,
                 inferred: &report.inferences,
+                toolchain_opportunities: toolchain_opportunities
+                    .iter()
+                    .map(|opportunity| opportunity.advisory.clone())
+                    .collect(),
                 comparison: comparison.as_ref(),
             })),
         },
@@ -27688,6 +27736,109 @@ fn build_pack_advisory(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetectedToolchainOpportunity {
+    advisory: ToolchainOpportunityAdvisory,
+    why: String,
+    next: String,
+}
+
+fn detect_toolchain_opportunities(report: &DetectReport) -> Vec<DetectedToolchainOpportunity> {
+    ["java", "python"]
+        .into_iter()
+        .filter_map(|ecosystem| {
+            let context = unsupported_toolchain_opportunity_context(ecosystem)?;
+            if !report.contract.runtimes.contains_key(context.fallback_runtime) {
+                return None;
+            }
+
+            let repo_signals = unsupported_toolchain_repo_signals(&report.root, ecosystem);
+            if repo_signals.is_empty() {
+                return None;
+            }
+
+            let fallback_tools = context
+                .fallback_tools
+                .iter()
+                .filter(|tool| report.contract.tools.contains_key(**tool))
+                .map(|tool| (*tool).to_string())
+                .collect::<Vec<_>>();
+            let fallback_model =
+                render_toolchain_opportunity_fallback_model(context.fallback_runtime, &fallback_tools);
+            let signal_summary = repo_signals
+                .iter()
+                .map(|signal| format!("`{signal}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ecosystem_label = match ecosystem {
+                "java" => "a JVM build surface",
+                "python" => "a Python project surface",
+                _ => "a managed ecosystem surface",
+            };
+
+            Some(DetectedToolchainOpportunity {
+                advisory: ToolchainOpportunityAdvisory {
+                    ecosystem: context.ecosystem.to_string(),
+                    fallback_runtime: context.fallback_runtime.to_string(),
+                    fallback_tools: fallback_tools.clone(),
+                    candidate_providers: context
+                        .candidate_providers
+                        .iter()
+                        .map(|provider| (*provider).to_string())
+                        .collect(),
+                    shipped: false,
+                    agent_note: context.agent_note.to_string(),
+                },
+                why: format!(
+                    "this repo uses {ecosystem_label} and currently models it through {fallback_model}; repo signals: {signal_summary}; ota does not ship a {ecosystem} toolchain provider yet"
+                ),
+                next: format!(
+                    "keep {fallback_model} for now; ota can model this more cleanly once {ecosystem} toolchain support is shipped"
+                ),
+            })
+        })
+        .collect()
+}
+
+fn render_toolchain_opportunity_fallback_model(runtime: &str, tools: &[String]) -> String {
+    if tools.is_empty() {
+        return format!("`runtimes.{runtime}`");
+    }
+
+    format!(
+        "`runtimes.{runtime}` and {}",
+        tools
+            .iter()
+            .map(|tool| format!("`tools.{tool}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn render_toolchain_opportunity_section(
+    stdout: &mut String,
+    opportunities: &[DetectedToolchainOpportunity],
+) {
+    if opportunities.is_empty() {
+        return;
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Toolchain Opportunities")
+    ));
+    for opportunity in opportunities {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            primary_warn_marker(),
+            paint_key("Ecosystem:"),
+            opportunity.advisory.ecosystem
+        ));
+        stdout.push_str(&format!("\n  {} {}", paint_key("Why:"), opportunity.why));
+        stdout.push_str(&format!("\n  {} {}", paint_next_label(), opportunity.next));
+    }
+}
+
 fn init_selected_pack_options(config: StarterPackConfig) -> Option<InitSelectedPackOptions> {
     let options = InitSelectedPackOptions {
         package_manager: config
@@ -27817,6 +27968,7 @@ fn render_init(
     bootstrap: bool,
     pack: Option<StarterPackConfig>,
     pack_advisory: Option<InitPackAdvisory>,
+    toolchain_opportunities: Vec<DetectedToolchainOpportunity>,
     format: OutputFormat,
 ) -> CommandOutput {
     let init_inferences = report.inferences.clone();
@@ -28073,6 +28225,7 @@ fn render_init(
                             );
                         }
                     }
+                    render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                     stdout.push_str(&format_next_timeline(&repo_contract_write_next_steps(
                         &contract_path,
                     )));
@@ -28089,6 +28242,10 @@ fn render_init(
                     pack_advisory,
                     config: &write_contract,
                     inferred: &init_inferences,
+                    toolchain_opportunities: toolchain_opportunities
+                        .iter()
+                        .map(|opportunity| opportunity.advisory.clone())
+                        .collect(),
                     provenance,
                 })),
             },
@@ -28146,6 +28303,7 @@ fn render_init(
                 );
             }
             render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
+            render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
             if pack.is_none() {
                 append_agent_boundary_outcome_section(
                     &mut stdout,
@@ -28182,6 +28340,10 @@ fn render_init(
             pack_advisory,
             config: &bootstrap_contract,
             inferred: &init_inferences,
+            toolchain_opportunities: toolchain_opportunities
+                .iter()
+                .map(|opportunity| opportunity.advisory.clone())
+                .collect(),
             provenance: init_contract_provenance(
                 &bootstrap_contract,
                 &preview_detected_contract,
@@ -38975,6 +39137,95 @@ env:
         let merged = fs::read_to_string(&contract_path).expect("read merged contract");
         assert!(merged.contains("path: custom.properties"), "{merged}");
         assert!(merged.contains("path: .env.local"), "{merged}");
+    }
+
+    #[test]
+    fn detect_dry_run_json_includes_toolchain_opportunity_metadata() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("pom.xml"),
+            r#"<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.ota</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+  </properties>
+</project>
+"#,
+        )
+        .expect("write pom.xml");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            true,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect json");
+        assert_eq!(
+            json["toolchain_opportunities"][0]["ecosystem"],
+            serde_json::Value::String(String::from("java"))
+        );
+        assert_eq!(
+            json["toolchain_opportunities"][0]["candidate_providers"][0],
+            serde_json::Value::String(String::from("sdkman"))
+        );
+        assert_eq!(
+            json["toolchain_opportunities"][0]["candidate_providers"][1],
+            serde_json::Value::String(String::from("mise"))
+        );
+    }
+
+    #[test]
+    fn init_preview_text_surfaces_user_safe_toolchain_opportunity_guidance() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("pom.xml"),
+            r#"<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.ota</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+  </properties>
+</project>
+"#,
+        )
+        .expect("write pom.xml");
+
+        let output = super::init(
+            Some(repo.path()),
+            false,
+            false,
+            None,
+            false,
+            OutputFormat::Text,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let stdout = super::strip_ansi_codes(&output.stdout);
+        assert!(stdout.contains("Toolchain Opportunities"), "{stdout}");
+        assert!(stdout.contains("Ecosystem: java"), "{stdout}");
+        assert!(
+            stdout.contains("keep `runtimes.java` and `tools.maven` for now"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("sdkman"), "{stdout}");
+        assert!(!stdout.contains("mise"), "{stdout}");
     }
 
     #[test]
