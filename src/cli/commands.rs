@@ -14562,7 +14562,112 @@ fn structured_validation_error_details(
         ));
     }
 
+    if let Some(issue) = parse_duplicate_ownership_validation_issue(why) {
+        let duplicate_kind = issue.duplicate_kind.clone();
+        let owner_location = issue.owner_location();
+        let duplicate_label = match issue.task_name.as_deref() {
+            Some(task_name) => format!(
+                "task `{task_name}` duplicates {duplicate_kind} `{}` that belongs to toolchain `{}`",
+                issue.duplicate_name, issue.toolchain_name
+            ),
+            None => format!(
+                "the contract duplicates {duplicate_kind} `{}` that belongs to toolchain `{}`",
+                issue.duplicate_name, issue.toolchain_name
+            ),
+        };
+        let remove_hint = match duplicate_kind.as_str() {
+            "runtime" => "remove the duplicate runtime declaration",
+            _ => "remove the duplicate tool declaration",
+        };
+        let rerun_steps = next_steps
+            .iter()
+            .filter(|step| step.starts_with("rerun "))
+            .cloned()
+            .collect::<Vec<_>>();
+        let primary_rerun_step = rerun_steps
+            .first()
+            .cloned()
+            .unwrap_or_else(|| String::from("rerun `ota validate`"));
+        let mut next_lines = vec![
+            format!("remove `{}`", issue.invalid_location),
+            remove_hint.to_string(),
+            primary_rerun_step,
+        ];
+        for rerun_step in rerun_steps.into_iter().skip(1) {
+            if !next_lines.contains(&rerun_step) {
+                next_lines.push(rerun_step);
+            }
+        }
+        return Some((
+            vec![
+                duplicate_label,
+                format!(
+                    "`{}` is already owned by `{owner_location}`",
+                    issue.invalid_location
+                ),
+                format!(
+                    "keep `{owner_location}` as the owner for `{}`",
+                    issue.duplicate_name
+                ),
+            ],
+            next_lines,
+        ));
+    }
+
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DuplicateOwnershipValidationIssue {
+    task_name: Option<String>,
+    toolchain_name: String,
+    duplicate_kind: String,
+    duplicate_name: String,
+    invalid_location: String,
+}
+
+impl DuplicateOwnershipValidationIssue {
+    fn owner_location(&self) -> String {
+        match self.task_name.as_deref() {
+            Some(task_name) => format!("tasks.{task_name}.requirements.toolchains"),
+            None => format!("toolchains.{}", self.toolchain_name),
+        }
+    }
+}
+
+fn parse_duplicate_ownership_validation_issue(
+    line: &str,
+) -> Option<DuplicateOwnershipValidationIssue> {
+    const PREFIX: &str = "duplicate ownership is invalid: ";
+    let rest = line.strip_prefix(PREFIX)?;
+
+    if let Some(rest) = rest.strip_prefix("toolchain `") {
+        let (toolchain_name, rest) = rest.split_once("` owns ")?;
+        let (duplicate_kind, rest) = rest.split_once(" `")?;
+        let (duplicate_name, rest) = rest.split_once("`, but the contract also declares `")?;
+        let (invalid_location, _) = rest.split_once("`; keep `toolchains.")?;
+        return Some(DuplicateOwnershipValidationIssue {
+            task_name: None,
+            toolchain_name: toolchain_name.to_string(),
+            duplicate_kind: duplicate_kind.trim().to_string(),
+            duplicate_name: duplicate_name.to_string(),
+            invalid_location: invalid_location.to_string(),
+        });
+    }
+
+    let rest = rest.strip_prefix("task `")?;
+    let (task_name, rest) = rest.split_once("` requires toolchain `")?;
+    let (toolchain_name, rest) = rest.split_once("`, which owns ")?;
+    let (duplicate_kind, rest) = rest.split_once(" `")?;
+    let (duplicate_name, rest) = rest.split_once("`, but the task also declares `")?;
+    let (invalid_location, _) = rest.split_once("`; keep `tasks.")?;
+    Some(DuplicateOwnershipValidationIssue {
+        task_name: Some(task_name.to_string()),
+        toolchain_name: toolchain_name.to_string(),
+        duplicate_kind: duplicate_kind.trim().to_string(),
+        duplicate_name: duplicate_name.to_string(),
+        invalid_location: invalid_location.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44276,6 +44381,34 @@ tasks:
     }
 
     #[test]
+    fn structured_validation_error_details_clarifies_duplicate_toolchain_ownership() {
+        let why = String::from(
+            "duplicate ownership is invalid: toolchain `rust` owns tool `cargo`, but the contract also declares `tools.cargo`; keep `toolchains.rust` as the owner and remove the duplicate tool declaration",
+        );
+        let next = vec![
+            String::from("repair `./ota.yaml`"),
+            String::from("rerun `ota validate`"),
+        ];
+
+        let (why_lines, next_steps) =
+            super::structured_validation_error_details(&[why], &next).unwrap();
+
+        assert_eq!(
+            why_lines[0],
+            "the contract duplicates tool `cargo` that belongs to toolchain `rust`"
+        );
+        assert!(why_lines.contains(&String::from(
+            "`tools.cargo` is already owned by `toolchains.rust`"
+        )));
+        assert!(why_lines.contains(&String::from(
+            "keep `toolchains.rust` as the owner for `cargo`"
+        )));
+        assert_eq!(next_steps[0], "remove `tools.cargo`");
+        assert_eq!(next_steps[1], "remove the duplicate tool declaration");
+        assert_eq!(next_steps[2], "rerun `ota validate`");
+    }
+
+    #[test]
     fn doctor_depends_on_boundary_finding_renders_compact_edge_shape() {
         let mut rendered = String::new();
         assert!(super::render_depends_on_boundary_doctor_finding(
@@ -47899,6 +48032,216 @@ tasks:
         );
         assert!(
             !rendered.contains("Container: stale-summary-id"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_explains_toolchain_fulfillment_precisely() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "setup",
+            None,
+            ExecutionOverrides::default(),
+            &RunError::ToolchainFulfillmentFailed {
+                task: String::from("setup"),
+                toolchain: String::from("rust"),
+                details: String::from(
+                    "`rustup toolchain install 1.94.0 --component rustfmt` exited with code 1",
+                ),
+            },
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("Toolchain fulfillment failed"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("task `setup` selected toolchain `rust`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`toolchains.rust.fulfillment: run` allowed ota to attempt run-path provisioning via `rustup`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`)"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("repair `rustup` or adjust `toolchains.rust`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("rerun `ota run setup --stream`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn up_toolchain_preview_actions_use_selected_task_backend() {
+        let host_os = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(windows) {
+            "windows"
+        } else {
+            "linux"
+        };
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+    host:
+      backend: native
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.1"
+    platforms:
+      {host_os}:
+        version: "1.94.0"
+        components:
+          - rustfmt
+tasks:
+  setup:
+    context: app
+    run: echo setup
+  dev:
+    context: host
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+            ),
+        )
+        .expect("contract should parse");
+
+        let actions = super::selected_up_toolchain_preview_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            Backend::Container,
+        );
+
+        assert!(actions.iter().any(|action| action.contains(
+            "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`)"
+        )));
+        assert!(!actions.iter().any(|action| {
+            action.contains("check toolchain `rust` via `rustup` (version `1.94.1`)")
+        }));
+    }
+
+    #[test]
+    fn up_run_error_uses_selected_execution_mode_for_toolchain_requirement_text() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let contract_path = temp_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    fulfillment: run
+    platforms:
+      linux:
+        version: "1.94.1"
+        components:
+          - rustfmt
+tasks:
+  dev:
+    context: app
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .expect("write contract");
+
+        let rendered = strip_ansi_codes(&super::render_up_run_error(
+            &contract_path,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            RunError::ToolchainFulfillmentFailed {
+                task: String::from("dev"),
+                toolchain: String::from("rust"),
+                details: String::from(
+                    "`rustup toolchain install 1.94.1 --component rustfmt` exited with code 1",
+                ),
+            },
+        ));
+
+        assert!(
+            rendered.contains(
+                "check toolchain `rust` via `rustup` (version `1.94.1`, components `rustfmt`)"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("check toolchain `rust` via `rustup` (version `1.94.0`)"),
             "{rendered}"
         );
     }
@@ -54797,6 +55140,42 @@ fn repo_env_task_command(task_name: &str, member: Option<&str>) -> String {
     }
 }
 
+fn selected_toolchain_target_os_for_task(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> &'static str {
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    requirement_target_os_for_backend(backend)
+}
+
+fn toolchain_requirement_summary(
+    contract: &Contract,
+    toolchain_name: &str,
+    target_os: &str,
+) -> Option<String> {
+    let toolchain = contract.toolchains.get(toolchain_name)?;
+    Some(toolchain_preview_requirement_clause(
+        toolchain_name,
+        toolchain,
+        target_os,
+    ))
+}
+
+fn toolchain_fulfillment_next_steps(
+    rerun_command: &str,
+    provider: &str,
+    task_name: &str,
+    toolchain_name: &str,
+) -> Vec<String> {
+    vec![
+        format!(
+            "repair `{provider}` or adjust `toolchains.{toolchain_name}` for task `{task_name}`"
+        ),
+        format!("rerun `{rerun_command}`"),
+    ]
+}
+
 fn repo_execution_plan_command(
     contract_path: &Path,
     member: Option<&str>,
@@ -55182,6 +55561,37 @@ fn render_run_structured_error_text(
                 format!("rerun `{}`", repo_run_stream_command(task_name, member)),
             ],
         ),
+        RunError::ToolchainFulfillmentFailed {
+            task,
+            toolchain,
+            details,
+        } => {
+            let target_os = selected_toolchain_target_os_for_task(contract, task, overrides);
+            let provider = contract
+                .toolchains
+                .get(toolchain.as_str())
+                .map(|spec| toolchain_provider_label(spec.provider))
+                .unwrap_or("toolchain provider");
+            let requirement =
+                toolchain_requirement_summary(contract, toolchain.as_str(), target_os)
+                    .unwrap_or_else(|| format!("check toolchain `{toolchain}` via `{provider}`"));
+            (
+                String::from("Toolchain fulfillment failed"),
+                vec![
+                    format!("task `{task}` selected toolchain `{toolchain}`"),
+                    format!(
+                        "`toolchains.{toolchain}.fulfillment: run` allowed ota to attempt run-path provisioning via `{provider}`"
+                    ),
+                    format!("{requirement}; provisioning attempt failed: {details}"),
+                ],
+                toolchain_fulfillment_next_steps(
+                    &repo_run_stream_command(task_name, member),
+                    provider,
+                    task,
+                    toolchain,
+                ),
+            )
+        }
         RunError::SkipDepsWithoutDependencies { task } => (
             String::from("Dependency override has no effect"),
             vec![format!(
@@ -62945,6 +63355,124 @@ fn current_requirement_platform() -> &'static str {
     }
 }
 
+fn requirement_target_os_for_backend(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Container => "linux",
+        Backend::Native | Backend::Remote => current_requirement_platform(),
+    }
+}
+
+fn toolchain_provider_label(provider: crate::schema::ToolchainProvider) -> &'static str {
+    match provider {
+        crate::schema::ToolchainProvider::Rustup => "rustup",
+    }
+}
+
+fn toolchain_preview_requirement_clause(
+    toolchain_name: &str,
+    toolchain: &crate::schema::ToolchainSpec,
+    target_os: &str,
+) -> String {
+    let mut parts = vec![format!("version `{}`", toolchain.version_for_os(target_os))];
+    let components = toolchain.components_for_os(target_os);
+    if !components.is_empty() {
+        parts.push(format!("components `{}`", components.join("`, `")));
+    }
+    let targets = toolchain.targets_for_os(target_os);
+    if !targets.is_empty() {
+        parts.push(format!("targets `{}`", targets.join("`, `")));
+    }
+    format!(
+        "check toolchain `{toolchain_name}` via `{}` ({})",
+        toolchain_provider_label(toolchain.provider),
+        parts.join(", ")
+    )
+}
+
+fn render_up_preview_toolchain_action(
+    toolchain_name: &str,
+    toolchain: &crate::schema::ToolchainSpec,
+    target_os: &str,
+) -> String {
+    let base = toolchain_preview_requirement_clause(toolchain_name, toolchain, target_os);
+    match toolchain.fulfillment_mode() {
+        crate::schema::ToolchainFulfillmentMode::None => {
+            format!("{base}; fulfillment: none (diagnose only, no provisioning)")
+        }
+        crate::schema::ToolchainFulfillmentMode::Run => format!(
+            "{base}; fulfillment: run (ota may provision the selected toolchain on the selected run path)"
+        ),
+    }
+}
+
+fn selected_up_toolchain_preview_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> Vec<String> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    let scoped_any = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+
+    if task_names.is_empty() {
+        let target_os = requirement_target_os_for_backend(fallback_backend);
+        for toolchain_name in contract.selected_workflow_required_toolchain_names(workflow_name) {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            if !toolchain.active_for_os(target_os) {
+                continue;
+            }
+            let action =
+                render_up_preview_toolchain_action(toolchain_name.as_str(), toolchain, target_os);
+            if seen.insert(action.clone()) {
+                actions.push(action);
+            }
+        }
+        return actions;
+    }
+
+    for task_name in task_names {
+        let target_os = requirement_target_os_for_backend(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+        );
+        let toolchain_names = if scoped_any {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| task.requirements.toolchains.clone())
+                .unwrap_or_default()
+        } else {
+            contract
+                .task_required_toolchain_names(task_name.as_str())
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        for toolchain_name in toolchain_names {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            if !toolchain.active_for_os(target_os) {
+                continue;
+            }
+            let action =
+                render_up_preview_toolchain_action(toolchain_name.as_str(), toolchain, target_os);
+            if seen.insert(action.clone()) {
+                actions.push(action);
+            }
+        }
+    }
+
+    actions
+}
+
 fn selected_up_native_activation_actions(
     contract: &Contract,
     overrides: ExecutionOverrides,
@@ -63397,6 +63925,8 @@ fn build_up_preview(
         selected_up_native_preparation_actions(contract, overrides, workflow_name, preflight);
     let activation_actions =
         selected_up_activation_actions(contract, overrides, workflow_name, preflight);
+    let toolchain_actions =
+        selected_up_toolchain_preview_actions(contract, overrides, workflow_name, backend);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
@@ -63413,6 +63943,7 @@ fn build_up_preview(
     for action in &native_preparation_actions {
         actions.push(render_up_preview_native_preparation_action(action));
     }
+    actions.extend(toolchain_actions);
     for action in &activation_actions {
         actions.push(render_up_preview_activation_action(action));
     }
@@ -64848,7 +65379,7 @@ fn execute_repo_up(
                     });
                 }
             }
-            Err(error) => return Err(render_up_run_error(resolved_path, error)),
+            Err(error) => return Err(render_up_run_error(resolved_path, overrides, error)),
         }
     }
 
@@ -64988,7 +65519,7 @@ fn execute_repo_up(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, error));
+                return Err(render_up_run_error(resolved_path, overrides, error));
             }
         }
     }
@@ -65081,7 +65612,7 @@ fn execute_repo_up(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, error));
+                return Err(render_up_run_error(resolved_path, overrides, error));
             }
         }
     }
@@ -68871,7 +69402,11 @@ fn parse_backend_requirement_gap(line: &str) -> Option<(String, String, String, 
     ))
 }
 
-fn render_up_run_error(contract_path: &Path, error: RunError) -> String {
+fn render_up_run_error(
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    error: RunError,
+) -> String {
     match error {
         RunError::HostPublicationConflict {
             task,
@@ -68942,6 +69477,54 @@ fn render_up_run_error(contract_path: &Path, error: RunError) -> String {
                 &runtime_listener_resolution.summary,
                 &runtime_listener_resolution.why_lines,
                 &runtime_listener_resolution.next_steps,
+                None,
+                None,
+            )
+        }
+        RunError::ToolchainFulfillmentFailed {
+            task,
+            toolchain,
+            details,
+        } => {
+            let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            let contract = match load_contract(contract_path) {
+                Ok(contract) => contract,
+                Err(_) => {
+                    return render_run_error(RunError::ToolchainFulfillmentFailed {
+                        task,
+                        toolchain,
+                        details,
+                    });
+                }
+            };
+            let target_os =
+                selected_toolchain_target_os_for_task(&contract, task.as_str(), overrides);
+            let provider = contract
+                .toolchains
+                .get(toolchain.as_str())
+                .map(|spec| toolchain_provider_label(spec.provider))
+                .unwrap_or("toolchain provider");
+            let requirement =
+                toolchain_requirement_summary(&contract, toolchain.as_str(), target_os)
+                    .unwrap_or_else(|| format!("check toolchain `{toolchain}` via `{provider}`"));
+            render_field_error_with_tail(
+                "UP",
+                &where_value,
+                &format!("toolchains.{toolchain}"),
+                "Toolchain fulfillment failed",
+                &[
+                    format!("task `{task}` selected toolchain `{toolchain}`"),
+                    format!(
+                        "`toolchains.{toolchain}.fulfillment: run` allowed ota to attempt run-path provisioning via `{provider}`"
+                    ),
+                    format!("{requirement}; provisioning attempt failed: {details}"),
+                ],
+                &[
+                    format!(
+                        "repair `{provider}` or adjust `toolchains.{toolchain}` for task `{task}`"
+                    ),
+                    String::from("rerun `ota up`"),
+                ],
                 None,
                 None,
             )
