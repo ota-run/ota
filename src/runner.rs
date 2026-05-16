@@ -74,7 +74,7 @@ use crate::schema::{
     parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
-use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_provider};
+use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_contract};
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
 #[derive(Clone)]
@@ -6464,7 +6464,7 @@ fn toolchain_fulfillment_commands(
     target_os: &str,
     backend: &ResolvedExecutionBackend,
 ) -> Vec<String> {
-    declared_toolchain_provider(toolchain_name, toolchain)
+    declared_toolchain_contract(toolchain_name, toolchain)
         .map(|provider| {
             provider
                 .fulfillment_commands(toolchain, target_os)

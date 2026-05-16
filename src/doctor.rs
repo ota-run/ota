@@ -69,10 +69,10 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
     ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, ToolRequirement, ToolchainProvider,
+    ToolAcquisitionSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
-use crate::toolchains::declared_toolchain_provider;
+use crate::toolchains::{ToolchainManagedSurfaceKind, declared_toolchain_contract};
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -4652,7 +4652,7 @@ fn diagnose_toolchains(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
-        let Some(provider) = declared_toolchain_provider(toolchain_name, toolchain) else {
+        let Some(provider) = declared_toolchain_contract(toolchain_name, toolchain) else {
             continue;
         };
         if !toolchain.active_for_os(target_os) {
@@ -4679,101 +4679,66 @@ fn diagnose_toolchains(
             findings,
         );
 
-        match toolchain.provider {
-            ToolchainProvider::Rustup => {
-                let component_names = toolchain.components_for_os(target_os);
-                let target_names = toolchain.targets_for_os(target_os);
-                if component_names.is_empty() && target_names.is_empty() {
-                    continue;
-                }
-                probe_started = true;
-                let mut provider_missing_reported = false;
-                let provider_label = provider.label();
-                let component_probe_command =
-                    format!("{provider_label} component list --installed");
-                let target_probe_command = format!("{provider_label} target list --installed");
+        let surface_probes = provider.managed_surface_probes(toolchain, target_os);
+        if surface_probes.is_empty() {
+            continue;
+        }
+        probe_started = true;
+        let mut provider_missing_reported = BTreeSet::new();
+        let provider_label = provider.label();
 
-                match rustup_installed_entries(
-                    "doctor-probe:rustup",
-                    component_probe_command.as_str(),
-                    mode,
-                    container_probe,
-                    remote_probe,
-                    contract_path,
-                ) {
-                    Ok(Some(installed_components)) => {
-                        for component in component_names {
-                            if installed_components.iter().any(|installed| {
-                                installed == &component
-                                    || installed.starts_with(&format!("{component}-"))
-                            }) {
-                                continue;
-                            }
-                            findings.push(missing_toolchain_component_finding(
-                                toolchain_name,
-                                &component,
-                                mode,
-                            ));
+        for surface_probe in surface_probes {
+            let probe_name = format!(
+                "doctor-probe:{}:{}",
+                provider_label,
+                surface_probe.kind.label()
+            );
+            match provider_installed_entries(
+                probe_name.as_str(),
+                surface_probe.command.as_str(),
+                mode,
+                container_probe,
+                remote_probe,
+                contract_path,
+            ) {
+                Ok(Some(installed_entries)) => {
+                    for entry in surface_probe.required_entries {
+                        if installed_entries.iter().any(|installed| {
+                            installed == &entry
+                                || (matches!(
+                                    surface_probe.kind,
+                                    ToolchainManagedSurfaceKind::Component
+                                ) && installed.starts_with(&format!("{entry}-")))
+                        }) {
+                            continue;
                         }
-                    }
-                    Ok(None) => {
-                        provider_missing_reported = true;
-                        findings.push(missing_toolchain_provider_finding(
+                        findings.push(missing_toolchain_managed_surface_finding(
                             toolchain_name,
-                            provider_label,
-                            mode,
-                            "components",
-                        ));
-                    }
-                    Err(details) => {
-                        findings.push(toolchain_provider_probe_failed_finding(
-                            toolchain_name,
-                            provider_label,
-                            component_probe_command.as_str(),
-                            details,
+                            provider,
+                            surface_probe.kind,
+                            &entry,
                             mode,
                         ));
                     }
                 }
-
-                match rustup_installed_entries(
-                    "doctor-probe:rustup-targets",
-                    target_probe_command.as_str(),
-                    mode,
-                    container_probe,
-                    remote_probe,
-                    contract_path,
-                ) {
-                    Ok(Some(installed_targets)) => {
-                        for target in target_names {
-                            if installed_targets.contains(target.as_str()) {
-                                continue;
-                            }
-                            findings.push(missing_toolchain_target_finding(
-                                toolchain_name,
-                                &target,
-                                mode,
-                            ));
-                        }
-                    }
-                    Ok(None) if !provider_missing_reported => {
+                Ok(None) => {
+                    if provider_missing_reported.insert(surface_probe.kind.label()) {
                         findings.push(missing_toolchain_provider_finding(
                             toolchain_name,
                             provider_label,
                             mode,
-                            "targets",
+                            surface_probe.kind.label(),
                         ));
                     }
-                    Ok(None) => {}
-                    Err(details) => {
-                        findings.push(toolchain_provider_probe_failed_finding(
-                            toolchain_name,
-                            provider_label,
-                            target_probe_command.as_str(),
-                            details,
-                            mode,
-                        ));
-                    }
+                }
+                Err(details) => {
+                    findings.push(toolchain_provider_probe_failed_finding(
+                        toolchain_name,
+                        provider_label,
+                        surface_probe.command.as_str(),
+                        details,
+                        mode,
+                    ));
                 }
             }
         }
@@ -4805,7 +4770,7 @@ fn doctor_probe_backend(
     }
 }
 
-fn rustup_installed_entries(
+fn provider_installed_entries(
     probe_name: &str,
     command: &str,
     mode: DoctorMode,
@@ -4883,37 +4848,27 @@ fn toolchain_provider_probe_failed_finding(
     }
 }
 
-fn missing_toolchain_component_finding(
+fn missing_toolchain_managed_surface_finding(
     toolchain_name: &str,
-    component: &str,
+    provider: crate::toolchains::ToolchainProviderContract,
+    kind: ToolchainManagedSurfaceKind,
+    entry: &str,
     mode: DoctorMode,
 ) -> Finding {
     Finding {
         severity: FindingSeverity::Error,
-        summary: format!("Missing toolchain component: {toolchain_name}.{component}"),
+        summary: format!(
+            "Missing toolchain {}: {toolchain_name}.{entry}",
+            kind.label().trim_end_matches('s')
+        ),
         why: format!(
-            "ota inspected toolchain `{toolchain_name}` through `rustup`, but component `{component}` is not installed"
+            "ota inspected toolchain `{toolchain_name}` through `{}`, but {} `{entry}` is not installed",
+            provider.label(),
+            kind.label().trim_end_matches('s')
         ),
         next: format!(
-            "run `rustup component add {component}` and rerun `{}`",
-            rerun_doctor_command(mode, None)
-        ),
-    }
-}
-
-fn missing_toolchain_target_finding(
-    toolchain_name: &str,
-    target: &str,
-    mode: DoctorMode,
-) -> Finding {
-    Finding {
-        severity: FindingSeverity::Error,
-        summary: format!("Missing toolchain target: {toolchain_name}.{target}"),
-        why: format!(
-            "ota inspected toolchain `{toolchain_name}` through `rustup`, but target `{target}` is not installed"
-        ),
-        next: format!(
-            "run `rustup target add {target}` and rerun `{}`",
+            "run `{}` and rerun `{}`",
+            provider.managed_surface_remediation_command(kind, entry),
             rerun_doctor_command(mode, None)
         ),
     }

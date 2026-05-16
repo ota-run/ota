@@ -1609,9 +1609,11 @@ Current behavior:
 - mixed-backend workflows now keep selected prerequisites on their own execution boundary during
   `ota up` preflight, so a native run task is diagnosed on the host while a container setup task is
   diagnosed in the selected container lane instead of flattening both into one doctor mode
-- selected toolchain preview lines stay toolchain-owned: when `toolchains.rust` owns the selected
-  Rust ecosystem path, `ota up --dry-run` describes the Rustup-owned toolchain requirement instead
-  of pretending owned capabilities like `cargo` or `rustfmt` are standalone setup tools
+- selected toolchain preview lines stay toolchain-owned: when a declared toolchain owns the
+  selected ecosystem path, `ota up --dry-run` describes that provider-owned toolchain requirement
+  instead of pretending owned capabilities are standalone setup tools, and the preview now names
+  the owned runtime capability alongside the provider so `toolchains.node` reads as Node via
+  Corepack rather than implying that Corepack itself is the runtime
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
   activation lane before setup when it is safe and selected; shipped paths now cover both
   Corepack-managed tools and explicit shell-command acquisition

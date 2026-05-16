@@ -32,9 +32,12 @@ Current shipped scope:
 - top-level `toolchains`
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
+- Corepack-backed diagnosis for Node toolchains
 - hard validation errors when the same prerequisite is declared under both `toolchains` and
   `runtimes` or `tools`
-- one supported contract shape today: `toolchains.rust` with `provider: rustup`
+- two supported contract shapes today:
+  - `toolchains.rust` with `provider: rustup`
+  - `toolchains.node` with `provider: corepack`
 
 ## Ownership rule
 
@@ -45,7 +48,9 @@ Pick the highest useful owner and do not repeat the same capability below it.
 - `tools` own standalone commands on PATH
 - `native_prerequisites` own host-native build bundles and shell activations
 - current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
-  ownership from `toolchains.rust` with `provider: rustup`
+  ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable ownership
+  from `toolchains.node` with `provider: corepack`; package managers such as `pnpm` remain
+  standalone tools unless a future provider contract explicitly owns them
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
@@ -57,16 +62,30 @@ Use `toolchains` when Ota must understand more than "does this executable exist?
 Examples:
 
 - Rust via Rustup, including components such as `rustfmt`
+- Node via Corepack, when the repo wants one owner for the Node runtime while package-manager
+  activation stays explicit under `tools`
 
 Current parser boundary:
 
-- the only shipped toolchain contract today is `toolchains.rust` with `provider: rustup`
+- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup` and
+  `toolchains.node` with `provider: corepack`
+- those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use `provider: rustup`,
+  and `toolchains.node` must use `provider: corepack`
 - the shared provider-agnostic toolchain fields are currently `provider`, `version`,
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
+- validation and command behavior read from a provider contract, not from free-form capability
+  text; today those contracts are the shipped Rustup and Corepack slices behind `toolchains.rust`
+  and `toolchains.node`
+- that provider contract also owns Rustup field-shape validation, so empty `profile`,
+  `components`, or `targets` entries fail as provider-contract violations rather than generic
+  schema drift
+- Corepack-backed Node toolchains currently use only the shared provider-agnostic field set and
+  stay check-only; package-manager activation such as `pnpm` still belongs under
+  `tools.<package-manager>.acquisition.provider: corepack`
 - `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic
   ecosystem-wide toolchain schema
-- future-fit examples for Node, Python, .NET, or Java are ownership-model examples only; they are
-  not valid contract entries until ota ships those provider adapters and schema fields
+- future-fit examples for Python, .NET, or Java are ownership-model examples only; they are not
+  valid contract entries until ota ships those provider adapters and schema fields
 
 Use `runtimes` when the requirement is simply "this runtime must exist at this version."
 
@@ -191,13 +210,18 @@ For Rustup-backed fulfillment:
 
 This slice is intentionally narrow:
 
-- Rustup is the only shipped `toolchains` provider today
+- shipped toolchain contracts today are:
+  - `toolchains.rust` with `provider: rustup`
+  - `toolchains.node` with `provider: corepack`
 - toolchains are selected at the task path, not through execution-context requirements
 - duplicate ownership is invalid and fails validation
-- the current shipped Rustup slice owns diagnosis and run-path fulfillment for the declared
-  toolchain and its components/targets
-- contracts that declare any toolchain other than `toolchains.rust` with `provider: rustup` fail
-  validation today
+- Rustup currently owns diagnosis plus run-path fulfillment for the declared toolchain and its
+  components/targets
+- Corepack-backed Node toolchains are currently diagnosis-only and use only the shared
+  provider-agnostic field set; `tools.node` is invalid duplicate ownership, while package-manager
+  activation such as `pnpm` still belongs under
+  `tools.<package-manager>.acquisition.provider: corepack`
+- contracts that declare any other toolchain/provider combination fail validation today
 
 That is enough to remove shell-based Rust component workarounds cleanly without introducing a new
 parallel provisioning system.
