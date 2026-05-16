@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use crate::schema::{
     Contract, RequirementSurface, RuntimeDetail, RuntimePlatformDetail, RuntimeRequirement,
@@ -33,6 +34,8 @@ pub(crate) const SHARED_TOOLCHAIN_CORE_SUMMARY: &str =
 pub(crate) const UNKNOWN_TOOLCHAIN_PROVIDER_LABEL: &str = "toolchain provider";
 pub(crate) const RUSTUP_TOOLCHAIN_NAME: &str = "rust";
 pub(crate) const COREPACK_TOOLCHAIN_NAME: &str = "node";
+pub(crate) const JAVA_TOOLCHAIN_NAME: &str = "java";
+pub(crate) const PYTHON_TOOLCHAIN_NAME: &str = "python";
 const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
     ToolchainProviderSpecificField::Profile,
     ToolchainProviderSpecificField::Components,
@@ -44,6 +47,22 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides";
 const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers`";
+pub(crate) const JAVA_TOOLCHAIN_OPPORTUNITY_CONTEXT: ToolchainOpportunityContext<'static> =
+    ToolchainOpportunityContext {
+        ecosystem: "java",
+        fallback_runtime: "java",
+        fallback_tools: &["maven", "gradle"],
+        candidate_providers: &["sdkman", "mise"],
+        agent_note: "This repo is a strong candidate for future `toolchains.java` support once Ota ships a Java provider boundary.",
+    };
+pub(crate) const PYTHON_TOOLCHAIN_OPPORTUNITY_CONTEXT: ToolchainOpportunityContext<'static> =
+    ToolchainOpportunityContext {
+        ecosystem: "python",
+        fallback_runtime: "python",
+        fallback_tools: &["uv"],
+        candidate_providers: &["uv", "mise"],
+        agent_note: "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary.",
+    };
 pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
     toolchain_name: RUSTUP_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Rustup,
@@ -129,6 +148,15 @@ pub(crate) struct ToolchainManagedSurfaceProbe {
     pub(crate) kind: ToolchainManagedSurfaceKind,
     pub(crate) command: String,
     pub(crate) required_entries: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolchainOpportunityContext<'a> {
+    pub(crate) ecosystem: &'a str,
+    pub(crate) fallback_runtime: &'a str,
+    pub(crate) fallback_tools: &'a [&'a str],
+    pub(crate) candidate_providers: &'a [&'a str],
+    pub(crate) agent_note: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1170,6 +1198,87 @@ fn known_provider_specific_fields() -> Vec<ToolchainProviderSpecificField> {
     fields
 }
 
+pub(crate) fn unsupported_toolchain_opportunity_context(
+    ecosystem: &str,
+) -> Option<ToolchainOpportunityContext<'static>> {
+    match ecosystem {
+        JAVA_TOOLCHAIN_NAME => Some(JAVA_TOOLCHAIN_OPPORTUNITY_CONTEXT),
+        PYTHON_TOOLCHAIN_NAME => Some(PYTHON_TOOLCHAIN_OPPORTUNITY_CONTEXT),
+        _ => None,
+    }
+}
+
+pub(crate) fn unsupported_toolchain_repo_signals(
+    contract_root: &Path,
+    ecosystem: &str,
+) -> Vec<&'static str> {
+    match ecosystem {
+        JAVA_TOOLCHAIN_NAME => {
+            let mut signals = Vec::new();
+            if contract_root.join("pom.xml").is_file() {
+                signals.push("pom.xml");
+            }
+            if contract_root.join("build.gradle").is_file() {
+                signals.push("build.gradle");
+            }
+            if contract_root.join("build.gradle.kts").is_file() {
+                signals.push("build.gradle.kts");
+            }
+            if contract_root.join(".sdkmanrc").is_file() {
+                signals.push(".sdkmanrc");
+            }
+            if tool_versions_entry(contract_root, &[JAVA_TOOLCHAIN_NAME]).is_some() {
+                signals.push(".tool-versions");
+            }
+            signals
+        }
+        PYTHON_TOOLCHAIN_NAME => {
+            let mut signals = Vec::new();
+            if contract_root.join("uv.lock").is_file() {
+                signals.push("uv.lock");
+            }
+            if contract_root.join("pyproject.toml").is_file() {
+                signals.push("pyproject.toml");
+            }
+            if contract_root.join(".python-version").is_file() {
+                signals.push(".python-version");
+            }
+            if tool_versions_entry(contract_root, &[PYTHON_TOOLCHAIN_NAME]).is_some() {
+                signals.push(".tool-versions");
+            }
+            signals
+        }
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn tool_versions_entry(
+    contract_root: &Path,
+    candidate_names: &[&str],
+) -> Option<String> {
+    let path = contract_root.join(".tool-versions");
+    let contents = std::fs::read_to_string(path).ok()?;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let Some(tool_name) = parts.next() else {
+            continue;
+        };
+        if candidate_names
+            .iter()
+            .any(|candidate| candidate == &tool_name)
+        {
+            return Some(tool_name.to_string());
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1323,6 +1432,7 @@ toolchains:
                 ToolchainProviderSpecificField::Profile,
                 ToolchainProviderSpecificField::Components,
                 ToolchainProviderSpecificField::Targets,
+                ToolchainProviderSpecificField::PackageManagers,
             ]
         );
     }

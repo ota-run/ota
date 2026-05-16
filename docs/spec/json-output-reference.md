@@ -1611,6 +1611,11 @@ These keys are optional and backward-compatible.
 When ota can trace the diagnosis source, finding objects may also include `provenance` and
 `provenance_key`. Current shipped provenance keys include `repo_contract`, `org_policy`, and
 `repo_signals`.
+When doctor detects a managed-ecosystem opportunity that Ota does not yet ship as a toolchain
+provider, the finding may also include an additive `toolchain_opportunity` object with
+`ecosystem`, `fallback_runtime`, `fallback_tools`, `candidate_providers`, `shipped`, and
+`agent_note`. This object is meant for editors and agents; the human-facing terminal finding keeps
+the fallback guidance user-safe and does not have to expose provider-candidate wording directly.
 
 When the repo declares runtimes or tools and policy provides approved sources for them,
 `ota doctor --json` may also include a top-level `provisioning` object. That object is a read-only
@@ -2557,6 +2562,26 @@ weighted signal markers behind the flat `signals` list for the suggested pack, a
 `selected_signal_details` does the same for any incidental signals that still matched the
 explicitly selected pack.
 
+When the repo clearly looks like a managed ecosystem that ota does not ship as a toolchain yet,
+`ota init --json` also adds `toolchain_opportunities` as additive agent-facing guidance. Terminal
+text stays user-safe and only says to keep the current `runtimes` / `tools` fallback model for
+now; provider-candidate detail stays in JSON.
+
+```json
+{
+  "toolchain_opportunities": [
+    {
+      "ecosystem": "java",
+      "fallback_runtime": "java",
+      "fallback_tools": ["maven"],
+      "candidate_providers": ["sdkman", "mise"],
+      "shipped": false,
+      "agent_note": "This repo is a strong candidate for future `toolchains.java` support once Ota ships a Java provider boundary."
+    }
+  ]
+}
+```
+
 `provenance` is the per-field source map for the starter contract:
 
 - detector-backed fields use `provenance: "detector-inferred"` and `provenance_key: "repo_signals"`
@@ -3268,6 +3293,8 @@ success shape.
 - `comparison.*.provenance_key` is the stable machine label `repo_signals`
 - `comparison.changes[*].source` and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
 - `comparison` may include lower-confidence add candidates that remain preview-only
+- `toolchain_opportunities` appears when repo signals strongly suggest a managed ecosystem that ota
+  still models through lower-level `runtimes` / `tools` declarations
 
 ```json
 {
@@ -3310,6 +3337,16 @@ success shape.
       "value": "22",
       "source": ".nvmrc",
       "confidence": "high"
+    }
+  ],
+  "toolchain_opportunities": [
+    {
+      "ecosystem": "java",
+      "fallback_runtime": "java",
+      "fallback_tools": ["maven"],
+      "candidate_providers": ["sdkman", "mise"],
+      "shipped": false,
+      "agent_note": "This repo is a strong candidate for future `toolchains.java` support once Ota ships a Java provider boundary."
     }
   ]
 }

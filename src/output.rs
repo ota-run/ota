@@ -1844,7 +1844,20 @@ pub struct InitSuccess<'a> {
     pub config: &'a DetectContract,
     pub inferred: &'a [Inference],
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchain_opportunities: Vec<ToolchainOpportunityAdvisory>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<ContractFieldProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolchainOpportunityAdvisory {
+    pub ecosystem: String,
+    pub fallback_runtime: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fallback_tools: Vec<String>,
+    pub candidate_providers: Vec<String>,
+    pub shipped: bool,
+    pub agent_note: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1976,6 +1989,8 @@ pub struct DetectSuccess<'a> {
     pub written: bool,
     pub config: JsonValue,
     pub inferred: &'a [Inference],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchain_opportunities: Vec<ToolchainOpportunityAdvisory>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<&'a DetectComparison>,
 }
