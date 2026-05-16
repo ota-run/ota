@@ -47,14 +47,6 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides";
 const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers`";
-pub(crate) const JAVA_TOOLCHAIN_OPPORTUNITY_CONTEXT: ToolchainOpportunityContext<'static> =
-    ToolchainOpportunityContext {
-        ecosystem: "java",
-        fallback_runtime: "java",
-        fallback_tools: &["maven", "gradle"],
-        candidate_providers: &["sdkman", "mise"],
-        agent_note: "This repo is a strong candidate for future `toolchains.java` support once Ota ships a Java provider boundary.",
-    };
 pub(crate) const PYTHON_TOOLCHAIN_OPPORTUNITY_CONTEXT: ToolchainOpportunityContext<'static> =
     ToolchainOpportunityContext {
         ecosystem: "python",
@@ -100,6 +92,24 @@ pub(crate) const COREPACK_TOOLCHAIN_CONTRACT: ToolchainProviderContract =
         managed_surface_entries_fn: corepack_managed_surface_entries,
         managed_surface_remediation_command_fn: corepack_managed_surface_remediation_command,
     };
+pub(crate) const SDKMAN_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
+    toolchain_name: JAVA_TOOLCHAIN_NAME,
+    provider: ToolchainProvider::Sdkman,
+    label: "sdkman",
+    primary_executable: "java",
+    owned_runtime: JAVA_TOOLCHAIN_NAME,
+    provider_specific_fields: &[],
+    provider_specific_field_summary: "",
+    requirement_detail_parts_fn: base_requirement_detail_parts,
+    owned_capabilities_fn: sdkman_owned_capabilities,
+    owned_tool_requirements_fn: sdkman_owned_tool_requirements,
+    fulfillment_commands_fn: sdkman_fulfillment_commands,
+    owned_runtime_remediation_command_fn: sdkman_owned_runtime_remediation_command,
+    run_fulfillment_validation_error_fn: sdkman_run_fulfillment_validation_error,
+    managed_surface_probes_fn: sdkman_managed_surface_probes,
+    managed_surface_entries_fn: sdkman_managed_surface_entries,
+    managed_surface_remediation_command_fn: sdkman_managed_surface_remediation_command,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolchainOwnedCapabilityKind {
@@ -614,7 +624,11 @@ pub(crate) fn toolchain_provider_contract(
 }
 
 pub(crate) fn shipped_toolchain_contracts() -> &'static [ToolchainProviderContract] {
-    &[RUSTUP_TOOLCHAIN_CONTRACT, COREPACK_TOOLCHAIN_CONTRACT]
+    &[
+        RUSTUP_TOOLCHAIN_CONTRACT,
+        COREPACK_TOOLCHAIN_CONTRACT,
+        SDKMAN_TOOLCHAIN_CONTRACT,
+    ]
 }
 
 pub(crate) fn shipped_toolchain_contract_by_name(name: &str) -> Option<ToolchainProviderContract> {
@@ -978,6 +992,26 @@ fn corepack_owned_capabilities(
     owned
 }
 
+fn sdkman_owned_capabilities(
+    provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+) -> Vec<ToolchainOwnedCapability> {
+    vec![
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Runtime,
+            name: provider.owned_runtime().to_string(),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: String::from("java"),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: String::from("javac"),
+        },
+    ]
+}
+
 fn rustup_owned_tool_requirements(
     _provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
@@ -1013,6 +1047,14 @@ fn corepack_owned_tool_requirements(
             )
         })
         .collect()
+}
+
+fn sdkman_owned_tool_requirements(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> BTreeMap<String, ToolRequirement> {
+    BTreeMap::new()
 }
 
 fn rustup_fulfillment_commands(
@@ -1051,6 +1093,14 @@ fn corepack_fulfillment_commands(
     Vec::new()
 }
 
+fn sdkman_fulfillment_commands(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    Vec::new()
+}
+
 fn rustup_owned_runtime_remediation_command(
     _provider: ToolchainProviderContract,
     requirement: &str,
@@ -1063,6 +1113,13 @@ fn corepack_owned_runtime_remediation_command(
     _requirement: &str,
 ) -> Option<String> {
     None
+}
+
+fn sdkman_owned_runtime_remediation_command(
+    _provider: ToolchainProviderContract,
+    requirement: &str,
+) -> Option<String> {
+    Some(format!("sdk install java {requirement}"))
 }
 
 fn rustup_run_fulfillment_validation_error(
@@ -1093,6 +1150,16 @@ fn corepack_run_fulfillment_validation_error(
 ) -> Option<String> {
     Some(format!(
         "toolchain `{name}` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare package-manager activation under `toolchains.{name}.package_managers`"
+    ))
+}
+
+fn sdkman_run_fulfillment_validation_error(
+    _provider: ToolchainProviderContract,
+    name: &str,
+    _toolchain: &ToolchainSpec,
+) -> Option<String> {
+    Some(format!(
+        "toolchain `{name}` uses `provider: sdkman` with `fulfillment: run`, but SDKMAN-backed Java toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare build tools such as Maven or Gradle separately under `tools`"
     ))
 }
 
@@ -1141,7 +1208,24 @@ fn corepack_managed_surface_probes(
     Vec::new()
 }
 
+fn sdkman_managed_surface_probes(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainManagedSurfaceProbe> {
+    Vec::new()
+}
+
 fn corepack_managed_surface_entries(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<String> {
+    Vec::new()
+}
+
+fn sdkman_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
     _toolchain: &ToolchainSpec,
@@ -1178,6 +1262,14 @@ fn corepack_managed_surface_remediation_command(
     None
 }
 
+fn sdkman_managed_surface_remediation_command(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _entry: &str,
+) -> Option<String> {
+    None
+}
+
 fn rustup_component_tool_name(component: &str) -> Option<&'static str> {
     match component {
         "rustfmt" => Some("rustfmt"),
@@ -1202,16 +1294,12 @@ pub(crate) fn unsupported_toolchain_opportunity_context(
     ecosystem: &str,
 ) -> Option<ToolchainOpportunityContext<'static>> {
     match ecosystem {
-        JAVA_TOOLCHAIN_NAME => Some(JAVA_TOOLCHAIN_OPPORTUNITY_CONTEXT),
         PYTHON_TOOLCHAIN_NAME => Some(PYTHON_TOOLCHAIN_OPPORTUNITY_CONTEXT),
         _ => None,
     }
 }
 
-pub(crate) fn unsupported_toolchain_repo_signals(
-    contract_root: &Path,
-    ecosystem: &str,
-) -> Vec<&'static str> {
+pub(crate) fn toolchain_repo_signals(contract_root: &Path, ecosystem: &str) -> Vec<&'static str> {
     match ecosystem {
         JAVA_TOOLCHAIN_NAME => {
             let mut signals = Vec::new();
@@ -1226,6 +1314,9 @@ pub(crate) fn unsupported_toolchain_repo_signals(
             }
             if contract_root.join(".sdkmanrc").is_file() {
                 signals.push(".sdkmanrc");
+            }
+            if contract_root.join(".java-version").is_file() {
+                signals.push(".java-version");
             }
             if tool_versions_entry(contract_root, &[JAVA_TOOLCHAIN_NAME]).is_some() {
                 signals.push(".tool-versions");
@@ -1403,6 +1494,44 @@ toolchains:
     }
 
     #[test]
+    fn sdkman_contract_owns_java_surface_but_stays_check_only() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    provider: sdkman
+    version: "21.0.2-tem"
+"#,
+        );
+        let toolchain = contract.toolchains.get("java").unwrap();
+        let provider = declared_toolchain_contract("java", toolchain).unwrap();
+
+        assert_eq!(provider.label(), "sdkman");
+        assert!(
+            provider
+                .owned_capabilities(toolchain)
+                .iter()
+                .any(
+                    |capability| capability.kind == ToolchainOwnedCapabilityKind::Tool
+                        && capability.name == "javac"
+                )
+        );
+        assert!(provider.fulfillment_commands(toolchain, "linux").is_empty());
+        assert!(
+            provider
+                .run_fulfillment_validation_error("java", toolchain)
+                .is_some()
+        );
+        assert_eq!(
+            provider.owned_runtime_remediation_command("21.0.2-tem"),
+            Some(String::from("sdk install java 21.0.2-tem"))
+        );
+    }
+
+    #[test]
     fn shipped_registry_is_the_source_of_provider_lookup_and_field_discovery() {
         assert_eq!(
             toolchain_provider_contract("rust", ToolchainProvider::Rustup)
@@ -1417,14 +1546,30 @@ toolchains:
             "corepack"
         );
         assert_eq!(
+            toolchain_provider_contract("java", ToolchainProvider::Sdkman)
+                .unwrap()
+                .label(),
+            "sdkman"
+        );
+        assert_eq!(
             shipped_toolchain_contract_by_label("rustup")
                 .unwrap()
                 .toolchain_name(),
             "rust"
         );
         assert_eq!(
+            shipped_toolchain_contract_by_label("sdkman")
+                .unwrap()
+                .toolchain_name(),
+            "java"
+        );
+        assert_eq!(
             toolchain_provider_label(ToolchainProvider::Rustup),
             "rustup"
+        );
+        assert_eq!(
+            toolchain_provider_label(ToolchainProvider::Sdkman),
+            "sdkman"
         );
         assert_eq!(
             known_provider_specific_fields(),

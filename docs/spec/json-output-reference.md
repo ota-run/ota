@@ -2565,18 +2565,19 @@ explicitly selected pack.
 When the repo clearly looks like a managed ecosystem that ota does not ship as a toolchain yet,
 `ota init --json` also adds `toolchain_opportunities` as additive agent-facing guidance. Terminal
 text stays user-safe and only says to keep the current `runtimes` / `tools` fallback model for
-now; provider-candidate detail stays in JSON.
+now; provider-candidate detail stays in JSON. When ota already ships the ecosystem owner, the
+starter `config` uses `toolchains.<name>` directly instead of adding a fallback opportunity.
 
 ```json
 {
   "toolchain_opportunities": [
     {
-      "ecosystem": "java",
-      "fallback_runtime": "java",
-      "fallback_tools": ["maven"],
-      "candidate_providers": ["sdkman", "mise"],
+      "ecosystem": "python",
+      "fallback_runtime": "python",
+      "fallback_tools": ["uv"],
+      "candidate_providers": ["uv", "mise"],
       "shipped": false,
-      "agent_note": "This repo is a strong candidate for future `toolchains.java` support once Ota ships a Java provider boundary."
+      "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
     }
   ]
 }
@@ -2676,6 +2677,7 @@ contract:
         "framework-specific entrypoints, web server commands, or whether the repo uses phpunit, pest, artisan, or another test wrapper unless the repo already declares a Composer `scripts.test` entry"
       ],
       "seeds": {
+        "toolchains": [],
         "runtimes": ["php"],
         "tools": ["composer"],
         "checks": ["php-installed", "composer-installed"],
@@ -2692,9 +2694,10 @@ contract:
         "multi-module reactor details, plugin goals, or org-specific wrapper/bootstrap scripts beyond the standard Maven build/test loop"
       ],
       "seeds": {
-        "runtimes": ["java"],
+        "toolchains": ["java"],
+        "runtimes": [],
         "tools": [],
-        "checks": ["java-installed"],
+        "checks": [],
         "tasks": ["setup", "build", "test"]
       }
     }
@@ -2709,7 +2712,7 @@ Each catalog entry keeps the operator guidance machine-readable:
 
 - `command` is the exact pack-selection command
 - `next` is the safe dry-run preview command to review before writing
-- `seeds` lists the unconditional starter fields, so wrapper-aware Java packs keep the global Maven or Gradle prerequisite in `when` instead of claiming it is always seeded
+- `seeds` lists the unconditional starter fields, including shipped `toolchains` owners when a pack now starts from a managed ecosystem contract instead of separate `runtimes` / `tools`
 
 ## `ota check --json`
 
@@ -3341,12 +3344,12 @@ success shape.
   ],
   "toolchain_opportunities": [
     {
-      "ecosystem": "java",
-      "fallback_runtime": "java",
-      "fallback_tools": ["maven"],
-      "candidate_providers": ["sdkman", "mise"],
+      "ecosystem": "python",
+      "fallback_runtime": "python",
+      "fallback_tools": ["uv"],
+      "candidate_providers": ["uv", "mise"],
       "shipped": false,
-      "agent_note": "This repo is a strong candidate for future `toolchains.java` support once Ota ships a Java provider boundary."
+      "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
     }
   ]
 }

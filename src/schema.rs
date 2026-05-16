@@ -1303,6 +1303,7 @@ pub struct ToolchainPlatformSpec {
 pub enum ToolchainProvider {
     Rustup,
     Corepack,
+    Sdkman,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

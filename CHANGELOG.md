@@ -75,6 +75,11 @@
   `fulfillment: run` semantics, and run/up fulfillment failures now name the selected toolchain,
   provider, checked requirement slice, and rerun path without falling back to standalone-tool
   wording for toolchain-owned capabilities
+- expanded the shipped toolchain surface with `toolchains.java` and `provider: sdkman` as a
+  first-class, check-only Java ecosystem owner: Java detection now writes `toolchains.java`
+  instead of `runtimes.java` for strong repo signals, duplicate ownership now covers `java` and
+  `javac`, and unsupported-toolchain opportunity guidance stays focused on ecosystems Ota still
+  does not ship yet
 - fixed mixed-backend `ota up` preflight so selected workflow prerequisites stay on their own
   execution boundary instead of being flattened into one doctor mode; native selected-path
   toolchains now diagnose on the host even when setup runs in a container, and the dry-run preview

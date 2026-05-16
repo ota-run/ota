@@ -76,8 +76,7 @@ use crate::toolchains::{
     ToolchainManagedSurfaceKind, ToolchainOpportunityContext, declared_toolchain_contract,
     requirement_surface_with_toolchain_owned_capabilities,
     requirement_surface_with_toolchain_owned_tools, shipped_toolchain_contract_by_label,
-    tool_versions_entry, unsupported_toolchain_opportunity_context,
-    unsupported_toolchain_repo_signals,
+    tool_versions_entry, toolchain_repo_signals, unsupported_toolchain_opportunity_context,
 };
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
@@ -5994,7 +5993,7 @@ fn unsupported_toolchain_opportunity_finding(
         return None;
     }
 
-    let repo_signals = unsupported_toolchain_repo_signals(contract_root, ecosystem);
+    let repo_signals = toolchain_repo_signals(contract_root, ecosystem);
     if repo_signals.is_empty() {
         return None;
     }
@@ -6044,7 +6043,7 @@ fn diagnose_unsupported_toolchain_opportunities(
     findings: &mut Vec<Finding>,
 ) {
     let contract_root = contract_working_dir(contract_path);
-    for ecosystem in ["java", "python"] {
+    for ecosystem in ["python"] {
         if contract.toolchains.contains_key(ecosystem) {
             continue;
         }
@@ -14055,7 +14054,7 @@ policies:
     }
 
     #[test]
-    fn reports_java_managed_toolchain_opportunity_without_provider_advice_in_text() {
+    fn reports_python_managed_toolchain_opportunity_without_provider_advice_in_text() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
@@ -14065,16 +14064,21 @@ version: 1
 project:
   name: ota
 runtimes:
-  java: "21"
+  python: "3.12"
 tools:
-  maven: "*"
+  uv: "*"
 tasks:
   test:
-    run: mvn test
+    run: uv run pytest
 "#,
         )
         .unwrap();
-        fs::write(fixture.path().join("pom.xml"), "<project />\n").unwrap();
+        fs::write(
+            fixture.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\n",
+        )
+        .unwrap();
+        fs::write(fixture.path().join("uv.lock"), "version = 1\n").unwrap();
 
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -14086,12 +14090,15 @@ tasks:
         let finding = report
             .findings
             .iter()
-            .find(|finding| finding.summary == "Managed toolchain opportunity: java")
+            .find(|finding| finding.summary == "Managed toolchain opportunity: python")
             .expect("toolchain opportunity finding should be present");
         assert_eq!(finding.severity, FindingSeverity::Warn);
-        assert!(finding.why.contains("`runtimes.java` and `tools.maven`"));
-        assert!(finding.why.contains("repo signals: `pom.xml`"));
-        assert!(!finding.next.contains("sdkman"));
+        assert!(finding.why.contains("`runtimes.python` and `tools.uv`"));
+        assert!(
+            finding
+                .why
+                .contains("repo signals: `uv.lock`, `pyproject.toml`")
+        );
         assert!(!finding.next.contains("mise"));
         assert_eq!(finding.provenance().as_deref(), Some("repo signals"));
         assert_eq!(finding.provenance_key().as_deref(), Some("repo_signals"));
@@ -14101,9 +14108,9 @@ tasks:
     fn doctor_json_includes_toolchain_opportunity_agent_metadata() {
         let finding = Finding {
             severity: FindingSeverity::Warn,
-            summary: String::from("Managed toolchain opportunity: java"),
+            summary: String::from("Managed toolchain opportunity: python"),
             why: String::from("fallback model"),
-            next: String::from("keep runtimes.java and tools.maven for now"),
+            next: String::from("keep runtimes.python and tools.uv for now"),
         };
 
         let json = serde_json::to_value(&finding).expect("finding should serialize");
@@ -14112,11 +14119,11 @@ tasks:
             serde_json::Value::String(String::from("OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"))
         );
         assert_eq!(json["provenance_key"], "repo_signals");
-        assert_eq!(json["toolchain_opportunity"]["ecosystem"], "java");
-        assert_eq!(json["toolchain_opportunity"]["fallback_runtime"], "java");
+        assert_eq!(json["toolchain_opportunity"]["ecosystem"], "python");
+        assert_eq!(json["toolchain_opportunity"]["fallback_runtime"], "python");
         assert_eq!(
             json["toolchain_opportunity"]["candidate_providers"][0],
-            "sdkman"
+            "uv"
         );
         assert_eq!(
             json["toolchain_opportunity"]["candidate_providers"][1],
@@ -14127,7 +14134,7 @@ tasks:
             json["toolchain_opportunity"]["agent_note"]
                 .as_str()
                 .expect("agent note")
-                .contains("toolchains.java")
+                .contains("toolchains.python")
         );
     }
 
