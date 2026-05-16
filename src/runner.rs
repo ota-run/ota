@@ -1139,6 +1139,7 @@ pub struct RunOutcome {
     pub backend_fulfillment: Option<BackendFulfillmentEvidence>,
     pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
     pub shared_local_backend: Option<SharedLocalBackendEvidence>,
+    pub fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
 }
@@ -1159,8 +1160,15 @@ pub struct CapturedRunOutcome {
     pub backend_fulfillment: Option<BackendFulfillmentEvidence>,
     pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
     pub shared_local_backend: Option<SharedLocalBackendEvidence>,
+    pub fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolchainFulfillmentEvidence {
+    pub name: String,
+    pub commands: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -2917,6 +2925,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
         backend_fulfillment: outcome.backend_fulfillment,
         task_step_shared_local_backends: outcome.task_step_shared_local_backends,
         shared_local_backend: outcome.shared_local_backend,
+        fulfilled_toolchains: outcome.fulfilled_toolchains,
         execution_note: outcome.execution_note,
         interrupted: outcome.interrupted,
     })
@@ -3806,6 +3815,7 @@ struct TaskRunState {
     fulfilled_backend_source_managed_actions: BTreeMap<String, Vec<ProvisioningAction>>,
     native_activation_env_cache: BTreeMap<String, BTreeMap<String, String>>,
     fulfilled_toolchain_keys: BTreeSet<String>,
+    fulfilled_toolchains: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -4219,6 +4229,11 @@ fn run_task_internal(
         backend_fulfillment: state.backend_fulfillment,
         task_step_shared_local_backends: state.task_step_shared_local_backends,
         shared_local_backend: state.shared_local_backend,
+        fulfilled_toolchains: state
+            .fulfilled_toolchains
+            .into_iter()
+            .map(|(name, commands)| ToolchainFulfillmentEvidence { name, commands })
+            .collect(),
         execution_note: state.execution_note,
         interrupted: state.interrupted,
     })
@@ -6395,6 +6410,7 @@ fn maybe_fulfill_toolchains_on_run_path(
             continue;
         }
 
+        let mut executed_commands = Vec::new();
         for command in
             toolchain_fulfillment_commands(toolchain_name.as_str(), toolchain, target_os, backend)
         {
@@ -6413,6 +6429,12 @@ fn maybe_fulfill_toolchains_on_run_path(
                     details: format!("`{command}` exited with code {}", output.exit_code),
                 });
             }
+            executed_commands.push(command);
+        }
+        if !executed_commands.is_empty() {
+            state
+                .fulfilled_toolchains
+                .insert(toolchain_name, executed_commands);
         }
     }
 
@@ -28351,6 +28373,7 @@ tasks:
                 backend_fulfillment: None,
                 task_step_shared_local_backends: vec![None],
                 shared_local_backend: None,
+                fulfilled_toolchains: vec![],
                 execution_note: None,
                 interrupted: false,
             }
@@ -42541,6 +42564,19 @@ tasks:
         assert_eq!(lines.len(), 1, "{log}");
         assert!(lines[0].contains("toolchain install 1.94.0"), "{log}");
         assert!(lines[0].contains("--component rustfmt"), "{log}");
+        let fulfilled = state
+            .fulfilled_toolchains
+            .get("rust")
+            .expect("fulfilled toolchain commands should be recorded");
+        assert_eq!(fulfilled.len(), 1, "{fulfilled:?}");
+        assert!(
+            fulfilled[0].contains("'toolchain' 'install' '1.94.0'"),
+            "{fulfilled:?}"
+        );
+        assert!(
+            fulfilled[0].contains("'--component' 'rustfmt'"),
+            "{fulfilled:?}"
+        );
     }
 
     #[test]

@@ -157,6 +157,50 @@
                 }
               }
             },
+            "toolchains": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "provider",
+                  "backend",
+                  "target_os",
+                  "version",
+                  "fulfillment",
+                  "required",
+                  "owns_runtime"
+                ],
+                "properties": {
+                  "name": { "type": "string" },
+                  "provider": { "type": "string" },
+                  "backend": { "type": "string" },
+                  "target_os": { "type": "string" },
+                  "version": { "type": "string" },
+                  "fulfillment": { "enum": ["none", "run"] },
+                  "required": { "type": "boolean" },
+                  "owns_runtime": { "type": "string" },
+                  "fulfilled": { "type": "boolean" },
+                  "commands": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "owns_tools": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "components": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "targets": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            },
             "policy": {
               "type": "array",
               "items": { "type": "string" }

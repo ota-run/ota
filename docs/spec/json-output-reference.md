@@ -1654,6 +1654,14 @@ and `verify` so the shape can grow without a breaking redesign.
 metadata that editors and remote-runner tooling can consume. Each `execution.env` entry may also
 include an additive `policy` field when an approved policy value is available for that env key.
 
+`ota doctor --json` may also include a top-level `toolchains` array for the selected workflow/task
+path. Each entry records the selected toolchain name, provider, effective backend, target OS,
+version, fulfillment mode, required flag, owned runtime, and any owned tools/components/targets
+that ota is reasoning about on that selected path. Receipt-bearing execution surfaces may also add
+`fulfilled` and `commands[]` when ota actually ran provider fulfillment commands on that execution
+path. This is additive execution evidence; it does not
+replace contract validation or finding-level detail.
+
 `ota doctor --json` also includes a top-level `summary` object with finding counts and
 machine-readable `verdict` / `agent_verdict` values so hosted validation and editor tooling do
 not need to recompute them. When there is at least one finding, the summary may also include
@@ -1692,6 +1700,14 @@ object for the default workflow so editors and automation can reason about the c
 without inferring it from task names. That workflow summary may also include additive
 `notes` and `readiness_probes` when the workflow declares them or references reusable named
 probes.
+
+Receipt-bearing execution surfaces such as `ota receipt --json`, `ota up --json`, and
+`ota run --json` may also include additive `receipt.toolchains[]` entries with the same toolchain
+evidence shape. Use those entries when you need to know which selected provider-backed ecosystem
+ota checked or fulfilled on the recorded execution path, instead of inferring that from human text
+or standalone runtime/tool fields. When fulfillment actually ran, `receipt.toolchains[]` can also
+include `fulfilled: true` plus additive `commands[]` entries with the exact provider commands ota
+executed for that toolchain during the recorded run path.
 
 ## `ota policy review --json`
 
@@ -2673,9 +2689,9 @@ Each catalog entry keeps the operator guidance machine-readable:
 ## `ota check --json`
 
 `ota check --json` uses the same finding shape as `ota doctor --json`, including additive
-`finding_groups` when present, and may also include the same additive top-level `workflow`
-summary for the default workflow, including workflow `readiness_probes`,
-`readiness_surfaces`, and `expose_surfaces` when declared:
+`finding_groups` when present. It may also include the same additive top-level `workflow`
+summary and `toolchains[]` evidence for the selected workflow path, including workflow
+`readiness_probes`, `readiness_surfaces`, and `expose_surfaces` when declared:
 
 ```json
 {

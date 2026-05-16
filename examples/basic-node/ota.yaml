@@ -77,7 +77,8 @@ workflows:
       task: dev
     notes: |
       Use this when you want the repo front door, not just one command.
-      `toolchains.node` keeps the Node runtime under one owner while `tools.pnpm` stays a standalone Corepack-managed package manager.
+      `toolchains.node` keeps the Node runtime and `node` executable under one owner while
+      `tools.pnpm` stays a standalone Corepack-managed package manager.
 agent:
   entrypoint: setup
   default_task: test
@@ -96,4 +97,5 @@ agent:
     Use `ota validate` before changes and `ota doctor` after edits.
     Use `ota workflows` to inspect the main repo path and `ota up --workflow app` to prepare it.
     Use `ota run test` as the main verification step for Node and TypeScript changes.
-    Keep `toolchains.node` as the owner for the Node runtime and `tools.pnpm` as the Corepack-managed package manager lane.
+    Keep `toolchains.node` as the owner for the Node runtime and `node` executable, and keep
+    `tools.pnpm` as the Corepack-managed package manager lane.
