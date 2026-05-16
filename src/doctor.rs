@@ -219,6 +219,141 @@ struct ScopedPreconditionSelection {
     env_scoped: bool,
 }
 
+#[derive(Debug, Clone)]
+struct BackendPreconditionSelection {
+    backend: Backend,
+    requirement_surface: RequirementSurface,
+    toolchain_names: BTreeSet<String>,
+    native_names: BTreeSet<String>,
+    env_names: BTreeSet<String>,
+    env_scoped: bool,
+}
+
+impl From<BackendPreconditionSelection> for ScopedPreconditionSelection {
+    fn from(value: BackendPreconditionSelection) -> Self {
+        Self {
+            requirement_surface: value.requirement_surface,
+            toolchain_names: value.toolchain_names,
+            native_names: value.native_names,
+            env_names: value.env_names,
+            env_scoped: value.env_scoped,
+        }
+    }
+}
+
+fn selected_backend_precondition_selections(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Vec<BackendPreconditionSelection> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        return Vec::new();
+    }
+
+    let scoped_runtimes = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.runtimes.is_empty())
+    });
+    let scoped_tools = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.tools.is_empty())
+    });
+    let scoped_toolchains = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+    let scoped_env = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.env.is_empty())
+    });
+
+    let mut selections = Vec::<BackendPreconditionSelection>::new();
+
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+        let selection =
+            if let Some(existing) = selections.iter_mut().find(|item| item.backend == backend) {
+                existing
+            } else {
+                selections.push(BackendPreconditionSelection {
+                    backend,
+                    requirement_surface: RequirementSurface::default(),
+                    toolchain_names: BTreeSet::new(),
+                    native_names: BTreeSet::new(),
+                    env_names: BTreeSet::new(),
+                    env_scoped: scoped_env,
+                });
+                selections.last_mut().expect("selection was just pushed")
+            };
+
+        for (name, requirement) in &task.requirements.runtimes {
+            selection.requirement_surface.runtimes.insert(
+                name.clone(),
+                contract.resolve_scoped_runtime_requirement(name, requirement),
+            );
+        }
+        for (name, requirement) in &task.requirements.tools {
+            selection.requirement_surface.tools.insert(
+                name.clone(),
+                contract.resolve_scoped_tool_requirement(name, requirement),
+            );
+        }
+        selection
+            .toolchain_names
+            .extend(task.requirements.toolchains.iter().cloned());
+        selection
+            .env_names
+            .extend(task.requirements.env.iter().cloned());
+        if matches!(backend, Backend::Native) {
+            selection
+                .native_names
+                .extend(task.requirements.native.iter().cloned());
+        }
+
+        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
+            && let Some(context) = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get(context_name))
+        {
+            selection.requirement_surface.merge(&RequirementSurface {
+                runtimes: context.requirements.runtimes.clone(),
+                tools: context.requirements.tools.clone(),
+            });
+        }
+    }
+
+    for selection in &mut selections {
+        if !scoped_runtimes {
+            let mut runtimes = contract.runtimes.clone();
+            runtimes.extend(selection.requirement_surface.runtimes.clone());
+            selection.requirement_surface.runtimes = runtimes;
+        }
+        if !scoped_tools {
+            let mut tools = contract.tools.clone();
+            tools.extend(selection.requirement_surface.tools.clone());
+            selection.requirement_surface.tools = tools;
+        }
+        if !scoped_toolchains {
+            selection.toolchain_names = contract.toolchains.keys().cloned().collect();
+        }
+    }
+
+    selections
+}
+
 fn scoped_precondition_selection(
     contract: &Contract,
     mode: DoctorMode,
@@ -2380,7 +2515,14 @@ fn diagnose_contract_with_scope(
     let mut adapter_bootstrap = None;
     let mut execution_target = None;
     let selected_lifecycle = doctor_selected_lifecycle(mode, lifecycle_override);
-    let precondition_selection = scoped_precondition_selection(contract, mode, workflow_name);
+    let backend_precondition_selections =
+        selected_backend_precondition_selections(contract, workflow_name, overrides);
+    let precondition_selection = backend_precondition_selections
+        .iter()
+        .find(|selection| selection.backend == backend_for_mode(mode))
+        .cloned()
+        .map(ScopedPreconditionSelection::from)
+        .unwrap_or_else(|| scoped_precondition_selection(contract, mode, workflow_name));
     let requirement_surface = precondition_selection.requirement_surface.clone();
     let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         match load_org_policy_pack_auto_details(contract_path) {
@@ -2547,6 +2689,105 @@ fn diagnose_contract_with_scope(
                     policy_target_os_for_mode(mode),
                     &mut findings,
                 );
+            }
+            for additional_selection in backend_precondition_selections
+                .iter()
+                .filter(|selection| selection.backend != backend_for_mode(mode))
+            {
+                let additional_mode = match additional_selection.backend {
+                    Backend::Native => DoctorMode::Native,
+                    Backend::Container => DoctorMode::Container,
+                    Backend::Remote => DoctorMode::Remote,
+                };
+                if additional_mode == DoctorMode::Remote {
+                    continue;
+                }
+                let additional_lifecycle =
+                    doctor_selected_lifecycle(additional_mode, lifecycle_override);
+                let additional_container_probe = if additional_mode == DoctorMode::Container {
+                    diagnose_execution_backend(
+                        contract,
+                        &mut findings,
+                        additional_mode,
+                        additional_lifecycle,
+                        ExecutionOverrides {
+                            backend: Some(Backend::Container),
+                            ..overrides
+                        },
+                    )
+                } else {
+                    None
+                };
+                let additional_provisioning_actions = loaded_policy
+                    .as_ref()
+                    .map(|loaded| {
+                        loaded
+                            .pack
+                            .selected_provisioning_actions_for_requirement_surface_os(
+                                policy_target_os_for_mode(additional_mode),
+                                &additional_selection.requirement_surface,
+                            )
+                    })
+                    .unwrap_or_default();
+                if additional_mode == DoctorMode::Native {
+                    diagnose_env(
+                        contract,
+                        loaded_policy
+                            .as_ref()
+                            .map(|loaded| loaded.pack.env_values()),
+                        &declared_env_sources,
+                        additional_selection
+                            .env_scoped
+                            .then_some(&additional_selection.env_names),
+                        &mut findings,
+                    );
+                }
+                diagnose_runtimes(
+                    &additional_selection.requirement_surface.runtimes,
+                    policy_target_os_for_mode(additional_mode),
+                    contract_path,
+                    loaded_policy.as_ref(),
+                    additional_mode,
+                    additional_lifecycle,
+                    additional_container_probe.as_ref(),
+                    None,
+                    None,
+                    &additional_provisioning_actions,
+                    &mut findings,
+                );
+                diagnose_tools(
+                    &additional_selection.requirement_surface.tools,
+                    policy_target_os_for_mode(additional_mode),
+                    contract_path,
+                    loaded_policy.as_ref(),
+                    additional_mode,
+                    additional_lifecycle,
+                    additional_container_probe.as_ref(),
+                    None,
+                    None,
+                    &additional_provisioning_actions,
+                    &mut findings,
+                );
+                diagnose_toolchains(
+                    contract,
+                    &additional_selection.toolchain_names,
+                    policy_target_os_for_mode(additional_mode),
+                    contract_path,
+                    additional_mode,
+                    additional_container_probe.as_ref(),
+                    None,
+                    None,
+                    &mut findings,
+                );
+                if additional_mode == DoctorMode::Native {
+                    diagnose_native_prerequisites(
+                        contract,
+                        contract_path,
+                        &additional_selection.native_names,
+                        policy_target_os_for_mode(additional_mode),
+                        &mut findings,
+                    );
+                }
             }
             runtime_probe_started || tool_probe_started || toolchain_probe_started
         };

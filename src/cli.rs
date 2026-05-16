@@ -13502,6 +13502,86 @@ tasks:
     }
 
     #[test]
+    fn doctor_duplicate_toolchain_ownership_surfaces_structured_contract_guidance() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+runtimes:
+  rust: "1.94.0"
+tasks:
+  setup:
+    run: cargo fetch
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let rendered = if output.stdout.is_empty() {
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+        } else {
+            strip_ansi(&output.stdout)
+        };
+        assert!(rendered.contains("ERROR  Invalid contract"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "the contract duplicates runtime `rust` that belongs to toolchain `rust`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`runtimes.rust` is already owned by `toolchains.rust`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("remove `runtimes.rust`"), "{rendered}");
+        assert!(rendered.contains("rerun `ota validate"), "{rendered}");
+        assert!(rendered.contains("rerun `ota doctor"), "{rendered}");
+    }
+
+    #[test]
+    fn doctor_duplicate_toolchain_ownership_json_preserves_validation_errors() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tools:
+  cargo: "*"
+tasks:
+  setup:
+    run: cargo fetch
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json_text = if output.stdout.is_empty() {
+            output.stderr.as_deref().unwrap_or_default()
+        } else {
+            output.stdout.as_str()
+        };
+        let json: Value = serde_json::from_str(json_text).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value
+                == "duplicate ownership is invalid: toolchain `rust` owns tool `cargo`, but the contract also declares `tools.cargo`; keep `toolchains.rust` as the owner and remove the duplicate tool declaration"));
+    }
+
+    #[test]
     fn receipt_with_bind_port_mode_auto_reports_field_specific_next_steps() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -26593,6 +26673,156 @@ tasks:
     }
 
     #[test]
+    fn up_dry_run_preview_explains_selected_toolchain_fulfillment_modes() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let rustc_body = if cfg!(windows) {
+            "@echo off\r\necho rustc 1.94.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho rustc 1.94.0\nexit 0\n"
+        };
+        let rustup_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"component\" (\r\n  echo rustfmt-x86_64-pc-windows-msvc\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"target\" (\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"component\" ]; then\n  echo rustfmt-x86_64-unknown-linux-gnu\n  exit 0\nfi\nif [ \"$1\" = \"target\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "rustc", rustc_body);
+        write_fake_command(&bin_dir, "rustup", rustup_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+
+        let output = run_with(["ota", "up", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains(
+                "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`); fulfillment: run (ota may provision the selected toolchain on the selected run path)"
+            ),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("activate tool `cargo`"), "{stdout}");
+    }
+
+    #[test]
+    fn up_dry_run_mixed_backend_workflow_checks_selected_toolchain_on_its_own_backend() {
+        let _guard = env_mutex_lock();
+        let host_os = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(windows) {
+            "windows"
+        } else {
+            "linux"
+        };
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+    host:
+      backend: native
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.1"
+    platforms:
+      {host_os}:
+        version: "1.94.0"
+        components:
+          - rustfmt
+tasks:
+  setup:
+    context: app
+    run: echo setup
+  dev:
+    context: host
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        ));
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        install_fake_docker(&bin_dir.join("docker"));
+        let rustc_body = if cfg!(windows) {
+            "@echo off\r\necho rustc 1.94.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho rustc 1.94.0\nexit 0\n"
+        };
+        let rustup_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"component\" (\r\n  echo rustfmt-x86_64-pc-windows-msvc\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"target\" (\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else if cfg!(target_os = "macos") {
+            "#!/bin/sh\nif [ \"$1\" = \"component\" ]; then\n  echo rustfmt-x86_64-apple-darwin\n  exit 0\nfi\nif [ \"$1\" = \"target\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"component\" ]; then\n  echo rustfmt-x86_64-unknown-linux-gnu\n  exit 0\nfi\nif [ \"$1\" = \"target\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "rustc", rustc_body);
+        write_fake_command(&bin_dir, "rustup", rustup_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let output = run_with([
+            "ota",
+            "up",
+            "--workflow",
+            "app",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
+        let stdout = strip_ansi(&output.stdout);
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains(
+                "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`)"
+            ),
+            "{stdout}"
+        );
+        assert!(
+            !normalized.contains("check toolchain `rust` via `rustup` (version `1.94.1`)"),
+            "{stdout}"
+        );
+    }
+
+    #[test]
     fn up_dry_run_container_preview_reports_image_and_preview_rerun() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -27459,6 +27689,10 @@ name = "ota"
 version = "0.1.0"
 "#,
         );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        install_fake_docker(&bin_dir.join("docker"));
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with([
             "ota",

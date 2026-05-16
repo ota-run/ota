@@ -6383,7 +6383,8 @@ fn maybe_fulfill_toolchains_on_run_path(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
-        if !toolchain.active_for_os(current_os)
+        let target_os = target_os_for_toolchain_backend(backend, current_os);
+        if !toolchain.active_for_os(target_os)
             || toolchain.fulfillment_mode() != ToolchainFulfillmentMode::Run
         {
             continue;
@@ -6394,12 +6395,9 @@ fn maybe_fulfill_toolchains_on_run_path(
             continue;
         }
 
-        for command in toolchain_fulfillment_commands(
-            toolchain_name.as_str(),
-            toolchain,
-            target_os_for_toolchain_backend(backend, current_os),
-            backend,
-        ) {
+        for command in
+            toolchain_fulfillment_commands(toolchain_name.as_str(), toolchain, target_os, backend)
+        {
             let output = run_backend_command_captured(
                 &format!("toolchain-fulfill:{toolchain_name}"),
                 command.as_str(),
@@ -42550,6 +42548,54 @@ tasks:
         assert_eq!(lines.len(), 1, "{log}");
         assert!(lines[0].contains("toolchain install 1.94.0"), "{log}");
         assert!(lines[0].contains("--component rustfmt"), "{log}");
+    }
+
+    #[test]
+    fn run_path_toolchain_fulfillment_uses_backend_target_os_for_container() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    only_on:
+      - linux
+    platforms:
+      linux:
+        version: "1.94.1"
+        components:
+          - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+"#,
+        );
+        let backend = ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::from("rust:1.94-bookworm"),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
+        let toolchain = fixture.contract.toolchains.get("rust").unwrap();
+        let target_os = super::target_os_for_toolchain_backend(&backend, "windows");
+
+        assert_eq!(target_os, "linux");
+        assert!(toolchain.active_for_os(target_os));
+        let commands =
+            super::toolchain_fulfillment_commands("rust", toolchain, target_os, &backend);
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("1.94.1"));
+        assert!(!commands[0].contains("1.94.0"));
+        assert!(commands[0].contains("rustfmt"));
     }
 
     fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {

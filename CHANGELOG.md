@@ -58,6 +58,16 @@
   setup, and the contract/site docs publish the ownership boundary as a first-class reference
   surface; validation also rejects unsupported toolchain declarations so the shipped surface stays
   explicitly bounded to `toolchains.rust` with `provider: rustup`
+- polished the `doctor`, `up`, and `run` command surfaces around toolchain ownership: duplicate
+  ownership now renders as a structured invalid-contract error instead of a generic validation blob,
+  `ota up --dry-run` explains selected toolchains with honest `fulfillment: none` vs
+  `fulfillment: run` semantics, and run/up fulfillment failures now name the selected toolchain,
+  provider, checked requirement slice, and rerun path without falling back to standalone-tool
+  wording for toolchain-owned capabilities
+- fixed mixed-backend `ota up` preflight so selected workflow prerequisites stay on their own
+  execution boundary instead of being flattened into one doctor mode; native selected-path
+  toolchains now diagnose on the host even when setup runs in a container, and the dry-run preview
+  matches that backend-aware preflight
 
 ## 1.6.12
 
