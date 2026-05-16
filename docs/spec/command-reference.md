@@ -1627,10 +1627,12 @@ Current behavior:
   selected ecosystem path, `ota up --dry-run` describes that provider-owned toolchain requirement
   instead of pretending owned capabilities are standalone setup tools, and the preview now names
   the owned runtime capability alongside the provider so `toolchains.node` reads as Node via
-  Corepack rather than implying that Corepack itself is the runtime
+  Corepack rather than implying that Corepack itself is the runtime; when `toolchains.node`
+  declares `package_managers`, those activation lanes stay attached to the same selected toolchain
 - policy-backed version/provisioning previews now include selected toolchain-owned runtime lanes
-  too, so a repo that declares only `toolchains.rust` can still show governed runtime install
-  paths without reintroducing duplicate `runtimes` ownership
+  too, and selected toolchain-owned tool lanes when the provider projects them there, so a repo
+  can show governed install paths without reintroducing duplicate `runtimes` or `tools`
+  ownership
 - `ota up --json` and preview/final execution receipts now expose additive `receipt.toolchains[]`
   evidence so the selected workflow path's toolchain/provider/backend decisions stay
   machine-readable alongside readiness findings

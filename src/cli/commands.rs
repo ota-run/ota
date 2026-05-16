@@ -152,7 +152,8 @@ use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
     declared_toolchain_fulfillment_attempt_summary, declared_toolchain_preview_action,
     fallback_toolchain_fulfillment_attempt_summary,
-    requirement_surface_with_toolchain_owned_runtimes, toolchain_fulfillment_status_detail,
+    requirement_surface_with_toolchain_owned_capabilities,
+    requirement_surface_with_toolchain_owned_tools, toolchain_fulfillment_status_detail,
 };
 use crate::update;
 use crate::validator::{
@@ -41462,19 +41463,18 @@ tasks:
 version: 1
 project:
   name: preview-up
-tools:
-  pnpm:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
-      tools:
-        pnpm: ">=10.22.0"
+      toolchains:
+        - node
   docker:run:
     launch:
       kind: container
@@ -41547,19 +41547,18 @@ workflows:
 version: 1
 project:
   name: preview-up
-tools:
-  pnpm:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
-      tools:
-        pnpm: ">=10.22.0"
+      toolchains:
+        - node
 workflows:
   default: contributor
   contributor:
@@ -41780,19 +41779,18 @@ workflows:
 version: 1
 project:
   name: preview-up
-tools:
-  pnpm:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
-      tools:
-        pnpm: ">=10.22.0"
+      toolchains:
+        - node
 workflows:
   default: contributor
   contributor:
@@ -41810,7 +41808,7 @@ workflows:
                         kind: ProvisioningActionKind::SelectSource,
                         target_kind: ProvisioningTargetKind::Tool,
                         name: String::from("pnpm"),
-                        requested_version: String::from(">=10.22.0"),
+                        requested_version: String::from("10.22.0"),
                         normalized_requirement: None,
                         resolved_version: None,
                         package: Some(String::from("pnpm")),
@@ -41844,11 +41842,84 @@ workflows:
                 .plan
                 .actions
                 .iter()
-                .any(|action| { action.contains("provision `pnpm` `>=10.22.0` via `brew`") })
+                .any(|action| { action.contains("provision `pnpm` `10.22.0` via `brew`") })
         );
         assert!(preview.plan.skipped.contains(&String::from(
             "skip Corepack activation for `pnpm`; policy provisioning is selected for this tool"
         )));
+    }
+
+    #[test]
+    fn selected_up_activation_actions_skip_container_scoped_corepack_package_managers() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/example/app:latest
+    host:
+      backend: native
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    platforms:
+      linux:
+        package_managers:
+          pnpm: "10.22.0"
+tasks:
+  setup:
+    context: app
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+  dev:
+    context: host
+    run: node --version
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from(
+                    "pnpm is declared in the contract but is not available inside container image `ghcr.io/example/app:latest`",
+                ),
+                next: String::from(
+                    "run `corepack enable && corepack prepare pnpm@10.22.0 --activate` and rerun `ota doctor`",
+                ),
+            }],
+        };
+
+        let actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+        );
+
+        assert!(actions.is_empty());
     }
 
     #[test]
@@ -42222,6 +42293,95 @@ tasks:
 
         assert_eq!(actions.len(), 1, "{actions:?}");
         assert_eq!(actions[0].name, "rust");
+    }
+
+    #[test]
+    fn selected_up_provisioning_actions_include_container_scoped_corepack_package_managers() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/example/app:latest
+    host:
+      backend: native
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    platforms:
+      linux:
+        package_managers:
+          pnpm: "10.22.0"
+tasks:
+  setup:
+    context: app
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+  dev:
+    context: host
+    run: node --version
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("pnpm"),
+                        requested_version: String::from("10.22.0"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(String::from("pnpm")),
+                        source: String::from("apt"),
+                        source_config: None,
+                        approved_version: Some(String::from("10.22.0")),
+                        policy_match: None,
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from(
+                    "pnpm is declared in the contract but is not available inside container image `ghcr.io/example/app:latest`",
+                ),
+                next: String::from("install `pnpm` and rerun `ota doctor`"),
+            }],
+        };
+
+        let actions = super::selected_up_provisioning_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].name, "pnpm");
     }
 
     #[test]
@@ -55944,35 +56104,6 @@ fn toolchain_summary_backend_for_mode(mode: DoctorMode) -> Backend {
     }
 }
 
-fn selected_toolchain_names_for_task_names(
-    contract: &Contract,
-    task_names: &[String],
-) -> BTreeSet<String> {
-    let scoped_any = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.toolchains.is_empty())
-    });
-
-    if task_names.is_empty() {
-        return contract.toolchains.keys().cloned().collect();
-    }
-
-    let mut names = BTreeSet::new();
-    for task_name in task_names {
-        if scoped_any {
-            if let Some(task) = contract.tasks.get(task_name.as_str()) {
-                names.extend(task.requirements.toolchains.iter().cloned());
-            }
-        } else {
-            names.extend(contract.task_required_toolchain_names(task_name.as_str()));
-        }
-    }
-
-    names
-}
-
 fn selected_toolchain_summary(
     toolchain_name: &str,
     toolchain: &crate::schema::ToolchainSpec,
@@ -57213,10 +57344,11 @@ fn execution_policy_lines_for_toolchain_names(
         return Vec::new();
     };
 
-    let requirements = requirement_surface_with_toolchain_owned_runtimes(
+    let requirements = requirement_surface_with_toolchain_owned_capabilities(
         contract,
         &contract.requirement_surface_for_backend(backend),
         toolchain_names,
+        policy_target_os_for_backend(backend),
     );
 
     policy_pack
@@ -64231,13 +64363,51 @@ fn up_policy_requirement_surface(
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
 ) -> RequirementSurface {
+    let mut surface = up_requirement_surface(contract, overrides, workflow_name);
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
-    let toolchain_names = selected_toolchain_names_for_task_names(contract, &task_names);
-    requirement_surface_with_toolchain_owned_runtimes(
-        contract,
-        &up_requirement_surface(contract, overrides, workflow_name),
-        &toolchain_names,
-    )
+    if task_names.is_empty() {
+        let toolchain_names = contract.selected_workflow_required_toolchain_names(workflow_name);
+        return requirement_surface_with_toolchain_owned_capabilities(
+            contract,
+            &surface,
+            &toolchain_names.into_iter().collect(),
+            requirement_target_os_for_backend(effective_execution(contract, overrides).0),
+        );
+    }
+
+    let scoped_any = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+
+    for task_name in task_names {
+        let target_os = requirement_target_os_for_backend(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+        );
+        let toolchain_names = if scoped_any {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| task.requirements.toolchains.clone())
+                .unwrap_or_default()
+        } else {
+            contract
+                .task_required_toolchain_names(task_name.as_str())
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        let toolchain_names = toolchain_names.into_iter().collect();
+        surface = requirement_surface_with_toolchain_owned_capabilities(
+            contract,
+            &surface,
+            &toolchain_names,
+            target_os,
+        );
+    }
+
+    surface
 }
 
 fn requirement_surface_targets_provisioning_action(
@@ -64408,7 +64578,7 @@ fn selected_up_activation_actions(
         return Vec::new();
     }
 
-    let requirement_surface = up_requirement_surface(contract, overrides, workflow_name);
+    let requirement_surface = up_activation_requirement_surface(contract, overrides, workflow_name);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
@@ -64422,6 +64592,62 @@ fn selected_up_activation_actions(
                     .any(|finding| finding_targets_activation_action(finding, action))
         })
         .collect()
+}
+
+fn up_activation_requirement_surface(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> RequirementSurface {
+    let requirement_surface = up_requirement_surface(contract, overrides, workflow_name);
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        let toolchain_names = contract.selected_workflow_required_toolchain_names(workflow_name);
+        return requirement_surface_with_toolchain_owned_tools(
+            contract,
+            &requirement_surface,
+            &toolchain_names.into_iter().collect(),
+            requirement_target_os_for_backend(effective_execution(contract, overrides).0),
+        );
+    }
+
+    let scoped_any = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+    let mut surface = requirement_surface;
+
+    for task_name in task_names {
+        if !matches!(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            Backend::Native
+        ) {
+            continue;
+        }
+        let toolchain_names = if scoped_any {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| task.requirements.toolchains.clone())
+                .unwrap_or_default()
+        } else {
+            contract
+                .task_required_toolchain_names(task_name.as_str())
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        let toolchain_names = toolchain_names.into_iter().collect();
+        surface = requirement_surface_with_toolchain_owned_tools(
+            contract,
+            &surface,
+            &toolchain_names,
+            requirement_target_os_for_backend(Backend::Native),
+        );
+    }
+
+    surface
 }
 
 fn current_requirement_platform() -> &'static str {
@@ -64984,7 +65210,7 @@ fn build_up_preview(
     for action in selected_up_native_activation_actions(contract, overrides, workflow_name) {
         actions.push(render_up_preview_native_activation_action(&action));
     }
-    for action in requirement_surface_activation_actions(&up_requirement_surface(
+    for action in requirement_surface_activation_actions(&up_activation_requirement_surface(
         contract,
         overrides,
         workflow_name,

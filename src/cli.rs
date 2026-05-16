@@ -26738,6 +26738,8 @@ toolchains:
   node:
     provider: corepack
     version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 tasks:
   setup:
     run: node --version
@@ -26753,7 +26755,19 @@ tasks:
         } else {
             "#!/bin/sh\necho v22.0.0\nexit 0\n"
         };
+        let corepack_body = if cfg!(windows) {
+            "@echo off\r\necho corepack 0.31.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho corepack 0.31.0\nexit 0\n"
+        };
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\necho 10.22.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho 10.22.0\nexit 0\n"
+        };
         write_fake_command(&bin_dir, "node", node_body);
+        write_fake_command(&bin_dir, "corepack", corepack_body);
+        write_fake_command(&bin_dir, "pnpm", pnpm_body);
         let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with(["ota", "up", "--dry-run", fixture.path()]);
@@ -26763,7 +26777,7 @@ tasks:
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
             normalized.contains(
-                "check toolchain `node` via `corepack` (owns runtime `node`, version `22`); fulfillment: none (diagnose only, no provisioning)"
+                "check toolchain `node` via `corepack` (owns runtime `node`, version `22`, package managers `pnpm@10.22.0`); fulfillment: none (diagnose only, no provisioning)"
             ),
             "{stdout}"
         );

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- deepened `toolchains.node`: Corepack-backed Node toolchains can now own declared package-manager
+  activation through `package_managers`, project those tools into doctor/up/policy activation
+  lanes, and reject duplicate `tools.<package-manager>` ownership when the toolchain already owns
+  that package manager
 - tightened the shipped toolchain provider boundary so `toolchains.rust` must use
   `provider: rustup` and `toolchains.node` must use `provider: corepack`, with validator errors
   driven by the shipped provider contract registry instead of a Rust-first fallback

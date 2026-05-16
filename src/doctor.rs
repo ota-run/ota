@@ -74,7 +74,8 @@ use crate::schema::{
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
     ToolchainManagedSurfaceKind, declared_toolchain_contract,
-    requirement_surface_with_toolchain_owned_runtimes, shipped_toolchain_contract_by_label,
+    requirement_surface_with_toolchain_owned_capabilities,
+    requirement_surface_with_toolchain_owned_tools, shipped_toolchain_contract_by_label,
 };
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
@@ -531,11 +532,13 @@ fn policy_requirement_surface_for_toolchains(
     contract: &Contract,
     requirement_surface: &RequirementSurface,
     toolchain_names: &BTreeSet<String>,
+    target_os: &str,
 ) -> RequirementSurface {
-    requirement_surface_with_toolchain_owned_runtimes(
+    requirement_surface_with_toolchain_owned_capabilities(
         contract,
         requirement_surface,
         toolchain_names,
+        target_os,
     )
 }
 
@@ -799,6 +802,7 @@ fn remote_doctor_probe_contexts(
             contract,
             &requirement_surface,
             &selected_toolchain_names,
+            &target_os,
         );
         let provisioning_actions = loaded_policy
             .map(|loaded| {
@@ -893,6 +897,7 @@ fn remote_doctor_probe_contexts(
         contract,
         &requirement_surface,
         &selected_toolchain_names,
+        policy_target_os_for_mode(DoctorMode::Remote),
     );
     let provisioning_actions = loaded_policy
         .map(|loaded| {
@@ -2602,6 +2607,7 @@ fn diagnose_contract_with_scope(
                     contract,
                     &requirement_surface,
                     &precondition_selection.toolchain_names,
+                    policy_target_os_for_mode(mode),
                 );
                 loaded
                     .pack
@@ -2672,7 +2678,13 @@ fn diagnose_contract_with_scope(
                         &mut findings,
                     );
                     diagnose_tools(
-                        &remote_probe.requirement_surface.tools,
+                        &requirement_surface_with_toolchain_owned_tools(
+                            contract,
+                            &remote_probe.requirement_surface,
+                            &precondition_selection.toolchain_names,
+                            &remote_probe.target_os,
+                        )
+                        .tools,
                         &remote_probe.target_os,
                         contract_path,
                         loaded_policy.as_ref(),
@@ -2720,7 +2732,13 @@ fn diagnose_contract_with_scope(
                 &mut findings,
             );
             let tool_probe_started = diagnose_tools(
-                &requirement_surface.tools,
+                &requirement_surface_with_toolchain_owned_tools(
+                    contract,
+                    &requirement_surface,
+                    &precondition_selection.toolchain_names,
+                    policy_target_os_for_mode(mode),
+                )
+                .tools,
                 policy_target_os_for_mode(mode),
                 contract_path,
                 loaded_policy.as_ref(),
@@ -2787,6 +2805,7 @@ fn diagnose_contract_with_scope(
                             contract,
                             &additional_selection.requirement_surface,
                             &additional_selection.toolchain_names,
+                            policy_target_os_for_mode(additional_mode),
                         );
                         loaded
                             .pack
@@ -2823,7 +2842,13 @@ fn diagnose_contract_with_scope(
                     &mut findings,
                 );
                 diagnose_tools(
-                    &additional_selection.requirement_surface.tools,
+                    &requirement_surface_with_toolchain_owned_tools(
+                        contract,
+                        &additional_selection.requirement_surface,
+                        &additional_selection.toolchain_names,
+                        policy_target_os_for_mode(additional_mode),
+                    )
+                    .tools,
                     policy_target_os_for_mode(additional_mode),
                     contract_path,
                     loaded_policy.as_ref(),
@@ -5207,8 +5232,12 @@ fn diagnose_org_policy(
     };
     let policy_pack = &loaded_policy.pack;
     let policy_path = &loaded_policy.path;
-    let policy_requirement_surface =
-        policy_requirement_surface_for_toolchains(contract, requirement_surface, toolchain_names);
+    let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+        contract,
+        requirement_surface,
+        toolchain_names,
+        policy_os,
+    );
 
     let contract_root = contract_working_dir(contract_path);
 
@@ -10180,21 +10209,18 @@ workflows:
 version: 1
 project:
   name: ota
-tools:
-  pnpmx:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      pnpmx: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
-      runtimes:
-        node: ">=24"
-      tools:
-        pnpmx: ">=10.22.0"
+      toolchains:
+        - node
   docker:run:
     launch:
       kind: container
@@ -10235,7 +10261,7 @@ workflows:
                 finding.summary.contains("pnpmx")
                     && finding
                         .next
-                        .contains("corepack enable && corepack prepare pnpm@10.22.0 --activate")
+                        .contains("corepack enable && corepack prepare pnpmx@10.22.0 --activate")
             }),
             "{report:?}"
         );
@@ -10274,19 +10300,18 @@ workflows:
 version: 1
 project:
   name: ota
-tools:
-  pnpmx:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      pnpmx: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
-      tools:
-        pnpmx: ">=10.22.0"
+      toolchains:
+        - node
 workflows:
   default: contributor
   contributor:
@@ -10321,7 +10346,7 @@ workflows:
         assert!(
             finding
                 .next
-                .contains("corepack prepare pnpm@10.22.0 --activate")
+                .contains("corepack prepare pnpmx@10.22.0 --activate")
         );
     }
 
