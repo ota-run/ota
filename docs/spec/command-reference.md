@@ -280,6 +280,9 @@ Current behavior:
 Text output:
 
 - header: `TASKS <path>`
+- when agent guidance is present, the shared `AGENT` block is grouped into `Overview`,
+  `Execution`, and `Boundary` sections with counted wrapped lists and writable-path root/exception
+  collapsing
 - each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
 - each task may include `Launch` when the resolved execution source is structured `launch`
 - each task may include `env`, `inputs`, and `requires_services`
@@ -1269,6 +1272,9 @@ Text output:
 - header: `DOCTOR <path>`
 - status line: `READY` or `NOT READY`
 - `Execution` includes a `Mode:` line in text output so the selected diagnosis context is explicit
+- when agent guidance is present, the shared `AGENT` block is grouped into `Overview`,
+  `Execution`, and `Boundary` sections with counted wrapped lists and writable-path root/exception
+  collapsing
 - summary includes repo verdict and agent verdict before per-finding details
 - grouped finding sections include `Provenance:` when the grouped findings share one diagnosis source
 - with `--concise`, findings keep severity + summary + `Next`, while `Why` detail is omitted
@@ -1489,11 +1495,15 @@ Text output:
 
 - header: `CHECK <path>`
 - status line: `READY` or `NOT READY`
+- when agent guidance is present, the shared `AGENT` block uses grouped `Overview`,
+  `Execution`, and `Boundary` sections with counted wrapped lists and writable-path
+  root/exception collapsing
 
 JSON output:
 
 - `ok`
 - `path`
+- additive `agent` can appear when the contract declares agent boundaries
 - `findings`
 - additive `toolchains[]` evidence can appear for the selected workflow path even though `ota check`
   itself still stays on the configured readiness/check surface instead of broadening into toolchain

@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- redesigned the shared `AGENT` summary block used by `ota tasks`, `ota doctor`, and `ota check`
+  into grouped `Overview`, `Execution`, and `Boundary` sections, with counted wrapped lists and
+  writable-path root/exception collapsing so large agent boundaries stay readable in terminal
+  output; `ota check --json` now also keeps additive `agent` details alongside its verdict/finding
+  payload
 - deepened `toolchains.node`: Corepack-backed Node toolchains can now own declared package-manager
   activation through `package_managers`, project those tools into doctor/up/policy activation
   lanes, and reject duplicate `tools.<package-manager>` ownership when the toolchain already owns
