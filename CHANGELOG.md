@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- tightened the shipped toolchain provider boundary so `toolchains.rust` must use
+  `provider: rustup` and `toolchains.node` must use `provider: corepack`, with validator errors
+  driven by the shipped provider contract registry instead of a Rust-first fallback
 - hardened the PowerShell bootstrap installer: checksum mismatches and missing official checksum
   manifests now fail closed instead of falling back to git installs, and Windows user PATH
   persistence now requires explicit `-SetupPath`
@@ -73,9 +76,25 @@
   provider labels, primary executables, and fulfillment commands from the same Rustup-backed
   registry slice instead of repeating Rust-specific assumptions in each command layer
 - tightened the provider-boundary contract for `toolchains`: the validator now teaches the shared
-  core (`provider`, `version`, `fulfillment`) vs Rustup-specific compatibility fields
-  (`profile`, `components`, `targets`), and the built-in `examples/basic-rust` contract now uses
-  `toolchains.rust` instead of teaching duplicate `runtimes.rust` / `tools.cargo` ownership
+  provider-agnostic fields (`provider`, `version`, `fulfillment`, `required`, `only_on`, and
+  `platforms.<os>.version`) vs Rustup-specific compatibility fields (`profile`, `components`,
+  `targets`), and the built-in `examples/basic-rust` contract now uses `toolchains.rust` instead
+  of teaching duplicate `runtimes.rust` / `tools.cargo` ownership
+- formalized the shipped Rustup provider contract inside Ota so validator field legality, duplicate
+  ownership, doctor-managed-surface checks, dry-run requirement rendering, and run-path
+  fulfillment all read from one provider contract instead of repeating parallel Rustup-specific
+  assumptions across command layers
+- moved Rustup-specific field-shape validation (`profile`, `components`, `targets`, including
+  platform overrides) behind that same provider contract so the validator no longer carries a
+  parallel copy of provider-specific field rules
+- added the second shipped toolchain contract slice: `toolchains.node` with `provider: corepack`
+  now gives Node one managed runtime/executable owner without claiming package-manager ownership;
+  the shipped Corepack contract stays intentionally narrow by using only the shared
+  provider-agnostic fields, staying check-only (`fulfillment: none`), and leaving `pnpm` / `yarn`
+  activation explicit under `tools.<package-manager>.acquisition.provider: corepack`
+- sharpened toolchain preview wording so dry-run and fulfillment-facing output now names the owned
+  runtime capability alongside the provider contract, which keeps `toolchains.node` honest as
+  “Node via Corepack” instead of reading like Corepack itself is the runtime being checked
 
 ## 1.6.12
 

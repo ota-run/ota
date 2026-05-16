@@ -1290,6 +1290,7 @@ pub struct ToolchainPlatformSpec {
 #[serde(rename_all = "snake_case")]
 pub enum ToolchainProvider {
     Rustup,
+    Corepack,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

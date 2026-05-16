@@ -24,10 +24,12 @@
 version: 1
 project:
   name: basic-node
-  description: Minimal Node repo that still shows workflow, requirements, and acquisition
+  description: Minimal Node repo that shows the check-only Node toolchain boundary plus Corepack-managed pnpm
   type: application
-runtimes:
-  node: "22"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
 tools:
   pnpm:
     version: "10"
@@ -40,18 +42,18 @@ tasks:
     description: Install Node dependencies
     run: pnpm install
     requirements:
-      runtimes:
-        node: "22"
+      toolchains:
+        - node
       tools:
         pnpm: "10"
-      checks:
-        - node-installed
   dev:
     description: Start the local development task
     run: pnpm dev
     depends_on:
       - setup
     requirements:
+      toolchains:
+        - node
       tools:
         pnpm: "10"
   test:
@@ -60,6 +62,8 @@ tasks:
     depends_on:
       - setup
     requirements:
+      toolchains:
+        - node
       tools:
         pnpm: "10"
 workflows:
@@ -73,11 +77,7 @@ workflows:
       task: dev
     notes: |
       Use this when you want the repo front door, not just one command.
-checks:
-  - name: node-installed
-    kind: precondition
-    severity: error
-    run: node --version
+      `toolchains.node` keeps the Node runtime under one owner while `tools.pnpm` stays a standalone Corepack-managed package manager.
 agent:
   entrypoint: setup
   default_task: test
@@ -96,3 +96,4 @@ agent:
     Use `ota validate` before changes and `ota doctor` after edits.
     Use `ota workflows` to inspect the main repo path and `ota up --workflow app` to prepare it.
     Use `ota run test` as the main verification step for Node and TypeScript changes.
+    Keep `toolchains.node` as the owner for the Node runtime and `tools.pnpm` as the Corepack-managed package manager lane.

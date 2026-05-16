@@ -613,6 +613,7 @@ Current shipped scope is intentionally narrow:
 - top-level `toolchains`
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
+- Corepack-backed diagnosis for Node toolchains
 - duplicate ownership is invalid when the same prerequisite is declared under both `toolchains`
   and `runtimes` or `tools`
 
@@ -644,9 +645,20 @@ Rules:
 - `version` must not be empty
 - shared provider-agnostic toolchain fields are currently `provider`, `version`,
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
-- `provider` is currently `rustup`
+- shipped providers are currently `rustup` for `toolchains.rust` and `corepack` for
+  `toolchains.node`
 - `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
-- the only shipped toolchain contract today is `toolchains.rust` with `provider: rustup`
+- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup` and
+  `toolchains.node` with `provider: corepack`
+- those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use
+  `provider: rustup`, and `toolchains.node` must use `provider: corepack`
+- ota validates and interprets toolchains through an explicit provider contract; Rustup currently
+  owns which extra toolchain fields are legal, which capabilities belong to `toolchains.rust`, and
+  how `doctor`, `up`, and `run` interpret fulfillment and managed surfaces, while Corepack-backed
+  Node toolchains currently use only the shared provider-agnostic field set and stay check-only
+- provider-specific field shape checks also live there: empty Rustup `profile`, `components`, and
+  `targets` entries fail because the Rustup provider contract rejects them, and Corepack-backed
+  Node toolchains reject those Rust-shaped fields entirely
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
 - `profile`, `components`, and `targets` are currently Rustup-specific compatibility fields, not a
   generic ecosystem-wide toolchain schema
@@ -659,8 +671,12 @@ Rules:
   paths to provision the declared toolchain on the run path
 - for `provider: rustup` with `fulfillment: run`, `version` must be one installable Rustup
   toolchain reference such as `stable`, `beta`, `nightly`, or `1.94.0`
+- `provider: corepack` currently supports only `fulfillment: none`; ota diagnoses Node through
+  `toolchains.node`, but package-manager activation such as `pnpm` still belongs under
+  `tools.<package-manager>.acquisition.provider: corepack`
 - duplicate ownership is invalid; if the same Rust capability is also declared under `runtimes`
-  or `tools`, validation fails and the duplicate must be removed
+  or `tools`, validation fails and the duplicate must be removed; the same applies to
+  `toolchains.node` versus `runtimes.node` or `tools.node`
 
 Ownership boundary:
 
@@ -669,7 +685,9 @@ Ownership boundary:
 - use `tools` for standalone commands on PATH
 - use `native_prerequisites` for host-native build bundles and shell activation
 - current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
-  ownership from `toolchains.rust` with `provider: rustup`
+  ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable ownership
+  from `toolchains.node` with `provider: corepack`; package managers such as `pnpm` remain
+  standalone tools unless a future provider contract explicitly owns them
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
@@ -793,7 +811,8 @@ Rules:
   selected task/workflow requires it
 - `acquisition.provider`: supported values are `corepack` and `command`
 - `acquisition.package` and `acquisition.version` are required for `provider: corepack`
-- `tool node` cannot use `provider: corepack`; declare Node under `runtimes.node`.
+- `tool node` cannot use `provider: corepack`; declare Node under `toolchains.node` with
+  `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks.
 - `acquisition.shell` and `acquisition.run` are required for `provider: command`
 - `provider: corepack` activates package-manager-managed tools such as `pnpm` through
   `corepack enable && corepack prepare <package>@<version> --activate`

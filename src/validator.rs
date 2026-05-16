@@ -34,11 +34,12 @@ use crate::schema::{
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
     TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolchainFulfillmentMode,
-    ToolchainProvider, ToolchainSpec, parse_memory_size_bytes, parse_readiness_duration_spec,
-    task_target_env_name,
+    ToolchainSpec, parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
-    SHARED_TOOLCHAIN_CORE_SUMMARY, declared_rustup_specific_fields, declared_toolchain_provider,
+    declared_toolchain_contract, known_provider_specific_field_owner_groups,
+    shipped_toolchain_contract_by_name, shipped_toolchain_contract_by_provider,
+    shipped_toolchain_contracts_summary, toolchain_provider_label,
 };
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -1028,34 +1029,6 @@ fn validate_toolchains(
             errors,
         );
 
-        if toolchain
-            .profile
-            .as_deref()
-            .is_some_and(|profile| profile.trim().is_empty())
-        {
-            errors.push(ValidationError::new(format!(
-                "toolchain `{name}` must not declare an empty `profile`"
-            )));
-        }
-        if toolchain
-            .components
-            .iter()
-            .any(|component| component.trim().is_empty())
-        {
-            errors.push(ValidationError::new(format!(
-                "toolchain `{name}` must not declare an empty `components` entry"
-            )));
-        }
-        if toolchain
-            .targets
-            .iter()
-            .any(|target| target.trim().is_empty())
-        {
-            errors.push(ValidationError::new(format!(
-                "toolchain `{name}` must not declare an empty `targets` entry"
-            )));
-        }
-
         for (platform, detail) in &toolchain.platforms {
             if detail
                 .version
@@ -1066,38 +1039,22 @@ fn validate_toolchains(
                     "toolchain `{name}` platform `{platform}` must not declare an empty `version`"
                 )));
             }
-            if detail
-                .profile
-                .as_deref()
-                .is_some_and(|profile| profile.trim().is_empty())
-            {
-                errors.push(ValidationError::new(format!(
-                    "toolchain `{name}` platform `{platform}` must not declare an empty `profile`"
-                )));
-            }
-            if detail
-                .components
-                .iter()
-                .any(|component| component.trim().is_empty())
-            {
-                errors.push(ValidationError::new(format!(
-                    "toolchain `{name}` platform `{platform}` must not declare an empty `components` entry"
-                )));
-            }
-            if detail.targets.iter().any(|target| target.trim().is_empty()) {
-                errors.push(ValidationError::new(format!(
-                    "toolchain `{name}` platform `{platform}` must not declare an empty `targets` entry"
-                )));
-            }
         }
 
-        if toolchain.fulfillment == Some(ToolchainFulfillmentMode::Run)
-            && matches!(toolchain.provider, ToolchainProvider::Rustup)
-            && !rustup_installable_toolchain_ref(toolchain.version.as_str())
-        {
-            errors.push(ValidationError::new(format!(
-                "toolchain `{name}` uses `provider: rustup` with `fulfillment: run`, so `toolchains.{name}.version` must be an installable rustup toolchain reference like `stable`, `beta`, `nightly`, or `1.94.0`"
-            )));
+        if let Some(provider_contract) = declared_toolchain_contract(name, toolchain) {
+            errors.extend(
+                provider_contract
+                    .provider_specific_validation_errors(name, toolchain)
+                    .into_iter()
+                    .map(ValidationError::new),
+            );
+
+            if toolchain.fulfillment == Some(ToolchainFulfillmentMode::Run)
+                && let Some(message) =
+                    provider_contract.run_fulfillment_validation_error(name, toolchain)
+            {
+                errors.push(ValidationError::new(message));
+            }
         }
     }
 }
@@ -1107,38 +1064,55 @@ fn validate_supported_toolchain(
     toolchain: &ToolchainSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if declared_toolchain_provider(name, toolchain).is_some() {
+    if declared_toolchain_contract(name, toolchain).is_some() {
         return;
     }
 
-    let declared_provider_fields = declared_rustup_specific_fields(toolchain);
+    let shipped_summary = shipped_toolchain_contracts_summary();
+    if let Some(expected_contract) = shipped_toolchain_contract_by_name(name) {
+        let actual_provider = toolchain_provider_label(toolchain.provider);
+        let actual_owner = shipped_toolchain_contract_by_provider(toolchain.provider)
+            .map(|contract| format!("`toolchains.{}`", contract.toolchain_name()))
+            .unwrap_or_else(|| String::from("another shipped toolchain"));
+        errors.push(ValidationError::new(format!(
+            "toolchain `{name}` is only supported with `provider: {}`; `provider: {actual_provider}` is not valid for `toolchains.{name}` and currently belongs to {actual_owner}. Keep the shared provider-agnostic fields on `toolchains.{name}` with `provider: {}` or move this capability back to `runtimes` / `tools` until ota ships another provider contract",
+            expected_contract.label(),
+            expected_contract.label(),
+        )));
+        return;
+    }
+
+    let shared_core_summary = shipped_toolchain_contract_by_name("rust")
+        .map(|contract| contract.shared_core_summary())
+        .unwrap_or("`provider`, `version`, and `fulfillment`");
+    let declared_provider_fields = known_provider_specific_field_owner_groups(toolchain);
     if declared_provider_fields.is_empty() {
         errors.push(ValidationError::new(format!(
-            "toolchain `{name}` is not supported today; the shared provider-agnostic toolchain fields are {SHARED_TOOLCHAIN_CORE_SUMMARY}, and the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`"
+            "toolchain `{name}` is not supported today; the shared provider-agnostic toolchain fields are {shared_core_summary}, and the current shipped toolchain surface only supports {shipped_summary}",
         )));
         return;
     }
 
     let declared_fields = declared_provider_fields
-        .iter()
-        .map(|field| format!("`{field}`"))
+        .into_iter()
+        .map(|(contract, fields)| {
+            let declared_fields = fields
+                .iter()
+                .map(|field| format!("`{field}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "provider-specific fields {declared_fields} are only valid for `toolchains.{}` with `provider: {}` ({})",
+                contract.toolchain_name(),
+                contract.label(),
+                contract.provider_specific_field_summary()
+            )
+        })
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("; ");
     errors.push(ValidationError::new(format!(
-        "toolchain `{name}` is not supported today; the shared provider-agnostic toolchain fields are {SHARED_TOOLCHAIN_CORE_SUMMARY}, and Rustup-specific fields {declared_fields} are only valid for `toolchains.rust` with `provider: rustup`"
+        "toolchain `{name}` is not supported today; the shared provider-agnostic toolchain fields are {shared_core_summary}, and {declared_fields}",
     )));
-}
-
-fn rustup_installable_toolchain_ref(value: &str) -> bool {
-    let trimmed = value.trim();
-    !trimmed.is_empty()
-        && !trimmed.contains(char::is_whitespace)
-        && !trimmed.contains('>')
-        && !trimmed.contains('<')
-        && !trimmed.contains('=')
-        && !trimmed.contains('^')
-        && !trimmed.contains('~')
-        && !trimmed.contains('*')
 }
 
 fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -1384,13 +1358,13 @@ fn validate_tool_acquisition(
             }
             if name.eq_ignore_ascii_case("node") {
                 errors.push(ValidationError::new(
-                    "tool `node` acquisition `corepack` is invalid; declare Node under `runtimes.node` and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                    "tool `node` acquisition `corepack` is invalid; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
                         .to_string(),
                 ));
             }
             if package.eq_ignore_ascii_case("node") && !name.eq_ignore_ascii_case("node") {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `corepack` must not declare `package: node`; declare Node under `runtimes.node` and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                    "tool `{name}` acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
                 )));
             }
             if acquisition.shell.is_some() {
@@ -4710,7 +4684,7 @@ fn duplicate_requirement_owners_for_toolchain(
     toolchain_name: &str,
     toolchain: &ToolchainSpec,
 ) -> Vec<(String, String)> {
-    declared_toolchain_provider(toolchain_name, toolchain)
+    declared_toolchain_contract(toolchain_name, toolchain)
         .map(|provider| {
             provider
                 .owned_capabilities(toolchain)
@@ -15686,7 +15660,7 @@ tools:
             .collect::<Vec<_>>();
         assert!(
             messages.iter().any(|message| message.contains(
-                "tool `node` acquisition `corepack` is invalid; declare Node under `runtimes.node`"
+                "tool `node` acquisition `corepack` is invalid; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks"
             )),
             "{messages:?}"
         );
@@ -15719,7 +15693,7 @@ tools:
             .collect::<Vec<_>>();
         assert!(
             messages.iter().any(|message| message.contains(
-                "tool `npm` acquisition `corepack` must not declare `package: node`; declare Node under `runtimes.node`"
+                "tool `npm` acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks"
             )),
             "{messages:?}"
         );
@@ -16374,7 +16348,7 @@ version: 1
 project:
   name: ota
 toolchains:
-  node:
+  java:
     provider: rustup
     version: "1.94.0"
 "#,
@@ -16390,7 +16364,7 @@ toolchains:
         assert!(
             rendered.iter().any(|error| {
                 error.contains(
-                    "toolchain `node` is not supported today; the shared provider-agnostic toolchain fields are `provider`, `version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`, and the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup`",
+                    "toolchain `java` is not supported today; the shared provider-agnostic toolchain fields are `provider`, `version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`, and the current shipped toolchain surface only supports `toolchains.rust` with `provider: rustup` and `toolchains.node` with `provider: corepack`",
                 )
             }),
             "{rendered:?}"
@@ -16406,7 +16380,7 @@ version: 1
 project:
   name: ota
 toolchains:
-  node:
+  java:
     provider: rustup
     version: "1.94.0"
     components:
@@ -16424,9 +16398,343 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "Rustup-specific fields `components` are only valid for `toolchains.rust` with `provider: rustup`",
+                "provider-specific fields `components` are only valid for `toolchains.rust` with `provider: rustup`",
             )),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn supports_corepack_node_toolchain_with_shared_fields_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    only_on:
+      - linux
+    platforms:
+      linux:
+        version: "22.2.0"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("corepack-backed node toolchain should validate");
+    }
+
+    #[test]
+    fn rejects_wrong_provider_for_shipped_rust_toolchain_name() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: corepack
+    version: "22"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("rust toolchain must reject the wrong shipped provider")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `rust` is only supported with `provider: rustup`; `provider: corepack` is not valid for `toolchains.rust` and currently belongs to `toolchains.node`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_provider_for_shipped_node_toolchain_name() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: rustup
+    version: "1.94.0"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("node toolchain must reject the wrong shipped provider")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` is only supported with `provider: corepack`; `provider: rustup` is not valid for `toolchains.node` and currently belongs to `toolchains.rust`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_corepack_node_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+runtimes:
+  node: "22"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate node runtime ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` owns runtime `node`, but the contract also declares `runtimes.node`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_corepack_node_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+tools:
+  node: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate node tool ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` owns tool `node`, but the contract also declares `tools.node`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_task_duplicate_ownership_for_corepack_node_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+tasks:
+  setup:
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+      tools:
+        node: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("task duplicate node tool ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` requires toolchain `node`, which owns tool `node`, but the task also declares `tasks.setup.requirements.tools.node`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_corepack_toolchain_run_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    fulfillment: run
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("corepack node toolchain must stay check-only")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.node.fulfillment: none` and use `tools.<package-manager>.acquisition.provider: corepack` for package-manager activation",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_corepack_toolchain_rustup_specific_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    components:
+      - pnpm
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("corepack node toolchain must reject rust-shaped fields")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` with `provider: corepack` must not declare `components`; current `toolchains.node` only supports the shared provider-agnostic fields",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_corepack_toolchain_empty_profile_field() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    profile: ""
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("corepack node toolchain must reject rust-shaped profile fields")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `node` with `provider: corepack` must not declare `profile`; current `toolchains.node` only supports the shared provider-agnostic fields",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn provider_contract_validates_rustup_specific_field_shapes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    profile: ""
+    components:
+      - ""
+    platforms:
+      linux:
+        targets:
+          - ""
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid rustup field shapes should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered
+                .iter()
+                .any(|error| error.contains("toolchain `rust` must not declare an empty `profile`")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error
+                .contains("toolchain `rust` must not declare an empty `components` entry")),
+            "{rendered:?}"
+        );
+        assert!(rendered.iter().any(|error| error.contains(
+            "toolchain `rust` platform `linux` must not declare an empty `targets` entry"
+        )));
     }
 }

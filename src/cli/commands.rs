@@ -147,7 +147,7 @@ use crate::schema::{
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
     ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
 };
-use crate::toolchains::declared_toolchain_provider;
+use crate::toolchains::declared_toolchain_contract;
 use crate::update;
 use crate::validator::{
     ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract_with_path,
@@ -48093,7 +48093,7 @@ tasks:
         );
         assert!(
             rendered.contains(
-                "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`)"
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`)"
             ),
             "{rendered}"
         );
@@ -48172,10 +48172,12 @@ workflows:
         );
 
         assert!(actions.iter().any(|action| action.contains(
-            "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`)"
+            "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`)"
         )));
         assert!(!actions.iter().any(|action| {
-            action.contains("check toolchain `rust` via `rustup` (version `1.94.1`)")
+            action.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`)",
+            )
         }));
     }
 
@@ -48237,12 +48239,14 @@ tasks:
 
         assert!(
             rendered.contains(
-                "check toolchain `rust` via `rustup` (version `1.94.1`, components `rustfmt`)"
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`, components `rustfmt`)"
             ),
             "{rendered}"
         );
         assert!(
-            !rendered.contains("check toolchain `rust` via `rustup` (version `1.94.0`)"),
+            !rendered.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`)"
+            ),
             "{rendered}"
         );
     }
@@ -63367,7 +63371,7 @@ fn toolchain_provider_label(
     toolchain_name: &str,
     toolchain: &crate::schema::ToolchainSpec,
 ) -> &'static str {
-    declared_toolchain_provider(toolchain_name, toolchain)
+    declared_toolchain_contract(toolchain_name, toolchain)
         .map(|provider| provider.label())
         .unwrap_or("toolchain provider")
 }
@@ -63377,15 +63381,9 @@ fn toolchain_preview_requirement_clause(
     toolchain: &crate::schema::ToolchainSpec,
     target_os: &str,
 ) -> String {
-    let mut parts = vec![format!("version `{}`", toolchain.version_for_os(target_os))];
-    let components = toolchain.components_for_os(target_os);
-    if !components.is_empty() {
-        parts.push(format!("components `{}`", components.join("`, `")));
-    }
-    let targets = toolchain.targets_for_os(target_os);
-    if !targets.is_empty() {
-        parts.push(format!("targets `{}`", targets.join("`, `")));
-    }
+    let parts = declared_toolchain_contract(toolchain_name, toolchain)
+        .map(|provider| provider.requirement_detail_parts(toolchain, target_os))
+        .unwrap_or_else(|| vec![format!("version `{}`", toolchain.version_for_os(target_os))]);
     format!(
         "check toolchain `{toolchain_name}` via `{}` ({})",
         toolchain_provider_label(toolchain_name, toolchain),

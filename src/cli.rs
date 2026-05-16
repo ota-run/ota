@@ -26719,11 +26719,59 @@ tasks:
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
             normalized.contains(
-                "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`); fulfillment: run (ota may provision the selected toolchain on the selected run path)"
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`); fulfillment: run (ota may provision the selected toolchain on the selected run path)"
             ),
             "{stdout}"
         );
         assert!(!stdout.contains("activate tool `cargo`"), "{stdout}");
+    }
+
+    #[test]
+    fn up_dry_run_preview_explains_corepack_node_toolchain_as_check_only() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+tasks:
+  setup:
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.0.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho v22.0.0\nexit 0\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let output = run_with(["ota", "up", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains(
+                "check toolchain `node` via `corepack` (owns runtime `node`, version `22`); fulfillment: none (diagnose only, no provisioning)"
+            ),
+            "{stdout}"
+        );
+        assert!(
+            !normalized
+                .contains("ota may provision the selected toolchain on the selected run path"),
+            "{stdout}"
+        );
     }
 
     #[test]
@@ -26812,12 +26860,14 @@ workflows:
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
             normalized.contains(
-                "check toolchain `rust` via `rustup` (version `1.94.0`, components `rustfmt`)"
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`)"
             ),
             "{stdout}"
         );
         assert!(
-            !normalized.contains("check toolchain `rust` via `rustup` (version `1.94.1`)"),
+            !normalized.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`)"
+            ),
             "{stdout}"
         );
     }
