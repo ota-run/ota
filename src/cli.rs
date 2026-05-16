@@ -18325,6 +18325,7 @@ tasks:
     run: cargo build
 agent:
   entrypoint: setup
+  default_task: setup
   safe_tasks:
     - setup
   writable_paths:
@@ -18336,13 +18337,72 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Agent"));
-        assert!(stdout.contains("Entrypoint: `setup`"));
-        assert!(stdout.contains("Safe tasks: `setup`"));
-        assert!(stdout.contains("Writable paths: `src`"));
+        assert!(stdout.contains("AGENT"));
         assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Entrypoint: `setup`"));
+        assert!(stdout.contains("Default task: `setup`"));
+        assert!(stdout.contains("Execution"));
+        assert!(stdout.contains("Safe tasks (1): `setup`"));
+        assert!(stdout.contains("Boundary"));
+        assert!(stdout.contains("Writable paths (1): `src/`"));
         assert!(stdout.contains("Tasks: 1"));
         assert!(stdout.contains("Agent-safe: 0"));
+    }
+
+    #[test]
+    fn tasks_text_groups_agent_writable_paths_into_roots_and_exceptions() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+agent:
+  writable_paths:
+    - entrypoints
+    - entrypoints/background.ts
+    - entrypoints/content.ts
+    - docs
+    - README.md
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Writable paths (3):"));
+        assert!(stdout.contains("`entrypoints/`, `docs/`, `README.md`"));
+        assert!(stdout.contains("Writable exceptions (2):"));
+        assert!(stdout.contains("`entrypoints/background.ts`, `entrypoints/content.ts`"));
+    }
+
+    #[test]
+    fn tasks_text_preserves_hidden_agent_paths_without_forcing_directory_suffixes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+agent:
+  writable_paths:
+    - .github
+    - .env
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Writable paths (2):"));
+        assert!(stdout.contains("`.github`, `.env`"));
+        assert!(!stdout.contains("`.github/`"));
     }
 
     #[test]
@@ -25774,6 +25834,43 @@ tasks:
     }
 
     #[test]
+    fn check_text_includes_redesigned_agent_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo build
+agent:
+  entrypoint: setup
+  default_task: setup
+  safe_tasks:
+    - setup
+  verify_after_changes:
+    - setup
+  writable_paths:
+    - src
+"#,
+        );
+
+        let output = run_with(["ota", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENT"));
+        assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Entrypoint: `setup`"));
+        assert!(stdout.contains("Default task: `setup`"));
+        assert!(stdout.contains("Execution"));
+        assert!(stdout.contains("Safe tasks (1): `setup`"));
+        assert!(stdout.contains("Verify after changes (1): `setup`"));
+        assert!(stdout.contains("Boundary"));
+        assert!(stdout.contains("Writable paths (1): `src/`"));
+    }
+
+    #[test]
     fn check_warning_only_reports_ready_with_warnings() {
         let fixture = ContractFixture::new(
             r#"
@@ -25815,6 +25912,11 @@ checks:
 tasks:
   test:
     run: cargo test
+agent:
+  entrypoint: test
+  default_task: test
+  writable_paths:
+    - src
 "#,
         );
 
@@ -25824,6 +25926,9 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["findings"][0]["summary"], "Check failed: health-check");
+        assert_eq!(json["agent"]["entrypoint"], "test");
+        assert_eq!(json["agent"]["default_task"], "test");
+        assert_eq!(json["agent"]["writable_paths"][0], "src");
     }
 
     #[test]
@@ -25873,6 +25978,7 @@ checks:
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
         assert_eq!(members[0]["ok"], false);
+        assert!(members[0].get("agent").is_none());
         assert_eq!(
             members[0]["findings"][0]["summary"],
             "Check failed: api-health"

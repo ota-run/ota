@@ -18524,6 +18524,11 @@ pub fn check(
                                 &member_target.contract,
                                 &member_target.contract_path,
                             );
+                            let member_agent = member_target
+                                .contract
+                                .agent
+                                .as_ref()
+                                .and_then(AgentSummary::from_config);
                             let member_toolchains = selected_workflow_toolchain_summaries(
                                 &member_target.contract,
                                 ExecutionOverrides::default(),
@@ -18538,20 +18543,43 @@ pub fn check(
                                 ),
                                 Some(&member_target.contract_path),
                                 member_workflow.as_ref(),
-                                None,
+                                member_agent.as_ref(),
                                 member_execution.as_ref(),
                                 None,
                                 None,
                                 &member_report,
                                 None,
                             ));
-                            member_results.push(json!({
-                                "member": member,
-                                "ok": member_report.ok,
-                                "workflow": member_workflow,
-                                "toolchains": member_toolchains,
-                                "findings": member_report.findings,
-                            }));
+                            let mut member_result = serde_json::Map::new();
+                            member_result
+                                .insert("member".into(), serde_json::Value::String(member.clone()));
+                            member_result
+                                .insert("ok".into(), serde_json::Value::Bool(member_report.ok));
+                            if let Some(workflow) = member_workflow {
+                                member_result.insert(
+                                    "workflow".into(),
+                                    serde_json::to_value(workflow)
+                                        .expect("workflow summary should serialize"),
+                                );
+                            }
+                            if let Some(agent) = member_agent {
+                                member_result.insert(
+                                    "agent".into(),
+                                    serde_json::to_value(agent)
+                                        .expect("agent summary should serialize"),
+                                );
+                            }
+                            member_result.insert(
+                                "toolchains".into(),
+                                serde_json::to_value(member_toolchains)
+                                    .expect("toolchain summaries should serialize"),
+                            );
+                            member_result.insert(
+                                "findings".into(),
+                                serde_json::to_value(member_report.findings)
+                                    .expect("findings should serialize"),
+                            );
+                            member_results.push(serde_json::Value::Object(member_result));
                         }
                     }
 
@@ -18584,13 +18612,18 @@ pub fn check(
                         &report,
                         crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
                     );
+                    let agent_summary = target
+                        .contract
+                        .agent
+                        .as_ref()
+                        .and_then(AgentSummary::from_config);
                     match format {
                         OutputFormat::Text => render_report_text(
                             "CHECK",
                             &text_path_display,
                             Some(&target.contract_path),
                             workflow_summary.as_ref(),
-                            None,
+                            agent_summary.as_ref(),
                             execution_summary.as_ref(),
                             None,
                             None,
@@ -18605,6 +18638,7 @@ pub fn check(
                                     path: &path_display,
                                     summary: check_summary,
                                     workflow: workflow_summary,
+                                    agent: agent_summary,
                                     finding_groups: doctor_finding_group_summaries(
                                         &report.findings,
                                         None,
@@ -35870,96 +35904,14 @@ fn format_doctor_execution_context_line(context: &ExecutionContextSummary<'_>) -
 }
 
 fn render_agent_summary_line(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
-    render_agent_summary_block(agent, include_notes)
+    render_agent_summary_text(agent, include_notes)
 }
 
 fn render_doctor_agent_summary_text(
     agent: &AgentSummary<'_>,
     include_notes: bool,
 ) -> Option<String> {
-    let mut lines = Vec::new();
-    lines.push(paint_section_title("Agent"));
-    if let Some(entrypoint) = agent.entrypoint {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Entrypoint:"),
-            &paint_backticked_code(entrypoint),
-        ));
-    }
-    if let Some(default_task) = agent.default_task {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Default task:"),
-            &paint_backticked_code(default_task),
-        ));
-    }
-    if !agent.safe_tasks.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Safe tasks:"),
-            &render_inline_code_list(&agent.safe_tasks),
-        ));
-    }
-    if !agent.verify_after_changes.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Verify after changes:"),
-            &render_inline_code_list(&agent.verify_after_changes),
-        ));
-    }
-    if !agent.writable_paths.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Writable paths:"),
-            &render_inline_code_list(&agent.writable_paths),
-        ));
-    }
-    if !agent.protected_paths.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Protected paths:"),
-            &render_inline_code_list(&agent.protected_paths),
-        ));
-    }
-    if let Some(reviewed) = agent.inferred_boundary_reviewed {
-        let review_status = if reviewed {
-            paint("reviewed", "1;38;2;255;255;255")
-        } else {
-            paint("inferred (needs review)", "1;38;2;255;216;107")
-        };
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Boundary review:"),
-            &review_status,
-        ));
-    }
-    if agent
-        .bootstrap
-        .as_ref()
-        .and_then(|bootstrap| bootstrap.ota.as_ref())
-        .is_some()
-    {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Bootstrap:"),
-            "ota install commands available",
-        ));
-    }
-    if include_notes
-        && let Some(notes) = agent.notes
-        && !notes.trim().is_empty()
-    {
-        lines.push(format!(" {}  {}", summary_bullet(), paint_key("Notes:")));
-        for line in notes.lines() {
-            lines.push(format!("    {line}"));
-        }
-    }
-
-    if lines.len() == 1 {
-        None
-    } else {
-        Some(lines.join("\n"))
-    }
+    render_agent_summary_text(agent, include_notes)
 }
 
 fn render_agents_markdown(
@@ -36897,68 +36849,109 @@ fn agents_markdown_already_present(existing: &str, generated: &str) -> bool {
     existing.contains(&generated)
 }
 
-fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
+fn render_agent_summary_text(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
     let mut lines = Vec::new();
-    lines.push(String::from("AGENT:"));
+    lines.push(paint_section_title("AGENT"));
+
+    let mut overview = Vec::new();
     if let Some(entrypoint) = agent.entrypoint {
-        lines.push(format!("  entrypoint: {entrypoint}"));
+        overview.push((
+            String::from("Entrypoint:"),
+            paint_backticked_code(entrypoint),
+        ));
     }
     if let Some(default_task) = agent.default_task {
-        lines.push(format!("  default_task: {default_task}"));
-    }
-    if !agent.safe_tasks.is_empty() {
-        lines.push(format!("  safe_tasks: {}", agent.safe_tasks.join(", ")));
-    }
-    if !agent.verify_after_changes.is_empty() {
-        lines.push(format!(
-            "  verify_after_changes: {}",
-            agent.verify_after_changes.join(", ")
+        overview.push((
+            String::from("Default task:"),
+            paint_backticked_code(default_task),
         ));
     }
-    if !agent.writable_paths.is_empty() {
-        lines.push(format!(
-            "  writable_paths: {}",
-            agent.writable_paths.join(", ")
-        ));
-    }
-    if !agent.protected_paths.is_empty() {
-        lines.push(format!(
-            "  protected_paths: {}",
-            agent.protected_paths.join(", ")
+    if agent
+        .bootstrap
+        .as_ref()
+        .and_then(|bootstrap| bootstrap.ota.as_ref())
+        .is_some()
+    {
+        overview.push((
+            String::from("Bootstrap:"),
+            String::from("ota install commands available"),
         ));
     }
     if let Some(reviewed) = agent.inferred_boundary_reviewed {
-        lines.push(format!(
-            "  boundary_review: {}",
-            if reviewed {
-                "reviewed"
-            } else {
-                "inferred (needs review)"
-            }
+        let review_status = if reviewed {
+            paint("reviewed", "1;38;2;255;255;255")
+        } else {
+            paint("inferred (needs review)", "1;38;2;255;216;107")
+        };
+        overview.push((String::from("Boundary review:"), review_status));
+    }
+
+    if !overview.is_empty() {
+        lines.push(String::new());
+        lines.push(paint_section_title("Overview"));
+        for (label, value) in overview {
+            lines.push(section_list_row(
+                &summary_bullet(),
+                &paint_key(&label),
+                &value,
+            ));
+        }
+    }
+
+    let mut execution = Vec::new();
+    if !agent.safe_tasks.is_empty() {
+        execution.push(render_agent_counted_code_list_row(
+            "Safe tasks",
+            &agent.safe_tasks,
         ));
     }
-    if let Some(bootstrap) = agent.bootstrap.as_ref()
-        && let Some(ota) = bootstrap.ota.as_ref()
-    {
-        lines.push(String::from("  bootstrap:"));
-        lines.push(String::from("    ota:"));
-        if let Some(note) = ota.note {
-            lines.push(format!("      note: {note}"));
-        }
-        if let Some(sh) = ota.sh {
-            lines.push(format!("      sh: {sh}"));
-        }
-        if let Some(powershell) = ota.powershell {
-            lines.push(format!("      powershell: {powershell}"));
-        }
+    if !agent.verify_after_changes.is_empty() {
+        execution.push(render_agent_counted_code_list_row(
+            "Verify after changes",
+            &agent.verify_after_changes,
+        ));
     }
+    if !execution.is_empty() {
+        lines.push(String::new());
+        lines.push(paint_section_title("Execution"));
+        lines.extend(execution);
+    }
+
+    let (writable_paths, writable_exceptions) =
+        summarize_agent_writable_paths(&agent.writable_paths);
+    let mut boundary = Vec::new();
+    if !writable_paths.is_empty() {
+        boundary.push(render_agent_counted_code_list_row(
+            "Writable paths",
+            &writable_paths,
+        ));
+    }
+    if !writable_exceptions.is_empty() {
+        boundary.push(render_agent_counted_code_list_row(
+            "Writable exceptions",
+            &writable_exceptions,
+        ));
+    }
+    if !agent.protected_paths.is_empty() {
+        boundary.push(render_agent_counted_code_list_row(
+            "Protected paths",
+            &agent.protected_paths,
+        ));
+    }
+    if !boundary.is_empty() {
+        lines.push(String::new());
+        lines.push(paint_section_title("Boundary"));
+        lines.extend(boundary);
+    }
+
     if include_notes
         && let Some(notes) = agent.notes
         && !notes.trim().is_empty()
     {
-        lines.push(String::from("  notes:"));
+        lines.push(String::new());
+        lines.push(paint_section_title("Notes"));
         for line in notes.lines() {
-            lines.push(format!("    {line}"));
+            lines.push(format!(" {}  {}", summary_bullet(), line));
         }
     }
 
@@ -36967,6 +36960,83 @@ fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> 
     } else {
         Some(lines.join("\n"))
     }
+}
+
+fn render_agent_counted_code_list_row<T: AsRef<str>>(label: &str, items: &[T]) -> String {
+    let mut output = String::new();
+    let label = format!("{label} ({}):", items.len());
+    append_wrapped_labeled_text(
+        &mut output,
+        &label,
+        &render_inline_code_list(items),
+        "",
+        96,
+        true,
+        paint_key,
+        |value| value.to_string(),
+    );
+    output.trim_start_matches('\n').to_string()
+}
+
+fn summarize_agent_writable_paths<T: AsRef<str>>(paths: &[T]) -> (Vec<String>, Vec<String>) {
+    let mut summarized = Vec::new();
+    let mut exceptions = Vec::new();
+    let mut seen_roots = BTreeSet::new();
+    let mut seen_summarized = BTreeSet::new();
+    let mut seen_exceptions = BTreeSet::new();
+
+    for path in paths {
+        let value = path.as_ref();
+        if let Some((root, remainder)) = value.split_once('/') {
+            if seen_roots.insert(root.to_string()) {
+                let rendered_root = format!("{root}/");
+                if seen_summarized.insert(rendered_root.clone()) {
+                    summarized.push(rendered_root);
+                }
+            }
+            let final_segment = remainder.rsplit('/').next().unwrap_or(remainder);
+            if looks_like_repo_file_path(final_segment) && seen_exceptions.insert(value.to_string())
+            {
+                exceptions.push(value.to_string());
+            }
+            continue;
+        }
+
+        let rendered = if value.starts_with('.') || looks_like_repo_file_path(value) {
+            value.to_string()
+        } else {
+            format!("{value}/")
+        };
+        if seen_summarized.insert(rendered.clone()) {
+            summarized.push(rendered);
+        }
+    }
+
+    (summarized, exceptions)
+}
+
+fn looks_like_repo_file_path(value: &str) -> bool {
+    if Path::new(value).extension().is_some() {
+        return true;
+    }
+    matches!(
+        value,
+        "Dockerfile"
+            | "Containerfile"
+            | "Makefile"
+            | "GNUmakefile"
+            | "Justfile"
+            | "Brewfile"
+            | "Procfile"
+            | "Tiltfile"
+            | "Vagrantfile"
+            | "Gemfile"
+            | "Rakefile"
+            | "README"
+            | "CHANGELOG"
+            | "LICENSE"
+            | "NOTICE"
+    )
 }
 
 fn render_up(

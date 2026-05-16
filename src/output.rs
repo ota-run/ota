@@ -147,6 +147,8 @@ pub struct CheckSuccess<'a> {
     pub finding_groups: Vec<DoctorFindingGroupSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub toolchains: Vec<ToolchainSelectionSummary>,
     pub findings: &'a [Finding],
