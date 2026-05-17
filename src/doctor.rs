@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -8001,11 +8001,11 @@ fn tcp_readiness_endpoint_status(
     port: u16,
     timeout: Option<Duration>,
 ) -> HttpReadinessStatus {
-    let addr = format!("{}:{}", address.trim(), port);
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
-    let Ok(addrs) = addr.to_socket_addrs() else {
+    let addrs = crate::runner::probe_socket_candidates(address, port);
+    if addrs.is_empty() {
         return HttpReadinessStatus::Failed;
-    };
+    }
     let mut timed_out = false;
     for socket in addrs {
         match TcpStream::connect_timeout(&socket, connect_timeout) {
@@ -11950,6 +11950,68 @@ workflows:
         let server = thread::spawn(move || {
             thread::sleep(Duration::from_millis(1500));
             let listener = TcpListener::bind(("127.0.0.1", port)).expect("listener should bind");
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn workflow_surface_readiness_accepts_ipv6_only_loopback_listener() {
+        let listener = match TcpListener::bind("[::1]:0") {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
             let mut buffer = [0u8; 256];
             let _ = stream.read(&mut buffer);
