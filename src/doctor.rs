@@ -998,7 +998,7 @@ struct RemoteProbeContext {
 const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
 const CONTAINER_PROBE_STARTED_MARKER: &str = "__OTA_CONTAINER_PROBE_STARTED__";
 const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
-const DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES: u32 = 5;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES: u32 = 30;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11849,6 +11849,68 @@ surfaces:
       kind: http
       path: /healthz/readiness
       timeout: 100
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn workflow_surface_readiness_allows_brief_boot_delay() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let server = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(1500));
+            let listener = TcpListener::bind(("127.0.0.1", port)).expect("listener should bind");
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
 tasks:
   dev:be:
     run: pnpm dev:be
