@@ -998,7 +998,8 @@ struct RemoteProbeContext {
 const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
 const CONTAINER_PROBE_STARTED_MARKER: &str = "__OTA_CONTAINER_PROBE_STARTED__";
 const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
-const DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES: u32 = 30;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 120;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 5;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7685,9 +7686,13 @@ fn run_workflow_surface_readiness(
     let resolved_timeout_ms = resolved_timeout.as_millis() as u64;
     let spinner = CheckSpinner::start();
     let mut status = CheckStatus::Failed;
+    let mut failed_attempts = 0u32;
+    let mut timed_out_attempts = 0u32;
     let mut attempts_performed = 0u32;
-    for attempt in 0..DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES {
-        attempts_performed = attempt + 1;
+    let max_attempts = DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES
+        .max(DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES);
+    for _ in 0..max_attempts {
+        attempts_performed += 1;
         let observed = match probe.request.as_ref() {
             Some(request) => http_readiness_endpoint_status(
                 probe.address.as_str(),
@@ -7709,11 +7714,23 @@ fn run_workflow_surface_readiness(
         if status == CheckStatus::Passed {
             break;
         }
-        if attempt + 1 < DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES {
-            thread::sleep(Duration::from_millis(
-                DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS,
-            ));
+        let should_continue = match status {
+            CheckStatus::Failed => {
+                failed_attempts += 1;
+                failed_attempts < DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES
+            }
+            CheckStatus::TimedOut(_) => {
+                timed_out_attempts += 1;
+                timed_out_attempts < DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES
+            }
+            CheckStatus::Passed => false,
+        };
+        if !should_continue {
+            break;
         }
+        thread::sleep(Duration::from_millis(
+            DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS,
+        ));
     }
     spinner.stop();
     Ok(WorkflowSurfaceReadinessObservation {
@@ -12005,7 +12022,7 @@ workflows:
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
-            for _ in 0..super::DOCTOR_WORKFLOW_SURFACE_READINESS_RETRIES {
+            for _ in 0..super::DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES {
                 let (_stream, _) = listener.accept().expect("probe should connect");
                 thread::sleep(Duration::from_millis(350));
             }
