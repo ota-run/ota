@@ -5,6 +5,49 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["ok", "path", "summary", "findings"],
+  "$defs": {
+    "toolchainSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "provider",
+        "backend",
+        "target_os",
+        "version",
+        "fulfillment",
+        "required",
+        "owns_runtime"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "provider": { "type": "string" },
+        "backend": { "type": "string" },
+        "target_os": { "type": "string" },
+        "version": { "type": "string" },
+        "fulfillment": { "enum": ["none", "run"] },
+        "required": { "type": "boolean" },
+        "owns_runtime": { "type": "string" },
+        "fulfilled": { "type": "boolean" },
+        "commands": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "owns_tools": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "components": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
@@ -39,6 +82,10 @@
       "type": "array",
       "items": { "$ref": "./shared.json#/$defs/finding" }
     },
+    "toolchains": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/toolchainSelection" }
+    },
     "finding_groups": {
       "type": "array",
       "items": {
@@ -62,6 +109,10 @@
         "properties": {
           "member": { "type": "string" },
           "ok": { "type": "boolean" },
+          "toolchains": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/toolchainSelection" }
+          },
           "findings": {
             "type": "array",
             "items": { "$ref": "./shared.json#/$defs/finding" }

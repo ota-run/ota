@@ -30,7 +30,11 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
-use crate::schema::{EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec};
+use crate::schema::{
+    EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec,
+    ToolchainFulfillmentMode, ToolchainProvider,
+};
+use crate::toolchains::{JAVA_TOOLCHAIN_NAME, toolchain_repo_signals};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -192,6 +196,8 @@ pub struct DetectContract {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<DetectProject>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub toolchains: BTreeMap<String, DetectToolchainSpec>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub runtimes: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tools: BTreeMap<String, String>,
@@ -205,6 +211,14 @@ pub struct DetectContract {
     pub tasks: BTreeMap<String, DetectTask>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<crate::schema::AgentConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectToolchainSpec {
+    pub provider: ToolchainProvider,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fulfillment: Option<ToolchainFulfillmentMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -373,6 +387,39 @@ impl DetectReport {
                 continue;
             }
 
+            if let Some(toolchain_field) = inference.field.strip_prefix("toolchains.")
+                && let Some((toolchain_name, field_name)) = toolchain_field.split_once('.')
+            {
+                let toolchain = contract
+                    .toolchains
+                    .entry(toolchain_name.to_string())
+                    .or_insert_with(|| DetectToolchainSpec {
+                        provider: ToolchainProvider::Sdkman,
+                        version: String::new(),
+                        fulfillment: None,
+                    });
+                match field_name {
+                    "provider" => {
+                        toolchain.provider = match inference.value.as_str() {
+                            "rustup" => ToolchainProvider::Rustup,
+                            "corepack" => ToolchainProvider::Corepack,
+                            "sdkman" => ToolchainProvider::Sdkman,
+                            _ => toolchain.provider,
+                        };
+                    }
+                    "version" => toolchain.version = inference.value.clone(),
+                    "fulfillment" => {
+                        toolchain.fulfillment = match inference.value.as_str() {
+                            "run" => Some(ToolchainFulfillmentMode::Run),
+                            "none" => Some(ToolchainFulfillmentMode::None),
+                            _ => toolchain.fulfillment,
+                        };
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
             if let Some(tool) = inference.field.strip_prefix("tools.") {
                 contract
                     .tools
@@ -461,6 +508,8 @@ impl DetectReport {
             .env
             .sources
             .retain(|source| !source.path.trim().is_empty());
+
+        normalize_detected_toolchains(&self.root, &mut contract);
 
         contract
     }
@@ -3925,7 +3974,12 @@ impl DetectBuilder {
         }
     }
 
-    fn finish(self) -> DetectReport {
+    fn finish(mut self) -> DetectReport {
+        synthesize_detected_toolchain_inferences(
+            &self.root,
+            &mut self.contract,
+            &mut self.inferences,
+        );
         DetectReport {
             root: self.root,
             contract: self.contract,
@@ -4127,6 +4181,63 @@ impl DetectBuilder {
             field.clone(),
             Inference::new(field, value, source, confidence),
         );
+    }
+}
+
+fn synthesize_detected_toolchain_inferences(
+    root: &Path,
+    contract: &mut DetectContract,
+    inferences: &mut BTreeMap<String, Inference>,
+) {
+    let Some(java_version) = contract.runtimes.get(JAVA_TOOLCHAIN_NAME).cloned() else {
+        return;
+    };
+    if toolchain_repo_signals(root, JAVA_TOOLCHAIN_NAME).is_empty() {
+        return;
+    }
+
+    let confidence = inferences
+        .get("runtimes.java")
+        .map(|inference| inference.confidence)
+        .unwrap_or(Confidence::High);
+    let version_source = inferences
+        .get("runtimes.java")
+        .map(|inference| inference.source.clone())
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.java.version"));
+
+    contract.runtimes.remove(JAVA_TOOLCHAIN_NAME);
+    inferences.remove("runtimes.java");
+    contract.toolchains.insert(
+        String::from(JAVA_TOOLCHAIN_NAME),
+        DetectToolchainSpec {
+            provider: ToolchainProvider::Sdkman,
+            version: java_version.clone(),
+            fulfillment: None,
+        },
+    );
+    inferences.insert(
+        String::from("toolchains.java.provider"),
+        Inference::new(
+            String::from("toolchains.java.provider"),
+            String::from("sdkman"),
+            String::from("ota.detect#toolchains.java.provider"),
+            confidence,
+        ),
+    );
+    inferences.insert(
+        String::from("toolchains.java.version"),
+        Inference::new(
+            String::from("toolchains.java.version"),
+            java_version,
+            version_source,
+            confidence,
+        ),
+    );
+}
+
+fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
+    if contract.toolchains.contains_key(JAVA_TOOLCHAIN_NAME) {
+        contract.runtimes.remove(JAVA_TOOLCHAIN_NAME);
     }
 }
 
@@ -4480,7 +4591,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{Confidence, detect_repo};
-    use crate::schema::{EnvSource, EnvSourceKind};
+    use crate::schema::{EnvSource, EnvSourceKind, ToolchainProvider};
 
     #[test]
     fn prefers_nvmrc_over_package_json_engines() {
@@ -5928,8 +6039,12 @@ channel = "1.85.0"
             Some("ota-java-service")
         );
         assert_eq!(
-            report.contract.runtimes.get("java"),
-            Some(&"21".to_string())
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Sdkman, "21"))
         );
         assert_eq!(
             report.contract.tools.get("gradle"),
@@ -5961,8 +6076,12 @@ channel = "1.85.0"
 
         assert_eq!(report.contract.tools.get("gradle"), Some(&"*".to_string()));
         assert_eq!(
-            report.contract.runtimes.get("java"),
-            Some(&"17".to_string())
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Sdkman, "17"))
         );
         assert_eq!(
             report
@@ -6027,8 +6146,12 @@ channel = "1.85.0"
             Some("Qredex Core")
         );
         assert_eq!(
-            report.contract.runtimes.get("java"),
-            Some(&"21".to_string())
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Sdkman, "21"))
         );
         assert_eq!(report.contract.tools.get("maven"), Some(&"*".to_string()));
         assert_eq!(
@@ -6073,8 +6196,12 @@ channel = "1.85.0"
             Some("ota-maven-service")
         );
         assert_eq!(
-            report.contract.runtimes.get("java"),
-            Some(&"21".to_string())
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Sdkman, "21"))
         );
         assert_eq!(report.contract.tools.get("maven"), Some(&"*".to_string()));
         assert_eq!(
@@ -6107,6 +6234,14 @@ channel = "1.85.0"
 
         let report = detect_repo(fixture.path()).unwrap();
 
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Sdkman, "21"))
+        );
         assert_eq!(
             report.contract.tools.get("maven"),
             Some(&"3.9.9".to_string())
@@ -6145,16 +6280,34 @@ channel = "1.85.0"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.runtimes.get("java"),
-            Some(&"21".to_string())
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Sdkman, "21"))
         );
         assert!(
             report
                 .inferences
                 .iter()
-                .any(|inference| inference.field == "runtimes.java"
+                .any(|inference| inference.field == "toolchains.java.provider"
+                    && inference.value == "sdkman"
+                    && inference.confidence == Confidence::High)
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "toolchains.java.version"
                     && inference.source == ".java-version"
                     && inference.confidence == Confidence::High)
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .all(|inference| inference.field != "runtimes.java")
         );
     }
 
@@ -6166,14 +6319,32 @@ channel = "1.85.0"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.runtimes.get("java"),
-            Some(&"21.0.2-tem".to_string())
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Sdkman, "21.0.2-tem"))
         );
         assert!(
             report
                 .inferences
                 .iter()
-                .any(|inference| inference.field == "runtimes.java"
+                .any(|inference| inference.field == "toolchains.java.version"
+                    && inference.source == ".sdkmanrc#java"
+                    && inference.confidence == Confidence::High)
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .all(|inference| inference.field != "runtimes.java")
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "toolchains.java.version"
                     && inference.source == ".sdkmanrc#java"
                     && inference.confidence == Confidence::High)
         );
@@ -6188,8 +6359,12 @@ channel = "1.85.0"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.runtimes.get("java"),
-            Some(&"21".to_string())
+            report
+                .contract
+                .toolchains
+                .get("java")
+                .map(|toolchain| toolchain.version.as_str()),
+            Some("21")
         );
     }
 

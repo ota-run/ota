@@ -63,7 +63,7 @@ Use one of the minimal starters:
 - [Basic Python](../../examples/basic-python/ota.yaml) for Python repos
 - [Basic Go](../../examples/basic-go/ota.yaml) for Go module repos
 - [Basic Java](../../examples/basic-java/ota.yaml) for Maven repos
-- [Basic Rust](../../examples/basic-rust/ota.yaml) for Cargo repos
+- [Basic Rust](../../examples/basic-rust/ota.yaml) for Rustup-backed Cargo repos
 - [Basic .NET](../../examples/basic-dotnet/ota.yaml) for C# / .NET repos
 - [Basic Script](../../examples/basic-script/ota.yaml) for script-only repos
 

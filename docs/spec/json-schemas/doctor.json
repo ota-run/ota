@@ -6,6 +6,47 @@
   "additionalProperties": false,
   "required": ["ok", "path", "mode", "summary", "findings"],
   "$defs": {
+    "toolchainSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "provider",
+        "backend",
+        "target_os",
+        "version",
+        "fulfillment",
+        "required",
+        "owns_runtime"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "provider": { "type": "string" },
+        "backend": { "type": "string" },
+        "target_os": { "type": "string" },
+        "version": { "type": "string" },
+        "fulfillment": { "enum": ["none", "run"] },
+        "required": { "type": "boolean" },
+        "owns_runtime": { "type": "string" },
+        "fulfilled": { "type": "boolean" },
+        "commands": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "owns_tools": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "components": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "workflowSummary": {
       "type": "object",
       "additionalProperties": false,
@@ -32,6 +73,18 @@
           "items": { "type": "string" }
         },
         "readiness_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "signal_readiness_checks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "signal_readiness_probes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "signal_readiness_surfaces": {
           "type": "array",
           "items": { "type": "string" }
         },
@@ -162,6 +215,10 @@
         }
       }
     },
+    "toolchains": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/toolchainSelection" }
+    },
     "provisioning": { "$ref": "./shared.json#/$defs/provisioningPlan" },
     "provisioning_request": {
       "$ref": "./shared.json#/$defs/provisioningBackendRequest"
@@ -214,6 +271,10 @@
         "properties": {
           "member": { "type": "string" },
           "ok": { "type": "boolean" },
+          "toolchains": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/toolchainSelection" }
+          },
           "agent": {
             "type": "object",
             "additionalProperties": false,

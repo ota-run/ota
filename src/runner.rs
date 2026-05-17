@@ -70,11 +70,11 @@ use crate::schema::{
     TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol,
     TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
-    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
-    task_target_env_name,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
+use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_contract};
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
 #[derive(Clone)]
@@ -1139,6 +1139,7 @@ pub struct RunOutcome {
     pub backend_fulfillment: Option<BackendFulfillmentEvidence>,
     pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
     pub shared_local_backend: Option<SharedLocalBackendEvidence>,
+    pub fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
 }
@@ -1159,8 +1160,15 @@ pub struct CapturedRunOutcome {
     pub backend_fulfillment: Option<BackendFulfillmentEvidence>,
     pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
     pub shared_local_backend: Option<SharedLocalBackendEvidence>,
+    pub fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolchainFulfillmentEvidence {
+    pub name: String,
+    pub commands: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -2917,6 +2925,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
         backend_fulfillment: outcome.backend_fulfillment,
         task_step_shared_local_backends: outcome.task_step_shared_local_backends,
         shared_local_backend: outcome.shared_local_backend,
+        fulfilled_toolchains: outcome.fulfilled_toolchains,
         execution_note: outcome.execution_note,
         interrupted: outcome.interrupted,
     })
@@ -3806,6 +3815,7 @@ struct TaskRunState {
     fulfilled_backend_source_managed_actions: BTreeMap<String, Vec<ProvisioningAction>>,
     native_activation_env_cache: BTreeMap<String, BTreeMap<String, String>>,
     fulfilled_toolchain_keys: BTreeSet<String>,
+    fulfilled_toolchains: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -4219,6 +4229,11 @@ fn run_task_internal(
         backend_fulfillment: state.backend_fulfillment,
         task_step_shared_local_backends: state.task_step_shared_local_backends,
         shared_local_backend: state.shared_local_backend,
+        fulfilled_toolchains: state
+            .fulfilled_toolchains
+            .into_iter()
+            .map(|(name, commands)| ToolchainFulfillmentEvidence { name, commands })
+            .collect(),
         execution_note: state.execution_note,
         interrupted: state.interrupted,
     })
@@ -4441,7 +4456,8 @@ fn execute_native_launch_command(
     mode: TaskExecutionMode,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
-    let mut process = Command::new(exe);
+    let resolved_executable = resolve_native_launch_executable(exe);
+    let mut process = Command::new(&resolved_executable);
     process
         .args(args)
         .current_dir(working_dir)
@@ -4637,6 +4653,10 @@ fn execute_native_launch_command(
             })
         }
     }
+}
+
+fn resolve_native_launch_executable(exe: &str) -> PathBuf {
+    crate::doctor::resolve_command_path(exe).unwrap_or_else(|| PathBuf::from(exe))
 }
 
 fn task_launch_container_shape_seed(
@@ -6383,7 +6403,8 @@ fn maybe_fulfill_toolchains_on_run_path(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
-        if !toolchain.active_for_os(current_os)
+        let target_os = target_os_for_toolchain_backend(backend, current_os);
+        if !toolchain.active_for_os(target_os)
             || toolchain.fulfillment_mode() != ToolchainFulfillmentMode::Run
         {
             continue;
@@ -6394,12 +6415,10 @@ fn maybe_fulfill_toolchains_on_run_path(
             continue;
         }
 
-        for command in toolchain_fulfillment_commands(
-            toolchain_name.as_str(),
-            toolchain,
-            target_os_for_toolchain_backend(backend, current_os),
-            backend,
-        ) {
+        let mut executed_commands = Vec::new();
+        for command in
+            toolchain_fulfillment_commands(toolchain_name.as_str(), toolchain, target_os, backend)
+        {
             let output = run_backend_command_captured(
                 &format!("toolchain-fulfill:{toolchain_name}"),
                 command.as_str(),
@@ -6415,6 +6434,12 @@ fn maybe_fulfill_toolchains_on_run_path(
                     details: format!("`{command}` exited with code {}", output.exit_code),
                 });
             }
+            executed_commands.push(command);
+        }
+        if !executed_commands.is_empty() {
+            state
+                .fulfilled_toolchains
+                .insert(toolchain_name, executed_commands);
         }
     }
 
@@ -6466,29 +6491,22 @@ fn toolchain_fulfillment_commands(
     target_os: &str,
     backend: &ResolvedExecutionBackend,
 ) -> Vec<String> {
-    match (toolchain_name, toolchain.provider) {
-        ("rust", ToolchainProvider::Rustup) => {
-            let mut args = vec![
-                String::from("toolchain"),
-                String::from("install"),
-                toolchain.version_for_os(target_os).to_string(),
-            ];
-            if let Some(profile) = toolchain.profile_for_os(target_os) {
-                args.push(String::from("--profile"));
-                args.push(profile.to_string());
-            }
-            for component in toolchain.components_for_os(target_os) {
-                args.push(String::from("--component"));
-                args.push(component);
-            }
-            for target in toolchain.targets_for_os(target_os) {
-                args.push(String::from("--target"));
-                args.push(target);
-            }
-            vec![shell_quote_command_argv(backend, "rustup", &args)]
-        }
-        _ => Vec::new(),
-    }
+    declared_toolchain_contract(toolchain_name, toolchain)
+        .map(|provider| {
+            provider
+                .fulfillment_commands(toolchain, target_os)
+                .into_iter()
+                .map(|command| render_toolchain_command(backend, command))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn render_toolchain_command(
+    backend: &ResolvedExecutionBackend,
+    command: ToolchainCommandSpec,
+) -> String {
+    shell_quote_command_argv(backend, command.program, &command.args)
 }
 
 fn target_os_for_toolchain_backend<'a>(
@@ -7381,11 +7399,8 @@ fn probe_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    if cfg!(windows)
-        && matches!(backend, ResolvedExecutionBackend::Native { .. })
-        && windows_native_shell_prefers_posix()
-    {
-        return probe_posix_shell_command_version(working_dir, command_name);
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        return probe_native_backend_command_version(working_dir, command_name);
     }
     let probe_command = backend_runtime_version_probe_command(command_name, backend);
     let output = run_backend_command_captured(
@@ -7413,65 +7428,105 @@ fn probe_backend_command_version(
     ))
 }
 
-fn windows_native_shell_prefers_posix() -> bool {
-    std::env::var("MSYSTEM").is_ok()
-        || std::env::var("SHELL")
-            .ok()
-            .map(|shell| {
-                let lowered = shell.to_ascii_lowercase();
-                lowered.contains("bash") || lowered.contains("sh")
-            })
-            .unwrap_or(false)
-}
-
-fn probe_posix_shell_command_version(
+fn probe_native_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    let quoted = shell_quote(command_name);
-    let probe_command = format!(
-        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
-    );
-    let shell_program = std::env::var("SHELL")
-        .ok()
-        .filter(|shell| !shell.trim().is_empty())
-        .unwrap_or_else(|| String::from("sh"));
-    let output = Command::new(shell_program)
-        .arg("-lc")
-        .arg(probe_command)
-        .current_dir(working_dir)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .and_then(|child| child.wait_with_output())
-        .map(|output| TaskCommandOutput {
-            exit_code: output.status.code().unwrap_or(1),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            target: None,
-            runtime: None,
-            service_termination: None,
-            execution_note: None,
-            interrupted: false,
-        })
-        .map_err(|error| error.to_string())?;
-    if output.exit_code == 127 {
+    let Some(resolved) = crate::doctor::resolve_command_path(command_name) else {
         return Ok(None);
+    };
+
+    let mut attempted_exit_code = None;
+    let mut attempted_error = None;
+    let mut parseable_attempt_observed = false;
+
+    for args in native_backend_version_probe_args(command_name) {
+        let output = native_backend_probe_output(resolved.as_path(), args, working_dir);
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    let combined = format!(
+                        "{} {}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    if let Some(version) = extract_probe_version_token(combined.as_str()) {
+                        return Ok(Some(version));
+                    }
+                    parseable_attempt_observed = true;
+                    continue;
+                }
+                attempted_exit_code = output.status.code();
+            }
+            Err(error) => {
+                attempted_error = Some(error.to_string());
+            }
+        }
     }
-    let combined = format!("{} {}", output.stdout, output.stderr);
-    if let Some(version) = extract_probe_version_token(combined.as_str()) {
-        return Ok(Some(version));
-    }
-    if output.exit_code != 0 {
-        return Err(format!(
-            "version probe command exited with code {}",
-            output.exit_code
+
+    if parseable_attempt_observed {
+        return Err(String::from(
+            "version probe did not return a parseable version",
         ));
     }
+
+    if let Some(error) = attempted_error {
+        return Err(format!("version probe command could not execute: {error}"));
+    }
+
+    if let Some(exit_code) = attempted_exit_code {
+        return Err(format!(
+            "version probe command exited with code {exit_code}"
+        ));
+    }
+
     Err(String::from(
-        "version probe did not return a parseable version",
+        "version probe command failed before ota could read a version",
     ))
+}
+
+fn native_backend_version_probe_args(command_name: &str) -> Vec<&'static str> {
+    if command_name == "go" {
+        vec!["version"]
+    } else {
+        vec!["--version", "version", "-version"]
+    }
+}
+
+fn native_backend_probe_output(
+    resolved_path: &Path,
+    args: &str,
+    working_dir: &Path,
+) -> std::io::Result<std::process::Output> {
+    let mut command = native_backend_probe_command(resolved_path);
+    command
+        .arg(args)
+        .current_dir(working_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+}
+
+#[cfg(windows)]
+fn native_backend_probe_command(resolved_path: &Path) -> Command {
+    let is_wrapper = resolved_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat")
+        });
+    if is_wrapper {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(resolved_path);
+        return command;
+    }
+    Command::new(resolved_path)
+}
+
+#[cfg(not(windows))]
+fn native_backend_probe_command(resolved_path: &Path) -> Command {
+    Command::new(resolved_path)
 }
 
 fn backend_runtime_version_probe_command(
@@ -9208,15 +9263,40 @@ pub(crate) fn target_probe_endpoint_reachable_with_timeout(
     port: u16,
     timeout: Option<Duration>,
 ) -> bool {
-    let addr = format!("{}:{}", address.trim(), port);
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
-    addr.to_socket_addrs()
-        .map(|addrs| {
-            addrs
-                .into_iter()
-                .any(|socket| TcpStream::connect_timeout(&socket, connect_timeout).is_ok())
-        })
-        .unwrap_or(false)
+    for (index, socket) in probe_socket_candidates(address, port)
+        .into_iter()
+        .enumerate()
+    {
+        let effective_timeout = probe_connect_timeout_for_candidate(connect_timeout, index);
+        if TcpStream::connect_timeout(&socket, effective_timeout).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+pub(crate) fn probe_socket_candidates(address: &str, port: u16) -> Vec<std::net::SocketAddr> {
+    let normalized = address.trim();
+    let mut candidates = Vec::new();
+    candidates.push(normalized.to_string());
+    if is_loopback_only_host_address(normalized) {
+        candidates.push(String::from("127.0.0.1"));
+        candidates.push(String::from("::1"));
+        candidates.push(String::from("localhost"));
+    }
+    let mut seen = BTreeSet::new();
+    let mut sockets = Vec::new();
+    for candidate in candidates {
+        if let Ok(resolved) = (candidate.as_str(), port).to_socket_addrs() {
+            for socket in resolved {
+                if seen.insert(socket) {
+                    sockets.push(socket);
+                }
+            }
+        }
+    }
+    sockets
 }
 
 fn target_activation_producer_failure(
@@ -15033,15 +15113,17 @@ pub(crate) fn http_readiness_endpoint_status(
     request: &HttpReadinessRequest,
     timeout: Option<Duration>,
 ) -> HttpReadinessStatus {
-    let addr = format!("{}:{}", address.trim(), port);
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
     let io_timeout = timeout.unwrap_or(Duration::from_millis(500));
-    let Ok(addrs) = addr.to_socket_addrs() else {
+    let addrs = probe_socket_candidates(address, port);
+    if addrs.is_empty() {
         return HttpReadinessStatus::Failed;
-    };
+    }
     let mut timed_out = false;
-    for socket in addrs {
-        match http_readiness_socket_status(address, socket, request, connect_timeout, io_timeout) {
+    for (index, socket) in addrs.into_iter().enumerate() {
+        let effective_timeout = probe_connect_timeout_for_candidate(connect_timeout, index);
+        match http_readiness_socket_status(address, socket, request, effective_timeout, io_timeout)
+        {
             HttpReadinessStatus::Passed => return HttpReadinessStatus::Passed,
             HttpReadinessStatus::TimedOut => timed_out = true,
             HttpReadinessStatus::Failed => {}
@@ -15126,6 +15208,14 @@ fn http_probe_io_timed_out(error: &std::io::Error) -> bool {
         error.kind(),
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
     )
+}
+
+fn probe_connect_timeout_for_candidate(base: Duration, candidate_index: usize) -> Duration {
+    if candidate_index == 0 {
+        base
+    } else {
+        base.min(Duration::from_millis(300))
+    }
 }
 
 fn response_matches_http_readiness(response_bytes: &[u8], request: &HttpReadinessRequest) -> bool {
@@ -20094,6 +20184,7 @@ mod tests {
     use std::fs::{self, File};
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
@@ -20198,6 +20289,41 @@ Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
         assert!(looks_like_powershell_script(script));
         assert!(!looks_like_posix_script(script));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_launch_resolves_windows_command_from_path() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let npx_path = bin_dir.join("npx.cmd");
+        fs::write(&npx_path, "@echo off\r\necho npx\r\n").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_pathext = env::var_os("PATHEXT");
+        let mut entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+        }
+
+        let resolved = super::resolve_native_launch_executable("npx");
+        assert_eq!(resolved, npx_path);
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_pathext {
+            Some(value) => unsafe { env::set_var("PATHEXT", value) },
+            None => unsafe { env::remove_var("PATHEXT") },
+        }
     }
 
     #[cfg(unix)]
@@ -26218,6 +26344,54 @@ tasks:
     }
 
     #[test]
+    #[cfg(unix)]
+    fn native_backend_requirement_probe_uses_resolved_binary_not_login_shell_path() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\nprintf 'v24.8.0\\n'\n");
+
+        let shell_path = temp.path().join("fake-shell.sh");
+        fs::write(&shell_path, "#!/bin/sh\nprintf 'v22.22.2\\n'\nexit 0\n").unwrap();
+        let mut shell_permissions = fs::metadata(&shell_path).unwrap().permissions();
+        shell_permissions.set_mode(0o755);
+        fs::set_permissions(&shell_path, shell_permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_shell = env::var_os("SHELL");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("SHELL", &shell_path);
+        }
+
+        let version = super::probe_backend_command_version(
+            &super::ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            Path::new("."),
+            "node",
+        )
+        .expect("native probe should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_shell {
+            Some(shell) => unsafe { env::set_var("SHELL", shell) },
+            None => unsafe { env::remove_var("SHELL") },
+        }
+
+        assert_eq!(version.as_deref(), Some("24.8.0"));
+    }
+
+    #[test]
     fn task_target_binding_does_not_resolve_listener_from_other_backend_mode() {
         let fixture = ContractFixture::new(
             r#"
@@ -28360,6 +28534,7 @@ tasks:
                 backend_fulfillment: None,
                 task_step_shared_local_backends: vec![None],
                 shared_local_backend: None,
+                fulfilled_toolchains: vec![],
                 execution_note: None,
                 interrupted: false,
             }
@@ -31458,6 +31633,77 @@ exec "$(dirname "$0")/docker-real" "$@"
             b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
             &request,
         ));
+    }
+
+    #[test]
+    fn loopback_tcp_probe_tries_ipv6_for_ipv4_loopback_surface() {
+        let listener = match TcpListener::bind("[::1]:0") {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+
+        assert!(
+            super::target_probe_endpoint_reachable_with_timeout(
+                "127.0.0.1",
+                port,
+                Some(Duration::from_millis(300))
+            ),
+            "tcp readiness should accept a loopback service reachable only via ::1"
+        );
+    }
+
+    #[test]
+    fn loopback_http_probe_tries_ipv6_for_ipv4_loopback_surface() {
+        let listener = match TcpListener::bind("[::1]:0") {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0u8; 512];
+                let _ = stream.read(&mut request);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+            }
+        });
+        let request = HttpReadinessRequest {
+            method: TaskRuntimeReadinessHttpMethod::Get,
+            path: String::from("/"),
+            headers: BTreeMap::new(),
+            success_statuses: vec![200],
+            body_contains: None,
+        };
+        let status = super::http_readiness_endpoint_status(
+            "127.0.0.1",
+            port,
+            &request,
+            Some(Duration::from_millis(400)),
+        );
+        server.join().expect("server thread should join");
+        assert_eq!(status, super::HttpReadinessStatus::Passed);
+    }
+
+    #[test]
+    fn primary_probe_candidate_keeps_declared_connect_timeout() {
+        let base = Duration::from_millis(2_000);
+        let timeout = super::probe_connect_timeout_for_candidate(base, 0);
+        assert_eq!(timeout, base);
+    }
+
+    #[test]
+    fn fallback_probe_candidates_use_capped_connect_timeout() {
+        let timeout = super::probe_connect_timeout_for_candidate(Duration::from_secs(5), 1);
+        assert_eq!(timeout, Duration::from_millis(300));
+        let timeout_small =
+            super::probe_connect_timeout_for_candidate(Duration::from_millis(200), 2);
+        assert_eq!(timeout_small, Duration::from_millis(200));
     }
 
     #[test]
@@ -42550,6 +42796,67 @@ tasks:
         assert_eq!(lines.len(), 1, "{log}");
         assert!(lines[0].contains("toolchain install 1.94.0"), "{log}");
         assert!(lines[0].contains("--component rustfmt"), "{log}");
+        let fulfilled = state
+            .fulfilled_toolchains
+            .get("rust")
+            .expect("fulfilled toolchain commands should be recorded");
+        assert_eq!(fulfilled.len(), 1, "{fulfilled:?}");
+        assert!(
+            fulfilled[0].contains("'toolchain' 'install' '1.94.0'"),
+            "{fulfilled:?}"
+        );
+        assert!(
+            fulfilled[0].contains("'--component' 'rustfmt'"),
+            "{fulfilled:?}"
+        );
+    }
+
+    #[test]
+    fn run_path_toolchain_fulfillment_uses_backend_target_os_for_container() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    only_on:
+      - linux
+    platforms:
+      linux:
+        version: "1.94.1"
+        components:
+          - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+"#,
+        );
+        let backend = ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::from("rust:1.94-bookworm"),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
+        let toolchain = fixture.contract.toolchains.get("rust").unwrap();
+        let target_os = super::target_os_for_toolchain_backend(&backend, "windows");
+
+        assert_eq!(target_os, "linux");
+        assert!(toolchain.active_for_os(target_os));
+        let commands =
+            super::toolchain_fulfillment_commands("rust", toolchain, target_os, &backend);
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("1.94.1"));
+        assert!(!commands[0].contains("1.94.0"));
+        assert!(commands[0].contains("rustfmt"));
     }
 
     fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {

@@ -98,6 +98,7 @@ pub(crate) struct StarterPackCatalogEntry {
     pub(crate) pack: StarterPack,
     pub(crate) summary: &'static str,
     pub(crate) when: &'static str,
+    pub(crate) toolchains: &'static [&'static str],
     pub(crate) runtimes: &'static [&'static str],
     pub(crate) tools: &'static [&'static str],
     pub(crate) checks: &'static [&'static str],
@@ -168,6 +169,7 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
                 when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path uses pnpm, and you can override it with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
+                toolchains: &[],
                 runtimes: &["node"],
                 tools: &["pnpm"],
                 checks: &["node-installed"],
@@ -183,6 +185,7 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional Python starter with requirements-based setup and pytest.",
                 when: "Use this for Python repos that install from requirements.txt. The default path uses pytest, and you can switch to `python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
+                toolchains: &[],
                 runtimes: &["python"],
                 tools: &[],
                 checks: &["python-installed"],
@@ -197,6 +200,7 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional Go starter with module download, build, and test tasks.",
                 when: "Use this for Go module repos that should start from the standard `go mod download`, `go build`, and `go test` flow without relying on detector-led init.",
+                toolchains: &[],
                 runtimes: &["go"],
                 tools: &[],
                 checks: &["go-installed"],
@@ -210,6 +214,7 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional Rust starter with Cargo fetch, build, and test tasks.",
                 when: "Use this for Cargo-managed Rust repos that should start from the standard fetch/build/test flow without relying on detector-led init.",
+                toolchains: &[],
                 runtimes: &["rust"],
                 tools: &["cargo"],
                 checks: &["rust-installed"],
@@ -223,6 +228,7 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional .NET starter with restore, build, and test tasks.",
                 when: "Use this for .NET repos that should start from the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
+                toolchains: &[],
                 runtimes: &["dotnet"],
                 tools: &["dotnet"],
                 checks: &["dotnet-installed"],
@@ -236,6 +242,7 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional PHP starter for Composer-managed repos with Composer install and optional existing test-script reuse.",
                 when: "Use this for Composer-managed PHP repos that should start from `composer install` and, when the repo already declares `scripts.test`, the existing Composer test script without relying on detector-led init.",
+                toolchains: &[],
                 runtimes: &["php"],
                 tools: &["composer"],
                 checks: &["php-installed", "composer-installed"],
@@ -249,9 +256,10 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional Java starter for Maven-driven repos with build and test lifecycles, preferring `mvnw` when the repo already ships it.",
                 when: "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses the wrapper instead of requiring a global Maven install.",
-                runtimes: &["java"],
+                toolchains: &["java"],
+                runtimes: &[],
                 tools: &[],
-                checks: &["java-installed"],
+                checks: &[],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
                 does_not_infer: &[
@@ -262,9 +270,10 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional Java starter for Gradle-driven repos with build and test lifecycles, preferring `gradlew` when the repo already ships it.",
                 when: "Use this when the repo is intentionally Gradle-based and you want an explicit Java starter without relying on repo detection. If `gradlew` already exists, ota uses the wrapper instead of requiring a global Gradle install.",
-                runtimes: &["java"],
+                toolchains: &["java"],
+                runtimes: &[],
                 tools: &[],
-                checks: &["java-installed"],
+                checks: &[],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
                 does_not_infer: &[
@@ -1606,7 +1615,8 @@ fn starter_agent_stack_source_extensions(contract: &DetectContract) -> Option<Ve
         extensions.extend(["rb", "rake"]);
     }
 
-    if contract.runtimes.contains_key("java")
+    if contract.toolchains.contains_key("java")
+        || contract.runtimes.contains_key("java")
         || contract.runtimes.contains_key("kotlin")
         || ["maven", "gradle", "kotlin"]
             .iter()
@@ -2210,17 +2220,14 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
         }
         StarterPack::JavaMaven => {
             let uses_wrapper = root.join("mvnw").exists();
-            contract
-                .runtimes
-                .insert(String::from("java"), String::from("22"));
-            contract.checks.push(DetectCheck {
-                name: String::from("java-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("java --version"),
-                path: None,
-                expect: None,
-            });
+            contract.toolchains.insert(
+                String::from("java"),
+                crate::detector::DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Sdkman,
+                    version: String::from("22"),
+                    fulfillment: None,
+                },
+            );
             if !uses_wrapper {
                 contract
                     .tools
@@ -2273,17 +2280,14 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
         }
         StarterPack::JavaGradle => {
             let uses_wrapper = root.join("gradlew").exists();
-            contract
-                .runtimes
-                .insert(String::from("java"), String::from("22"));
-            contract.checks.push(DetectCheck {
-                name: String::from("java-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("java --version"),
-                path: None,
-                expect: None,
-            });
+            contract.toolchains.insert(
+                String::from("java"),
+                crate::detector::DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Sdkman,
+                    version: String::from("22"),
+                    fulfillment: None,
+                },
+            );
             if !uses_wrapper {
                 contract
                     .tools

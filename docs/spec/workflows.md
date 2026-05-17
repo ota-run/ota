@@ -340,6 +340,19 @@ Use `checks[].probe` when the same underlying probe should also participate in t
 Use `readiness.surfaces` when the workflow should prove one runtime surface already owned by the
 repo topology instead of restating a probe target or literal URL.
 
+Use `readiness.signal` when a packaged/quickstart path should report extra startup signals without
+blocking readiness verdicts:
+
+- `readiness.signal.checks`
+- `readiness.signal.probes`
+- `readiness.signal.surfaces`
+
+Signal findings are surfaced as informational diagnostics in `ota doctor` / `ota up` output and
+JSON, but they do not flip repo readiness to `not_ready`.
+
+Each readiness item must appear in one lane only: gating (`readiness.*`) or signal
+(`readiness.signal.*`), not both.
+
 ## Design rule
 
 Use workflows when they make the repo's operational truth more explicit.

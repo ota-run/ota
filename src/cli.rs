@@ -13502,6 +13502,86 @@ tasks:
     }
 
     #[test]
+    fn doctor_duplicate_toolchain_ownership_surfaces_structured_contract_guidance() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+runtimes:
+  rust: "1.94.0"
+tasks:
+  setup:
+    run: cargo fetch
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let rendered = if output.stdout.is_empty() {
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+        } else {
+            strip_ansi(&output.stdout)
+        };
+        assert!(rendered.contains("ERROR  Invalid contract"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "the contract duplicates runtime `rust` that belongs to toolchain `rust`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`runtimes.rust` is already owned by `toolchains.rust`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("remove `runtimes.rust`"), "{rendered}");
+        assert!(rendered.contains("rerun `ota validate"), "{rendered}");
+        assert!(rendered.contains("rerun `ota doctor"), "{rendered}");
+    }
+
+    #[test]
+    fn doctor_duplicate_toolchain_ownership_json_preserves_validation_errors() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tools:
+  cargo: "*"
+tasks:
+  setup:
+    run: cargo fetch
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json_text = if output.stdout.is_empty() {
+            output.stderr.as_deref().unwrap_or_default()
+        } else {
+            output.stdout.as_str()
+        };
+        let json: Value = serde_json::from_str(json_text).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value
+                == "duplicate ownership is invalid: toolchain `rust` owns tool `cargo`, but the contract also declares `tools.cargo`; keep `toolchains.rust` as the owner and remove the duplicate tool declaration"));
+    }
+
+    #[test]
     fn receipt_with_bind_port_mode_auto_reports_field_specific_next_steps() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -18245,6 +18325,7 @@ tasks:
     run: cargo build
 agent:
   entrypoint: setup
+  default_task: setup
   safe_tasks:
     - setup
   writable_paths:
@@ -18256,13 +18337,72 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Agent"));
-        assert!(stdout.contains("Entrypoint: `setup`"));
-        assert!(stdout.contains("Safe tasks: `setup`"));
-        assert!(stdout.contains("Writable paths: `src`"));
+        assert!(stdout.contains("AGENT"));
         assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Entrypoint: `setup`"));
+        assert!(stdout.contains("Default task: `setup`"));
+        assert!(stdout.contains("Execution"));
+        assert!(stdout.contains("Safe tasks (1): `setup`"));
+        assert!(stdout.contains("Boundary"));
+        assert!(stdout.contains("Writable paths (1): `src/`"));
         assert!(stdout.contains("Tasks: 1"));
         assert!(stdout.contains("Agent-safe: 0"));
+    }
+
+    #[test]
+    fn tasks_text_groups_agent_writable_paths_into_roots_and_exceptions() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+agent:
+  writable_paths:
+    - entrypoints
+    - entrypoints/background.ts
+    - entrypoints/content.ts
+    - docs
+    - README.md
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Writable paths (3):"));
+        assert!(stdout.contains("`entrypoints/`, `docs/`, `README.md`"));
+        assert!(stdout.contains("Writable exceptions (2):"));
+        assert!(stdout.contains("`entrypoints/background.ts`, `entrypoints/content.ts`"));
+    }
+
+    #[test]
+    fn tasks_text_preserves_hidden_agent_paths_without_forcing_directory_suffixes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+agent:
+  writable_paths:
+    - .github
+    - .env
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Writable paths (2):"));
+        assert!(stdout.contains("`.github`, `.env`"));
+        assert!(!stdout.contains("`.github/`"));
     }
 
     #[test]
@@ -21992,8 +22132,10 @@ name = "fastapi"
             .find(|entry| entry["name"] == "java-maven")
             .expect("java-maven pack");
         assert_eq!(java_maven["command"], "ota init --pack java-maven");
+        assert_eq!(java_maven["seeds"]["toolchains"][0], "java");
+        assert_eq!(java_maven["seeds"]["runtimes"], json!([]));
         assert_eq!(java_maven["seeds"]["tools"], json!([]));
-        assert_eq!(java_maven["seeds"]["checks"][0], "java-installed");
+        assert_eq!(java_maven["seeds"]["checks"], json!([]));
         assert!(
             java_maven["does_not_infer"][0]
                 .as_str()
@@ -22008,6 +22150,8 @@ name = "fastapi"
             java_gradle["next"],
             "ota init --pack java-gradle --dry-run ."
         );
+        assert_eq!(java_gradle["seeds"]["toolchains"][0], "java");
+        assert_eq!(java_gradle["seeds"]["runtimes"], json!([]));
         assert_eq!(java_gradle["seeds"]["tools"], json!([]));
         assert_eq!(java_gradle["seeds"]["tasks"][0], "setup");
         assert!(
@@ -22524,7 +22668,9 @@ requires-python = ">=3.12"
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Pack: java-maven"));
-        assert!(stdout.contains("java: '22'"));
+        assert!(stdout.contains("toolchains:"));
+        assert!(stdout.contains("provider: sdkman"));
+        assert!(stdout.contains("version: '22'") || stdout.contains("version: \"22\""));
         assert!(stdout.contains("maven: '3.9'"));
         assert!(stdout.contains("name: maven-installed"));
         assert!(stdout.contains("run: mvn package"));
@@ -22553,8 +22699,9 @@ requires-python = ">=3.12"
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./mvnw package");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./mvnw test");
-        assert_eq!(json["config"]["checks"][0]["name"], "java-installed");
-        assert_eq!(json["config"]["checks"].as_array().unwrap().len(), 1);
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
+        assert!(json["config"]["checks"].is_null());
         assert!(json["config"]["tools"]["maven"].is_null());
     }
 
@@ -22815,8 +22962,10 @@ requires-python = ">=3.12"
         assert_eq!(json["ok"], true);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "java-gradle");
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
         assert_eq!(json["config"]["tools"]["gradle"], "8");
-        assert_eq!(json["config"]["checks"][1]["name"], "gradle-installed");
+        assert_eq!(json["config"]["checks"][0]["name"], "gradle-installed");
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],
             "Build the default Gradle outputs."
@@ -22856,8 +23005,9 @@ requires-python = ">=3.12"
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./gradlew build");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./gradlew test");
-        assert_eq!(json["config"]["checks"][0]["name"], "java-installed");
-        assert_eq!(json["config"]["checks"].as_array().unwrap().len(), 1);
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
+        assert!(json["config"]["checks"].is_null());
         assert!(json["config"]["tools"]["gradle"].is_null());
     }
 
@@ -25684,6 +25834,43 @@ tasks:
     }
 
     #[test]
+    fn check_text_includes_redesigned_agent_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo build
+agent:
+  entrypoint: setup
+  default_task: setup
+  safe_tasks:
+    - setup
+  verify_after_changes:
+    - setup
+  writable_paths:
+    - src
+"#,
+        );
+
+        let output = run_with(["ota", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENT"));
+        assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Entrypoint: `setup`"));
+        assert!(stdout.contains("Default task: `setup`"));
+        assert!(stdout.contains("Execution"));
+        assert!(stdout.contains("Safe tasks (1): `setup`"));
+        assert!(stdout.contains("Verify after changes (1): `setup`"));
+        assert!(stdout.contains("Boundary"));
+        assert!(stdout.contains("Writable paths (1): `src/`"));
+    }
+
+    #[test]
     fn check_warning_only_reports_ready_with_warnings() {
         let fixture = ContractFixture::new(
             r#"
@@ -25725,6 +25912,11 @@ checks:
 tasks:
   test:
     run: cargo test
+agent:
+  entrypoint: test
+  default_task: test
+  writable_paths:
+    - src
 "#,
         );
 
@@ -25734,6 +25926,9 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["findings"][0]["summary"], "Check failed: health-check");
+        assert_eq!(json["agent"]["entrypoint"], "test");
+        assert_eq!(json["agent"]["default_task"], "test");
+        assert_eq!(json["agent"]["writable_paths"][0], "src");
     }
 
     #[test]
@@ -25783,6 +25978,7 @@ checks:
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
         assert_eq!(members[0]["ok"], false);
+        assert!(members[0].get("agent").is_none());
         assert_eq!(
             members[0]["findings"][0]["summary"],
             "Check failed: api-health"
@@ -26590,6 +26786,316 @@ tasks:
             "Missing tool: ota-tool-that-does-not-exist"
         );
         assert!(json.get("blockers").is_none());
+    }
+
+    #[test]
+    fn up_dry_run_preview_explains_selected_toolchain_fulfillment_modes() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let rustc_body = if cfg!(windows) {
+            "@echo off\r\necho rustc 1.94.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho rustc 1.94.0\nexit 0\n"
+        };
+        let rustup_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"component\" (\r\n  echo rustfmt-x86_64-pc-windows-msvc\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"target\" (\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"component\" ]; then\n  echo rustfmt-x86_64-unknown-linux-gnu\n  exit 0\nfi\nif [ \"$1\" = \"target\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "rustc", rustc_body);
+        write_fake_command(&bin_dir, "rustup", rustup_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+
+        let output = run_with(["ota", "up", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`); fulfillment: run (ota may provision the selected toolchain on the selected run path)"
+            ),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("activate tool `cargo`"), "{stdout}");
+    }
+
+    #[test]
+    fn up_dry_run_preview_explains_corepack_node_toolchain_as_check_only() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
+tasks:
+  setup:
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.0.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho v22.0.0\nexit 0\n"
+        };
+        let corepack_body = if cfg!(windows) {
+            "@echo off\r\necho corepack 0.31.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho corepack 0.31.0\nexit 0\n"
+        };
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\necho 10.22.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho 10.22.0\nexit 0\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        write_fake_command(&bin_dir, "corepack", corepack_body);
+        write_fake_command(&bin_dir, "pnpm", pnpm_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let output = run_with(["ota", "up", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains(
+                "check toolchain `node` via `corepack` (owns runtime `node`, version `22`); fulfillment: none (diagnose only, no provisioning)"
+            ),
+            "{stdout}"
+        );
+        assert!(
+            !normalized
+                .contains("ota may provision the selected toolchain on the selected run path"),
+            "{stdout}"
+        );
+    }
+
+    #[test]
+    fn up_dry_run_selected_node_only_workflow_does_not_inherit_corepack_package_managers() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
+tasks:
+  quickstart:
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+  backend:
+    run: pnpm --version
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "*"
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+  backend:
+    run:
+      task: backend
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.0.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho v22.0.0\nexit 0\n"
+        };
+        let corepack_body = if cfg!(windows) {
+            "@echo off\r\necho corepack 0.31.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho corepack 0.31.0\nexit 0\n"
+        };
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\necho 11.1.1\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho 11.1.1\nexit 0\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        write_fake_command(&bin_dir, "corepack", corepack_body);
+        write_fake_command(&bin_dir, "pnpm", pnpm_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let instant_output = run_with([
+            "ota",
+            "up",
+            "--workflow",
+            "instant",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(instant_output.exit_code, 0);
+        let instant_stdout = strip_ansi(&instant_output.stdout);
+        assert!(
+            !instant_stdout.contains("Version mismatch for tool: pnpm"),
+            "{instant_stdout}"
+        );
+        assert!(
+            !instant_stdout.contains("activate tool `pnpm`"),
+            "{instant_stdout}"
+        );
+
+        let backend_output = run_with([
+            "ota",
+            "up",
+            "--workflow",
+            "backend",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(backend_output.exit_code, 1);
+        let backend_stdout = strip_ansi(&backend_output.stdout);
+        assert!(
+            backend_stdout.contains("Version mismatch for tool: pnpm"),
+            "{backend_stdout}"
+        );
+    }
+
+    #[test]
+    fn up_dry_run_mixed_backend_workflow_checks_selected_toolchain_on_its_own_backend() {
+        let _guard = env_mutex_lock();
+        let host_os = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(windows) {
+            "windows"
+        } else {
+            "linux"
+        };
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+    host:
+      backend: native
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.1"
+    platforms:
+      {host_os}:
+        version: "1.94.0"
+        components:
+          - rustfmt
+tasks:
+  setup:
+    context: app
+    run: echo setup
+  dev:
+    context: host
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        ));
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        install_fake_docker(&bin_dir.join("docker"));
+        let rustc_body = if cfg!(windows) {
+            "@echo off\r\necho rustc 1.94.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho rustc 1.94.0\nexit 0\n"
+        };
+        let rustup_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"component\" (\r\n  echo rustfmt-x86_64-pc-windows-msvc\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"target\" (\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else if cfg!(target_os = "macos") {
+            "#!/bin/sh\nif [ \"$1\" = \"component\" ]; then\n  echo rustfmt-x86_64-apple-darwin\n  exit 0\nfi\nif [ \"$1\" = \"target\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"component\" ]; then\n  echo rustfmt-x86_64-unknown-linux-gnu\n  exit 0\nfi\nif [ \"$1\" = \"target\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "rustc", rustc_body);
+        write_fake_command(&bin_dir, "rustup", rustup_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let output = run_with([
+            "ota",
+            "up",
+            "--workflow",
+            "app",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
+        let stdout = strip_ansi(&output.stdout);
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            normalized.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`)"
+            ),
+            "{stdout}"
+        );
+        assert!(
+            !normalized.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`)"
+            ),
+            "{stdout}"
+        );
     }
 
     #[test]
@@ -27459,6 +27965,10 @@ name = "ota"
 version = "0.1.0"
 "#,
         );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        install_fake_docker(&bin_dir.join("docker"));
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with([
             "ota",

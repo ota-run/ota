@@ -613,6 +613,7 @@ Current shipped scope is intentionally narrow:
 - top-level `toolchains`
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
+- Corepack-backed diagnosis for Node toolchains
 - duplicate ownership is invalid when the same prerequisite is declared under both `toolchains`
   and `runtimes` or `tools`
 
@@ -642,12 +643,29 @@ Rules:
 
 - toolchain names must not be empty
 - `version` must not be empty
-- `provider` is currently `rustup`
+- shared provider-agnostic toolchain fields are currently `provider`, `version`,
+  `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
+- shipped providers are currently `rustup` for `toolchains.rust` and `corepack` for
+  `toolchains.node`
 - `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
-- the only shipped toolchain contract today is `toolchains.rust` with `provider: rustup`
+- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup` and
+  `toolchains.node` with `provider: corepack`
+- those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use
+  `provider: rustup`, and `toolchains.node` must use `provider: corepack`
+- ota validates and interprets toolchains through an explicit provider contract; Rustup currently
+  owns which extra toolchain fields are legal, which capabilities belong to `toolchains.rust`, and
+  how `doctor`, `up`, and `run` interpret fulfillment and managed surfaces, while Corepack-backed
+  Node toolchains stay check-only and currently allow provider-scoped `package_managers`
+- provider-specific field shape checks also live there: empty Rustup `profile`, `components`, and
+  `targets` entries fail because the Rustup provider contract rejects them, and Corepack-backed
+  Node toolchains reject those Rust-shaped fields entirely while validating
+  `package_managers` tokens and versions as Corepack-safe activation inputs
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
-- `platforms` may override `version`, `profile`, `components`, and `targets` per OS using
-  `linux`, `macos`, or `windows`
+- `profile`, `components`, and `targets` are currently Rustup-specific compatibility fields; Node
+  via Corepack currently adds provider-scoped `package_managers`; these are not a generic
+  ecosystem-wide toolchain schema
+- `platforms` may override `version`, `profile`, `components`, `package_managers`, and `targets`
+  per OS using `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
 - `profile`, when set, must not be empty
 - `components` and `targets` entries must not be empty
@@ -655,8 +673,12 @@ Rules:
   paths to provision the declared toolchain on the run path
 - for `provider: rustup` with `fulfillment: run`, `version` must be one installable Rustup
   toolchain reference such as `stable`, `beta`, `nightly`, or `1.94.0`
+- `provider: corepack` currently supports only `fulfillment: none`; ota diagnoses Node through
+  `toolchains.node`, and declared `package_managers` surface Corepack activation through that same
+  toolchain owner
 - duplicate ownership is invalid; if the same Rust capability is also declared under `runtimes`
-  or `tools`, validation fails and the duplicate must be removed
+  or `tools`, validation fails and the duplicate must be removed; the same applies to
+  `toolchains.node` versus `runtimes.node` or `tools.node`
 
 Ownership boundary:
 
@@ -664,6 +686,9 @@ Ownership boundary:
 - use `runtimes` for simple unmanaged runtime version checks
 - use `tools` for standalone commands on PATH
 - use `native_prerequisites` for host-native build bundles and shell activation
+- current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
+  ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable plus
+  declared Corepack package-manager ownership from `toolchains.node` with `provider: corepack`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
@@ -787,7 +812,8 @@ Rules:
   selected task/workflow requires it
 - `acquisition.provider`: supported values are `corepack` and `command`
 - `acquisition.package` and `acquisition.version` are required for `provider: corepack`
-- `tool node` cannot use `provider: corepack`; declare Node under `runtimes.node`.
+- `tool node` cannot use `provider: corepack`; declare Node under `toolchains.node` with
+  `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks.
 - `acquisition.shell` and `acquisition.run` are required for `provider: command`
 - `provider: corepack` activates package-manager-managed tools such as `pnpm` through
   `corepack enable && corepack prepare <package>@<version> --activate`
@@ -2157,6 +2183,10 @@ Fields:
 - `<name>.readiness.checks`: optional readiness checks that belong to that workflow
 - `<name>.readiness.probes`: optional reusable readiness probes that belong to that workflow
 - `<name>.readiness.surfaces`: optional attached runtime surfaces that belong to that workflow's selected run task
+- `<name>.readiness.signal.checks`: optional non-gating checks surfaced as informational readiness signals
+- `<name>.readiness.signal.probes`: optional non-gating reusable probes surfaced as informational readiness signals
+- `<name>.readiness.signal.surfaces`: optional non-gating attached surfaces surfaced as informational readiness signals
+- a readiness entry must be declared in exactly one lane (`readiness.*` or `readiness.signal.*`)
 - `<name>.exposes`: optional human-readable endpoints or URLs the workflow is expected to surface
   - literal string form keeps a fixed URL
   - object form `{ surface: <name> }` resolves through the selected workflow run task

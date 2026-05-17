@@ -370,7 +370,7 @@ Example contracts:
 - [basic-node](examples/basic-node/ota.yaml) - Node / TypeScript starter
 - [basic-dotnet](examples/basic-dotnet/ota.yaml) - C# / .NET starter
 - [basic-java](examples/basic-java/ota.yaml) - Maven starter
-- [basic-rust](examples/basic-rust/ota.yaml) - Cargo starter
+- [basic-rust](examples/basic-rust/ota.yaml) - Rustup-backed Cargo starter
 - [basic-script](examples/basic-script/ota.yaml) - Script-only starter
 - [basic-services](examples/basic-services/ota.yaml) - Service-backed repo starter
 - [shared-local-topology](examples/shared-local-topology/ota.yaml) - Shared local backend topology
@@ -827,7 +827,7 @@ If you want the shortest “which example proves what?” guide, use
 - [Basic Java](examples/basic-java/ota.yaml) - Maven starter
 - [Basic Python](examples/basic-python/ota.yaml) - Python starter
 - [Basic Go](examples/basic-go/ota.yaml) - Go module starter
-- [Basic Rust](examples/basic-rust/ota.yaml) - Cargo starter
+- [Basic Rust](examples/basic-rust/ota.yaml) - Rustup-backed Cargo starter
 - [Basic Script](examples/basic-script/ota.yaml) - Script-only starter
 
 ### Mixed and realistic repos

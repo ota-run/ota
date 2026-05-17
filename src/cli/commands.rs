@@ -92,15 +92,16 @@ use crate::output::{
     ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
     ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
     ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
-    TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
-    ValidateFailure, ValidateSuccess, ValidateSummary, WorkflowSummary, WorkflowsFailure,
-    WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
-    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
     WorkspaceTaskLaunchSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
     WorkspaceUpSuccess,
 };
@@ -118,22 +119,25 @@ use crate::provisioning::{
 };
 use crate::runner::{
     CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
-    ExecutionOverrides, LoadedDeclaredEnvSource, ResolvedEnvValue, ResolvedExecutionBackend,
-    ResolvedTaskRuntime, RunError, RuntimeListenerBindDiscoveryFailure,
-    RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, ServiceTermination,
-    ServiceTerminationCause, SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee,
-    TaskExecutionRelation, TaskTargetResolutionEvidence, clean_execution_report,
+    ExecutionOverrides, HostRuntimeReadinessProbe, LoadedDeclaredEnvSource, ResolvedEnvValue,
+    ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
+    RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
+    RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
+    SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
+    TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence, clean_execution_report,
     clean_stale_execution, effective_execution, effective_task_env_for_backend,
     effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
-    ephemeral_container_name, load_declared_env_sources, load_policy_env_overlay,
-    named_execution_context, persistent_container_name, reported_task_context_for_backend,
-    resolve_declared_env_source_value, resolve_effective_task_container_backend,
-    resolve_execution_backend, resolve_execution_backend_with_contract_path,
+    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
+    load_policy_env_overlay, named_execution_context, persistent_container_name,
+    reported_task_context_for_backend, resolve_declared_env_source_value,
+    resolve_effective_task_container_backend, resolve_execution_backend,
+    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
     resolve_task_env_details, resolve_task_env_details_for_task,
     resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
+    task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
@@ -146,6 +150,16 @@ use crate::schema::{
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
     ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
+};
+use crate::toolchains::{
+    ToolchainOwnedCapabilityKind, declared_toolchain_contract,
+    declared_toolchain_fulfillment_attempt_summary,
+    declared_toolchain_preview_action_for_required_tools,
+    fallback_toolchain_fulfillment_attempt_summary,
+    requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
+    requirement_surface_with_toolchain_owned_tools_for_required_tools,
+    toolchain_fulfillment_status_detail, toolchain_repo_signals,
+    unsupported_toolchain_opportunity_context,
 };
 use crate::update;
 use crate::validator::{
@@ -527,6 +541,27 @@ fn parse_task_exit_failure_line(line: &str) -> Option<(String, i32)> {
         .or_else(|| remainder.split_once("` exited with code "))?;
     let exit_code = exit_code.trim().parse().ok()?;
     Some((task_name.to_string(), exit_code))
+}
+
+fn windows_exit_code_guidance(exit_code: i32) -> Option<&'static str> {
+    match exit_code {
+        -1073741819 => Some("the process crashed with access violation"),
+        -1073740791 => Some("the process hit a fast-fail (stack buffer overrun)"),
+        -1073741510 => Some("the process was interrupted (Ctrl+C or console close)"),
+        -1073741502 => {
+            Some("the process could not start because a dependent DLL initialization failed")
+        }
+        _ => None,
+    }
+}
+
+fn windows_exit_code_guidance_line(exit_code: i32) -> Option<String> {
+    windows_exit_code_guidance(exit_code).map(|guidance| {
+        format!(
+            "on Windows, exit code `{exit_code}` (`0x{:08X}`) usually means {guidance}",
+            exit_code as u32
+        )
+    })
 }
 
 fn render_task_exit_failure_text(
@@ -1896,14 +1931,34 @@ pub fn proof_runtime(
                         command_for_repo_contract_target("ota clean", &target.contract_path)
                     )
                 });
-                let proof_error = cleanup_error.as_deref().or(up_process_failure);
-                let proof_next = match (&cleanup_next, up_process_failure) {
-                    (Some(next), _) => Some(next.clone()),
-                    (None, Some(failure_message)) => Some(format!(
+                let mut proof_summary_for_output = proof_summary.clone();
+                if let Some(overridden_blocker) = proof_runtime_up_exit_primary_blocker(
+                    &proof_summary,
+                    up_process_failure,
+                    &up_log_artifact_display,
+                ) {
+                    proof_summary_for_output.primary_blocker = Some(overridden_blocker);
+                }
+                let primary_blocker_error = proof_summary_for_output
+                    .primary_blocker
+                    .as_ref()
+                    .map(|blocker| blocker.summary.clone());
+                let primary_blocker_next = proof_summary_for_output
+                    .primary_blocker
+                    .as_ref()
+                    .map(|blocker| blocker.next.clone());
+                let proof_error = cleanup_error
+                    .clone()
+                    .or(primary_blocker_error)
+                    .or_else(|| up_process_failure.map(str::to_string));
+                let proof_next = match (&cleanup_next, primary_blocker_next, up_process_failure) {
+                    (Some(next), _, _) => Some(next.clone()),
+                    (None, Some(next), _) => Some(next),
+                    (None, None, Some(failure_message)) => Some(format!(
                         "inspect `{}` and rerun `ota proof runtime` ({failure_message})",
                         up_log_artifact_display
                     )),
-                    (None, None) => None,
+                    (None, None, None) => None,
                 };
                 let status = proof_runtime_status_word(
                     proof_summary.verdict,
@@ -1932,7 +1987,7 @@ pub fn proof_runtime(
                             &target.contract_path,
                             text_phase,
                             status,
-                            &proof_summary,
+                            &proof_summary_for_output,
                             up_process_failure,
                             &topology_artifact_display,
                             &doctor_artifact_display,
@@ -1950,13 +2005,13 @@ pub fn proof_runtime(
                             mode: "runtime-proof",
                             workflow: effective_workflow_name,
                             phase: json_phase,
-                            summary: proof_summary,
+                            summary: proof_summary_for_output,
                             artifacts: Some(ProofRuntimeArtifacts {
                                 topology: &topology_artifact_display,
                                 doctor: &doctor_artifact_display,
                                 up_log: &up_log_artifact_display,
                             }),
-                            error: proof_error,
+                            error: proof_error.as_deref(),
                             next: proof_next.as_deref(),
                         }),
                         stderr: None,
@@ -14562,7 +14617,112 @@ fn structured_validation_error_details(
         ));
     }
 
+    if let Some(issue) = parse_duplicate_ownership_validation_issue(why) {
+        let duplicate_kind = issue.duplicate_kind.clone();
+        let owner_location = issue.owner_location();
+        let duplicate_label = match issue.task_name.as_deref() {
+            Some(task_name) => format!(
+                "task `{task_name}` duplicates {duplicate_kind} `{}` that belongs to toolchain `{}`",
+                issue.duplicate_name, issue.toolchain_name
+            ),
+            None => format!(
+                "the contract duplicates {duplicate_kind} `{}` that belongs to toolchain `{}`",
+                issue.duplicate_name, issue.toolchain_name
+            ),
+        };
+        let remove_hint = match duplicate_kind.as_str() {
+            "runtime" => "remove the duplicate runtime declaration",
+            _ => "remove the duplicate tool declaration",
+        };
+        let rerun_steps = next_steps
+            .iter()
+            .filter(|step| step.starts_with("rerun "))
+            .cloned()
+            .collect::<Vec<_>>();
+        let primary_rerun_step = rerun_steps
+            .first()
+            .cloned()
+            .unwrap_or_else(|| String::from("rerun `ota validate`"));
+        let mut next_lines = vec![
+            format!("remove `{}`", issue.invalid_location),
+            remove_hint.to_string(),
+            primary_rerun_step,
+        ];
+        for rerun_step in rerun_steps.into_iter().skip(1) {
+            if !next_lines.contains(&rerun_step) {
+                next_lines.push(rerun_step);
+            }
+        }
+        return Some((
+            vec![
+                duplicate_label,
+                format!(
+                    "`{}` is already owned by `{owner_location}`",
+                    issue.invalid_location
+                ),
+                format!(
+                    "keep `{owner_location}` as the owner for `{}`",
+                    issue.duplicate_name
+                ),
+            ],
+            next_lines,
+        ));
+    }
+
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DuplicateOwnershipValidationIssue {
+    task_name: Option<String>,
+    toolchain_name: String,
+    duplicate_kind: String,
+    duplicate_name: String,
+    invalid_location: String,
+}
+
+impl DuplicateOwnershipValidationIssue {
+    fn owner_location(&self) -> String {
+        match self.task_name.as_deref() {
+            Some(task_name) => format!("tasks.{task_name}.requirements.toolchains"),
+            None => format!("toolchains.{}", self.toolchain_name),
+        }
+    }
+}
+
+fn parse_duplicate_ownership_validation_issue(
+    line: &str,
+) -> Option<DuplicateOwnershipValidationIssue> {
+    const PREFIX: &str = "duplicate ownership is invalid: ";
+    let rest = line.strip_prefix(PREFIX)?;
+
+    if let Some(rest) = rest.strip_prefix("toolchain `") {
+        let (toolchain_name, rest) = rest.split_once("` owns ")?;
+        let (duplicate_kind, rest) = rest.split_once(" `")?;
+        let (duplicate_name, rest) = rest.split_once("`, but the contract also declares `")?;
+        let (invalid_location, _) = rest.split_once("`; keep `toolchains.")?;
+        return Some(DuplicateOwnershipValidationIssue {
+            task_name: None,
+            toolchain_name: toolchain_name.to_string(),
+            duplicate_kind: duplicate_kind.trim().to_string(),
+            duplicate_name: duplicate_name.to_string(),
+            invalid_location: invalid_location.to_string(),
+        });
+    }
+
+    let rest = rest.strip_prefix("task `")?;
+    let (task_name, rest) = rest.split_once("` requires toolchain `")?;
+    let (toolchain_name, rest) = rest.split_once("`, which owns ")?;
+    let (duplicate_kind, rest) = rest.split_once(" `")?;
+    let (duplicate_name, rest) = rest.split_once("`, but the task also declares `")?;
+    let (invalid_location, _) = rest.split_once("`; keep `tasks.")?;
+    Some(DuplicateOwnershipValidationIssue {
+        task_name: Some(task_name.to_string()),
+        toolchain_name: toolchain_name.to_string(),
+        duplicate_kind: duplicate_kind.trim().to_string(),
+        duplicate_name: duplicate_name.to_string(),
+        invalid_location: invalid_location.to_string(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15484,6 +15644,7 @@ pub fn doctor(
                                 adapter_bootstrap: report.adapter_bootstrap.as_ref(),
                                 extensions: &empty_extensions,
                                 fix: fix_summary.clone(),
+                                toolchains: Vec::new(),
                                 findings: &report.findings,
                             }),
                             stderr: None,
@@ -15614,6 +15775,12 @@ pub fn doctor(
                     &target.contract,
                     &target.contract_path,
                     (!required_env_names.is_empty()).then_some(&required_env_names),
+                );
+                let selected_toolchains = selected_workflow_toolchain_summaries(
+                    &target.contract,
+                    diagnosis_overrides,
+                    workflow_name,
+                    toolchain_summary_backend_for_mode(mode),
                 );
                 if members.is_empty()
                     && target.contract_path == resolved_path
@@ -15766,6 +15933,12 @@ pub fn doctor(
                                     (!member_required_env_names.is_empty())
                                         .then_some(&member_required_env_names),
                                 );
+                            let member_toolchains = selected_workflow_toolchain_summaries(
+                                &member_target.contract,
+                                diagnosis_overrides,
+                                workflow_name,
+                                toolchain_summary_backend_for_mode(mode),
+                            );
                             let rewritten_member_findings = rewrite_doctor_findings_for_contract(
                                 &member_report.findings,
                                 &member_target.contract_path,
@@ -15791,6 +15964,7 @@ pub fn doctor(
                                 "ok": member_report.ok,
                                 "workflow": member_workflow,
                                 "agent": member_agent,
+                                "toolchains": member_toolchains,
                                 "findings": rewritten_member_findings,
                             }));
                         }
@@ -15826,6 +16000,7 @@ pub fn doctor(
                                     "workflow": workflow_summary,
                                     "agent": agent_summary,
                                     "fix": fix_summary,
+                                    "toolchains": selected_toolchains,
                                     "findings": rewritten_findings,
                                     "members": member_results,
                                 })),
@@ -15900,6 +16075,7 @@ pub fn doctor(
                                     adapter_bootstrap: report.adapter_bootstrap.as_ref(),
                                     extensions: &target.contract.extensions,
                                     fix: fix_summary.clone(),
+                                    toolchains: selected_toolchains,
                                     findings: &rewritten_findings,
                                 }),
                                 stderr: None,
@@ -16009,6 +16185,12 @@ pub fn doctor(
                     );
                     let execution_summary =
                         ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                    let selected_toolchains = selected_workflow_toolchain_summaries(
+                        &target.contract,
+                        diagnosis_overrides,
+                        workflow_name,
+                        toolchain_summary_backend_for_mode(mode),
+                    );
                     text_sections.push(render_doctor_section(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         &target.contract_path,
@@ -16025,6 +16207,7 @@ pub fn doctor(
                         "ok": report.ok,
                         "workflow": workflow,
                         "agent": agent,
+                        "toolchains": selected_toolchains,
                         "findings": rewritten_findings,
                     }));
                 }
@@ -17708,6 +17891,7 @@ fn append_contractless_repo_findings(
     }
 
     if report.contract.runtimes.is_empty()
+        && report.contract.toolchains.is_empty()
         && report.contract.tools.is_empty()
         && report.contract.services.is_empty()
         && report.contract.tasks.is_empty()
@@ -18195,6 +18379,12 @@ pub fn check(
                 };
                 let execution_summary =
                     ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                let selected_toolchains = selected_workflow_toolchain_summaries(
+                    &target.contract,
+                    ExecutionOverrides::default(),
+                    workflow_name,
+                    Backend::Native,
+                );
                 if members.is_empty()
                     && target.contract_path == resolved_path
                     && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -18379,6 +18569,17 @@ pub fn check(
                                 &member_target.contract,
                                 &member_target.contract_path,
                             );
+                            let member_agent = member_target
+                                .contract
+                                .agent
+                                .as_ref()
+                                .and_then(AgentSummary::from_config);
+                            let member_toolchains = selected_workflow_toolchain_summaries(
+                                &member_target.contract,
+                                ExecutionOverrides::default(),
+                                workflow_name,
+                                Backend::Native,
+                            );
                             text_sections.push(render_report_section(
                                 "CHECK",
                                 &display_contract_target(
@@ -18387,19 +18588,43 @@ pub fn check(
                                 ),
                                 Some(&member_target.contract_path),
                                 member_workflow.as_ref(),
-                                None,
+                                member_agent.as_ref(),
                                 member_execution.as_ref(),
                                 None,
                                 None,
                                 &member_report,
                                 None,
                             ));
-                            member_results.push(json!({
-                                "member": member,
-                                "ok": member_report.ok,
-                                "workflow": member_workflow,
-                                "findings": member_report.findings,
-                            }));
+                            let mut member_result = serde_json::Map::new();
+                            member_result
+                                .insert("member".into(), serde_json::Value::String(member.clone()));
+                            member_result
+                                .insert("ok".into(), serde_json::Value::Bool(member_report.ok));
+                            if let Some(workflow) = member_workflow {
+                                member_result.insert(
+                                    "workflow".into(),
+                                    serde_json::to_value(workflow)
+                                        .expect("workflow summary should serialize"),
+                                );
+                            }
+                            if let Some(agent) = member_agent {
+                                member_result.insert(
+                                    "agent".into(),
+                                    serde_json::to_value(agent)
+                                        .expect("agent summary should serialize"),
+                                );
+                            }
+                            member_result.insert(
+                                "toolchains".into(),
+                                serde_json::to_value(member_toolchains)
+                                    .expect("toolchain summaries should serialize"),
+                            );
+                            member_result.insert(
+                                "findings".into(),
+                                serde_json::to_value(member_report.findings)
+                                    .expect("findings should serialize"),
+                            );
+                            member_results.push(serde_json::Value::Object(member_result));
                         }
                     }
 
@@ -18419,6 +18644,7 @@ pub fn check(
                                 "path": path_display,
                                 "summary": check_summary,
                                 "workflow": workflow_summary,
+                                "toolchains": selected_toolchains,
                                 "findings": report.findings,
                                 "members": member_results,
                             })),
@@ -18431,13 +18657,18 @@ pub fn check(
                         &report,
                         crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
                     );
+                    let agent_summary = target
+                        .contract
+                        .agent
+                        .as_ref()
+                        .and_then(AgentSummary::from_config);
                     match format {
                         OutputFormat::Text => render_report_text(
                             "CHECK",
                             &text_path_display,
                             Some(&target.contract_path),
                             workflow_summary.as_ref(),
-                            None,
+                            agent_summary.as_ref(),
                             execution_summary.as_ref(),
                             None,
                             None,
@@ -18452,11 +18683,13 @@ pub fn check(
                                     path: &path_display,
                                     summary: check_summary,
                                     workflow: workflow_summary,
+                                    agent: agent_summary,
                                     finding_groups: doctor_finding_group_summaries(
                                         &report.findings,
                                         None,
                                         None,
                                     ),
+                                    toolchains: selected_toolchains,
                                     findings: &report.findings,
                                 }),
                                 stderr: None,
@@ -18615,6 +18848,12 @@ pub fn check(
                     };
                     let execution_summary =
                         ExecutionSummary::from_contract(&target.contract, &target.contract_path);
+                    let selected_toolchains = selected_workflow_toolchain_summaries(
+                        &target.contract,
+                        ExecutionOverrides::default(),
+                        workflow_name,
+                        Backend::Native,
+                    );
                     text_sections.push(render_report_section(
                         "CHECK",
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
@@ -18631,6 +18870,7 @@ pub fn check(
                         "member": member,
                         "ok": report.ok,
                         "workflow": workflow,
+                        "toolchains": selected_toolchains,
                         "findings": report.findings,
                     }));
                 }
@@ -19700,11 +19940,20 @@ pub fn init(
         );
     }
 
-    let pack_advisory = pack.and_then(|selected_pack| {
+    let detected_pack_context = pack.and_then(|selected_pack| {
         detect_repo(&root)
             .ok()
-            .and_then(|detected| build_pack_advisory(selected_pack.pack, &detected, &root))
+            .map(|detected| (selected_pack, detected))
     });
+    let pack_advisory = detected_pack_context
+        .as_ref()
+        .and_then(|(selected_pack, detected)| {
+            build_pack_advisory(selected_pack.pack, detected, &root)
+        });
+    let pack_toolchain_opportunities = detected_pack_context
+        .as_ref()
+        .map(|(_, detected)| detect_toolchain_opportunities(detected))
+        .unwrap_or_default();
 
     finalize_debug(
         match if let Some(pack) = pack {
@@ -19716,15 +19965,23 @@ pub fn init(
         } else {
             detect_repo(&root)
         } {
-            Ok(report) => render_init(
-                report,
-                &contract_path,
-                write,
-                bootstrap,
-                pack,
-                pack_advisory,
-                format,
-            ),
+            Ok(report) => {
+                let toolchain_opportunities = if pack.is_some() {
+                    pack_toolchain_opportunities
+                } else {
+                    detect_toolchain_opportunities(&report)
+                };
+                render_init(
+                    report,
+                    &contract_path,
+                    write,
+                    bootstrap,
+                    pack,
+                    pack_advisory,
+                    toolchain_opportunities,
+                    format,
+                )
+            }
             Err(error) => {
                 let error = error.to_string();
                 match format {
@@ -19927,6 +20184,11 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                         .map(|value| (*value).to_string())
                         .collect(),
                     seeds: InitPackSeeds {
+                        toolchains: entry
+                            .toolchains
+                            .iter()
+                            .map(|value| (*value).to_string())
+                            .collect(),
                         runtimes: entry
                             .runtimes
                             .iter()
@@ -21995,6 +22257,7 @@ pub fn detect(
                 let mut preview_contract = report.contract.clone();
                 apply_detected_starter_contract_defaults(&mut preview_contract, &report);
                 let agent_boundary = starter_agent_boundary_outcome_from_detect_report(&report);
+                let toolchain_opportunities = detect_toolchain_opportunities(&report);
                 let yaml = serde_yaml::to_string(&preview_contract)
                     .expect("serializing detected contract should not fail");
                 match format {
@@ -22025,6 +22288,7 @@ pub fn detect(
                             "Annotations",
                             report.inferences.iter(),
                         );
+                        render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                         if !comparison_first {
                             render_detect_comparison_section(
                                 &mut stdout,
@@ -22053,6 +22317,10 @@ pub fn detect(
                         written: false,
                         config: detect_json_config_value(&preview_contract),
                         inferred: &report.inferences,
+                        toolchain_opportunities: toolchain_opportunities
+                            .iter()
+                            .map(|opportunity| opportunity.advisory.clone())
+                            .collect(),
                         comparison: comparison.as_ref(),
                     })),
                 }
@@ -25441,6 +25709,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
     let compact_root_display = compact_repo_path(&report.root);
+    let toolchain_opportunities = detect_toolchain_opportunities(&report);
     if contract_path.exists() {
         let next = format!("ota detect --merge --dry-run {}", compact_root_display);
         let highlighted_path = paint_code(&compact_path_display);
@@ -25555,6 +25824,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     "Excluded from automatic write",
                     excluded_write_inferences(&report),
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -25563,6 +25833,10 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 written: true,
                 config,
                 inferred: &report.inferences,
+                toolchain_opportunities: toolchain_opportunities
+                    .iter()
+                    .map(|opportunity| opportunity.advisory.clone())
+                    .collect(),
                 comparison: None,
             })),
         },
@@ -25618,6 +25892,7 @@ fn write_detected_merge(
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
+    let toolchain_opportunities = detect_toolchain_opportunities(&report);
     let existing_contract = match load_contract(&contract_path) {
         Ok(contract) => contract,
         Err(error) => {
@@ -25740,6 +26015,7 @@ fn write_detected_merge(
                     Some(&comparison),
                     DetectComparisonMode::MergePreview,
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -25748,6 +26024,10 @@ fn write_detected_merge(
                 written: false,
                 config: detect_json_config_value(&report.contract),
                 inferred: &report.inferences,
+                toolchain_opportunities: toolchain_opportunities
+                    .iter()
+                    .map(|opportunity| opportunity.advisory.clone())
+                    .collect(),
                 comparison: Some(&comparison),
             })),
         };
@@ -25964,6 +26244,7 @@ fn write_detected_merge(
                     post_write_comparison.as_ref(),
                     DetectComparisonMode::MergeResult,
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 stdout.push_str(&format_next_timeline(&next_steps));
                 CommandOutput::success(stdout)
             }
@@ -25976,6 +26257,10 @@ fn write_detected_merge(
                     written: true,
                     config,
                     inferred: &report.inferences,
+                    toolchain_opportunities: toolchain_opportunities
+                        .iter()
+                        .map(|opportunity| opportunity.advisory.clone())
+                        .collect(),
                     comparison: post_write_comparison.as_ref(),
                 }))
             }
@@ -26000,6 +26285,7 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
+    let toolchain_opportunities = detect_toolchain_opportunities(&report);
     let existing_contract = match load_contract(&contract_path) {
         Ok(contract) => contract,
         Err(error) => {
@@ -26160,6 +26446,7 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     comparison.as_ref(),
                     DetectComparisonMode::RewriteResult,
                 );
+                render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                 stdout.push_str(&format_next_timeline(&repo_contract_write_next_steps(
                     &contract_path,
                 )));
@@ -26171,6 +26458,10 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                 written: true,
                 config,
                 inferred: &report.inferences,
+                toolchain_opportunities: toolchain_opportunities
+                    .iter()
+                    .map(|opportunity| opportunity.advisory.clone())
+                    .collect(),
                 comparison: comparison.as_ref(),
             })),
         },
@@ -27530,6 +27821,109 @@ fn build_pack_advisory(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetectedToolchainOpportunity {
+    advisory: ToolchainOpportunityAdvisory,
+    why: String,
+    next: String,
+}
+
+fn detect_toolchain_opportunities(report: &DetectReport) -> Vec<DetectedToolchainOpportunity> {
+    ["python"]
+        .into_iter()
+        .filter_map(|ecosystem| {
+            let context = unsupported_toolchain_opportunity_context(ecosystem)?;
+            if !report.contract.runtimes.contains_key(context.fallback_runtime) {
+                return None;
+            }
+
+            let repo_signals = toolchain_repo_signals(&report.root, ecosystem);
+            if repo_signals.is_empty() {
+                return None;
+            }
+
+            let fallback_tools = context
+                .fallback_tools
+                .iter()
+                .filter(|tool| report.contract.tools.contains_key(**tool))
+                .map(|tool| (*tool).to_string())
+                .collect::<Vec<_>>();
+            let fallback_model =
+                render_toolchain_opportunity_fallback_model(context.fallback_runtime, &fallback_tools);
+            let signal_summary = repo_signals
+                .iter()
+                .map(|signal| format!("`{signal}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ecosystem_label = match ecosystem {
+                "java" => "a JVM build surface",
+                "python" => "a Python project surface",
+                _ => "a managed ecosystem surface",
+            };
+
+            Some(DetectedToolchainOpportunity {
+                advisory: ToolchainOpportunityAdvisory {
+                    ecosystem: context.ecosystem.to_string(),
+                    fallback_runtime: context.fallback_runtime.to_string(),
+                    fallback_tools: fallback_tools.clone(),
+                    candidate_providers: context
+                        .candidate_providers
+                        .iter()
+                        .map(|provider| (*provider).to_string())
+                        .collect(),
+                    shipped: false,
+                    agent_note: context.agent_note.to_string(),
+                },
+                why: format!(
+                    "this repo uses {ecosystem_label} and currently models it through {fallback_model}; repo signals: {signal_summary}; ota does not ship a {ecosystem} toolchain provider yet"
+                ),
+                next: format!(
+                    "keep {fallback_model} for now; ota can model this more cleanly once {ecosystem} toolchain support is shipped"
+                ),
+            })
+        })
+        .collect()
+}
+
+fn render_toolchain_opportunity_fallback_model(runtime: &str, tools: &[String]) -> String {
+    if tools.is_empty() {
+        return format!("`runtimes.{runtime}`");
+    }
+
+    format!(
+        "`runtimes.{runtime}` and {}",
+        tools
+            .iter()
+            .map(|tool| format!("`tools.{tool}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn render_toolchain_opportunity_section(
+    stdout: &mut String,
+    opportunities: &[DetectedToolchainOpportunity],
+) {
+    if opportunities.is_empty() {
+        return;
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Toolchain Opportunities")
+    ));
+    for opportunity in opportunities {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            primary_warn_marker(),
+            paint_key("Ecosystem:"),
+            opportunity.advisory.ecosystem
+        ));
+        stdout.push_str(&format!("\n  {} {}", paint_key("Why:"), opportunity.why));
+        stdout.push_str(&format!("\n  {} {}", paint_next_label(), opportunity.next));
+    }
+}
+
 fn init_selected_pack_options(config: StarterPackConfig) -> Option<InitSelectedPackOptions> {
     let options = InitSelectedPackOptions {
         package_manager: config
@@ -27659,6 +28053,7 @@ fn render_init(
     bootstrap: bool,
     pack: Option<StarterPackConfig>,
     pack_advisory: Option<InitPackAdvisory>,
+    toolchain_opportunities: Vec<DetectedToolchainOpportunity>,
     format: OutputFormat,
 ) -> CommandOutput {
     let init_inferences = report.inferences.clone();
@@ -27915,6 +28310,7 @@ fn render_init(
                             );
                         }
                     }
+                    render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
                     stdout.push_str(&format_next_timeline(&repo_contract_write_next_steps(
                         &contract_path,
                     )));
@@ -27931,6 +28327,10 @@ fn render_init(
                     pack_advisory,
                     config: &write_contract,
                     inferred: &init_inferences,
+                    toolchain_opportunities: toolchain_opportunities
+                        .iter()
+                        .map(|opportunity| opportunity.advisory.clone())
+                        .collect(),
                     provenance,
                 })),
             },
@@ -27988,6 +28388,7 @@ fn render_init(
                 );
             }
             render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
+            render_toolchain_opportunity_section(&mut stdout, &toolchain_opportunities);
             if pack.is_none() {
                 append_agent_boundary_outcome_section(
                     &mut stdout,
@@ -28024,6 +28425,10 @@ fn render_init(
             pack_advisory,
             config: &bootstrap_contract,
             inferred: &init_inferences,
+            toolchain_opportunities: toolchain_opportunities
+                .iter()
+                .map(|opportunity| opportunity.advisory.clone())
+                .collect(),
             provenance: init_contract_provenance(
                 &bootstrap_contract,
                 &preview_detected_contract,
@@ -30099,6 +30504,13 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     if contract.project.is_some() {
         fields.push(String::from("project.name"));
     }
+    for (name, toolchain) in &contract.toolchains {
+        fields.push(format!("toolchains.{name}.provider"));
+        fields.push(format!("toolchains.{name}.version"));
+        if toolchain.fulfillment.is_some() {
+            fields.push(format!("toolchains.{name}.fulfillment"));
+        }
+    }
     for name in contract.runtimes.keys() {
         fields.push(format!("runtimes.{name}"));
     }
@@ -30246,6 +30658,31 @@ fn init_contract_provenance(
             format!("runtimes.{name}"),
             starter_contract_source,
         );
+    }
+    for (name, toolchain) in &contract.toolchains {
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            &detected_fields,
+            format!("toolchains.{name}.provider"),
+            "ota.detect#toolchain_provider",
+        );
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            &detected_fields,
+            format!("toolchains.{name}.version"),
+            starter_contract_source,
+        );
+        if toolchain.fulfillment.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("toolchains.{name}.fulfillment"),
+                "ota.detect#toolchain_fulfillment",
+            );
+        }
     }
     for name in contract.tools.keys() {
         push_init_field_provenance(
@@ -31194,6 +31631,33 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             String::from("-")
         } else {
             workflow.readiness_surfaces.join(",")
+        }
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Signal Checks:"),
+        if workflow.signal_readiness_checks.is_empty() {
+            String::from("-")
+        } else {
+            workflow.signal_readiness_checks.join(",")
+        }
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Signal Probes:"),
+        if workflow.signal_readiness_probes.is_empty() {
+            String::from("-")
+        } else {
+            workflow.signal_readiness_probes.join(",")
+        }
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Signal Surfaces:"),
+        if workflow.signal_readiness_surfaces.is_empty() {
+            String::from("-")
+        } else {
+            workflow.signal_readiness_surfaces.join(",")
         }
     ));
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
@@ -34712,6 +35176,96 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     stdout
 }
 
+fn render_toolchain_summary_text(toolchains: &[ToolchainSelectionSummary]) -> String {
+    if toolchains.is_empty() {
+        return String::new();
+    }
+
+    let mut stdout = String::new();
+    stdout.push_str(&paint_section_title("Toolchains"));
+    for toolchain in toolchains {
+        stdout.push_str(&format!(
+            "\n{} {} via {}",
+            summary_bullet(),
+            paint_backticked_code(&toolchain.name),
+            paint_backticked_code(&toolchain.provider)
+        ));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Selection:"),
+            format!(
+                "{}, {}, version {}, fulfillment {}, {}",
+                toolchain.backend,
+                toolchain.target_os,
+                toolchain.version,
+                toolchain.fulfillment,
+                if toolchain.required {
+                    "required"
+                } else {
+                    "optional"
+                }
+            )
+        ));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Owns runtime:"),
+            paint_backticked_code(&toolchain.owns_runtime)
+        ));
+        if let Some(fulfilled) = toolchain.fulfilled {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Fulfilled:"),
+                toolchain_fulfillment_status_detail(&toolchain.fulfillment, fulfilled)
+            ));
+            for command in &toolchain.commands {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Command:"),
+                    paint_code(command)
+                ));
+            }
+        }
+        if !toolchain.owns_tools.is_empty() {
+            let tools = toolchain
+                .owns_tools
+                .iter()
+                .map(|tool| tool.as_str())
+                .collect::<Vec<_>>();
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Owns tools:"),
+                render_inline_code_list(&tools)
+            ));
+        }
+        if !toolchain.components.is_empty() {
+            let components = toolchain
+                .components
+                .iter()
+                .map(|component| component.as_str())
+                .collect::<Vec<_>>();
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Components:"),
+                render_inline_code_list(&components)
+            ));
+        }
+        if !toolchain.targets.is_empty() {
+            let targets = toolchain
+                .targets
+                .iter()
+                .map(|target| target.as_str())
+                .collect::<Vec<_>>();
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Targets:"),
+                render_inline_code_list(&targets)
+            ));
+        }
+    }
+
+    stdout
+}
+
 fn format_execution_context_brief(context: &ExecutionContextSummary<'_>) -> String {
     let mut details = vec![context.backend.to_string()];
     if let Some(lifecycle) = context.lifecycle {
@@ -35422,96 +35976,14 @@ fn format_doctor_execution_context_line(context: &ExecutionContextSummary<'_>) -
 }
 
 fn render_agent_summary_line(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
-    render_agent_summary_block(agent, include_notes)
+    render_agent_summary_text(agent, include_notes)
 }
 
 fn render_doctor_agent_summary_text(
     agent: &AgentSummary<'_>,
     include_notes: bool,
 ) -> Option<String> {
-    let mut lines = Vec::new();
-    lines.push(paint_section_title("Agent"));
-    if let Some(entrypoint) = agent.entrypoint {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Entrypoint:"),
-            &paint_backticked_code(entrypoint),
-        ));
-    }
-    if let Some(default_task) = agent.default_task {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Default task:"),
-            &paint_backticked_code(default_task),
-        ));
-    }
-    if !agent.safe_tasks.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Safe tasks:"),
-            &render_inline_code_list(&agent.safe_tasks),
-        ));
-    }
-    if !agent.verify_after_changes.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Verify after changes:"),
-            &render_inline_code_list(&agent.verify_after_changes),
-        ));
-    }
-    if !agent.writable_paths.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Writable paths:"),
-            &render_inline_code_list(&agent.writable_paths),
-        ));
-    }
-    if !agent.protected_paths.is_empty() {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Protected paths:"),
-            &render_inline_code_list(&agent.protected_paths),
-        ));
-    }
-    if let Some(reviewed) = agent.inferred_boundary_reviewed {
-        let review_status = if reviewed {
-            paint("reviewed", "1;38;2;255;255;255")
-        } else {
-            paint("inferred (needs review)", "1;38;2;255;216;107")
-        };
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Boundary review:"),
-            &review_status,
-        ));
-    }
-    if agent
-        .bootstrap
-        .as_ref()
-        .and_then(|bootstrap| bootstrap.ota.as_ref())
-        .is_some()
-    {
-        lines.push(section_list_row(
-            &summary_bullet(),
-            &paint_key("Bootstrap:"),
-            "ota install commands available",
-        ));
-    }
-    if include_notes
-        && let Some(notes) = agent.notes
-        && !notes.trim().is_empty()
-    {
-        lines.push(format!(" {}  {}", summary_bullet(), paint_key("Notes:")));
-        for line in notes.lines() {
-            lines.push(format!("    {line}"));
-        }
-    }
-
-    if lines.len() == 1 {
-        None
-    } else {
-        Some(lines.join("\n"))
-    }
+    render_agent_summary_text(agent, include_notes)
 }
 
 fn render_agents_markdown(
@@ -35578,6 +36050,66 @@ fn render_agents_markdown(
             output.push_str(
                 &workflow
                     .readiness_checks
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.readiness_probes.is_empty() {
+            output.push_str("- `readiness_probes`: ");
+            output.push_str(
+                &workflow
+                    .readiness_probes
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.readiness_surfaces.is_empty() {
+            output.push_str("- `readiness_surfaces`: ");
+            output.push_str(
+                &workflow
+                    .readiness_surfaces
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.signal_readiness_checks.is_empty() {
+            output.push_str("- `signal_readiness_checks`: ");
+            output.push_str(
+                &workflow
+                    .signal_readiness_checks
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.signal_readiness_probes.is_empty() {
+            output.push_str("- `signal_readiness_probes`: ");
+            output.push_str(
+                &workflow
+                    .signal_readiness_probes
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.signal_readiness_surfaces.is_empty() {
+            output.push_str("- `signal_readiness_surfaces`: ");
+            output.push_str(
+                &workflow
+                    .signal_readiness_surfaces
                     .iter()
                     .map(|value| format!("`{value}`"))
                     .collect::<Vec<_>>()
@@ -36449,68 +36981,109 @@ fn agents_markdown_already_present(existing: &str, generated: &str) -> bool {
     existing.contains(&generated)
 }
 
-fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
+fn render_agent_summary_text(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
     let mut lines = Vec::new();
-    lines.push(String::from("AGENT:"));
+    lines.push(paint_section_title("AGENT"));
+
+    let mut overview = Vec::new();
     if let Some(entrypoint) = agent.entrypoint {
-        lines.push(format!("  entrypoint: {entrypoint}"));
+        overview.push((
+            String::from("Entrypoint:"),
+            paint_backticked_code(entrypoint),
+        ));
     }
     if let Some(default_task) = agent.default_task {
-        lines.push(format!("  default_task: {default_task}"));
-    }
-    if !agent.safe_tasks.is_empty() {
-        lines.push(format!("  safe_tasks: {}", agent.safe_tasks.join(", ")));
-    }
-    if !agent.verify_after_changes.is_empty() {
-        lines.push(format!(
-            "  verify_after_changes: {}",
-            agent.verify_after_changes.join(", ")
+        overview.push((
+            String::from("Default task:"),
+            paint_backticked_code(default_task),
         ));
     }
-    if !agent.writable_paths.is_empty() {
-        lines.push(format!(
-            "  writable_paths: {}",
-            agent.writable_paths.join(", ")
-        ));
-    }
-    if !agent.protected_paths.is_empty() {
-        lines.push(format!(
-            "  protected_paths: {}",
-            agent.protected_paths.join(", ")
+    if agent
+        .bootstrap
+        .as_ref()
+        .and_then(|bootstrap| bootstrap.ota.as_ref())
+        .is_some()
+    {
+        overview.push((
+            String::from("Bootstrap:"),
+            String::from("ota install commands available"),
         ));
     }
     if let Some(reviewed) = agent.inferred_boundary_reviewed {
-        lines.push(format!(
-            "  boundary_review: {}",
-            if reviewed {
-                "reviewed"
-            } else {
-                "inferred (needs review)"
-            }
+        let review_status = if reviewed {
+            paint("reviewed", "1;38;2;255;255;255")
+        } else {
+            paint("inferred (needs review)", "1;38;2;255;216;107")
+        };
+        overview.push((String::from("Boundary review:"), review_status));
+    }
+
+    if !overview.is_empty() {
+        lines.push(String::new());
+        lines.push(paint_section_title("Overview"));
+        for (label, value) in overview {
+            lines.push(section_list_row(
+                &summary_bullet(),
+                &paint_key(&label),
+                &value,
+            ));
+        }
+    }
+
+    let mut execution = Vec::new();
+    if !agent.safe_tasks.is_empty() {
+        execution.push(render_agent_counted_code_list_row(
+            "Safe tasks",
+            &agent.safe_tasks,
         ));
     }
-    if let Some(bootstrap) = agent.bootstrap.as_ref()
-        && let Some(ota) = bootstrap.ota.as_ref()
-    {
-        lines.push(String::from("  bootstrap:"));
-        lines.push(String::from("    ota:"));
-        if let Some(note) = ota.note {
-            lines.push(format!("      note: {note}"));
-        }
-        if let Some(sh) = ota.sh {
-            lines.push(format!("      sh: {sh}"));
-        }
-        if let Some(powershell) = ota.powershell {
-            lines.push(format!("      powershell: {powershell}"));
-        }
+    if !agent.verify_after_changes.is_empty() {
+        execution.push(render_agent_counted_code_list_row(
+            "Verify after changes",
+            &agent.verify_after_changes,
+        ));
     }
+    if !execution.is_empty() {
+        lines.push(String::new());
+        lines.push(paint_section_title("Execution"));
+        lines.extend(execution);
+    }
+
+    let (writable_paths, writable_exceptions) =
+        summarize_agent_writable_paths(&agent.writable_paths);
+    let mut boundary = Vec::new();
+    if !writable_paths.is_empty() {
+        boundary.push(render_agent_counted_code_list_row(
+            "Writable paths",
+            &writable_paths,
+        ));
+    }
+    if !writable_exceptions.is_empty() {
+        boundary.push(render_agent_counted_code_list_row(
+            "Writable exceptions",
+            &writable_exceptions,
+        ));
+    }
+    if !agent.protected_paths.is_empty() {
+        boundary.push(render_agent_counted_code_list_row(
+            "Protected paths",
+            &agent.protected_paths,
+        ));
+    }
+    if !boundary.is_empty() {
+        lines.push(String::new());
+        lines.push(paint_section_title("Boundary"));
+        lines.extend(boundary);
+    }
+
     if include_notes
         && let Some(notes) = agent.notes
         && !notes.trim().is_empty()
     {
-        lines.push(String::from("  notes:"));
+        lines.push(String::new());
+        lines.push(paint_section_title("Notes"));
         for line in notes.lines() {
-            lines.push(format!("    {line}"));
+            lines.push(format!(" {}  {}", summary_bullet(), line));
         }
     }
 
@@ -36519,6 +37092,83 @@ fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> 
     } else {
         Some(lines.join("\n"))
     }
+}
+
+fn render_agent_counted_code_list_row<T: AsRef<str>>(label: &str, items: &[T]) -> String {
+    let mut output = String::new();
+    let label = format!("{label} ({}):", items.len());
+    append_wrapped_labeled_text(
+        &mut output,
+        &label,
+        &render_inline_code_list(items),
+        "",
+        96,
+        true,
+        paint_key,
+        |value| value.to_string(),
+    );
+    output.trim_start_matches('\n').to_string()
+}
+
+fn summarize_agent_writable_paths<T: AsRef<str>>(paths: &[T]) -> (Vec<String>, Vec<String>) {
+    let mut summarized = Vec::new();
+    let mut exceptions = Vec::new();
+    let mut seen_roots = BTreeSet::new();
+    let mut seen_summarized = BTreeSet::new();
+    let mut seen_exceptions = BTreeSet::new();
+
+    for path in paths {
+        let value = path.as_ref();
+        if let Some((root, remainder)) = value.split_once('/') {
+            if seen_roots.insert(root.to_string()) {
+                let rendered_root = format!("{root}/");
+                if seen_summarized.insert(rendered_root.clone()) {
+                    summarized.push(rendered_root);
+                }
+            }
+            let final_segment = remainder.rsplit('/').next().unwrap_or(remainder);
+            if looks_like_repo_file_path(final_segment) && seen_exceptions.insert(value.to_string())
+            {
+                exceptions.push(value.to_string());
+            }
+            continue;
+        }
+
+        let rendered = if value.starts_with('.') || looks_like_repo_file_path(value) {
+            value.to_string()
+        } else {
+            format!("{value}/")
+        };
+        if seen_summarized.insert(rendered.clone()) {
+            summarized.push(rendered);
+        }
+    }
+
+    (summarized, exceptions)
+}
+
+fn looks_like_repo_file_path(value: &str) -> bool {
+    if Path::new(value).extension().is_some() {
+        return true;
+    }
+    matches!(
+        value,
+        "Dockerfile"
+            | "Containerfile"
+            | "Makefile"
+            | "GNUmakefile"
+            | "Justfile"
+            | "Brewfile"
+            | "Procfile"
+            | "Tiltfile"
+            | "Vagrantfile"
+            | "Gemfile"
+            | "Rakefile"
+            | "README"
+            | "CHANGELOG"
+            | "LICENSE"
+            | "NOTICE"
+    )
 }
 
 fn render_up(
@@ -37129,8 +37779,12 @@ mod tests {
     use std::collections::BTreeMap;
     use std::env;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
@@ -37150,25 +37804,27 @@ mod tests {
     use crate::detector::{
         Confidence, DetectContract, DetectProject, DetectReport, DetectTask, Inference,
     };
+    use crate::doctor::ProvisioningDiagnostics;
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
         ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorVerdict,
         EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs,
         ExecutionReceiptSummary, ExecutionSummary, ListedWorkflowSummary, ServiceEndpointSummary,
         ServiceManagerSummary, ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary,
-        TaskSummary, WorkflowSummary,
+        TaskSummary, ToolchainSelectionSummary, WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
-        ProvisioningBackendRequest, ProvisioningPlan, ProvisioningTargetKind,
+        ProvisioningBackendRequest, ProvisioningPlan, ProvisioningPlanEntry,
+        ProvisioningTargetKind,
     };
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
         CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, RunError, ServiceTermination,
         ServiceTerminationCause, ServiceTerminationKind, SharedLocalBackendEvidence,
         TaskExecutionRelation, TaskTargetResolutionEvidence, TaskTargetResolutionSource,
-        simulate_run_interrupt_for_test,
+        ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, ToolAcquisitionProvider,
@@ -37335,7 +37991,139 @@ workflows:
     }
 
     #[test]
-    fn render_proof_runtime_text_prioritizes_up_process_failure() {
+    fn wait_for_proof_runtime_readiness_captures_final_doctor_once_probe_is_observed() {
+        let _guard = cwd_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("probe should connect");
+                let mut buffer = [0u8; 256];
+                let _ = stream.read(&mut buffer);
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .expect("probe response should write");
+            }
+        });
+        let failing_check = if cfg!(windows) {
+            "cmd /C exit 1"
+        } else {
+            "sh -c 'exit 1'"
+        };
+
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: proof-runtime-regression
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:{port}/healthz/readiness
+      timeout: 1000
+checks:
+  - name: setup-complete
+    kind: health
+    severity: error
+    run: {failing_check}
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+  app:
+    run:
+      task: app
+    readiness:
+      probes:
+        - backend-ready
+      checks:
+        - setup-complete
+"#
+            ),
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
+                .spawn()
+                .unwrap()
+        } else {
+            Command::new("sh").args(["-c", "sleep 30"]).spawn().unwrap()
+        };
+
+        let started = Instant::now();
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            &mut child,
+        )
+        .unwrap();
+
+        child.kill().unwrap();
+        let _ = child.wait();
+        server.join().expect("probe server should finish");
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(!proof_ok);
+        assert_eq!(phase, "service readiness");
+        assert!(up_failure.is_none());
+        assert!(!report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Check failed: setup-complete"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_wait_budget_uses_floor_for_full_diagnosis() {
+        let budget =
+            super::proof_runtime_wait_budget(&super::ProofRuntimeReadinessStrategy::FullDiagnosis);
+        assert_eq!(
+            budget,
+            Duration::from_secs(super::PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS)
+        );
+    }
+
+    #[test]
+    fn proof_runtime_wait_budget_scales_for_slow_surface_targets() {
+        let target = crate::runner::HostRuntimeReadinessProbe {
+            listener: String::from("backend"),
+            protocol: crate::schema::TaskRuntimeProtocol::Http,
+            address: String::from("127.0.0.1"),
+            port: 5678,
+            request: Some(crate::runner::HttpReadinessRequest {
+                method: crate::schema::TaskRuntimeReadinessHttpMethod::Get,
+                path: String::from("/healthz/readiness"),
+                headers: BTreeMap::new(),
+                success_statuses: vec![200],
+                body_contains: None,
+            }),
+            default_timeout: Some(Duration::from_secs(10)),
+        };
+        let budget = super::proof_runtime_wait_budget(
+            &super::ProofRuntimeReadinessStrategy::LightweightTargets(vec![target]),
+        );
+        assert_eq!(budget, Duration::from_secs(420));
+    }
+
+    #[test]
+    fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
         let contract_path = contract_dir.path().join("ota.yaml");
@@ -37388,9 +38176,93 @@ workflows:
             None,
         ));
 
+        assert!(rendered.contains("missing-check-command"));
+        assert!(rendered.contains("rerun `ota doctor`"));
+        assert!(!rendered.contains("Up process exited unexpectedly"));
+    }
+
+    #[test]
+    fn render_proof_runtime_text_uses_up_process_failure_when_no_primary_blocker() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("default"),
+            Path::new("./ota.yaml"),
+            "service readiness",
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            &summary,
+            Some("up process exited with code 1"),
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            None,
+            None,
+        ));
+
         assert!(rendered.contains("Up process exited unexpectedly"));
         assert!(rendered.contains("Why: up process exited with code 1"));
         assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
+    }
+
+    #[test]
+    fn proof_runtime_up_exit_primary_blocker_overrides_surface_blocker() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness failed: app"),
+                why: String::from("surface app did not become ready"),
+                next: String::from("rerun `ota doctor`"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let overridden = super::proof_runtime_up_exit_primary_blocker(
+            &summary,
+            Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
+            "up.log",
+        )
+        .expect("surface blocker should be overridden for pre-readiness up exit");
+        assert_eq!(overridden.summary, "Run task exited before readiness");
+        assert!(overridden.why.contains("exit code 1"));
+        assert_eq!(
+            overridden.next,
+            "inspect up.log and rerun `ota proof runtime`"
+        );
+
+        let mut summary = summary;
+        summary.primary_blocker = Some(overridden);
+
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("default"),
+            Path::new("./ota.yaml"),
+            "service readiness",
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            &summary,
+            Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            None,
+            None,
+        ));
+
+        assert!(rendered.contains("Run task exited before readiness"));
+        assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
+        assert!(!rendered.contains("Surface readiness failed: app"));
     }
 
     #[test]
@@ -37746,6 +38618,9 @@ tasks:
             readiness_checks: vec![String::from("app-health")],
             readiness_probes: vec![String::from("app-ready")],
             readiness_surfaces: vec![String::from("backend")],
+            signal_readiness_checks: Vec::new(),
+            signal_readiness_probes: Vec::new(),
+            signal_readiness_surfaces: Vec::new(),
             exposes: vec![String::from("http://127.0.0.1:5678")],
             expose_surfaces: vec![String::from("backend")],
             expose_entries: vec![crate::output::WorkflowExposeEntry {
@@ -38728,6 +39603,124 @@ env:
     }
 
     #[test]
+    fn detect_dry_run_json_includes_toolchain_opportunity_metadata() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+        )
+        .expect("write pyproject");
+        fs::write(repo.path().join("uv.lock"), "version = 1\n").expect("write uv.lock");
+        fs::write(repo.path().join(".python-version"), "3.12\n").expect("write .python-version");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            true,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect json");
+        assert_eq!(
+            json["toolchain_opportunities"][0]["ecosystem"],
+            serde_json::Value::String(String::from("python"))
+        );
+        assert_eq!(
+            json["toolchain_opportunities"][0]["candidate_providers"][0],
+            serde_json::Value::String(String::from("uv"))
+        );
+        assert_eq!(
+            json["toolchain_opportunities"][0]["candidate_providers"][1],
+            serde_json::Value::String(String::from("mise"))
+        );
+    }
+
+    #[test]
+    fn detect_dry_run_json_prefers_java_toolchain_contract_when_provider_is_shipped() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("pom.xml"),
+            r#"<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.ota</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+  </properties>
+</project>
+"#,
+        )
+        .expect("write pom.xml");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            true,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect json");
+        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert_eq!(json["config"]["toolchains"]["java"]["version"], "21");
+        assert!(json["config"]["runtimes"]["java"].is_null(), "{json}");
+        assert!(
+            json["toolchain_opportunities"].as_array().is_none(),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn init_preview_text_surfaces_user_safe_toolchain_opportunity_guidance() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+        )
+        .expect("write pyproject");
+        fs::write(repo.path().join("uv.lock"), "version = 1\n").expect("write uv.lock");
+        fs::write(repo.path().join(".python-version"), "3.12\n").expect("write .python-version");
+
+        let output = super::init(
+            Some(repo.path()),
+            false,
+            false,
+            None,
+            false,
+            OutputFormat::Text,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let stdout = super::strip_ansi_codes(&output.stdout);
+        assert!(stdout.contains("Toolchain Opportunities"), "{stdout}");
+        assert!(stdout.contains("Ecosystem: python"), "{stdout}");
+        assert!(
+            stdout.contains("keep `runtimes.python` and `tools.uv` for now"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("mise"), "{stdout}");
+    }
+
+    #[test]
     fn capture_durable_run_logs_writes_repo_local_artifacts_when_enabled() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         let contract_path = repo.path().join("ota.yaml");
@@ -38807,6 +39800,7 @@ env:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: Some(ExecutionReceiptLogs {
                 dir: String::from(".ota/state/logs/20260424-dev"),
@@ -39209,6 +40203,9 @@ tasks:
                 ],
                 readiness_probes: Vec::new(),
                 readiness_surfaces: Vec::new(),
+                signal_readiness_checks: Vec::new(),
+                signal_readiness_probes: Vec::new(),
+                signal_readiness_surfaces: Vec::new(),
                 exposes: Vec::new(),
                 expose_surfaces: Vec::new(),
                 expose_entries: Vec::new(),
@@ -40257,6 +41254,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40337,6 +41335,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40472,6 +41471,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40561,6 +41561,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40672,6 +41673,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -40746,6 +41748,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -41206,19 +42209,18 @@ tasks:
 version: 1
 project:
   name: preview-up
-tools:
-  pnpm:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
-      tools:
-        pnpm: ">=10.22.0"
+      toolchains:
+        - node
   docker:run:
     launch:
       kind: container
@@ -41291,23 +42293,26 @@ workflows:
 version: 1
 project:
   name: preview-up
-tools:
-  pnpm:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
+      toolchains:
+        - node
       tools:
-        pnpm: ">=10.22.0"
+        pnpm: "10.22.0"
 workflows:
   default: contributor
   contributor:
     setup:
+      task: setup
+    run:
       task: setup
 "#,
         )
@@ -41334,6 +42339,29 @@ workflows:
             Some("contributor"),
             &preflight,
         );
+        let requirement_surface = super::up_policy_requirement_surface(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("contributor"),
+        );
+        assert!(
+            requirement_surface.tools.contains_key("pnpm"),
+            "{requirement_surface:?}"
+        );
+        let preview_action = &preflight
+            .provisioning
+            .as_ref()
+            .expect("provisioning diagnostics")
+            .request
+            .actions[0];
+        assert!(super::requirement_surface_targets_provisioning_action(
+            &requirement_surface,
+            preview_action,
+        ));
+        assert!(super::finding_targets_provisioning_action(
+            &preflight.findings[0],
+            preview_action,
+        ));
 
         assert!(preview.plan.actions.contains(&String::from(
             "activate tool `pnpm` via `corepack` (`pnpm@10.22.0`)"
@@ -41524,23 +42552,26 @@ workflows:
 version: 1
 project:
   name: preview-up
-tools:
-  pnpm:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
+      toolchains:
+        - node
       tools:
-        pnpm: ">=10.22.0"
+        pnpm: "10.22.0"
 workflows:
   default: contributor
   contributor:
     setup:
+      task: setup
+    run:
       task: setup
 "#,
         )
@@ -41554,7 +42585,7 @@ workflows:
                         kind: ProvisioningActionKind::SelectSource,
                         target_kind: ProvisioningTargetKind::Tool,
                         name: String::from("pnpm"),
-                        requested_version: String::from(">=10.22.0"),
+                        requested_version: String::from("10.22.0"),
                         normalized_requirement: None,
                         resolved_version: None,
                         package: Some(String::from("pnpm")),
@@ -41588,11 +42619,152 @@ workflows:
                 .plan
                 .actions
                 .iter()
-                .any(|action| { action.contains("provision `pnpm` `>=10.22.0` via `brew`") })
+                .any(|action| { action.contains("provision `pnpm` `10.22.0` via `brew`") })
         );
         assert!(preview.plan.skipped.contains(&String::from(
             "skip Corepack activation for `pnpm`; policy provisioning is selected for this tool"
         )));
+    }
+
+    #[test]
+    fn selected_up_activation_actions_skip_container_scoped_corepack_package_managers() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/example/app:latest
+    host:
+      backend: native
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    platforms:
+      linux:
+        package_managers:
+          pnpm: "10.22.0"
+tasks:
+  setup:
+    context: app
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.22.0"
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from(
+                    "pnpm is declared in the contract but is not available inside container image `ghcr.io/example/app:latest`",
+                ),
+                next: String::from(
+                    "run `corepack enable && corepack prepare pnpm@10.22.0 --activate` and rerun `ota doctor`",
+                ),
+            }],
+        };
+
+        let actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+        );
+
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn selected_up_activation_actions_exclude_unrequired_corepack_package_managers_for_selected_workflow()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: ">=22.16"
+    package_managers:
+      pnpm: "10.32.1"
+tools:
+  npx: "*"
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.32.1"
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      toolchains:
+        - node
+      tools:
+        npx: "*"
+workflows:
+  default: backend
+  backend:
+    run:
+      task: install
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from("pnpm is declared in the contract but is not available on PATH"),
+                next: String::from(
+                    "run `corepack enable && corepack prepare pnpm@10.32.1 --activate` and rerun `ota doctor`",
+                ),
+            }],
+        };
+
+        let actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("instant"),
+            &preflight,
+        );
+
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
     #[test]
@@ -41873,6 +43045,271 @@ tasks:
 
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].name, "java");
+    }
+
+    #[test]
+    fn selected_up_provisioning_actions_include_toolchain_owned_runtime_requirements() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(ProvisioningDiagnostics {
+                plan: ProvisioningPlan {
+                    allowed: vec![ProvisioningPlanEntry {
+                        kind: ProvisioningTargetKind::Runtime,
+                        name: String::from("rust"),
+                        requested_version: String::from("1.94.0"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: None,
+                        source: Some(String::from("mise")),
+                        source_config: None,
+                        approved_version: Some(String::from("1.94.0")),
+                        policy_match: None,
+                        blocked_reason: None,
+                    }],
+                    blocked: Vec::new(),
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Runtime,
+                        name: String::from("rust"),
+                        requested_version: String::from("1.94.0"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: None,
+                        source: String::from("mise"),
+                        source_config: None,
+                        approved_version: Some(String::from("1.94.0")),
+                        policy_match: None,
+                    }],
+                },
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Runtime,
+                        name: String::from("rust"),
+                        requested_version: String::from("1.94.0"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: None,
+                        source: String::from("mise"),
+                        source_config: None,
+                        approved_version: Some(String::from("1.94.0")),
+                        policy_match: None,
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing runtime: rust"),
+                why: String::from(
+                    "rust is declared through the selected toolchain but is not available",
+                ),
+                next: String::from("install `rust` and rerun `ota doctor`"),
+            }],
+        };
+
+        let actions = super::selected_up_provisioning_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            None,
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].name, "rust");
+    }
+
+    #[test]
+    fn selected_up_provisioning_actions_include_container_scoped_corepack_package_managers() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/example/app:latest
+    host:
+      backend: native
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    platforms:
+      linux:
+        package_managers:
+          pnpm: "10.22.0"
+tasks:
+  setup:
+    context: app
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.22.0"
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("pnpm"),
+                        requested_version: String::from("10.22.0"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(String::from("pnpm")),
+                        source: String::from("apt"),
+                        source_config: None,
+                        approved_version: Some(String::from("10.22.0")),
+                        policy_match: None,
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from(
+                    "pnpm is declared in the contract but is not available inside container image `ghcr.io/example/app:latest`",
+                ),
+                next: String::from("install `pnpm` and rerun `ota doctor`"),
+            }],
+        };
+
+        let actions = super::selected_up_provisioning_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].name, "pnpm");
+    }
+
+    #[test]
+    fn selected_up_provisioning_actions_exclude_unrequired_corepack_package_managers_for_selected_workflow()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: ">=22.16"
+    package_managers:
+      pnpm: "10.32.1"
+tools:
+  npx: "*"
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.32.1"
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      toolchains:
+        - node
+      tools:
+        npx: "*"
+workflows:
+  default: backend
+  backend:
+    run:
+      task: install
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("pnpm"),
+                        requested_version: String::from("10.32.1"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(String::from("pnpm")),
+                        source: String::from("mise"),
+                        source_config: None,
+                        approved_version: Some(String::from("10.32.1")),
+                        policy_match: None,
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from("pnpm is declared in the contract but is not available on PATH"),
+                next: String::from("install `pnpm` and rerun `ota doctor`"),
+            }],
+        };
+
+        let actions = super::selected_up_provisioning_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("instant"),
+            &preflight,
+        );
+
+        assert!(actions.is_empty(), "{actions:?}");
     }
 
     #[test]
@@ -42760,6 +44197,57 @@ policies:
         assert!(container_lines[0].contains("tool node 22 via mise"));
     }
 
+    #[test]
+    fn execution_policy_lines_include_toolchain_owned_runtime_requirements() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    rust:
+      source: mise
+      approved_versions:
+        - "1.94.0"
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let lines = super::execution_policy_lines(&contract, &contract_path, Backend::Native);
+
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("runtime rust 1.94.0 via mise"),
+            "expected toolchain-owned runtime provisioning line, got: {}",
+            lines[0]
+        );
+    }
+
     fn write_cross_member_target_root_contract(root: &Path) -> crate::workspace::WorkspaceRepoRef {
         fs::write(
             root.join("ota.yaml"),
@@ -43148,6 +44636,78 @@ workflows:
             "install compatible runtimes and tools, then rerun `ota doctor`"
         );
         assert_eq!(groups[0].count, 2);
+    }
+
+    #[test]
+    fn doctor_json_includes_selected_toolchains() {
+        let fixture = TempDir::new().expect("temp dir");
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::doctor(
+            Some(fixture.path()),
+            None,
+            &[],
+            Some("app"),
+            false,
+            false,
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("doctor json should parse");
+        let toolchains = json["toolchains"]
+            .as_array()
+            .expect("toolchains array should be present");
+        assert_eq!(toolchains.len(), 1, "{json}");
+        let toolchain = &toolchains[0];
+        assert_eq!(toolchain["name"], "rust");
+        assert_eq!(toolchain["provider"], "rustup");
+        assert_eq!(toolchain["backend"], "native");
+        assert_eq!(
+            toolchain["target_os"],
+            super::current_requirement_platform()
+        );
+        assert_eq!(toolchain["fulfillment"], "none");
+        assert_eq!(toolchain["owns_runtime"], "rust");
+        assert!(
+            toolchain["owns_tools"]
+                .as_array()
+                .is_some_and(|tools| tools.iter().any(|tool| tool == "cargo"))
+        );
+        assert!(
+            toolchain["owns_tools"]
+                .as_array()
+                .is_some_and(|tools| tools.iter().any(|tool| tool == "rustfmt"))
+        );
     }
 
     #[test]
@@ -44276,6 +45836,34 @@ tasks:
     }
 
     #[test]
+    fn structured_validation_error_details_clarifies_duplicate_toolchain_ownership() {
+        let why = String::from(
+            "duplicate ownership is invalid: toolchain `rust` owns tool `cargo`, but the contract also declares `tools.cargo`; keep `toolchains.rust` as the owner and remove the duplicate tool declaration",
+        );
+        let next = vec![
+            String::from("repair `./ota.yaml`"),
+            String::from("rerun `ota validate`"),
+        ];
+
+        let (why_lines, next_steps) =
+            super::structured_validation_error_details(&[why], &next).unwrap();
+
+        assert_eq!(
+            why_lines[0],
+            "the contract duplicates tool `cargo` that belongs to toolchain `rust`"
+        );
+        assert!(why_lines.contains(&String::from(
+            "`tools.cargo` is already owned by `toolchains.rust`"
+        )));
+        assert!(why_lines.contains(&String::from(
+            "keep `toolchains.rust` as the owner for `cargo`"
+        )));
+        assert_eq!(next_steps[0], "remove `tools.cargo`");
+        assert_eq!(next_steps[1], "remove the duplicate tool declaration");
+        assert_eq!(next_steps[2], "rerun `ota validate`");
+    }
+
+    #[test]
     fn doctor_depends_on_boundary_finding_renders_compact_edge_shape() {
         let mut rendered = String::new();
         assert!(super::render_depends_on_boundary_doctor_finding(
@@ -44796,6 +46384,9 @@ execution:
             readiness_checks: Vec::new(),
             readiness_probes: Vec::new(),
             readiness_surfaces: Vec::new(),
+            signal_readiness_checks: Vec::new(),
+            signal_readiness_probes: Vec::new(),
+            signal_readiness_surfaces: Vec::new(),
             exposes: Vec::new(),
             expose_surfaces: Vec::new(),
             expose_entries: Vec::new(),
@@ -44926,6 +46517,7 @@ workflows:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -45639,6 +47231,7 @@ tasks:
                 generation: 0,
                 execution_note: None,
             }],
+            &[],
             &[],
             &[],
             &[],
@@ -46364,6 +47957,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -46416,6 +48010,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -46468,6 +48063,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -46537,6 +48133,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -46605,6 +48202,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -46707,6 +48305,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -46763,6 +48362,7 @@ tasks:
             &[],
             &[],
             &[],
+            &[],
             None,
             &[],
             None,
@@ -46804,6 +48404,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -46910,6 +48511,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -46963,6 +48565,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -47904,6 +49507,338 @@ tasks:
     }
 
     #[test]
+    fn run_structured_error_text_explains_toolchain_fulfillment_precisely() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "setup",
+            None,
+            ExecutionOverrides::default(),
+            &RunError::ToolchainFulfillmentFailed {
+                task: String::from("setup"),
+                toolchain: String::from("rust"),
+                details: String::from(
+                    "`rustup toolchain install 1.94.0 --component rustfmt` exited with code 1",
+                ),
+            },
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("Toolchain fulfillment failed"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("task `setup` selected toolchain `rust`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`toolchains.rust.fulfillment: run` allowed ota to attempt run-path provisioning via `rustup`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`)"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("repair `rustup` or adjust `toolchains.rust`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("rerun `ota run setup --stream`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn up_toolchain_preview_actions_use_selected_task_backend() {
+        let host_os = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(windows) {
+            "windows"
+        } else {
+            "linux"
+        };
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+    host:
+      backend: native
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.1"
+    platforms:
+      {host_os}:
+        version: "1.94.0"
+        components:
+          - rustfmt
+tasks:
+  setup:
+    context: app
+    run: echo setup
+  dev:
+    context: host
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+            ),
+        )
+        .expect("contract should parse");
+
+        let actions = super::selected_up_toolchain_preview_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            Backend::Container,
+        );
+
+        assert!(actions.iter().any(|action| action.contains(
+            "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`, components `rustfmt`)"
+        )));
+        assert!(!actions.iter().any(|action| {
+            action.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`)",
+            )
+        }));
+    }
+
+    #[test]
+    fn up_toolchain_preview_actions_include_corepack_package_manager_when_selected_workflow_requires_it()
+     {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: ">=22.16"
+    package_managers:
+      pnpm: "10.32.1"
+tools:
+  npx: "*"
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.32.1"
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      toolchains:
+        - node
+      tools:
+        npx: "*"
+workflows:
+  default: backend
+  backend:
+    run:
+      task: install
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .expect("contract should parse");
+
+        let actions = super::selected_up_toolchain_preview_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("backend"),
+            Backend::Native,
+        );
+
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.contains("package managers `pnpm@10.32.1`")),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
+    fn up_toolchain_preview_actions_exclude_unrequired_corepack_package_managers_for_selected_workflow()
+     {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: ">=22.16"
+    package_managers:
+      pnpm: "10.32.1"
+tools:
+  npx: "*"
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.32.1"
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      toolchains:
+        - node
+      tools:
+        npx: "*"
+workflows:
+  default: backend
+  backend:
+    run:
+      task: install
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .expect("contract should parse");
+
+        let actions = super::selected_up_toolchain_preview_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("instant"),
+            Backend::Native,
+        );
+
+        assert!(
+            actions
+                .iter()
+                .all(|action| !action.contains("package managers `pnpm@10.32.1`")),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
+    fn up_run_error_uses_selected_execution_mode_for_toolchain_requirement_text() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let contract_path = temp_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    fulfillment: run
+    platforms:
+      linux:
+        version: "1.94.1"
+        components:
+          - rustfmt
+tasks:
+  dev:
+    context: app
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .expect("write contract");
+
+        let rendered = strip_ansi_codes(&super::render_up_run_error(
+            &contract_path,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            RunError::ToolchainFulfillmentFailed {
+                task: String::from("dev"),
+                toolchain: String::from("rust"),
+                details: String::from(
+                    "`rustup toolchain install 1.94.1 --component rustfmt` exited with code 1",
+                ),
+            },
+        ));
+
+        assert!(
+            rendered.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.1`, components `rustfmt`)"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains(
+                "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`)"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_reports_interrupted_non_service_with_cleanup_note() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -47994,6 +49929,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -48069,6 +50005,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -48130,6 +50067,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -48194,6 +50132,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -48252,6 +50191,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -48310,6 +50250,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -48373,6 +50314,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: Some(ServiceTermination {
@@ -48572,6 +50514,26 @@ tasks:
             rendered.contains(
                 "requested task `dev:clean` failed because depends_on task `dev` returned a non-zero exit code"
             ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn task_exit_failure_text_decodes_common_windows_crash_code() {
+        let rendered = strip_ansi_codes(&super::render_task_exit_failure_text(
+            "./ota.yaml",
+            "dev",
+            None,
+            -1073741819,
+            None,
+            &[],
+            Some("RUN SUMMARY\nStatus:      failed"),
+            None,
+        ));
+
+        assert!(rendered.contains("0xC0000005"), "{rendered}");
+        assert!(
+            rendered.contains("on Windows, exit code `-1073741819` (`0xC0000005`) usually means the process crashed with access violation"),
             "{rendered}"
         );
     }
@@ -48834,6 +50796,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: None,
             logs: None,
             service_termination: None,
@@ -48972,6 +50935,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
@@ -49070,6 +51034,7 @@ tasks:
             env: BTreeMap::new(),
             env_sources: Vec::new(),
             native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
@@ -49456,6 +51421,394 @@ tasks:
             .as_ref()
             .expect("activation");
         assert!(activation.applied);
+    }
+
+    #[test]
+    fn preview_receipt_tracks_selected_workflow_toolchains() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: target-test
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    components:
+      - rustfmt
+tasks:
+  setup:
+    context: app
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let receipt = super::preview_receipt(
+            &contract,
+            Path::new("./ota.yaml"),
+            ExecutionOverrides::default(),
+            Some("app"),
+            "READY",
+            &[],
+        );
+
+        assert_eq!(receipt.toolchains.len(), 1);
+        let toolchain = &receipt.toolchains[0];
+        assert_eq!(toolchain.name, "rust");
+        assert_eq!(toolchain.provider, "rustup");
+        assert_eq!(toolchain.backend, "container");
+        assert_eq!(toolchain.target_os, "linux");
+        assert_eq!(toolchain.fulfillment, "none");
+        assert_eq!(toolchain.owns_runtime, "rust");
+        assert!(toolchain.owns_tools.iter().any(|tool| tool == "cargo"));
+        assert!(toolchain.owns_tools.iter().any(|tool| tool == "rustfmt"));
+    }
+
+    #[test]
+    fn preview_receipt_policy_lines_follow_selected_workflow_toolchains() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: target-test
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+  node:
+    provider: corepack
+    version: "22"
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+  test:
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    rust:
+      source: mise
+      approved_versions:
+        - "1.94.0"
+    node:
+      source: mise
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let receipt = super::preview_receipt(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("app"),
+            "READY",
+            &[],
+        );
+
+        assert_eq!(receipt.toolchains.len(), 2, "{:?}", receipt.toolchains);
+        assert_eq!(receipt.policy.len(), 2, "{:?}", receipt.policy);
+        assert!(
+            receipt
+                .policy
+                .iter()
+                .any(|line| line.contains("runtime rust 1.94.0 via mise")),
+            "{:?}",
+            receipt.policy
+        );
+        assert!(
+            receipt
+                .policy
+                .iter()
+                .any(|line| line.contains("runtime node 22 via mise")),
+            "{:?}",
+            receipt.policy
+        );
+    }
+
+    #[test]
+    fn execution_receipt_text_renders_selected_toolchains_section() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("ghcr.io/ota/dev:latest")),
+            container_memory_bytes: None,
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: vec![ToolchainSelectionSummary {
+                name: String::from("rust"),
+                provider: String::from("rustup"),
+                backend: String::from("container"),
+                target_os: String::from("linux"),
+                version: String::from("1.94.0"),
+                fulfillment: String::from("run"),
+                required: true,
+                owns_runtime: String::from("rust"),
+                fulfilled: Some(true),
+                commands: vec![String::from(
+                    "rustup toolchain install 1.94.0 --profile minimal --component rustfmt",
+                )],
+                owns_tools: vec![String::from("cargo"), String::from("rustfmt")],
+                components: vec![String::from("rustfmt")],
+                targets: Vec::new(),
+            }],
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "setup",
+                "READY",
+                Some(String::from("task `setup`")),
+                Some(0),
+            )],
+            status: Some(String::from("ready")),
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 0,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_text(&receipt));
+        assert!(rendered.contains("Toolchains"), "{rendered}");
+        assert!(rendered.contains("`rust` via `rustup`"), "{rendered}");
+        assert!(rendered.contains("container, linux, version 1.94.0, fulfillment run, required"));
+        assert!(rendered.contains("Owns runtime: `rust`"), "{rendered}");
+        assert!(
+            rendered.contains("Owns tools: `cargo`, `rustfmt`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Components: `rustfmt`"), "{rendered}");
+        assert!(
+            rendered.contains("Fulfilled: applied on this execution path"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Command: rustup toolchain install 1.94.0 --profile minimal --component rustfmt"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_execution_receipt_includes_toolchain_fulfillment_evidence() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .unwrap();
+
+        let receipt = super::run_execution_receipt_with_shared(
+            &contract,
+            Path::new("./ota.yaml"),
+            ExecutionOverrides::default(),
+            "setup",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("setup"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            &[ToolchainFulfillmentEvidence {
+                name: String::from("rust"),
+                commands: vec![String::from(
+                    "rustup toolchain install 1.94.0 --profile minimal",
+                )],
+            }],
+            &[],
+            None,
+            &[],
+            None,
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.toolchains.len(), 1);
+        let toolchain = &receipt.toolchains[0];
+        assert_eq!(toolchain.name, "rust");
+        assert_eq!(toolchain.fulfillment, "run");
+        assert_eq!(toolchain.fulfilled, Some(true));
+        assert_eq!(
+            toolchain.commands,
+            vec![String::from(
+                "rustup toolchain install 1.94.0 --profile minimal"
+            )]
+        );
+    }
+
+    #[test]
+    fn run_execution_receipt_policy_lines_follow_selected_task_toolchains() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+  node:
+    provider: corepack
+    version: "22"
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    rust:
+      source: mise
+      approved_versions:
+        - "1.94.0"
+    node:
+      source: mise
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let receipt = super::run_execution_receipt_with_shared(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            "setup",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("setup"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            &[],
+            None,
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.toolchains.len(), 1, "{:?}", receipt.toolchains);
+        assert_eq!(receipt.policy.len(), 1, "{:?}", receipt.policy);
+        assert!(
+            receipt.policy[0].contains("runtime rust 1.94.0 via mise"),
+            "{:?}",
+            receipt.policy
+        );
     }
 
     #[test]
@@ -51242,6 +53595,72 @@ workflows:
                 .findings
                 .iter()
                 .any(|finding| finding.summary == "Check failed: frontend-ready")
+        );
+    }
+
+    #[test]
+    fn up_selected_workflow_does_not_fail_on_unrelated_global_checks() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: workflow-up
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+tasks:
+  quickstart:
+    run: echo quickstart
+    requirements:
+      tools:
+        node: "20"
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("instant"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(!result.report.findings.iter().any(
+            |finding| finding.summary == "File check failed: workspace-dependencies-installed"
+        ));
+        assert!(
+            result
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Version mismatch for tool: node"),
+            "status={} phase={} findings={:?} stdout=\n{}\nstderr=\n{}",
+            result.status,
+            result.phase,
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.as_str())
+                .collect::<Vec<_>>(),
+            result.stdout,
+            result.stderr
         );
     }
 
@@ -53047,6 +55466,7 @@ fn run_single_contract_target_streaming(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.fulfilled_toolchains,
                 &outcome.task_step_backend_fulfillments,
                 outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
@@ -53112,6 +55532,7 @@ fn run_single_contract_target_streaming(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.fulfilled_toolchains,
                 &outcome.task_step_backend_fulfillments,
                 outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
@@ -53214,6 +55635,7 @@ fn run_single_contract_target_streaming(
                 &[],
                 &[],
                 &[],
+                &[],
                 error_backend_fulfillment,
                 &[],
                 None,
@@ -53293,6 +55715,7 @@ fn run_single_contract_target_captured(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.fulfilled_toolchains,
                 &outcome.task_step_backend_fulfillments,
                 outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
@@ -53354,6 +55777,7 @@ fn run_single_contract_target_captured(
                 &outcome.task_steps,
                 &outcome.task_step_target_resolutions,
                 &outcome.target_resolutions,
+                &outcome.fulfilled_toolchains,
                 &outcome.task_step_backend_fulfillments,
                 outcome.backend_fulfillment.clone(),
                 &outcome.task_step_shared_local_backends,
@@ -53449,6 +55873,7 @@ fn run_single_contract_target_captured(
                 overrides,
                 task_name.as_str(),
                 member,
+                &[],
                 &[],
                 &[],
                 &[],
@@ -54409,11 +56834,14 @@ fn task_exit_failure_why_lines(
         );
         lines
     } else {
-        vec![
-            dependency_failure_line.unwrap_or_else(|| {
+        let mut lines =
+            vec![dependency_failure_line.unwrap_or_else(|| {
                 format!("task `{failed_step_name}` returned a non-zero exit code")
-            }),
-        ]
+            })];
+        if let Some(guidance) = windows_exit_code_guidance_line(exit_code) {
+            lines.push(guidance);
+        }
+        lines
     }
 }
 
@@ -54795,6 +57223,240 @@ fn repo_env_task_command(task_name: &str, member: Option<&str>) -> String {
         Some(member) => format!("ota env --member {member} --task {task_name}"),
         None => format!("ota env --task {task_name}"),
     }
+}
+
+fn selected_toolchain_target_os_for_task(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> &'static str {
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    requirement_target_os_for_backend(backend)
+}
+
+fn toolchain_summary_backend_for_mode(mode: DoctorMode) -> Backend {
+    match mode {
+        DoctorMode::Native => Backend::Native,
+        DoctorMode::Container => Backend::Container,
+        DoctorMode::Remote => Backend::Remote,
+    }
+}
+
+fn selected_toolchain_summary(
+    toolchain_name: &str,
+    toolchain: &crate::schema::ToolchainSpec,
+    backend: Backend,
+    target_os: &str,
+) -> Option<ToolchainSelectionSummary> {
+    let provider = declared_toolchain_contract(toolchain_name, toolchain)?;
+    if !toolchain.active_for_os(target_os) {
+        return None;
+    }
+    let owned_capabilities = provider.owned_capabilities(toolchain);
+    let owns_tools = owned_capabilities
+        .iter()
+        .filter(|capability| capability.kind == ToolchainOwnedCapabilityKind::Tool)
+        .map(|capability| capability.name.clone())
+        .collect::<Vec<_>>();
+
+    Some(ToolchainSelectionSummary {
+        name: toolchain_name.to_string(),
+        provider: provider.label().to_string(),
+        backend: format_backend(backend).to_string(),
+        target_os: target_os.to_string(),
+        version: toolchain.version_for_os(target_os).to_string(),
+        fulfillment: match toolchain.fulfillment_mode() {
+            crate::schema::ToolchainFulfillmentMode::None => String::from("none"),
+            crate::schema::ToolchainFulfillmentMode::Run => String::from("run"),
+        },
+        required: toolchain.required_for_os(target_os),
+        owns_runtime: provider.owned_runtime().to_string(),
+        fulfilled: None,
+        commands: Vec::new(),
+        owns_tools,
+        components: provider.managed_surface_entries(
+            crate::toolchains::ToolchainManagedSurfaceKind::Component,
+            toolchain,
+            target_os,
+        ),
+        targets: provider.managed_surface_entries(
+            crate::toolchains::ToolchainManagedSurfaceKind::Target,
+            toolchain,
+            target_os,
+        ),
+    })
+}
+
+fn apply_toolchain_fulfillment_evidence(
+    toolchains: &mut [ToolchainSelectionSummary],
+    fulfilled_toolchains: &[ToolchainFulfillmentEvidence],
+) {
+    let fulfilled_by_name = fulfilled_toolchains
+        .iter()
+        .map(|evidence| (evidence.name.as_str(), evidence))
+        .collect::<BTreeMap<_, _>>();
+
+    for toolchain in toolchains {
+        let fulfilled = fulfilled_by_name.get(toolchain.name.as_str());
+        toolchain.fulfilled = Some(fulfilled.is_some());
+        toolchain.commands = fulfilled
+            .map(|evidence| evidence.commands.clone())
+            .unwrap_or_default();
+    }
+}
+
+fn toolchain_summary_names(toolchains: &[ToolchainSelectionSummary]) -> BTreeSet<String> {
+    toolchains
+        .iter()
+        .map(|toolchain| toolchain.name.clone())
+        .collect()
+}
+
+fn selected_toolchain_summaries_for_task_names(
+    contract: &Contract,
+    task_names: &[String],
+    overrides: ExecutionOverrides,
+    fallback_backend: Backend,
+) -> Vec<ToolchainSelectionSummary> {
+    let mut seen = BTreeSet::new();
+    let mut summaries = Vec::new();
+
+    if task_names.is_empty() {
+        let target_os = requirement_target_os_for_backend(fallback_backend);
+        for toolchain_name in contract.toolchains.keys() {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            let Some(summary) = selected_toolchain_summary(
+                toolchain_name.as_str(),
+                toolchain,
+                fallback_backend,
+                target_os,
+            ) else {
+                continue;
+            };
+            let key = format!(
+                "{}:{}:{}:{}:{}",
+                summary.name,
+                summary.backend,
+                summary.target_os,
+                summary.version,
+                summary.fulfillment
+            );
+            if seen.insert(key) {
+                summaries.push(summary);
+            }
+        }
+        return summaries;
+    }
+
+    let scoped_any = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+    for task_name in task_names {
+        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+        let target_os = requirement_target_os_for_backend(backend);
+        let toolchain_names = if scoped_any {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| task.requirements.toolchains.clone())
+                .unwrap_or_default()
+        } else {
+            contract
+                .task_required_toolchain_names(task_name.as_str())
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+
+        for toolchain_name in toolchain_names {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            let Some(summary) =
+                selected_toolchain_summary(toolchain_name.as_str(), toolchain, backend, target_os)
+            else {
+                continue;
+            };
+            let key = format!(
+                "{}:{}:{}:{}:{}",
+                summary.name,
+                summary.backend,
+                summary.target_os,
+                summary.version,
+                summary.fulfillment
+            );
+            if seen.insert(key) {
+                summaries.push(summary);
+            }
+        }
+    }
+
+    summaries
+}
+
+fn selected_workflow_toolchain_summaries(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> Vec<ToolchainSelectionSummary> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    selected_toolchain_summaries_for_task_names(contract, &task_names, overrides, fallback_backend)
+}
+
+fn selected_task_toolchain_summaries(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Vec<ToolchainSelectionSummary> {
+    selected_toolchain_summaries_for_task_names(
+        contract,
+        &[task_name.to_string()],
+        overrides,
+        effective_task_execution(contract, task_name, overrides).backend,
+    )
+}
+
+fn fallback_toolchain_summaries_for_backend(
+    contract: &Contract,
+    backend: Backend,
+) -> Vec<ToolchainSelectionSummary> {
+    selected_toolchain_summaries_for_task_names(
+        contract,
+        &[],
+        ExecutionOverrides::default(),
+        backend,
+    )
+}
+
+fn resolved_toolchain_fulfillment_attempt_summary(
+    contract: &Contract,
+    toolchain_name: &str,
+    target_os: &str,
+) -> crate::toolchains::ToolchainFulfillmentAttemptSummary {
+    contract
+        .toolchains
+        .get(toolchain_name)
+        .map(|spec| declared_toolchain_fulfillment_attempt_summary(toolchain_name, spec, target_os))
+        .unwrap_or_else(|| fallback_toolchain_fulfillment_attempt_summary(toolchain_name))
+}
+
+fn toolchain_fulfillment_next_steps(
+    rerun_command: &str,
+    provider: &str,
+    task_name: &str,
+    toolchain_name: &str,
+) -> Vec<String> {
+    vec![
+        format!(
+            "repair `{provider}` or adjust `toolchains.{toolchain_name}` for task `{task_name}`"
+        ),
+        format!("rerun `{rerun_command}`"),
+    ]
 }
 
 fn repo_execution_plan_command(
@@ -55182,6 +57844,36 @@ fn render_run_structured_error_text(
                 format!("rerun `{}`", repo_run_stream_command(task_name, member)),
             ],
         ),
+        RunError::ToolchainFulfillmentFailed {
+            task,
+            toolchain,
+            details,
+        } => {
+            let target_os = selected_toolchain_target_os_for_task(contract, task, overrides);
+            let summary = resolved_toolchain_fulfillment_attempt_summary(
+                contract,
+                toolchain.as_str(),
+                target_os,
+            );
+            let provider = summary.provider_label.as_str();
+            (
+                String::from("Toolchain fulfillment failed"),
+                vec![
+                    format!("task `{task}` selected toolchain `{toolchain}`"),
+                    summary.allowance_clause,
+                    format!(
+                        "{}; provisioning attempt failed: {details}",
+                        summary.requirement_clause
+                    ),
+                ],
+                toolchain_fulfillment_next_steps(
+                    &repo_run_stream_command(task_name, member),
+                    provider,
+                    task,
+                    toolchain,
+                ),
+            )
+        }
         RunError::SkipDepsWithoutDependencies { task } => (
             String::from("Dependency override has no effect"),
             vec![format!(
@@ -55766,16 +58458,37 @@ fn source_config_summary(
     )
 }
 
+#[cfg(test)]
 fn execution_policy_lines(
     contract: &Contract,
     contract_path: &Path,
     backend: Backend,
 ) -> Vec<String> {
+    execution_policy_lines_for_toolchain_names(
+        contract,
+        contract_path,
+        backend,
+        &contract.toolchains.keys().cloned().collect(),
+    )
+}
+
+fn execution_policy_lines_for_toolchain_names(
+    contract: &Contract,
+    contract_path: &Path,
+    backend: Backend,
+    toolchain_names: &BTreeSet<String>,
+) -> Vec<String> {
     let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
         return Vec::new();
     };
 
-    let requirements = contract.requirement_surface_for_backend(backend);
+    let requirements = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+        contract,
+        &contract.requirement_surface_for_backend(backend),
+        toolchain_names,
+        policy_target_os_for_backend(backend),
+        None,
+    );
 
     policy_pack
         .selected_provisioning_actions_for_requirement_surface_os(
@@ -55854,6 +58567,7 @@ fn run_execution_receipt(
         step_target_resolutions,
         target_resolutions,
         &[],
+        &[],
         None,
         &[],
         None,
@@ -55874,6 +58588,7 @@ fn run_execution_receipt_with_shared(
     executed_steps: &[ExecutedTaskStep],
     step_target_resolutions: &[Vec<TaskTargetResolutionEvidence>],
     target_resolutions: &[TaskTargetResolutionEvidence],
+    fulfilled_toolchains: &[ToolchainFulfillmentEvidence],
     step_backend_fulfillments: &[Option<crate::runner::BackendFulfillmentEvidence>],
     backend_fulfillment: Option<crate::runner::BackendFulfillmentEvidence>,
     step_shared_local_backends: &[Option<SharedLocalBackendEvidence>],
@@ -56047,6 +58762,9 @@ fn run_execution_receipt_with_shared(
         current_requirement_platform(),
         true,
     );
+    let mut toolchains = selected_task_toolchain_summaries(contract, task_name, overrides);
+    apply_toolchain_fulfillment_evidence(&mut toolchains, fulfilled_toolchains);
+    let toolchain_names = toolchain_summary_names(&toolchains);
 
     ExecutionReceipt {
         ok,
@@ -56073,12 +58791,18 @@ fn run_execution_receipt_with_shared(
             .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
         native_prerequisites,
+        toolchains,
         runtime,
         logs: None,
         service_termination: None,
         backend_fulfillment,
         workloads: BTreeMap::new(),
-        policy: execution_policy_lines(contract, contract_path, backend),
+        policy: execution_policy_lines_for_toolchain_names(
+            contract,
+            contract_path,
+            backend,
+            &toolchain_names,
+        ),
         steps,
         status: Some(status),
         failed_task: failure_context
@@ -58234,6 +60958,161 @@ fn spawn_proof_runtime_up_process(
         .map_err(|error| format!("could not start `ota up --stream` for runtime proof: {error}"))
 }
 
+#[derive(Debug, Clone)]
+enum ProofRuntimeReadinessStrategy {
+    LightweightTargets(Vec<HostRuntimeReadinessProbe>),
+    FullDiagnosis,
+}
+
+fn proof_runtime_readiness_strategy(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> ProofRuntimeReadinessStrategy {
+    match proof_runtime_readiness_targets(contract, contract_path, workflow_name, overrides) {
+        Ok(targets) if !targets.is_empty() => {
+            ProofRuntimeReadinessStrategy::LightweightTargets(targets)
+        }
+        Ok(_) | Err(_) => ProofRuntimeReadinessStrategy::FullDiagnosis,
+    }
+}
+
+fn proof_runtime_readiness_targets(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<Vec<HostRuntimeReadinessProbe>, String> {
+    let Some((_, workflow)) = contract.selected_workflow(workflow_name) else {
+        return Ok(Vec::new());
+    };
+
+    let mut targets = Vec::new();
+    if !workflow.readiness.surfaces.is_empty() {
+        let run_task_name = workflow
+            .run
+            .as_ref()
+            .map(|run| run.task.as_str())
+            .ok_or_else(|| String::from("selected workflow does not declare `run.task`"))?;
+        let task = contract
+            .tasks
+            .get(run_task_name)
+            .ok_or_else(|| format!("workflow run task `{run_task_name}` is not declared"))?;
+        let backend = match resolve_execution_backend_with_contract_path(
+            contract,
+            run_task_name,
+            overrides,
+            Some(contract_path),
+        )
+        .map_err(|error| error.to_string())?
+        {
+            ResolvedExecutionBackend::Native { .. } => Backend::Native,
+            ResolvedExecutionBackend::Container { .. } => Backend::Container,
+            ResolvedExecutionBackend::Remote { .. }
+            | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
+        };
+        for surface_name in &workflow.readiness.surfaces {
+            targets.push(task_surface_host_readiness_probe_for_backend(
+                contract,
+                task,
+                backend,
+                surface_name,
+            )?);
+        }
+    }
+
+    for probe_name in &workflow.readiness.probes {
+        let target = match resolve_named_readiness_probe(contract, probe_name)? {
+            ResolvedNamedReadinessProbe::Http {
+                address,
+                port,
+                request,
+                timeout,
+                ..
+            } => HostRuntimeReadinessProbe {
+                listener: probe_name.clone(),
+                protocol: TaskRuntimeProtocol::Http,
+                address,
+                port,
+                request: Some(request),
+                default_timeout: timeout,
+            },
+            ResolvedNamedReadinessProbe::Tcp {
+                address,
+                port,
+                timeout,
+                ..
+            } => HostRuntimeReadinessProbe {
+                listener: probe_name.clone(),
+                protocol: TaskRuntimeProtocol::Tcp,
+                address,
+                port,
+                request: None,
+                default_timeout: timeout,
+            },
+        };
+        targets.push(target);
+    }
+
+    Ok(targets)
+}
+
+fn proof_runtime_readiness_targets_observed(targets: &[HostRuntimeReadinessProbe]) -> bool {
+    targets
+        .iter()
+        .all(|target| host_runtime_readiness_observed(target, None))
+}
+
+const PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS: u64 = 180;
+const PROOF_RUNTIME_READINESS_WAIT_CEILING_SECS: u64 = 900;
+const PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS: u64 = 2;
+const PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET: u64 = 30;
+const PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS: u64 = 60;
+
+fn proof_runtime_wait_budget(readiness_strategy: &ProofRuntimeReadinessStrategy) -> Duration {
+    let floor = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS);
+    let ceiling = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_CEILING_SECS);
+    let computed = match readiness_strategy {
+        ProofRuntimeReadinessStrategy::LightweightTargets(targets) if !targets.is_empty() => {
+            let max_timeout = targets
+                .iter()
+                .filter_map(|target| target.default_timeout)
+                .max()
+                .unwrap_or(Duration::from_millis(200));
+            let timeout_secs = max_timeout.as_secs().max(1);
+            Duration::from_secs(
+                timeout_secs
+                    .saturating_mul(PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET)
+                    .saturating_add(
+                        PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS
+                            * PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET,
+                    )
+                    .saturating_add(PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS),
+            )
+        }
+        _ => floor,
+    };
+    computed.max(floor).min(ceiling)
+}
+
+fn proof_runtime_doctor_report(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    doctor_mode: DoctorMode,
+    overrides: ExecutionOverrides,
+) -> DoctorReport {
+    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+        contract,
+        contract_path,
+        doctor_mode,
+        overrides.lifecycle,
+        workflow_name,
+        overrides,
+    )
+}
+
 fn wait_for_proof_runtime_readiness(
     contract: &Contract,
     contract_path: &Path,
@@ -58241,36 +61120,79 @@ fn wait_for_proof_runtime_readiness(
     overrides: ExecutionOverrides,
     up_process: &mut std::process::Child,
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
-    let deadline = Instant::now() + Duration::from_secs(180);
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
+    let readiness_strategy =
+        proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
+    let deadline = Instant::now() + proof_runtime_wait_budget(&readiness_strategy);
     let agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
     loop {
-        let latest_report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
-            contract,
-            contract_path,
-            doctor_mode,
-            overrides.lifecycle,
-            workflow_name,
-            overrides.clone(),
-        );
-        let summary = doctor_summary(&latest_report, agent_verdict);
-        if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
-            return Ok((latest_report, "post-up diagnosis", true, None));
+        if let ProofRuntimeReadinessStrategy::LightweightTargets(targets) = &readiness_strategy
+            && proof_runtime_readiness_targets_observed(targets)
+        {
+            let latest_report = proof_runtime_doctor_report(
+                contract,
+                contract_path,
+                workflow_name,
+                doctor_mode,
+                overrides.clone(),
+            );
+            let summary = doctor_summary(&latest_report, agent_verdict);
+            if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                return Ok((latest_report, "post-up diagnosis", true, None));
+            }
+            return Ok((latest_report, "service readiness", false, None));
         }
+
+        let latest_report = if matches!(
+            readiness_strategy,
+            ProofRuntimeReadinessStrategy::FullDiagnosis
+        ) {
+            let latest_report = proof_runtime_doctor_report(
+                contract,
+                contract_path,
+                workflow_name,
+                doctor_mode,
+                overrides.clone(),
+            );
+            let summary = doctor_summary(&latest_report, agent_verdict);
+            if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                return Ok((latest_report, "post-up diagnosis", true, None));
+            }
+            Some(latest_report)
+        } else {
+            None
+        };
+
+        let finalize_report = |report: Option<DoctorReport>| {
+            report.unwrap_or_else(|| {
+                proof_runtime_doctor_report(
+                    contract,
+                    contract_path,
+                    workflow_name,
+                    doctor_mode,
+                    overrides.clone(),
+                )
+            })
+        };
 
         match up_process.try_wait() {
             Ok(Some(exit_status)) => {
                 let up_process_failure = if let Some(code) = exit_status.code() {
-                    Some(format!(
+                    let mut why = format!(
                         "`ota up --stream` exited while waiting for readiness (exit code {code})"
-                    ))
+                    );
+                    if let Some(guidance) = windows_exit_code_guidance_line(code) {
+                        why.push_str("; ");
+                        why.push_str(guidance.as_str());
+                    }
+                    Some(why)
                 } else {
                     Some(String::from(
                         "`ota up --stream` was terminated before readiness could be observed",
                     ))
                 };
                 return Ok((
-                    latest_report,
+                    finalize_report(latest_report),
                     "service readiness",
                     false,
                     up_process_failure,
@@ -58286,7 +61208,7 @@ fn wait_for_proof_runtime_readiness(
 
         if Instant::now() >= deadline {
             return Ok((
-                latest_report,
+                finalize_report(latest_report),
                 "service readiness",
                 false,
                 Some(String::from("timed out while waiting for readiness")),
@@ -58365,6 +61287,29 @@ fn proof_runtime_command_for_repo(
     let repo_root = contract_working_dir(contract_path);
     let repo_display = compact_repo_path(repo_root);
     format!("{full} {repo_display}")
+}
+
+fn proof_runtime_up_exit_primary_blocker(
+    summary: &DoctorSummary,
+    up_process_failure: Option<&str>,
+    up_log_artifact: &str,
+) -> Option<DoctorPrimaryBlocker> {
+    let process_failure = up_process_failure?;
+    let primary = summary.primary_blocker.as_ref()?;
+    if !(primary.summary.starts_with("Surface readiness failed:")
+        || primary.summary.starts_with("Surface readiness timed out:"))
+    {
+        return None;
+    }
+
+    Some(DoctorPrimaryBlocker {
+        severity: FindingSeverity::Error,
+        summary: String::from("Run task exited before readiness"),
+        why: process_failure.to_string(),
+        next: format!("inspect {} and rerun `ota proof runtime`", up_log_artifact),
+        provenance: primary.provenance.clone(),
+        provenance_key: primary.provenance_key.clone(),
+    })
 }
 
 fn render_proof_runtime_text(
@@ -58449,6 +61394,16 @@ fn render_proof_runtime_text(
                     None,
                 )
             ));
+        } else if let Some(primary) = summary.primary_blocker.as_ref() {
+            stdout.push_str(&format!(
+                "\n{}  {}\n{} {}\n{} {}",
+                render_severity(primary.severity),
+                render_finding_summary_with_count(primary.severity, &primary.summary, 1,),
+                finding_detail_key(primary.severity, "Why:"),
+                render_backticked_text(&primary.why, None),
+                finding_detail_key(primary.severity, "Next:"),
+                render_backticked_text(&primary.next, None)
+            ));
         } else if let Some(process_failure) = up_process_failure {
             stdout.push_str(&format!(
                 "\n{}  {}\n{} {}\n{} {}",
@@ -58465,16 +61420,6 @@ fn render_proof_runtime_text(
                     &format!("inspect {} and rerun `ota proof runtime`", up_log_artifact),
                     None,
                 )
-            ));
-        } else if let Some(primary) = summary.primary_blocker.as_ref() {
-            stdout.push_str(&format!(
-                "\n{}  {}\n{} {}\n{} {}",
-                render_severity(primary.severity),
-                render_finding_summary_with_count(primary.severity, &primary.summary, 1),
-                finding_detail_key(primary.severity, "Why:"),
-                render_backticked_text(&primary.why, None),
-                finding_detail_key(primary.severity, "Next:"),
-                render_backticked_text(&primary.next, None)
             ));
         }
     }
@@ -59185,6 +62130,11 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 stdout.push_str(&format!("\n  {} {note}", paint_key("Note:")));
             }
         }
+    }
+
+    if !receipt.toolchains.is_empty() {
+        stdout.push_str("\n\n");
+        stdout.push_str(&render_toolchain_summary_text(&receipt.toolchains));
     }
 
     if let Some(runtime) = receipt.runtime.as_ref() {
@@ -61290,6 +64240,12 @@ fn repo_execution_receipt(
         current_requirement_platform(),
         phase != "preview" && phase != "readiness",
     );
+    let toolchains = task
+        .map(|task_name| {
+            selected_task_toolchain_summaries(contract, task_name, ExecutionOverrides::default())
+        })
+        .unwrap_or_else(|| fallback_toolchain_summaries_for_backend(contract, execution_backend));
+    let toolchain_names = toolchain_summary_names(&toolchains);
 
     ExecutionReceipt {
         ok,
@@ -61316,12 +64272,18 @@ fn repo_execution_receipt(
             .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
         native_prerequisites,
+        toolchains,
         runtime: None,
         logs: None,
         service_termination: None,
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
-        policy: execution_policy_lines(contract, path, execution_backend),
+        policy: execution_policy_lines_for_toolchain_names(
+            contract,
+            path,
+            execution_backend,
+            &toolchain_names,
+        ),
         steps,
         status: Some(receipt_status),
         failed_task: None,
@@ -62002,6 +64964,7 @@ fn workspace_up_receipt(
             .collect(),
         env_sources,
         native_prerequisites: Vec::new(),
+        toolchains: Vec::new(),
         runtime: None,
         logs: None,
         service_termination: None,
@@ -62082,6 +65045,7 @@ fn workspace_status_receipt(
         env: BTreeMap::new(),
         env_sources: Vec::new(),
         native_prerequisites: Vec::new(),
+        toolchains: Vec::new(),
         runtime: None,
         logs: None,
         service_termination: None,
@@ -62169,6 +65133,7 @@ fn workspace_run_receipt(
             .collect(),
         env_sources,
         native_prerequisites: Vec::new(),
+        toolchains: Vec::new(),
         runtime: None,
         logs: None,
         service_termination: None,
@@ -62753,6 +65718,61 @@ fn up_requirement_surface(
     surface
 }
 
+fn up_policy_requirement_surface(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> RequirementSurface {
+    let mut surface = up_requirement_surface(contract, overrides, workflow_name);
+    let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        let toolchain_names = contract.selected_workflow_required_toolchain_names(workflow_name);
+        return requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+            contract,
+            &surface,
+            &toolchain_names.into_iter().collect(),
+            requirement_target_os_for_backend(effective_execution(contract, overrides).0),
+            Some(&required_tool_names),
+        );
+    }
+
+    let scoped_any = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+
+    for task_name in task_names {
+        let target_os = requirement_target_os_for_backend(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+        );
+        let toolchain_names = if scoped_any {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| task.requirements.toolchains.clone())
+                .unwrap_or_default()
+        } else {
+            contract
+                .task_required_toolchain_names(task_name.as_str())
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        let toolchain_names = toolchain_names.into_iter().collect();
+        surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+            contract,
+            &surface,
+            &toolchain_names,
+            target_os,
+            Some(&required_tool_names),
+        );
+    }
+
+    surface
+}
+
 fn requirement_surface_targets_provisioning_action(
     requirement_surface: &RequirementSurface,
     action: &crate::policy_pack::ProvisioningAction,
@@ -62773,7 +65793,7 @@ fn selected_up_provisioning_actions(
     workflow_name: Option<&str>,
     preflight: &DoctorReport,
 ) -> Vec<crate::policy_pack::ProvisioningAction> {
-    let requirement_surface = up_requirement_surface(contract, overrides, workflow_name);
+    let requirement_surface = up_policy_requirement_surface(contract, overrides, workflow_name);
     preflight
         .provisioning
         .as_ref()
@@ -62921,7 +65941,7 @@ fn selected_up_activation_actions(
         return Vec::new();
     }
 
-    let requirement_surface = up_requirement_surface(contract, overrides, workflow_name);
+    let requirement_surface = up_activation_requirement_surface(contract, overrides, workflow_name);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
@@ -62937,12 +65957,167 @@ fn selected_up_activation_actions(
         .collect()
 }
 
+fn up_activation_requirement_surface(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+) -> RequirementSurface {
+    let requirement_surface = up_requirement_surface(contract, overrides, workflow_name);
+    let required_tool_names = requirement_surface
+        .tools
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        let toolchain_names = contract.selected_workflow_required_toolchain_names(workflow_name);
+        return requirement_surface_with_toolchain_owned_tools_for_required_tools(
+            contract,
+            &requirement_surface,
+            &toolchain_names.into_iter().collect(),
+            requirement_target_os_for_backend(effective_execution(contract, overrides).0),
+            Some(&required_tool_names),
+        );
+    }
+
+    let scoped_any = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+    let mut surface = requirement_surface;
+
+    for task_name in task_names {
+        if !matches!(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            Backend::Native
+        ) {
+            continue;
+        }
+        let toolchain_names = if scoped_any {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| task.requirements.toolchains.clone())
+                .unwrap_or_default()
+        } else {
+            contract
+                .task_required_toolchain_names(task_name.as_str())
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        let toolchain_names = toolchain_names.into_iter().collect();
+        surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
+            contract,
+            &surface,
+            &toolchain_names,
+            requirement_target_os_for_backend(Backend::Native),
+            Some(&required_tool_names),
+        );
+    }
+
+    surface
+}
+
 fn current_requirement_platform() -> &'static str {
     match std::env::consts::OS {
         "macos" => "macos",
         "windows" => "windows",
         other => other,
     }
+}
+
+fn requirement_target_os_for_backend(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Container => "linux",
+        Backend::Native | Backend::Remote => current_requirement_platform(),
+    }
+}
+
+fn selected_up_toolchain_preview_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> Vec<String> {
+    let required_tool_names =
+        selected_workflow_task_requirement_surface(contract, overrides, workflow_name)
+            .map(|surface| surface.tools.into_keys().collect::<BTreeSet<_>>())
+            .unwrap_or_else(|| {
+                up_requirement_surface(contract, overrides, workflow_name)
+                    .tools
+                    .into_keys()
+                    .collect()
+            });
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    let scoped_any = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+
+    if task_names.is_empty() {
+        let target_os = requirement_target_os_for_backend(fallback_backend);
+        for toolchain_name in contract.selected_workflow_required_toolchain_names(workflow_name) {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            if !toolchain.active_for_os(target_os) {
+                continue;
+            }
+            let action = declared_toolchain_preview_action_for_required_tools(
+                toolchain_name.as_str(),
+                toolchain,
+                target_os,
+                &required_tool_names,
+            );
+            if seen.insert(action.clone()) {
+                actions.push(action);
+            }
+        }
+        return actions;
+    }
+
+    for task_name in task_names {
+        let target_os = requirement_target_os_for_backend(
+            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+        );
+        let toolchain_names = if scoped_any {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| task.requirements.toolchains.clone())
+                .unwrap_or_default()
+        } else {
+            contract
+                .task_required_toolchain_names(task_name.as_str())
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        for toolchain_name in toolchain_names {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            if !toolchain.active_for_os(target_os) {
+                continue;
+            }
+            let action = declared_toolchain_preview_action_for_required_tools(
+                toolchain_name.as_str(),
+                toolchain,
+                target_os,
+                &required_tool_names,
+            );
+            if seen.insert(action.clone()) {
+                actions.push(action);
+            }
+        }
+    }
+
+    actions
 }
 
 fn selected_up_native_activation_actions(
@@ -63397,6 +66572,8 @@ fn build_up_preview(
         selected_up_native_preparation_actions(contract, overrides, workflow_name, preflight);
     let activation_actions =
         selected_up_activation_actions(contract, overrides, workflow_name, preflight);
+    let toolchain_actions =
+        selected_up_toolchain_preview_actions(contract, overrides, workflow_name, backend);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
@@ -63413,13 +66590,14 @@ fn build_up_preview(
     for action in &native_preparation_actions {
         actions.push(render_up_preview_native_preparation_action(action));
     }
+    actions.extend(toolchain_actions);
     for action in &activation_actions {
         actions.push(render_up_preview_activation_action(action));
     }
     for action in selected_up_native_activation_actions(contract, overrides, workflow_name) {
         actions.push(render_up_preview_native_activation_action(&action));
     }
-    for action in requirement_surface_activation_actions(&up_requirement_surface(
+    for action in requirement_surface_activation_actions(&up_activation_requirement_surface(
         contract,
         overrides,
         workflow_name,
@@ -63468,7 +66646,17 @@ fn preview_receipt(
     let preview_task = selected_up_setup_task_name(contract, workflow_name)
         .or_else(|| selected_up_prepare_task_name(contract, workflow_name))
         .or_else(|| selected_up_primary_task_name(contract, workflow_name));
-    repo_execution_receipt(
+    let preview_backend = preview_task
+        .map(|task_name| effective_task_execution(contract, task_name, overrides).backend)
+        .unwrap_or_else(|| {
+            phase_execution_backend(&selected_phase_execution_context(
+                contract,
+                resolved_path,
+                overrides,
+            ))
+            .unwrap_or(Backend::Native)
+        });
+    let mut receipt = repo_execution_receipt(
         resolved_path,
         contract,
         if let Some(task_name) = preview_task {
@@ -63483,7 +66671,16 @@ fn preview_receipt(
         findings,
         None,
         findings.first().map(|finding| finding.next.clone()),
-    )
+    );
+    receipt.toolchains =
+        selected_workflow_toolchain_summaries(contract, overrides, workflow_name, preview_backend);
+    receipt.policy = execution_policy_lines_for_toolchain_names(
+        contract,
+        resolved_path,
+        preview_backend,
+        &toolchain_summary_names(&receipt.toolchains),
+    );
+    receipt
 }
 
 fn run_up_task(
@@ -64848,7 +68045,7 @@ fn execute_repo_up(
                     });
                 }
             }
-            Err(error) => return Err(render_up_run_error(resolved_path, error)),
+            Err(error) => return Err(render_up_run_error(resolved_path, overrides, error)),
         }
     }
 
@@ -64988,7 +68185,7 @@ fn execute_repo_up(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, error));
+                return Err(render_up_run_error(resolved_path, overrides, error));
             }
         }
     }
@@ -65081,7 +68278,7 @@ fn execute_repo_up(
                 ) {
                     return Ok(blocked_result);
                 }
-                return Err(render_up_run_error(resolved_path, error));
+                return Err(render_up_run_error(resolved_path, overrides, error));
             }
         }
     }
@@ -68871,7 +72068,11 @@ fn parse_backend_requirement_gap(line: &str) -> Option<(String, String, String, 
     ))
 }
 
-fn render_up_run_error(contract_path: &Path, error: RunError) -> String {
+fn render_up_run_error(
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    error: RunError,
+) -> String {
     match error {
         RunError::HostPublicationConflict {
             task,
@@ -68942,6 +72143,53 @@ fn render_up_run_error(contract_path: &Path, error: RunError) -> String {
                 &runtime_listener_resolution.summary,
                 &runtime_listener_resolution.why_lines,
                 &runtime_listener_resolution.next_steps,
+                None,
+                None,
+            )
+        }
+        RunError::ToolchainFulfillmentFailed {
+            task,
+            toolchain,
+            details,
+        } => {
+            let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            let contract = match load_contract(contract_path) {
+                Ok(contract) => contract,
+                Err(_) => {
+                    return render_run_error(RunError::ToolchainFulfillmentFailed {
+                        task,
+                        toolchain,
+                        details,
+                    });
+                }
+            };
+            let target_os =
+                selected_toolchain_target_os_for_task(&contract, task.as_str(), overrides);
+            let summary = resolved_toolchain_fulfillment_attempt_summary(
+                &contract,
+                toolchain.as_str(),
+                target_os,
+            );
+            let provider = summary.provider_label.as_str();
+            render_field_error_with_tail(
+                "UP",
+                &where_value,
+                &format!("toolchains.{toolchain}"),
+                "Toolchain fulfillment failed",
+                &[
+                    format!("task `{task}` selected toolchain `{toolchain}`"),
+                    summary.allowance_clause,
+                    format!(
+                        "{}; provisioning attempt failed: {details}",
+                        summary.requirement_clause
+                    ),
+                ],
+                &[
+                    format!(
+                        "repair `{provider}` or adjust `toolchains.{toolchain}` for task `{task}`"
+                    ),
+                    String::from("rerun `ota up`"),
+                ],
                 None,
                 None,
             )

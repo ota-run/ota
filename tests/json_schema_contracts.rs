@@ -589,6 +589,7 @@ fn assist_normalize_schema_covers_preview_and_failure_contract() {
 #[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
+    let shared = load_schema("docs/spec/json-schemas/shared.json");
     let success = &schema["oneOf"][0]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
     let comparison = &success["comparison"]["properties"];
@@ -609,6 +610,12 @@ fn detect_schema_includes_comparison_preview() {
     assert!(removal.get("provenance_key").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
+    assert!(success.get("toolchain_opportunities").is_some());
+    assert!(
+        shared["$defs"]["toolchainOpportunity"]["properties"]
+            .get("candidate_providers")
+            .is_some()
+    );
     assert!(failure.get("next").is_some());
 }
 
@@ -761,6 +768,7 @@ fn shared_finding_schema_includes_optional_policy_context() {
     assert!(finding.get("policy_source").is_some());
     assert!(finding.get("install_scope").is_some());
     assert!(finding.get("mutation_allowed").is_some());
+    assert!(finding.get("toolchain_opportunity").is_some());
 
     let evidence = &finding["evidence"]["properties"];
     assert!(evidence.get("observed").is_some());
@@ -769,6 +777,14 @@ fn shared_finding_schema_includes_optional_policy_context() {
     assert!(evidence.get("checked_at").is_some());
     assert!(evidence.get("command").is_some());
     assert!(evidence.get("path").is_some());
+
+    let opportunity = &schema["$defs"]["toolchainOpportunity"]["properties"];
+    assert!(opportunity.get("ecosystem").is_some());
+    assert!(opportunity.get("fallback_runtime").is_some());
+    assert!(opportunity.get("fallback_tools").is_some());
+    assert!(opportunity.get("candidate_providers").is_some());
+    assert!(opportunity.get("shipped").is_some());
+    assert!(opportunity.get("agent_note").is_some());
 }
 
 #[test]
@@ -851,6 +867,7 @@ fn init_schema_includes_optional_next_on_failures() {
     assert!(success.get("pack_advisory").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
+    assert!(success.get("toolchain_opportunities").is_some());
     assert!(success.get("provenance").is_some());
     assert!(advisory.get("selected_pack").is_some());
     assert!(advisory.get("suggested_pack").is_some());

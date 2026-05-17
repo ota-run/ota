@@ -416,6 +416,19 @@ pub struct WorkflowReadinessSpec {
     pub probes: Vec<String>,
     #[serde(default)]
     pub surfaces: Vec<String>,
+    #[serde(default)]
+    pub signal: WorkflowReadinessSignalSpec,
+}
+
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowReadinessSignalSpec {
+    #[serde(default)]
+    pub checks: Vec<String>,
+    #[serde(default)]
+    pub probes: Vec<String>,
+    #[serde(default)]
+    pub surfaces: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -1200,6 +1213,8 @@ pub struct ToolchainSpec {
     #[serde(default)]
     pub components: Vec<String>,
     #[serde(default)]
+    pub package_managers: BTreeMap<String, String>,
+    #[serde(default)]
     pub targets: Vec<String>,
     #[serde(default)]
     pub fulfillment: Option<ToolchainFulfillmentMode>,
@@ -1250,6 +1265,14 @@ impl ToolchainSpec {
         values
     }
 
+    pub fn package_managers_for_os(&self, os: &str) -> BTreeMap<String, String> {
+        let mut values = self.package_managers.clone();
+        if let Some(platform) = self.platforms.get(os) {
+            values.extend(platform.package_managers.clone());
+        }
+        values
+    }
+
     pub fn targets_for_os(&self, os: &str) -> Vec<String> {
         let mut values = Vec::new();
         let mut seen = BTreeSet::new();
@@ -1283,6 +1306,8 @@ pub struct ToolchainPlatformSpec {
     #[serde(default)]
     pub components: Vec<String>,
     #[serde(default)]
+    pub package_managers: BTreeMap<String, String>,
+    #[serde(default)]
     pub targets: Vec<String>,
 }
 
@@ -1290,6 +1315,8 @@ pub struct ToolchainPlatformSpec {
 #[serde(rename_all = "snake_case")]
 pub enum ToolchainProvider {
     Rustup,
+    Corepack,
+    Sdkman,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

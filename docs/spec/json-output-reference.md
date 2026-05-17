@@ -1442,6 +1442,9 @@ Success:
       "readiness_checks": [],
       "readiness_probes": [],
       "readiness_surfaces": ["backend"],
+      "signal_readiness_checks": [],
+      "signal_readiness_probes": [],
+      "signal_readiness_surfaces": [],
       "exposes": ["http://127.0.0.1:5678/"],
       "expose_surfaces": ["backend"],
       "default": true
@@ -1453,6 +1456,9 @@ Success:
       "readiness_checks": [],
       "readiness_probes": [],
       "readiness_surfaces": ["backend"],
+      "signal_readiness_checks": [],
+      "signal_readiness_probes": [],
+      "signal_readiness_surfaces": [],
       "exposes": ["http://127.0.0.1:5678/"],
       "expose_surfaces": ["backend"],
       "default": false
@@ -1476,6 +1482,9 @@ Notes:
   - `readiness_checks`
   - `readiness_probes`
   - `readiness_surfaces`
+  - `signal_readiness_checks`
+  - `signal_readiness_probes`
+  - `signal_readiness_surfaces`
   - `exposes`
   - `expose_surfaces`
   - `default`
@@ -1611,6 +1620,11 @@ These keys are optional and backward-compatible.
 When ota can trace the diagnosis source, finding objects may also include `provenance` and
 `provenance_key`. Current shipped provenance keys include `repo_contract`, `org_policy`, and
 `repo_signals`.
+When doctor detects a managed-ecosystem opportunity that Ota does not yet ship as a toolchain
+provider, the finding may also include an additive `toolchain_opportunity` object with
+`ecosystem`, `fallback_runtime`, `fallback_tools`, `candidate_providers`, `shipped`, and
+`agent_note`. This object is meant for editors and agents; the human-facing terminal finding keeps
+the fallback guidance user-safe and does not have to expose provider-candidate wording directly.
 
 When the repo declares runtimes or tools and policy provides approved sources for them,
 `ota doctor --json` may also include a top-level `provisioning` object. That object is a read-only
@@ -1654,6 +1668,14 @@ and `verify` so the shape can grow without a breaking redesign.
 metadata that editors and remote-runner tooling can consume. Each `execution.env` entry may also
 include an additive `policy` field when an approved policy value is available for that env key.
 
+`ota doctor --json` may also include a top-level `toolchains` array for the selected workflow/task
+path. Each entry records the selected toolchain name, provider, effective backend, target OS,
+version, fulfillment mode, required flag, owned runtime, and any owned tools/components/targets
+that ota is reasoning about on that selected path. Receipt-bearing execution surfaces may also add
+`fulfilled` and `commands[]` when ota actually ran provider fulfillment commands on that execution
+path. This is additive execution evidence; it does not
+replace contract validation or finding-level detail.
+
 `ota doctor --json` also includes a top-level `summary` object with finding counts and
 machine-readable `verdict` / `agent_verdict` values so hosted validation and editor tooling do
 not need to recompute them. When there is at least one finding, the summary may also include
@@ -1692,6 +1714,14 @@ object for the default workflow so editors and automation can reason about the c
 without inferring it from task names. That workflow summary may also include additive
 `notes` and `readiness_probes` when the workflow declares them or references reusable named
 probes.
+
+Receipt-bearing execution surfaces such as `ota receipt --json`, `ota up --json`, and
+`ota run --json` may also include additive `receipt.toolchains[]` entries with the same toolchain
+evidence shape. Use those entries when you need to know which selected provider-backed ecosystem
+ota checked or fulfilled on the recorded execution path, instead of inferring that from human text
+or standalone runtime/tool fields. When fulfillment actually ran, `receipt.toolchains[]` can also
+include `fulfilled: true` plus additive `commands[]` entries with the exact provider commands ota
+executed for that toolchain during the recorded run path.
 
 ## `ota policy review --json`
 
@@ -2541,6 +2571,27 @@ weighted signal markers behind the flat `signals` list for the suggested pack, a
 `selected_signal_details` does the same for any incidental signals that still matched the
 explicitly selected pack.
 
+When the repo clearly looks like a managed ecosystem that ota does not ship as a toolchain yet,
+`ota init --json` also adds `toolchain_opportunities` as additive agent-facing guidance. Terminal
+text stays user-safe and only says to keep the current `runtimes` / `tools` fallback model for
+now; provider-candidate detail stays in JSON. When ota already ships the ecosystem owner, the
+starter `config` uses `toolchains.<name>` directly instead of adding a fallback opportunity.
+
+```json
+{
+  "toolchain_opportunities": [
+    {
+      "ecosystem": "python",
+      "fallback_runtime": "python",
+      "fallback_tools": ["uv"],
+      "candidate_providers": ["uv", "mise"],
+      "shipped": false,
+      "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
+    }
+  ]
+}
+```
+
 `provenance` is the per-field source map for the starter contract:
 
 - detector-backed fields use `provenance: "detector-inferred"` and `provenance_key: "repo_signals"`
@@ -2635,6 +2686,7 @@ contract:
         "framework-specific entrypoints, web server commands, or whether the repo uses phpunit, pest, artisan, or another test wrapper unless the repo already declares a Composer `scripts.test` entry"
       ],
       "seeds": {
+        "toolchains": [],
         "runtimes": ["php"],
         "tools": ["composer"],
         "checks": ["php-installed", "composer-installed"],
@@ -2651,9 +2703,10 @@ contract:
         "multi-module reactor details, plugin goals, or org-specific wrapper/bootstrap scripts beyond the standard Maven build/test loop"
       ],
       "seeds": {
-        "runtimes": ["java"],
+        "toolchains": ["java"],
+        "runtimes": [],
         "tools": [],
-        "checks": ["java-installed"],
+        "checks": [],
         "tasks": ["setup", "build", "test"]
       }
     }
@@ -2668,14 +2721,14 @@ Each catalog entry keeps the operator guidance machine-readable:
 
 - `command` is the exact pack-selection command
 - `next` is the safe dry-run preview command to review before writing
-- `seeds` lists the unconditional starter fields, so wrapper-aware Java packs keep the global Maven or Gradle prerequisite in `when` instead of claiming it is always seeded
+- `seeds` lists the unconditional starter fields, including shipped `toolchains` owners when a pack now starts from a managed ecosystem contract instead of separate `runtimes` / `tools`
 
 ## `ota check --json`
 
 `ota check --json` uses the same finding shape as `ota doctor --json`, including additive
-`finding_groups` when present, and may also include the same additive top-level `workflow`
-summary for the default workflow, including workflow `readiness_probes`,
-`readiness_surfaces`, and `expose_surfaces` when declared:
+`finding_groups` when present. It may also include the same additive top-level `workflow`
+summary and `toolchains[]` evidence for the selected workflow path, including workflow
+`readiness_probes`, `readiness_surfaces`, `signal_readiness_*`, and `expose_surfaces` when declared:
 
 ```json
 {
@@ -2689,6 +2742,9 @@ summary for the default workflow, including workflow `readiness_probes`,
     "readiness_checks": ["app-health"],
     "readiness_probes": ["app-ready"],
     "readiness_surfaces": ["backend"],
+    "signal_readiness_checks": [],
+    "signal_readiness_probes": [],
+    "signal_readiness_surfaces": [],
     "exposes": []
   },
   "findings": [
@@ -3252,6 +3308,8 @@ success shape.
 - `comparison.*.provenance_key` is the stable machine label `repo_signals`
 - `comparison.changes[*].source` and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
 - `comparison` may include lower-confidence add candidates that remain preview-only
+- `toolchain_opportunities` appears when repo signals strongly suggest a managed ecosystem that ota
+  still models through lower-level `runtimes` / `tools` declarations
 
 ```json
 {
@@ -3294,6 +3352,16 @@ success shape.
       "value": "22",
       "source": ".nvmrc",
       "confidence": "high"
+    }
+  ],
+  "toolchain_opportunities": [
+    {
+      "ecosystem": "python",
+      "fallback_runtime": "python",
+      "fallback_tools": ["uv"],
+      "candidate_providers": ["uv", "mise"],
+      "shipped": false,
+      "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
     }
   ]
 }

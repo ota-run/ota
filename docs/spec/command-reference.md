@@ -280,6 +280,9 @@ Current behavior:
 Text output:
 
 - header: `TASKS <path>`
+- when agent guidance is present, the shared `AGENT` block is grouped into `Overview`,
+  `Execution`, and `Boundary` sections with counted wrapped lists and writable-path root/exception
+  collapsing
 - each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
 - each task may include `Launch` when the resolved execution source is structured `launch`
 - each task may include `env`, `inputs`, and `requires_services`
@@ -328,8 +331,9 @@ Text output:
 - each workflow includes workflow-native command hints such as `Use: ota up --workflow <name>`
   and `Proof: ota proof runtime --workflow <name>`
 - each workflow may include `intent`, `description`, `notes`, `prepare`, `setup`, `run`, `services`,
-  `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`, `exposes`, and
-  the per-entry `default` flag
+  `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`,
+  `signal_readiness_checks`, `signal_readiness_probes`, `signal_readiness_surfaces`, `exposes`,
+  and the per-entry `default` flag
 - when no workflows are declared, the text output says so explicitly and points users back to
   `ota tasks` or contract authoring instead of ending empty
 
@@ -1064,6 +1068,11 @@ Current behavior:
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
 - backend-configuration failures now point through `ota execution plan` first so the selected execution path can be inspected before you change contract execution settings or retry the task
 - declared env-source failures now point through `ota env --task <name>` first so source status and precedence stay visible before you repair files or rerun the task
+- when the selected task path uses `requirements.toolchains`, ota treats that toolchain as the owner for the selected path instead of describing its owned capabilities as standalone `runtimes` or `tools`
+- toolchain run-path fulfillment is opt-in: `toolchains.<name>.fulfillment: none` keeps `ota run` on diagnosis/check-only behavior, while `fulfillment: run` lets ota attempt provider-backed run-path provisioning for the selected toolchain only
+- when toolchain fulfillment fails, run output names the selected toolchain, the owning provider, the declared requirement slice ota checked, and the rerun lane instead of reducing the failure to a generic tool install error
+- `ota run --json` and receipt-backed run summaries now expose additive `toolchains[]` evidence for the selected task path, including provider, backend, target OS, version, fulfillment mode, owned runtime, and any owned tools/components/targets ota selected on that path
+- when ota actually runs provider fulfillment commands on that path, the same `toolchains[]` entry also records `fulfilled` plus additive `commands[]` evidence
 - on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - on non-interactive text success, large task output is shown as a bounded excerpt before the compact `RUN SUMMARY`
 - on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
@@ -1206,6 +1215,16 @@ ota doctor --member api --member web --json [PATH]
   instead of treating unrelated task-specific prerequisites as repo-global truth
 - selected-path `requirements.env` entries become missing-env blockers for that diagnosis even when
   the same top-level `env.vars.<name>` entry is optional outside the selected task/workflow path
+- when the selected path resolves through `requirements.toolchains`, doctor diagnoses the selected
+  toolchain/provider/components/targets as one owned surface and does not restate owned capabilities
+  such as `cargo` or `rustfmt` as standalone selected-path tools
+- doctor never provisions toolchains: `toolchains.<name>.fulfillment: none` and `fulfillment: run`
+  both stay diagnosis-only here; duplicate ownership between `toolchains`, `runtimes`, and `tools`
+  fails early as an invalid contract instead of degrading into an advisory finding
+- org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
+  so `toolchains.rust` can participate in approved-version and approved-source findings without
+  re-declaring `runtimes.rust`
+- `ota doctor --json` now exposes additive `toolchains[]` entries for the selected workflow/task path, including the provider, effective backend, target OS, version, fulfillment mode, and the owned runtime/tool capabilities ota checked on that path
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path
@@ -1254,6 +1273,9 @@ Text output:
 - header: `DOCTOR <path>`
 - status line: `READY` or `NOT READY`
 - `Execution` includes a `Mode:` line in text output so the selected diagnosis context is explicit
+- when agent guidance is present, the shared `AGENT` block is grouped into `Overview`,
+  `Execution`, and `Boundary` sections with counted wrapped lists and writable-path root/exception
+  collapsing
 - summary includes repo verdict and agent verdict before per-finding details
 - grouped finding sections include `Provenance:` when the grouped findings share one diagnosis source
 - with `--concise`, findings keep severity + summary + `Next`, while `Why` detail is omitted
@@ -1474,12 +1496,19 @@ Text output:
 
 - header: `CHECK <path>`
 - status line: `READY` or `NOT READY`
+- when agent guidance is present, the shared `AGENT` block uses grouped `Overview`,
+  `Execution`, and `Boundary` sections with counted wrapped lists and writable-path
+  root/exception collapsing
 
 JSON output:
 
 - `ok`
 - `path`
+- additive `agent` can appear when the contract declares agent boundaries
 - `findings`
+- additive `toolchains[]` evidence can appear for the selected workflow path even though `ota check`
+  itself still stays on the configured readiness/check surface instead of broadening into toolchain
+  diagnosis or fulfillment
 - monorepo root summaries include grouped per-member results in `members`
 
 ## `ota receipt`
@@ -1521,6 +1550,11 @@ Current behavior:
 - includes repo contract drift findings from the same `ota detect` comparison path used by `ota doctor`
 - captures the current repo state as an execution receipt with one `readiness` step
 - when a lifecycle override is selected, the receipt preserves that selected lifecycle, image, target, and rerun path instead of falling back to the default doctor container lifecycle
+- receipt JSON now includes additive `receipt.toolchains[]` evidence for the selected readiness
+  path, mirroring the same provider/backend/target OS/fulfillment shape used by `ota run --json`
+  and `ota up --json`
+- when a recorded execution path actually ran provider fulfillment commands, `receipt.toolchains[]`
+  can also include additive `fulfilled` and `commands[]` evidence there
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
@@ -1593,6 +1627,28 @@ Current behavior:
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`
   evaluates and provisions that merged prerequisite surface before setup instead of unrelated
   task-local quickstart or packaged-runtime requirements elsewhere in the repo
+- `ota up --dry-run` now lists selected toolchains explicitly: `fulfillment: none` means ota will
+  diagnose/check that toolchain on the selected path without provisioning it, while
+  `fulfillment: run` means ota may provision that selected toolchain on the selected run path if
+  the provider and policy allow it
+- mixed-backend workflows now keep selected prerequisites on their own execution boundary during
+  `ota up` preflight, so a native run task is diagnosed on the host while a container setup task is
+  diagnosed in the selected container lane instead of flattening both into one doctor mode
+- selected toolchain preview lines stay toolchain-owned: when a declared toolchain owns the
+  selected ecosystem path, `ota up --dry-run` describes that provider-owned toolchain requirement
+  instead of pretending owned capabilities are standalone setup tools, and the preview now names
+  the owned runtime capability alongside the provider so `toolchains.node` reads as Node via
+  Corepack rather than implying that Corepack itself is the runtime; when `toolchains.node`
+  declares `package_managers`, those activation lanes stay attached to the same selected toolchain
+- policy-backed version/provisioning previews now include selected toolchain-owned runtime lanes
+  too, and selected toolchain-owned tool lanes when the provider projects them there, so a repo
+  can show governed install paths without reintroducing duplicate `runtimes` or `tools`
+  ownership
+- `ota up --json` and preview/final execution receipts now expose additive `receipt.toolchains[]`
+  evidence so the selected workflow path's toolchain/provider/backend decisions stay
+  machine-readable alongside readiness findings
+- when ota actually runs provider fulfillment commands on the selected run path, the final receipt
+  can also include additive `fulfilled` and `commands[]` evidence for that toolchain entry
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, `ota up` can run that
   activation lane before setup when it is safe and selected; shipped paths now cover both
   Corepack-managed tools and explicit shell-command acquisition

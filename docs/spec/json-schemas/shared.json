@@ -81,7 +81,34 @@
         "policy_reason": { "type": "string" },
         "policy_source": { "enum": ["repo", "local", "org", "dashboard"] },
         "install_scope": { "enum": ["host", "repo_local", "container", "remote"] },
-        "mutation_allowed": { "type": "boolean" }
+        "mutation_allowed": { "type": "boolean" },
+        "toolchain_opportunity": { "$ref": "#/$defs/toolchainOpportunity" }
+      }
+    },
+    "toolchainOpportunity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ecosystem",
+        "fallback_runtime",
+        "fallback_tools",
+        "candidate_providers",
+        "shipped",
+        "agent_note"
+      ],
+      "properties": {
+        "ecosystem": { "type": "string" },
+        "fallback_runtime": { "type": "string" },
+        "fallback_tools": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "candidate_providers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "shipped": { "type": "boolean" },
+        "agent_note": { "type": "string" }
       }
     },
     "inference": {
