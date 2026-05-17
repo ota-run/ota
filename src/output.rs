@@ -2493,6 +2493,12 @@ pub struct WorkflowSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub readiness_surfaces: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signal_readiness_checks: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signal_readiness_probes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signal_readiness_surfaces: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exposes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub expose_surfaces: Vec<String>,
@@ -2592,6 +2598,9 @@ impl<'a> WorkflowSummary<'a> {
             readiness_checks: workflow.readiness.checks.clone(),
             readiness_probes: workflow.readiness.probes.clone(),
             readiness_surfaces: workflow.readiness.surfaces.clone(),
+            signal_readiness_checks: workflow.readiness.signal.checks.clone(),
+            signal_readiness_probes: workflow.readiness.signal.probes.clone(),
+            signal_readiness_surfaces: workflow.readiness.signal.surfaces.clone(),
             exposes,
             expose_surfaces,
             expose_entries,

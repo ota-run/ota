@@ -32,6 +32,18 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "signal_readiness_checks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "signal_readiness_probes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "signal_readiness_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "exposes": {
           "type": "array",
           "items": { "type": "string" }
