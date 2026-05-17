@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed host-loopback readiness probing across `ota doctor`, `ota up`, and runtime probes so
+  loopback surfaces declared as `127.0.0.1` now also resolve canonical local aliases (`::1`,
+  `localhost`) before failing; this removes false not-ready outcomes on macOS/Windows when the
+  runtime binds IPv6 loopback
 - fixed workflow-surface readiness retry budgeting in `ota doctor` to avoid false early
   not-ready outcomes on real startup paths: timeout retries now use a longer default window,
   and selected surfaces now honor `readiness.start_period`, `readiness.interval`, and explicit

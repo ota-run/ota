@@ -9263,15 +9263,33 @@ pub(crate) fn target_probe_endpoint_reachable_with_timeout(
     port: u16,
     timeout: Option<Duration>,
 ) -> bool {
-    let addr = format!("{}:{}", address.trim(), port);
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
-    addr.to_socket_addrs()
-        .map(|addrs| {
-            addrs
-                .into_iter()
-                .any(|socket| TcpStream::connect_timeout(&socket, connect_timeout).is_ok())
-        })
-        .unwrap_or(false)
+    probe_socket_candidates(address, port)
+        .into_iter()
+        .any(|socket| TcpStream::connect_timeout(&socket, connect_timeout).is_ok())
+}
+
+pub(crate) fn probe_socket_candidates(address: &str, port: u16) -> Vec<std::net::SocketAddr> {
+    let normalized = address.trim();
+    let mut candidates = Vec::new();
+    candidates.push(normalized.to_string());
+    if is_loopback_only_host_address(normalized) {
+        candidates.push(String::from("127.0.0.1"));
+        candidates.push(String::from("::1"));
+        candidates.push(String::from("localhost"));
+    }
+    let mut seen = BTreeSet::new();
+    let mut sockets = Vec::new();
+    for candidate in candidates {
+        if let Ok(resolved) = (candidate.as_str(), port).to_socket_addrs() {
+            for socket in resolved {
+                if seen.insert(socket) {
+                    sockets.push(socket);
+                }
+            }
+        }
+    }
+    sockets
 }
 
 fn target_activation_producer_failure(
@@ -15088,12 +15106,12 @@ pub(crate) fn http_readiness_endpoint_status(
     request: &HttpReadinessRequest,
     timeout: Option<Duration>,
 ) -> HttpReadinessStatus {
-    let addr = format!("{}:{}", address.trim(), port);
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
     let io_timeout = timeout.unwrap_or(Duration::from_millis(500));
-    let Ok(addrs) = addr.to_socket_addrs() else {
+    let addrs = probe_socket_candidates(address, port);
+    if addrs.is_empty() {
         return HttpReadinessStatus::Failed;
-    };
+    }
     let mut timed_out = false;
     for socket in addrs {
         match http_readiness_socket_status(address, socket, request, connect_timeout, io_timeout) {
@@ -31598,6 +31616,61 @@ exec "$(dirname "$0")/docker-real" "$@"
             b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
             &request,
         ));
+    }
+
+    #[test]
+    fn loopback_tcp_probe_tries_ipv6_for_ipv4_loopback_surface() {
+        let listener = match TcpListener::bind("[::1]:0") {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+
+        assert!(
+            super::target_probe_endpoint_reachable_with_timeout(
+                "127.0.0.1",
+                port,
+                Some(Duration::from_millis(300))
+            ),
+            "tcp readiness should accept a loopback service reachable only via ::1"
+        );
+    }
+
+    #[test]
+    fn loopback_http_probe_tries_ipv6_for_ipv4_loopback_surface() {
+        let listener = match TcpListener::bind("[::1]:0") {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let server = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0u8; 512];
+                let _ = stream.read(&mut request);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK");
+            }
+        });
+        let request = HttpReadinessRequest {
+            method: TaskRuntimeReadinessHttpMethod::Get,
+            path: String::from("/"),
+            headers: BTreeMap::new(),
+            success_statuses: vec![200],
+            body_contains: None,
+        };
+        let status = super::http_readiness_endpoint_status(
+            "127.0.0.1",
+            port,
+            &request,
+            Some(Duration::from_millis(400)),
+        );
+        server.join().expect("server thread should join");
+        assert_eq!(status, super::HttpReadinessStatus::Passed);
     }
 
     #[test]
