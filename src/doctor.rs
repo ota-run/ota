@@ -7130,20 +7130,40 @@ fn diagnose_checks(
 ) {
     let working_dir = contract_working_dir(contract_path);
     let selected_checks = selected_workflow_check_names(contract, workflow_name, scope);
+    let selected_signal_checks =
+        selected_workflow_signal_check_names(contract, workflow_name, scope);
     let selected_precondition_checks =
         selected_task_requirement_check_names(contract, workflow_name);
     let selected_probes = selected_workflow_probe_names(contract, workflow_name, scope);
+    let selected_signal_probes =
+        selected_workflow_signal_probe_names(contract, workflow_name, scope);
     let selected_surfaces = selected_workflow_surface_names(contract, workflow_name, scope);
+    let selected_signal_surfaces =
+        selected_workflow_signal_surface_names(contract, workflow_name, scope);
     let scoped_workflow_targets = selected_checks.is_some()
+        || selected_signal_checks.is_some()
         || selected_precondition_checks.is_some()
         || selected_probes.is_some()
-        || selected_surfaces.is_some();
+        || selected_signal_probes.is_some()
+        || selected_surfaces.is_some()
+        || selected_signal_surfaces.is_some();
     let mut probes_executed_via_checks = BTreeSet::new();
 
     for check in &contract.checks {
         let is_selected_precondition = selected_precondition_checks
             .as_ref()
             .is_some_and(|selected| selected.contains(check.name.as_str()));
+        let is_selected_check = selected_checks
+            .as_ref()
+            .is_some_and(|selected| selected.contains(check.name.as_str()));
+        let is_selected_signal_check = selected_signal_checks
+            .as_ref()
+            .is_some_and(|selected| selected.contains(check.name.as_str()));
+        let is_selected_signal = is_selected_signal_check && !is_selected_check;
+        let has_explicit_workflow_check_selection =
+            selected_checks.is_some() || selected_signal_checks.is_some();
+        let is_explicitly_selected_check =
+            is_selected_precondition || is_selected_check || is_selected_signal_check;
 
         if scope == DoctorScope::Preconditions && check.kind != CheckKind::Precondition {
             continue;
@@ -7162,12 +7182,10 @@ fn diagnose_checks(
                 if check.kind == CheckKind::Precondition {
                     continue;
                 }
-                if scoped_workflow_targets && selected_checks.is_none() {
+                if scoped_workflow_targets && !has_explicit_workflow_check_selection {
                     continue;
                 }
-                if let Some(selected) = selected_checks.as_ref()
-                    && !selected.contains(check.name.as_str())
-                {
+                if has_explicit_workflow_check_selection && !is_explicitly_selected_check {
                     continue;
                 }
             }
@@ -7178,11 +7196,9 @@ fn diagnose_checks(
                 {
                     continue;
                 }
-            } else if scoped_workflow_targets && selected_checks.is_none() {
+            } else if scoped_workflow_targets && !has_explicit_workflow_check_selection {
                 continue;
-            } else if let Some(selected) = selected_checks.as_ref()
-                && !selected.contains(check.name.as_str())
-            {
+            } else if has_explicit_workflow_check_selection && !is_explicitly_selected_check {
                 continue;
             }
         }
@@ -7194,13 +7210,21 @@ fn diagnose_checks(
         match run_declared_check(contract, contract_path, check, working_dir, None) {
             CheckStatus::Passed => continue,
             CheckStatus::Failed => findings.push(Finding {
-                severity: map_check_severity(check.severity),
+                severity: if is_selected_signal {
+                    FindingSeverity::Info
+                } else {
+                    map_check_severity(check.severity)
+                },
                 summary: failed_check_summary(check),
                 why: failed_check_why(contract, check),
                 next: failed_check_next(contract, workflow_name, check),
             }),
             CheckStatus::TimedOut(timeout) => findings.push(Finding {
-                severity: map_check_severity(check.severity),
+                severity: if is_selected_signal {
+                    FindingSeverity::Info
+                } else {
+                    map_check_severity(check.severity)
+                },
                 summary: timed_out_check_summary(check),
                 why: timed_out_check_why(contract, check, timeout),
                 next: timed_out_check_next(contract, check),
@@ -7208,11 +7232,13 @@ fn diagnose_checks(
         }
     }
 
+    let mut executed_workflow_probes = BTreeSet::new();
     if let Some(selected_probe_names) = selected_probes {
         for probe_name in selected_probe_names {
             if probes_executed_via_checks.contains(probe_name) {
                 continue;
             }
+            executed_workflow_probes.insert(probe_name.to_string());
             if contract.probe(probe_name).is_none() {
                 continue;
             }
@@ -7235,6 +7261,44 @@ fn diagnose_checks(
                     summary: format!("Probe timed out: {probe_name}"),
                     why: format!(
                         "the configured workflow readiness probe `{probe_name}` ({}) did not finish within {}ms",
+                        probe_source_description(contract, probe_name),
+                        timeout
+                    ),
+                    next: timed_out_probe_next(probe_name, probe),
+                }),
+            }
+        }
+    }
+
+    if let Some(selected_signal_probe_names) = selected_signal_probes {
+        for probe_name in selected_signal_probe_names {
+            if probes_executed_via_checks.contains(probe_name)
+                || executed_workflow_probes.contains(probe_name)
+            {
+                continue;
+            }
+            if contract.probe(probe_name).is_none() {
+                continue;
+            }
+            let probe = contract
+                .probe(probe_name)
+                .expect("checked probe existence above");
+            match run_named_probe(contract, contract_path, probe_name, None) {
+                CheckStatus::Passed => continue,
+                CheckStatus::Failed => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal probe failed: {probe_name}"),
+                    why: format!(
+                        "the configured workflow signal probe `{probe_name}` ({}) did not succeed",
+                        probe_source_description(contract, probe_name)
+                    ),
+                    next: failed_probe_next(probe_name, probe),
+                }),
+                CheckStatus::TimedOut(timeout) => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal probe timed out: {probe_name}"),
+                    why: format!(
+                        "the configured workflow signal probe `{probe_name}` ({}) did not finish within {}ms",
                         probe_source_description(contract, probe_name),
                         timeout
                     ),
@@ -7298,6 +7362,80 @@ fn diagnose_checks(
                     summary: format!("Surface readiness could not be evaluated: {surface_name}"),
                     why: format!(
                         "the selected workflow surface `{surface_name}` on run task `{}` could not be resolved or checked: {error}",
+                        contract
+                            .selected_workflow(workflow_name)
+                            .and_then(|(_, workflow)| workflow.run.as_ref())
+                            .map(|run| run.task.as_str())
+                            .unwrap_or("-")
+                    ),
+                    next: format!(
+                        "repair workflow run task `{}` surface attachment/readiness and rerun `{}`",
+                        contract
+                            .selected_workflow(workflow_name)
+                            .and_then(|(_, workflow)| workflow.run.as_ref())
+                            .map(|run| run.task.as_str())
+                            .unwrap_or("-"),
+                        rerun_command
+                    ),
+                }),
+            }
+        }
+    }
+
+    if let Some(selected_signal_surface_names) = selected_signal_surfaces {
+        for surface_name in selected_signal_surface_names {
+            let rerun_command = rerun_selected_workflow_doctor_command(workflow_name);
+            match run_workflow_surface_readiness(
+                contract,
+                contract_path,
+                workflow_name,
+                surface_name,
+            ) {
+                Ok(observation) if observation.status == CheckStatus::Passed => continue,
+                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal surface readiness failed: {surface_name}"),
+                    why: format!(
+                        "the configured workflow signal surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready after {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.attempts
+                    ),
+                    next: format!(
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
+                    ),
+                }),
+                Ok(observation) => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal surface readiness timed out: {surface_name}"),
+                    why: format!(
+                        "the configured workflow signal surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready within {}ms across {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.timeout_ms,
+                        observation.attempts
+                    ),
+                    next: format!(
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
+                    ),
+                }),
+                Err(error) => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal surface readiness could not be evaluated: {surface_name}"),
+                    why: format!(
+                        "the configured workflow signal surface `{surface_name}` on run task `{}` could not be resolved or checked: {error}",
                         contract
                             .selected_workflow(workflow_name)
                             .and_then(|(_, workflow)| workflow.run.as_ref())
@@ -7412,6 +7550,31 @@ fn selected_workflow_check_names<'a>(
     )
 }
 
+fn selected_workflow_signal_check_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    scope: DoctorScope,
+) -> Option<BTreeSet<&'a str>> {
+    if scope == DoctorScope::Preconditions {
+        return None;
+    }
+
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.readiness.signal.checks.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .readiness
+            .signal
+            .checks
+            .iter()
+            .map(|check| check.as_str())
+            .collect(),
+    )
+}
+
 fn selected_task_requirement_check_names(
     contract: &Contract,
     workflow_name: Option<&str>,
@@ -7455,6 +7618,31 @@ fn selected_workflow_probe_names<'a>(
     )
 }
 
+fn selected_workflow_signal_probe_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    scope: DoctorScope,
+) -> Option<BTreeSet<&'a str>> {
+    if scope == DoctorScope::Preconditions {
+        return None;
+    }
+
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.readiness.signal.probes.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .readiness
+            .signal
+            .probes
+            .iter()
+            .map(|probe| probe.as_str())
+            .collect(),
+    )
+}
+
 fn selected_workflow_surface_names<'a>(
     contract: &'a Contract,
     workflow_name: Option<&str>,
@@ -7472,6 +7660,31 @@ fn selected_workflow_surface_names<'a>(
     Some(
         workflow
             .readiness
+            .surfaces
+            .iter()
+            .map(|surface| surface.as_str())
+            .collect(),
+    )
+}
+
+fn selected_workflow_signal_surface_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    scope: DoctorScope,
+) -> Option<BTreeSet<&'a str>> {
+    if scope == DoctorScope::Preconditions {
+        return None;
+    }
+
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.readiness.signal.surfaces.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .readiness
+            .signal
             .surfaces
             .iter()
             .map(|surface| surface.as_str())
@@ -8310,6 +8523,9 @@ fn check_failure_details_summary(details: &CheckFailureDetails) -> Option<String
     let mut parts = Vec::new();
     if let Some(exit_code) = details.exit_code {
         parts.push(format!("exit code {exit_code}"));
+        if let Some(guidance) = windows_exit_code_guidance_line(exit_code) {
+            parts.push(guidance);
+        }
     }
     if !details.stdout.is_empty() {
         parts.push(format!("stdout: {}", details.stdout));
@@ -8318,6 +8534,25 @@ fn check_failure_details_summary(details: &CheckFailureDetails) -> Option<String
         parts.push(format!("stderr: {}", details.stderr));
     }
     (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+fn windows_exit_code_guidance(exit_code: i32) -> Option<&'static str> {
+    match exit_code {
+        -1073741819 => Some("Windows access violation crash"),
+        -1073740791 => Some("Windows fast-fail / stack buffer overrun crash"),
+        -1073741510 => Some("Windows interrupt/termination (Ctrl+C or console close)"),
+        -1073741502 => Some("Windows DLL initialization failure"),
+        _ => None,
+    }
+}
+
+fn windows_exit_code_guidance_line(exit_code: i32) -> Option<String> {
+    windows_exit_code_guidance(exit_code).map(|guidance| {
+        format!(
+            "on Windows this usually maps to `{guidance}` (`0x{:08X}`)",
+            exit_code as u32
+        )
+    })
 }
 
 struct CheckSpinner {
@@ -11793,6 +12028,99 @@ workflows:
     }
 
     #[test]
+    fn workflow_signal_checks_are_non_gating() {
+        let dir = TempDir::new().unwrap();
+        let contract_path = dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+  - name: runtime-signal
+    kind: file
+    severity: error
+    path: runtime-ready.flag
+    expect: file
+tasks:
+  quickstart:
+    run: npx --yes n8n
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+    readiness:
+      signal:
+        checks:
+          - runtime-signal
+"#,
+        )
+        .unwrap();
+
+        let report =
+            super::diagnose_checks_only_for_workflow(&contract, &contract_path, Some("instant"));
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "File check failed: runtime-signal"
+                && finding.severity == FindingSeverity::Info
+        }));
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary
+                    != "File check failed: workspace-dependencies-installed"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_signal_probes_are_non_gating() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:9/healthz/readiness
+      timeout: 100
+workflows:
+  default: backend
+  backend:
+    readiness:
+      signal:
+        probes:
+          - backend-ready
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Signal probe failed: backend-ready"
+                && finding.severity == FindingSeverity::Info
+        }));
+    }
+
+    #[test]
     fn workflow_readiness_probes_are_executed() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener.local_addr().unwrap().port();
@@ -12237,6 +12565,66 @@ workflows:
         let configured = 30;
         let capped = super::capped_failed_retry_budget(configured, Duration::from_millis(200));
         assert_eq!(capped, configured);
+    }
+
+    #[test]
+    fn workflow_signal_surface_failure_is_non_gating() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 6553
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 50ms
+      interval: 10ms
+      retries: 1
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      signal:
+        surfaces:
+          - backend
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.iter().any(|finding| {
+            (finding.summary == "Signal surface readiness failed: backend"
+                || finding.summary == "Signal surface readiness timed out: backend")
+                && finding.severity == FindingSeverity::Info
+        }));
+    }
+
+    #[test]
+    fn windows_exit_code_guidance_line_decodes_common_crash_codes() {
+        let guidance = super::windows_exit_code_guidance_line(-1073741819)
+            .expect("known windows code should decode");
+        assert!(guidance.contains("0xC0000005"), "{guidance}");
+        assert!(guidance.contains("access violation"), "{guidance}");
     }
 
     #[test]

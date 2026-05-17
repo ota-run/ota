@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- improved runtime-proof failure classification when startup exits before readiness: proof output now
+  prioritizes `Run task exited before readiness` over generic workflow-surface readiness blockers
+  when both are present, so deterministic startup-exit root causes surface first
+- added Windows crash-code decoding guidance for common negative exit codes in both run and doctor
+  failure paths, including `0xC0000005` (access violation), `0xC0000409` (fast-fail/stack buffer
+  overrun), and `0xC000013A` (interrupt), so remediation output is actionable without manual code
+  translation
+- added first-class non-gating workflow readiness signals with
+  `workflows.<name>.readiness.signal.{checks,probes,surfaces}`: Ota now executes those surfaces as
+  informational diagnostics that do not block repo readiness verdicts, while preserving strict
+  reference and attachment validation; overlap between gating and signal readiness lanes is now
+  rejected explicitly so one item cannot be both blocking and non-gating
 - fixed `ota proof runtime` readiness waiting for packaged/container startup paths by replacing
   the fixed 180-second wait budget with a deterministic strategy-aware budget (with floor/ceiling),
   so cold image pulls and first-run packaged launches have enough headroom before proof times out

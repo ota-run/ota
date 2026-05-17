@@ -1442,6 +1442,9 @@ Success:
       "readiness_checks": [],
       "readiness_probes": [],
       "readiness_surfaces": ["backend"],
+      "signal_readiness_checks": [],
+      "signal_readiness_probes": [],
+      "signal_readiness_surfaces": [],
       "exposes": ["http://127.0.0.1:5678/"],
       "expose_surfaces": ["backend"],
       "default": true
@@ -1453,6 +1456,9 @@ Success:
       "readiness_checks": [],
       "readiness_probes": [],
       "readiness_surfaces": ["backend"],
+      "signal_readiness_checks": [],
+      "signal_readiness_probes": [],
+      "signal_readiness_surfaces": [],
       "exposes": ["http://127.0.0.1:5678/"],
       "expose_surfaces": ["backend"],
       "default": false
@@ -1476,6 +1482,9 @@ Notes:
   - `readiness_checks`
   - `readiness_probes`
   - `readiness_surfaces`
+  - `signal_readiness_checks`
+  - `signal_readiness_probes`
+  - `signal_readiness_surfaces`
   - `exposes`
   - `expose_surfaces`
   - `default`
@@ -2719,7 +2728,7 @@ Each catalog entry keeps the operator guidance machine-readable:
 `ota check --json` uses the same finding shape as `ota doctor --json`, including additive
 `finding_groups` when present. It may also include the same additive top-level `workflow`
 summary and `toolchains[]` evidence for the selected workflow path, including workflow
-`readiness_probes`, `readiness_surfaces`, and `expose_surfaces` when declared:
+`readiness_probes`, `readiness_surfaces`, `signal_readiness_*`, and `expose_surfaces` when declared:
 
 ```json
 {
@@ -2733,6 +2742,9 @@ summary and `toolchains[]` evidence for the selected workflow path, including wo
     "readiness_checks": ["app-health"],
     "readiness_probes": ["app-ready"],
     "readiness_surfaces": ["backend"],
+    "signal_readiness_checks": [],
+    "signal_readiness_probes": [],
+    "signal_readiness_surfaces": [],
     "exposes": []
   },
   "findings": [

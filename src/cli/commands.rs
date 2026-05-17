@@ -541,6 +541,27 @@ fn parse_task_exit_failure_line(line: &str) -> Option<(String, i32)> {
     Some((task_name.to_string(), exit_code))
 }
 
+fn windows_exit_code_guidance(exit_code: i32) -> Option<&'static str> {
+    match exit_code {
+        -1073741819 => Some("the process crashed with access violation"),
+        -1073740791 => Some("the process hit a fast-fail (stack buffer overrun)"),
+        -1073741510 => Some("the process was interrupted (Ctrl+C or console close)"),
+        -1073741502 => {
+            Some("the process could not start because a dependent DLL initialization failed")
+        }
+        _ => None,
+    }
+}
+
+fn windows_exit_code_guidance_line(exit_code: i32) -> Option<String> {
+    windows_exit_code_guidance(exit_code).map(|guidance| {
+        format!(
+            "on Windows, exit code `{exit_code}` (`0x{:08X}`) usually means {guidance}",
+            exit_code as u32
+        )
+    })
+}
+
 fn render_task_exit_failure_text(
     where_value: &str,
     failed_step_name: &str,
@@ -1908,11 +1929,19 @@ pub fn proof_runtime(
                         command_for_repo_contract_target("ota clean", &target.contract_path)
                     )
                 });
-                let primary_blocker_error = proof_summary
+                let mut proof_summary_for_output = proof_summary.clone();
+                if let Some(overridden_blocker) = proof_runtime_up_exit_primary_blocker(
+                    &proof_summary,
+                    up_process_failure,
+                    &up_log_artifact_display,
+                ) {
+                    proof_summary_for_output.primary_blocker = Some(overridden_blocker);
+                }
+                let primary_blocker_error = proof_summary_for_output
                     .primary_blocker
                     .as_ref()
                     .map(|blocker| blocker.summary.clone());
-                let primary_blocker_next = proof_summary
+                let primary_blocker_next = proof_summary_for_output
                     .primary_blocker
                     .as_ref()
                     .map(|blocker| blocker.next.clone());
@@ -1956,7 +1985,7 @@ pub fn proof_runtime(
                             &target.contract_path,
                             text_phase,
                             status,
-                            &proof_summary,
+                            &proof_summary_for_output,
                             up_process_failure,
                             &topology_artifact_display,
                             &doctor_artifact_display,
@@ -1974,7 +2003,7 @@ pub fn proof_runtime(
                             mode: "runtime-proof",
                             workflow: effective_workflow_name,
                             phase: json_phase,
-                            summary: proof_summary,
+                            summary: proof_summary_for_output,
                             artifacts: Some(ProofRuntimeArtifacts {
                                 topology: &topology_artifact_display,
                                 doctor: &doctor_artifact_display,
@@ -31602,6 +31631,33 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             workflow.readiness_surfaces.join(",")
         }
     ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Signal Checks:"),
+        if workflow.signal_readiness_checks.is_empty() {
+            String::from("-")
+        } else {
+            workflow.signal_readiness_checks.join(",")
+        }
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Signal Probes:"),
+        if workflow.signal_readiness_probes.is_empty() {
+            String::from("-")
+        } else {
+            workflow.signal_readiness_probes.join(",")
+        }
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Signal Surfaces:"),
+        if workflow.signal_readiness_surfaces.is_empty() {
+            String::from("-")
+        } else {
+            workflow.signal_readiness_surfaces.join(",")
+        }
+    ));
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
         output.push_str(&format!("\n  {}", paint_key("Exposes:")));
         if !workflow.expose_entries.is_empty() {
@@ -35999,6 +36055,66 @@ fn render_agents_markdown(
             );
             output.push('\n');
         }
+        if !workflow.readiness_probes.is_empty() {
+            output.push_str("- `readiness_probes`: ");
+            output.push_str(
+                &workflow
+                    .readiness_probes
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.readiness_surfaces.is_empty() {
+            output.push_str("- `readiness_surfaces`: ");
+            output.push_str(
+                &workflow
+                    .readiness_surfaces
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.signal_readiness_checks.is_empty() {
+            output.push_str("- `signal_readiness_checks`: ");
+            output.push_str(
+                &workflow
+                    .signal_readiness_checks
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.signal_readiness_probes.is_empty() {
+            output.push_str("- `signal_readiness_probes`: ");
+            output.push_str(
+                &workflow
+                    .signal_readiness_probes
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !workflow.signal_readiness_surfaces.is_empty() {
+            output.push_str("- `signal_readiness_surfaces`: ");
+            output.push_str(
+                &workflow
+                    .signal_readiness_surfaces
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
         output.push('\n');
     }
     output.push_str("## Agent Contract\n\n");
@@ -38095,6 +38211,59 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_up_exit_primary_blocker_overrides_surface_blocker() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness failed: app"),
+                why: String::from("surface app did not become ready"),
+                next: String::from("rerun `ota doctor`"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let overridden = super::proof_runtime_up_exit_primary_blocker(
+            &summary,
+            Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
+            "up.log",
+        )
+        .expect("surface blocker should be overridden for pre-readiness up exit");
+        assert_eq!(overridden.summary, "Run task exited before readiness");
+        assert!(overridden.why.contains("exit code 1"));
+        assert_eq!(
+            overridden.next,
+            "inspect up.log and rerun `ota proof runtime`"
+        );
+
+        let mut summary = summary;
+        summary.primary_blocker = Some(overridden);
+
+        let rendered = strip_ansi_codes(&super::render_proof_runtime_text(
+            "./ota.yaml",
+            Some("default"),
+            Path::new("./ota.yaml"),
+            "service readiness",
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            &summary,
+            Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
+            "topology.json",
+            "doctor.json",
+            "up.log",
+            None,
+            None,
+        ));
+
+        assert!(rendered.contains("Run task exited before readiness"));
+        assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
+        assert!(!rendered.contains("Surface readiness failed: app"));
+    }
+
+    #[test]
     fn env_text_shows_properties_source_provenance() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -38447,6 +38616,9 @@ tasks:
             readiness_checks: vec![String::from("app-health")],
             readiness_probes: vec![String::from("app-ready")],
             readiness_surfaces: vec![String::from("backend")],
+            signal_readiness_checks: Vec::new(),
+            signal_readiness_probes: Vec::new(),
+            signal_readiness_surfaces: Vec::new(),
             exposes: vec![String::from("http://127.0.0.1:5678")],
             expose_surfaces: vec![String::from("backend")],
             expose_entries: vec![crate::output::WorkflowExposeEntry {
@@ -40029,6 +40201,9 @@ tasks:
                 ],
                 readiness_probes: Vec::new(),
                 readiness_surfaces: Vec::new(),
+                signal_readiness_checks: Vec::new(),
+                signal_readiness_probes: Vec::new(),
+                signal_readiness_surfaces: Vec::new(),
                 exposes: Vec::new(),
                 expose_surfaces: Vec::new(),
                 expose_entries: Vec::new(),
@@ -46025,6 +46200,9 @@ execution:
             readiness_checks: Vec::new(),
             readiness_probes: Vec::new(),
             readiness_surfaces: Vec::new(),
+            signal_readiness_checks: Vec::new(),
+            signal_readiness_probes: Vec::new(),
+            signal_readiness_surfaces: Vec::new(),
             exposes: Vec::new(),
             expose_surfaces: Vec::new(),
             expose_entries: Vec::new(),
@@ -50034,6 +50212,26 @@ tasks:
             rendered.contains(
                 "requested task `dev:clean` failed because depends_on task `dev` returned a non-zero exit code"
             ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn task_exit_failure_text_decodes_common_windows_crash_code() {
+        let rendered = strip_ansi_codes(&super::render_task_exit_failure_text(
+            "./ota.yaml",
+            "dev",
+            None,
+            -1073741819,
+            None,
+            &[],
+            Some("RUN SUMMARY\nStatus:      failed"),
+            None,
+        ));
+
+        assert!(rendered.contains("0xC0000005"), "{rendered}");
+        assert!(
+            rendered.contains("on Windows, exit code `-1073741819` (`0xC0000005`) usually means the process crashed with access violation"),
             "{rendered}"
         );
     }
@@ -56334,11 +56532,14 @@ fn task_exit_failure_why_lines(
         );
         lines
     } else {
-        vec![
-            dependency_failure_line.unwrap_or_else(|| {
+        let mut lines =
+            vec![dependency_failure_line.unwrap_or_else(|| {
                 format!("task `{failed_step_name}` returned a non-zero exit code")
-            }),
-        ]
+            })];
+        if let Some(guidance) = windows_exit_code_guidance_line(exit_code) {
+            lines.push(guidance);
+        }
+        lines
     }
 }
 
@@ -60674,9 +60875,14 @@ fn wait_for_proof_runtime_readiness(
         match up_process.try_wait() {
             Ok(Some(exit_status)) => {
                 let up_process_failure = if let Some(code) = exit_status.code() {
-                    Some(format!(
+                    let mut why = format!(
                         "`ota up --stream` exited while waiting for readiness (exit code {code})"
-                    ))
+                    );
+                    if let Some(guidance) = windows_exit_code_guidance_line(code) {
+                        why.push_str("; ");
+                        why.push_str(guidance.as_str());
+                    }
+                    Some(why)
                 } else {
                     Some(String::from(
                         "`ota up --stream` was terminated before readiness could be observed",
@@ -60778,6 +60984,29 @@ fn proof_runtime_command_for_repo(
     let repo_root = contract_working_dir(contract_path);
     let repo_display = compact_repo_path(repo_root);
     format!("{full} {repo_display}")
+}
+
+fn proof_runtime_up_exit_primary_blocker(
+    summary: &DoctorSummary,
+    up_process_failure: Option<&str>,
+    up_log_artifact: &str,
+) -> Option<DoctorPrimaryBlocker> {
+    let process_failure = up_process_failure?;
+    let primary = summary.primary_blocker.as_ref()?;
+    if !(primary.summary.starts_with("Surface readiness failed:")
+        || primary.summary.starts_with("Surface readiness timed out:"))
+    {
+        return None;
+    }
+
+    Some(DoctorPrimaryBlocker {
+        severity: FindingSeverity::Error,
+        summary: String::from("Run task exited before readiness"),
+        why: process_failure.to_string(),
+        next: format!("inspect {} and rerun `ota proof runtime`", up_log_artifact),
+        provenance: primary.provenance.clone(),
+        provenance_key: primary.provenance_key.clone(),
+    })
 }
 
 fn render_proof_runtime_text(

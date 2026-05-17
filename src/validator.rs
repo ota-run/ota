@@ -6060,53 +6060,111 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
             }
         }
-        for check in &workflow.readiness.checks {
-            if !contract
-                .checks
-                .iter()
-                .any(|declared| declared.name == *check)
-            {
-                errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.readiness.checks` references unknown check `{check}`"
-                )));
+        for (field, checks) in [
+            ("readiness.checks", &workflow.readiness.checks),
+            ("readiness.signal.checks", &workflow.readiness.signal.checks),
+        ] {
+            for check in checks {
+                if !contract
+                    .checks
+                    .iter()
+                    .any(|declared| declared.name == *check)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.{field}` references unknown check `{check}`"
+                    )));
+                }
             }
         }
-        for probe in &workflow.readiness.probes {
-            if !contract.readiness.probes.contains_key(probe) {
-                errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.readiness.probes` references unknown probe `{probe}`"
-                )));
+        for (field, probes) in [
+            ("readiness.probes", &workflow.readiness.probes),
+            ("readiness.signal.probes", &workflow.readiness.signal.probes),
+        ] {
+            for probe in probes {
+                if !contract.readiness.probes.contains_key(probe) {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.{field}` references unknown probe `{probe}`"
+                    )));
+                }
             }
         }
-        for surface in &workflow.readiness.surfaces {
-            if !contract.surfaces.contains_key(surface) {
-                errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.readiness.surfaces` references unknown surface `{surface}`"
-                )));
+        for (field, surfaces) in [
+            ("readiness.surfaces", &workflow.readiness.surfaces),
+            (
+                "readiness.signal.surfaces",
+                &workflow.readiness.signal.surfaces,
+            ),
+        ] {
+            for surface in surfaces {
+                if !contract.surfaces.contains_key(surface) {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.{field}` references unknown surface `{surface}`"
+                    )));
+                }
             }
+        }
+        for overlap in overlap_names(
+            &workflow.readiness.checks,
+            &workflow.readiness.signal.checks,
+        ) {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.readiness.checks` and `workflows.{name}.readiness.signal.checks` both include `{overlap}`; declare a readiness item in exactly one lane (gating or signal)"
+            )));
+        }
+        for overlap in overlap_names(
+            &workflow.readiness.probes,
+            &workflow.readiness.signal.probes,
+        ) {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.readiness.probes` and `workflows.{name}.readiness.signal.probes` both include `{overlap}`; declare a readiness item in exactly one lane (gating or signal)"
+            )));
+        }
+        for overlap in overlap_names(
+            &workflow.readiness.surfaces,
+            &workflow.readiness.signal.surfaces,
+        ) {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{name}.readiness.surfaces` and `workflows.{name}.readiness.signal.surfaces` both include `{overlap}`; declare a readiness item in exactly one lane (gating or signal)"
+            )));
         }
         let run_task = workflow
             .run
             .as_ref()
             .and_then(|run| contract.tasks.get(run.task.as_str()));
-        if !workflow.readiness.surfaces.is_empty() && run_task.is_none() {
-            errors.push(ValidationError::new(format!(
-                "`workflows.{name}.readiness.surfaces` requires `workflows.{name}.run.task` to resolve to a declared task"
-            )));
+        for (field, surfaces) in [
+            ("readiness.surfaces", &workflow.readiness.surfaces),
+            (
+                "readiness.signal.surfaces",
+                &workflow.readiness.signal.surfaces,
+            ),
+        ] {
+            if !surfaces.is_empty() && run_task.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.{field}` requires `workflows.{name}.run.task` to resolve to a declared task"
+                )));
+            }
         }
         if let Some(task) = run_task {
-            for surface in &workflow.readiness.surfaces {
-                if let Some(message) =
-                    workflow_surface_attachment_error(contract, task, surface.as_str())
-                {
-                    errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.readiness.surfaces` references surface `{surface}`, but run task `{}` {message}",
-                        workflow
-                            .run
-                            .as_ref()
-                            .expect("run task should exist when task resolved")
-                            .task
-                    )));
+            for (field, surfaces) in [
+                ("readiness.surfaces", &workflow.readiness.surfaces),
+                (
+                    "readiness.signal.surfaces",
+                    &workflow.readiness.signal.surfaces,
+                ),
+            ] {
+                for surface in surfaces {
+                    if let Some(message) =
+                        workflow_surface_attachment_error(contract, task, surface.as_str())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.{field}` references surface `{surface}`, but run task `{}` {message}",
+                            workflow
+                                .run
+                                .as_ref()
+                                .expect("run task should exist when task resolved")
+                                .task
+                        )));
+                    }
                 }
             }
         }
@@ -6139,6 +6197,16 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
         }
     }
+}
+
+fn overlap_names<'a>(left: &'a [String], right: &'a [String]) -> Vec<&'a str> {
+    let right_set = right.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    left.iter()
+        .map(String::as_str)
+        .filter(|value| right_set.contains(value))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn workflow_surface_attachment_error(
@@ -7310,6 +7378,37 @@ workflows:
     }
 
     #[test]
+    fn rejects_unknown_signal_readiness_references() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+workflows:
+  default: backend
+  backend:
+    readiness:
+      signal:
+        checks:
+          - missing-check
+        probes:
+          - missing-probe
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract).expect_err("signal references should be rejected");
+        let message = error.to_string();
+        assert!(message.contains(
+            "`workflows.backend.readiness.signal.checks` references unknown check `missing-check`"
+        ));
+        assert!(message.contains(
+            "`workflows.backend.readiness.signal.probes` references unknown probe `missing-probe`"
+        ));
+    }
+
+    #[test]
     fn rejects_workflow_readiness_surface_not_attached_to_run_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -7348,6 +7447,117 @@ workflows:
             .expect_err("workflow surface readiness should reject unattached run-task surfaces");
         assert!(error.to_string().contains(
             "`workflows.frontend.readiness.surfaces` references surface `backend`, but run task `dev:fe` does not attach that surface for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_signal_surface_not_attached_to_run_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+  dev:fe:
+    run: pnpm dev:fe
+    runtime:
+      kind: service
+workflows:
+  default: frontend
+  frontend:
+    run:
+      task: dev:fe
+    readiness:
+      signal:
+        surfaces:
+          - backend
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("workflow signal surface should reject unattached run-task surfaces");
+        assert!(error.to_string().contains(
+            "`workflows.frontend.readiness.signal.surfaces` references surface `backend`, but run task `dev:fe` does not attach that surface for backend `native`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_readiness_signal_overlap_entries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: app-check
+    kind: file
+    severity: error
+    path: package.json
+    expect: file
+readiness:
+  probes:
+    app-probe:
+      kind: http
+      url: http://127.0.0.1:5678/healthz/readiness
+      timeout: 1000
+surfaces:
+  app:
+    kind: http
+    port: 5678
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      surfaces:
+        - app
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      checks:
+        - app-check
+      probes:
+        - app-probe
+      surfaces:
+        - app
+      signal:
+        checks:
+          - app-check
+        probes:
+          - app-probe
+        surfaces:
+          - app
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_contract(&contract).expect_err("overlap between gating and signal lanes");
+        let message = error.to_string();
+        assert!(message.contains(
+            "`workflows.app.readiness.checks` and `workflows.app.readiness.signal.checks` both include `app-check`"
+        ));
+        assert!(message.contains(
+            "`workflows.app.readiness.probes` and `workflows.app.readiness.signal.probes` both include `app-probe`"
+        ));
+        assert!(message.contains(
+            "`workflows.app.readiness.surfaces` and `workflows.app.readiness.signal.surfaces` both include `app`"
         ));
     }
 

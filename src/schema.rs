@@ -416,6 +416,19 @@ pub struct WorkflowReadinessSpec {
     pub probes: Vec<String>,
     #[serde(default)]
     pub surfaces: Vec<String>,
+    #[serde(default)]
+    pub signal: WorkflowReadinessSignalSpec,
+}
+
+#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowReadinessSignalSpec {
+    #[serde(default)]
+    pub checks: Vec<String>,
+    #[serde(default)]
+    pub probes: Vec<String>,
+    #[serde(default)]
+    pub surfaces: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

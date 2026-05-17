@@ -2183,6 +2183,10 @@ Fields:
 - `<name>.readiness.checks`: optional readiness checks that belong to that workflow
 - `<name>.readiness.probes`: optional reusable readiness probes that belong to that workflow
 - `<name>.readiness.surfaces`: optional attached runtime surfaces that belong to that workflow's selected run task
+- `<name>.readiness.signal.checks`: optional non-gating checks surfaced as informational readiness signals
+- `<name>.readiness.signal.probes`: optional non-gating reusable probes surfaced as informational readiness signals
+- `<name>.readiness.signal.surfaces`: optional non-gating attached surfaces surfaced as informational readiness signals
+- a readiness entry must be declared in exactly one lane (`readiness.*` or `readiness.signal.*`)
 - `<name>.exposes`: optional human-readable endpoints or URLs the workflow is expected to surface
   - literal string form keeps a fixed URL
   - object form `{ surface: <name> }` resolves through the selected workflow run task
