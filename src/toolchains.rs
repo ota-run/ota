@@ -691,9 +691,7 @@ pub(crate) fn declared_toolchain_requirement_clause(
     toolchain: &ToolchainSpec,
     target_os: &str,
 ) -> String {
-    let parts = declared_toolchain_contract(name, toolchain)
-        .map(|provider| provider.requirement_detail_parts(toolchain, target_os))
-        .unwrap_or_else(|| vec![format!("version `{}`", toolchain.version_for_os(target_os))]);
+    let parts = declared_toolchain_requirement_clause_parts(name, toolchain, target_os, None);
     format!(
         "check toolchain `{name}` via `{}` ({})",
         declared_toolchain_provider_label(name, toolchain),
@@ -701,12 +699,58 @@ pub(crate) fn declared_toolchain_requirement_clause(
     )
 }
 
-pub(crate) fn declared_toolchain_preview_action(
+pub(crate) fn declared_toolchain_requirement_clause_for_required_tools(
     name: &str,
     toolchain: &ToolchainSpec,
     target_os: &str,
+    required_tools: &BTreeSet<String>,
 ) -> String {
-    let base = declared_toolchain_requirement_clause(name, toolchain, target_os);
+    let parts = declared_toolchain_requirement_clause_parts(
+        name,
+        toolchain,
+        target_os,
+        Some(required_tools),
+    );
+    format!(
+        "check toolchain `{name}` via `{}` ({})",
+        declared_toolchain_provider_label(name, toolchain),
+        parts.join(", ")
+    )
+}
+
+fn declared_toolchain_requirement_clause_parts(
+    name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+    required_tools: Option<&BTreeSet<String>>,
+) -> Vec<String> {
+    declared_toolchain_contract(name, toolchain)
+        .map(|provider| {
+            if provider.provider() == ToolchainProvider::Corepack {
+                return corepack_requirement_detail_parts_scoped(
+                    provider,
+                    toolchain,
+                    target_os,
+                    required_tools,
+                );
+            }
+            provider.requirement_detail_parts(toolchain, target_os)
+        })
+        .unwrap_or_else(|| vec![format!("version `{}`", toolchain.version_for_os(target_os))])
+}
+
+pub(crate) fn declared_toolchain_preview_action_for_required_tools(
+    name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+    required_tools: &BTreeSet<String>,
+) -> String {
+    let base = declared_toolchain_requirement_clause_for_required_tools(
+        name,
+        toolchain,
+        target_os,
+        required_tools,
+    );
     match toolchain.fulfillment_mode() {
         ToolchainFulfillmentMode::None => {
             format!("{base}; fulfillment: none (diagnose only, no provisioning)")
@@ -839,11 +883,12 @@ pub(crate) fn requirement_surface_with_toolchain_owned_runtimes(
     merged
 }
 
-pub(crate) fn requirement_surface_with_toolchain_owned_tools(
+pub(crate) fn requirement_surface_with_toolchain_owned_tools_for_required_tools(
     contract: &Contract,
     base: &RequirementSurface,
     toolchain_names: &BTreeSet<String>,
     target_os: &str,
+    required_tools: Option<&BTreeSet<String>>,
 ) -> RequirementSurface {
     let mut merged = base.clone();
 
@@ -855,6 +900,11 @@ pub(crate) fn requirement_surface_with_toolchain_owned_tools(
             continue;
         };
         for (tool_name, requirement) in provider.owned_tool_requirements(toolchain, target_os) {
+            if let Some(required_tools) = required_tools
+                && !required_tools.contains(tool_name.as_str())
+            {
+                continue;
+            }
             let merged_requirement = merged
                 .tools
                 .get(tool_name.as_str())
@@ -867,19 +917,21 @@ pub(crate) fn requirement_surface_with_toolchain_owned_tools(
     merged
 }
 
-pub(crate) fn requirement_surface_with_toolchain_owned_capabilities(
+pub(crate) fn requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
     contract: &Contract,
     base: &RequirementSurface,
     toolchain_names: &BTreeSet<String>,
     target_os: &str,
+    required_tools: Option<&BTreeSet<String>>,
 ) -> RequirementSurface {
     let with_runtimes =
         requirement_surface_with_toolchain_owned_runtimes(contract, base, toolchain_names);
-    requirement_surface_with_toolchain_owned_tools(
+    requirement_surface_with_toolchain_owned_tools_for_required_tools(
         contract,
         &with_runtimes,
         toolchain_names,
         target_os,
+        required_tools,
     )
 }
 
@@ -916,8 +968,20 @@ fn corepack_requirement_detail_parts(
     toolchain: &ToolchainSpec,
     target_os: &str,
 ) -> Vec<String> {
+    corepack_requirement_detail_parts_scoped(provider, toolchain, target_os, None)
+}
+
+fn corepack_requirement_detail_parts_scoped(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+    required_tools: Option<&BTreeSet<String>>,
+) -> Vec<String> {
     let mut parts = base_requirement_detail_parts(provider, toolchain, target_os);
-    let package_managers = toolchain.package_managers_for_os(target_os);
+    let mut package_managers = toolchain.package_managers_for_os(target_os);
+    if let Some(required_tools) = required_tools {
+        package_managers.retain(|name, _| required_tools.contains(name));
+    }
     if !package_managers.is_empty() {
         let rendered = package_managers
             .iter()
