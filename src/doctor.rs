@@ -1001,6 +1001,7 @@ const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 30;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
+const DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandVersionProbe {
@@ -7685,12 +7686,14 @@ fn run_workflow_surface_readiness(
     let timing = workflow_surface_readiness_timing_policy(contract, surface_name);
     let resolved_timeout = probe.default_timeout.unwrap_or(Duration::from_millis(200));
     let resolved_timeout_ms = resolved_timeout.as_millis() as u64;
+    let timed_out_retry_budget =
+        capped_timed_out_retry_budget(timing.timed_out_retries, resolved_timeout_ms);
     let spinner = CheckSpinner::start();
     let mut status = CheckStatus::Failed;
     let mut failed_attempts = 0u32;
     let mut timed_out_attempts = 0u32;
     let mut attempts_performed = 0u32;
-    let max_attempts = timing.failed_retries.max(timing.timed_out_retries);
+    let max_attempts = timing.failed_retries.max(timed_out_retry_budget);
     if !timing.start_period.is_zero() {
         thread::sleep(timing.start_period);
     }
@@ -7724,7 +7727,7 @@ fn run_workflow_surface_readiness(
             }
             CheckStatus::TimedOut(_) => {
                 timed_out_attempts += 1;
-                timed_out_attempts < timing.timed_out_retries
+                timed_out_attempts < timed_out_retry_budget
             }
             CheckStatus::Passed => false,
         };
@@ -7748,6 +7751,14 @@ fn run_workflow_surface_readiness(
         port: probe.port,
         timeout_ms: resolved_timeout_ms,
     })
+}
+
+fn capped_timed_out_retry_budget(configured_retries: u32, timeout_ms: u64) -> u32 {
+    let timeout_ms = timeout_ms.max(1);
+    let cap = DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS
+        .div_ceil(timeout_ms)
+        .max(1);
+    configured_retries.min(cap as u32).max(1)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -12113,6 +12124,20 @@ workflows:
             .expect("surface timeout finding should be present");
         assert!(finding.why.contains("within 200ms across"), "{report:?}");
         assert!(!finding.why.contains("within 0ms"), "{report:?}");
+    }
+
+    #[test]
+    fn workflow_surface_timeout_retry_budget_caps_large_timeouts() {
+        let configured = 120;
+        let capped = super::capped_timed_out_retry_budget(configured, 10_000);
+        assert_eq!(capped, 3);
+    }
+
+    #[test]
+    fn workflow_surface_timeout_retry_budget_preserves_small_timeouts() {
+        let configured = 30;
+        let capped = super::capped_timed_out_retry_budget(configured, 200);
+        assert_eq!(capped, configured);
     }
 
     #[test]
