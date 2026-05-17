@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed workflow-surface readiness retry budgeting in `ota doctor` to avoid false early
+  not-ready outcomes on real startup paths: timeout retries now use a longer default window,
+  and selected surfaces now honor `readiness.start_period`, `readiness.interval`, and explicit
+  `readiness.retries` when evaluating workflow-surface readiness
 - fixed native backend version probing to resolve and execute the concrete runtime/tool binary
   directly (with Windows `.cmd`/`.bat` wrapper handling) instead of relying on shell-shaped
   probe commands, so backend-fulfillment checks now match doctor-style command resolution and no

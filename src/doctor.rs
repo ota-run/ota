@@ -999,7 +999,7 @@ const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
 const CONTAINER_PROBE_STARTED_MARKER: &str = "__OTA_CONTAINER_PROBE_STARTED__";
 const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 120;
-const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 5;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 30;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7682,6 +7682,7 @@ fn run_workflow_surface_readiness(
     };
     let probe =
         task_surface_host_readiness_probe_for_backend(contract, task, backend, surface_name)?;
+    let timing = workflow_surface_readiness_timing_policy(contract, surface_name);
     let resolved_timeout = probe.default_timeout.unwrap_or(Duration::from_millis(200));
     let resolved_timeout_ms = resolved_timeout.as_millis() as u64;
     let spinner = CheckSpinner::start();
@@ -7689,8 +7690,10 @@ fn run_workflow_surface_readiness(
     let mut failed_attempts = 0u32;
     let mut timed_out_attempts = 0u32;
     let mut attempts_performed = 0u32;
-    let max_attempts = DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES
-        .max(DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES);
+    let max_attempts = timing.failed_retries.max(timing.timed_out_retries);
+    if !timing.start_period.is_zero() {
+        thread::sleep(timing.start_period);
+    }
     for _ in 0..max_attempts {
         attempts_performed += 1;
         let observed = match probe.request.as_ref() {
@@ -7717,20 +7720,18 @@ fn run_workflow_surface_readiness(
         let should_continue = match status {
             CheckStatus::Failed => {
                 failed_attempts += 1;
-                failed_attempts < DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES
+                failed_attempts < timing.failed_retries
             }
             CheckStatus::TimedOut(_) => {
                 timed_out_attempts += 1;
-                timed_out_attempts < DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES
+                timed_out_attempts < timing.timed_out_retries
             }
             CheckStatus::Passed => false,
         };
         if !should_continue {
             break;
         }
-        thread::sleep(Duration::from_millis(
-            DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS,
-        ));
+        thread::sleep(timing.interval);
     }
     spinner.stop();
     Ok(WorkflowSurfaceReadinessObservation {
@@ -7747,6 +7748,38 @@ fn run_workflow_surface_readiness(
         port: probe.port,
         timeout_ms: resolved_timeout_ms,
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkflowSurfaceReadinessTimingPolicy {
+    start_period: Duration,
+    interval: Duration,
+    failed_retries: u32,
+    timed_out_retries: u32,
+}
+
+fn workflow_surface_readiness_timing_policy(
+    contract: &Contract,
+    surface_name: &str,
+) -> WorkflowSurfaceReadinessTimingPolicy {
+    let readiness = contract
+        .surface(surface_name)
+        .and_then(|surface| surface.readiness.as_ref());
+    let retries = readiness.and_then(|readiness| readiness.retries);
+    WorkflowSurfaceReadinessTimingPolicy {
+        start_period: readiness
+            .and_then(|readiness| readiness.start_period.as_deref())
+            .and_then(crate::schema::parse_readiness_duration_spec)
+            .unwrap_or(Duration::ZERO),
+        interval: readiness
+            .and_then(|readiness| readiness.interval.as_deref())
+            .and_then(crate::schema::parse_readiness_duration_spec)
+            .unwrap_or(Duration::from_millis(
+                DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS,
+            )),
+        failed_retries: retries.unwrap_or(DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES),
+        timed_out_retries: retries.unwrap_or(DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12019,10 +12052,11 @@ workflows:
 
     #[test]
     fn workflow_surface_timeout_uses_effective_default_timeout() {
+        let retries = 3u32;
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
-            for _ in 0..super::DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES {
+            for _ in 0..retries {
                 let (_stream, _) = listener.accept().expect("probe should connect");
                 thread::sleep(Duration::from_millis(350));
             }
@@ -12042,6 +12076,7 @@ surfaces:
     readiness:
       kind: http
       path: /healthz/readiness
+      retries: {retries}
 tasks:
   dev:be:
     run: pnpm dev:be
