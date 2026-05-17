@@ -30,6 +30,9 @@
   loopback surfaces declared as `127.0.0.1` now also resolve canonical local aliases (`::1`,
   `localhost`) before failing; this removes false not-ready outcomes on macOS/Windows when the
   runtime binds IPv6 loopback
+- tightened loopback alias probe behavior for explicit readiness timeouts: primary endpoints keep
+  the declared timeout, while fallback alias connect attempts use a short capped timeout, so
+  Windows/MINGW loopback probing does not burn most of the retry window on slow fallback sockets
 - fixed long-running workflow-surface doctor calls when startup checks fail repeatedly: failed
   readiness retries are now capped to a bounded observation window (matching timeout retry
   windowing), so `ota doctor --workflow ...` no longer blocks for many minutes on slow or

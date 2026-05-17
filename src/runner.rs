@@ -9264,9 +9264,16 @@ pub(crate) fn target_probe_endpoint_reachable_with_timeout(
     timeout: Option<Duration>,
 ) -> bool {
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
-    probe_socket_candidates(address, port)
+    for (index, socket) in probe_socket_candidates(address, port)
         .into_iter()
-        .any(|socket| TcpStream::connect_timeout(&socket, connect_timeout).is_ok())
+        .enumerate()
+    {
+        let effective_timeout = probe_connect_timeout_for_candidate(connect_timeout, index);
+        if TcpStream::connect_timeout(&socket, effective_timeout).is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 pub(crate) fn probe_socket_candidates(address: &str, port: u16) -> Vec<std::net::SocketAddr> {
@@ -15113,8 +15120,10 @@ pub(crate) fn http_readiness_endpoint_status(
         return HttpReadinessStatus::Failed;
     }
     let mut timed_out = false;
-    for socket in addrs {
-        match http_readiness_socket_status(address, socket, request, connect_timeout, io_timeout) {
+    for (index, socket) in addrs.into_iter().enumerate() {
+        let effective_timeout = probe_connect_timeout_for_candidate(connect_timeout, index);
+        match http_readiness_socket_status(address, socket, request, effective_timeout, io_timeout)
+        {
             HttpReadinessStatus::Passed => return HttpReadinessStatus::Passed,
             HttpReadinessStatus::TimedOut => timed_out = true,
             HttpReadinessStatus::Failed => {}
@@ -15199,6 +15208,14 @@ fn http_probe_io_timed_out(error: &std::io::Error) -> bool {
         error.kind(),
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
     )
+}
+
+fn probe_connect_timeout_for_candidate(base: Duration, candidate_index: usize) -> Duration {
+    if candidate_index == 0 {
+        base
+    } else {
+        base.min(Duration::from_millis(300))
+    }
 }
 
 fn response_matches_http_readiness(response_bytes: &[u8], request: &HttpReadinessRequest) -> bool {
@@ -31671,6 +31688,22 @@ exec "$(dirname "$0")/docker-real" "$@"
         );
         server.join().expect("server thread should join");
         assert_eq!(status, super::HttpReadinessStatus::Passed);
+    }
+
+    #[test]
+    fn primary_probe_candidate_keeps_declared_connect_timeout() {
+        let base = Duration::from_millis(2_000);
+        let timeout = super::probe_connect_timeout_for_candidate(base, 0);
+        assert_eq!(timeout, base);
+    }
+
+    #[test]
+    fn fallback_probe_candidates_use_capped_connect_timeout() {
+        let timeout = super::probe_connect_timeout_for_candidate(Duration::from_secs(5), 1);
+        assert_eq!(timeout, Duration::from_millis(300));
+        let timeout_small =
+            super::probe_connect_timeout_for_candidate(Duration::from_millis(200), 2);
+        assert_eq!(timeout_small, Duration::from_millis(200));
     }
 
     #[test]
