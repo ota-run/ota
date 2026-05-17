@@ -30,6 +30,9 @@
   not-ready outcomes on real startup paths: timeout retries now use a longer default window,
   and selected surfaces now honor `readiness.start_period`, `readiness.interval`, and explicit
   `readiness.retries` when evaluating workflow-surface readiness
+- fixed workflow-surface doctor probe hangs for high readiness timeouts by capping timeout-driven
+  retry budgets to a bounded observation window, so a single `ota doctor --workflow ...` call no
+  longer appears stuck for many minutes on slow or non-responsive startup paths
 - fixed native backend version probing to resolve and execute the concrete runtime/tool binary
   directly (with Windows `.cmd`/`.bat` wrapper handling) instead of relying on shell-shaped
   probe commands, so backend-fulfillment checks now match doctor-style command resolution and no
