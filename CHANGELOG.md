@@ -40,6 +40,9 @@
 - widened the bounded workflow-surface observation window used by doctor/proof retries so slow
   first-run packaged startup paths (notably on Windows and Docker cold starts) get more startup
   headroom without reverting to unbounded readiness hangs
+- raised default failed-probe retry capacity for workflow-surface readiness to match the bounded
+  observation window, so slower startup surfaces can use the full bounded budget instead of
+  stopping early at the legacy 120-check default
 - tightened workflow-surface probe timing in `ota doctor` by capping per-attempt probe timeout to
   a bounded effective ceiling before retry budgeting, so default-surface observation stays
   responsive even when declared surface timeouts are large
