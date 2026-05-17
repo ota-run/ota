@@ -34,6 +34,7 @@ pub mod schema;
 pub(crate) mod terminal;
 #[cfg(test)]
 pub mod test_support;
+pub(crate) mod toolchains;
 pub mod update;
 pub mod validator;
 pub mod workspace;

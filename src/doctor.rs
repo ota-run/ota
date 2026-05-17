@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -69,9 +69,16 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
     ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, ToolRequirement, ToolchainProvider, ToolchainSpec,
+    ToolAcquisitionSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
+use crate::toolchains::{
+    ToolchainManagedSurfaceKind, ToolchainOpportunityContext, declared_toolchain_contract,
+    requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
+    requirement_surface_with_toolchain_owned_tools_for_required_tools,
+    shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_repo_signals,
+    unsupported_toolchain_opportunity_context,
+};
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -219,6 +226,141 @@ struct ScopedPreconditionSelection {
     env_scoped: bool,
 }
 
+#[derive(Debug, Clone)]
+struct BackendPreconditionSelection {
+    backend: Backend,
+    requirement_surface: RequirementSurface,
+    toolchain_names: BTreeSet<String>,
+    native_names: BTreeSet<String>,
+    env_names: BTreeSet<String>,
+    env_scoped: bool,
+}
+
+impl From<BackendPreconditionSelection> for ScopedPreconditionSelection {
+    fn from(value: BackendPreconditionSelection) -> Self {
+        Self {
+            requirement_surface: value.requirement_surface,
+            toolchain_names: value.toolchain_names,
+            native_names: value.native_names,
+            env_names: value.env_names,
+            env_scoped: value.env_scoped,
+        }
+    }
+}
+
+fn selected_backend_precondition_selections(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Vec<BackendPreconditionSelection> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() {
+        return Vec::new();
+    }
+
+    let scoped_runtimes = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.runtimes.is_empty())
+    });
+    let scoped_tools = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.tools.is_empty())
+    });
+    let scoped_toolchains = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.toolchains.is_empty())
+    });
+    let scoped_env = task_names.iter().any(|task_name| {
+        contract
+            .tasks
+            .get(task_name.as_str())
+            .is_some_and(|task| !task.requirements.env.is_empty())
+    });
+
+    let mut selections = Vec::<BackendPreconditionSelection>::new();
+
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+        let selection =
+            if let Some(existing) = selections.iter_mut().find(|item| item.backend == backend) {
+                existing
+            } else {
+                selections.push(BackendPreconditionSelection {
+                    backend,
+                    requirement_surface: RequirementSurface::default(),
+                    toolchain_names: BTreeSet::new(),
+                    native_names: BTreeSet::new(),
+                    env_names: BTreeSet::new(),
+                    env_scoped: scoped_env,
+                });
+                selections.last_mut().expect("selection was just pushed")
+            };
+
+        for (name, requirement) in &task.requirements.runtimes {
+            selection.requirement_surface.runtimes.insert(
+                name.clone(),
+                contract.resolve_scoped_runtime_requirement(name, requirement),
+            );
+        }
+        for (name, requirement) in &task.requirements.tools {
+            selection.requirement_surface.tools.insert(
+                name.clone(),
+                contract.resolve_scoped_tool_requirement(name, requirement),
+            );
+        }
+        selection
+            .toolchain_names
+            .extend(task.requirements.toolchains.iter().cloned());
+        selection
+            .env_names
+            .extend(task.requirements.env.iter().cloned());
+        if matches!(backend, Backend::Native) {
+            selection
+                .native_names
+                .extend(task.requirements.native.iter().cloned());
+        }
+
+        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
+            && let Some(context) = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get(context_name))
+        {
+            selection.requirement_surface.merge(&RequirementSurface {
+                runtimes: context.requirements.runtimes.clone(),
+                tools: context.requirements.tools.clone(),
+            });
+        }
+    }
+
+    for selection in &mut selections {
+        if !scoped_runtimes {
+            let mut runtimes = contract.runtimes.clone();
+            runtimes.extend(selection.requirement_surface.runtimes.clone());
+            selection.requirement_surface.runtimes = runtimes;
+        }
+        if !scoped_tools {
+            let mut tools = contract.tools.clone();
+            tools.extend(selection.requirement_surface.tools.clone());
+            selection.requirement_surface.tools = tools;
+        }
+        if !scoped_toolchains {
+            selection.toolchain_names = contract.toolchains.keys().cloned().collect();
+        }
+    }
+
+    selections
+}
+
 fn scoped_precondition_selection(
     contract: &Contract,
     mode: DoctorMode,
@@ -285,8 +427,8 @@ fn precondition_requirement_surface(
 
 #[derive(Debug, Clone, Default)]
 struct RemoteTaskRequirementSelection {
-    by_context: BTreeMap<String, RequirementSurface>,
-    fallback: Option<RequirementSurface>,
+    by_context: BTreeMap<String, ScopedPreconditionSelection>,
+    fallback: Option<ScopedPreconditionSelection>,
 }
 
 fn selected_remote_task_requirement_selection(
@@ -301,8 +443,10 @@ fn selected_remote_task_requirement_selection(
     #[derive(Debug, Default, Clone)]
     struct Entry {
         surface: RequirementSurface,
+        toolchain_names: BTreeSet<String>,
         scoped_runtimes: bool,
         scoped_tools: bool,
+        scoped_toolchains: bool,
     }
 
     let mut by_context = BTreeMap::<String, Entry>::new();
@@ -328,6 +472,12 @@ fn selected_remote_task_requirement_selection(
         if !task.requirements.tools.is_empty() {
             target.scoped_tools = true;
         }
+        if !task.requirements.toolchains.is_empty() {
+            target.scoped_toolchains = true;
+            target
+                .toolchain_names
+                .extend(task.requirements.toolchains.iter().cloned());
+        }
         for (name, requirement) in &task.requirements.runtimes {
             target.surface.runtimes.insert(
                 name.clone(),
@@ -346,7 +496,7 @@ fn selected_remote_task_requirement_selection(
         return None;
     }
 
-    let finalize_entry = |entry: Entry| -> RequirementSurface {
+    let finalize_entry = |entry: Entry| -> ScopedPreconditionSelection {
         let mut surface = entry.surface;
         if !entry.scoped_runtimes {
             surface.runtimes = contract.runtimes.clone();
@@ -354,7 +504,18 @@ fn selected_remote_task_requirement_selection(
         if !entry.scoped_tools {
             surface.tools = contract.tools.clone();
         }
-        surface
+        let toolchain_names = if entry.scoped_toolchains {
+            entry.toolchain_names
+        } else {
+            contract.toolchains.keys().cloned().collect()
+        };
+        ScopedPreconditionSelection {
+            requirement_surface: surface,
+            toolchain_names,
+            native_names: BTreeSet::new(),
+            env_names: BTreeSet::new(),
+            env_scoped: false,
+        }
     };
 
     let by_context = by_context
@@ -367,6 +528,26 @@ fn selected_remote_task_requirement_selection(
         by_context,
         fallback,
     })
+}
+
+fn policy_requirement_surface_for_toolchains(
+    contract: &Contract,
+    requirement_surface: &RequirementSurface,
+    toolchain_names: &BTreeSet<String>,
+    target_os: &str,
+) -> RequirementSurface {
+    let required_tools = requirement_surface
+        .tools
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+        contract,
+        requirement_surface,
+        toolchain_names,
+        target_os,
+        Some(&required_tools),
+    )
 }
 
 fn corepack_activation_command(acquisition: &ToolAcquisitionSpec) -> String {
@@ -584,10 +765,10 @@ fn remote_doctor_probe_contexts(
         .filter(|(_, context)| context.backend == Backend::Remote)
     {
         let selected_task_surface = if let Some(selection) = selected_task_requirements.as_ref() {
-            let Some(surface) = selection.by_context.get(name.as_str()) else {
+            let Some(scoped) = selection.by_context.get(name.as_str()) else {
                 continue;
             };
-            Some(surface)
+            Some(scoped)
         } else {
             None
         };
@@ -612,24 +793,32 @@ fn remote_doctor_probe_contexts(
                 continue;
             }
         };
-        let mut requirement_surface =
-            selected_task_surface
-                .cloned()
-                .unwrap_or_else(|| RequirementSurface {
-                    runtimes: contract.runtimes.clone(),
-                    tools: contract.tools.clone(),
-                });
+        let mut requirement_surface = selected_task_surface
+            .map(|selection| selection.requirement_surface.clone())
+            .unwrap_or_else(|| RequirementSurface {
+                runtimes: contract.runtimes.clone(),
+                tools: contract.tools.clone(),
+            });
         requirement_surface.merge(&RequirementSurface {
             runtimes: context.requirements.runtimes.clone(),
             tools: context.requirements.tools.clone(),
         });
+        let selected_toolchain_names = selected_task_surface
+            .map(|selection| selection.toolchain_names.clone())
+            .unwrap_or_else(|| contract.toolchains.keys().cloned().collect());
+        let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+            contract,
+            &requirement_surface,
+            &selected_toolchain_names,
+            &target_os,
+        );
         let provisioning_actions = loaded_policy
             .map(|loaded| {
                 loaded
                     .pack
                     .selected_provisioning_actions_for_requirement_surface_os(
                         &target_os,
-                        &requirement_surface,
+                        &policy_requirement_surface,
                     )
             })
             .unwrap_or_default();
@@ -638,6 +827,7 @@ fn remote_doctor_probe_contexts(
             backend,
             target_os,
             requirement_surface,
+            policy_requirement_surface,
             provisioning_actions,
         });
     }
@@ -701,18 +891,29 @@ fn remote_doctor_probe_contexts(
     let requirement_surface = selected_task_requirements
         .as_ref()
         .and_then(|selection| selection.fallback.as_ref())
-        .cloned()
+        .map(|selection| selection.requirement_surface.clone())
         .unwrap_or_else(|| RequirementSurface {
             runtimes: contract.runtimes.clone(),
             tools: contract.tools.clone(),
         });
+    let selected_toolchain_names = selected_task_requirements
+        .as_ref()
+        .and_then(|selection| selection.fallback.as_ref())
+        .map(|selection| selection.toolchain_names.clone())
+        .unwrap_or_else(|| contract.toolchains.keys().cloned().collect());
+    let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+        contract,
+        &requirement_surface,
+        &selected_toolchain_names,
+        policy_target_os_for_mode(DoctorMode::Remote),
+    );
     let provisioning_actions = loaded_policy
         .map(|loaded| {
             loaded
                 .pack
                 .selected_provisioning_actions_for_requirement_surface_os(
                     &target_os,
-                    &requirement_surface,
+                    &policy_requirement_surface,
                 )
         })
         .unwrap_or_default();
@@ -722,6 +923,7 @@ fn remote_doctor_probe_contexts(
         backend,
         target_os,
         requirement_surface,
+        policy_requirement_surface,
         provisioning_actions,
     });
 
@@ -796,12 +998,19 @@ struct RemoteProbeContext {
     backend: ResolvedExecutionBackend,
     target_os: String,
     requirement_surface: RequirementSurface,
+    policy_requirement_surface: RequirementSurface,
     provisioning_actions: Vec<ProvisioningAction>,
 }
 
 const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
 const CONTAINER_PROBE_STARTED_MARKER: &str = "__OTA_CONTAINER_PROBE_STARTED__";
 const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 600;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 30;
+const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
+const DOCTOR_WORKFLOW_SURFACE_MAX_PROBE_TIMEOUT_MS: u64 = 5_000;
+const DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS: u64 = 30_000;
+const DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandVersionProbe {
@@ -1320,6 +1529,9 @@ impl Finding {
             }
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
+            s if s.starts_with("Managed toolchain opportunity: ") => {
+                "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
+            }
             s if s.starts_with("Missing toolchain provider: ") => "OTA_TOOLCHAIN_PROVIDER_MISSING",
             s if s.starts_with("Toolchain provider probe failed: ") => {
                 "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
@@ -1479,7 +1691,7 @@ impl Finding {
             | "OTA_CHECK_TIMED_OUT"
             | "OTA_FILE_CHECK_FAILED"
             | "OTA_FILE_CHECK_TIMED_OUT" => "execution",
-            "OTA_CONTRACT_DRIFT" => "contract",
+            "OTA_CONTRACT_DRIFT" | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => "contract",
             "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "contract",
             _ => "contract",
         }
@@ -1507,6 +1719,7 @@ impl Finding {
             | "OTA_RUNTIME_VERSION_UNPARSEABLE"
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING"
+            | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
             | "OTA_TOOL_PROBE_FAILED"
             | "OTA_TOOL_VERSION_UNPARSEABLE"
             | "OTA_NATIVE_PREREQUISITE_MISSING"
@@ -1670,6 +1883,13 @@ impl Finding {
                 } else {
                     "host".to_string()
                 },
+                String::new(),
+                String::new(),
+            ),
+            "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => (
+                "the selected repo path is using fallback runtime/tool declarations for an ecosystem Ota does not yet ship as a managed toolchain".to_string(),
+                "a shipped toolchain provider exists for that ecosystem or the repo intentionally stays on the fallback runtime/tool model".to_string(),
+                "repo_signals".to_string(),
                 String::new(),
                 String::new(),
             ),
@@ -1957,11 +2177,25 @@ impl Finding {
         }
     }
 
+    fn toolchain_opportunity_context(&self) -> Option<ToolchainOpportunityContext<'static>> {
+        let ecosystem = self
+            .summary
+            .strip_prefix("Managed toolchain opportunity: ")?;
+        unsupported_toolchain_opportunity_context(ecosystem.trim())
+    }
+
     fn provenance_context(&self) -> Option<FindingProvenanceContext<'_>> {
         if self.policy_context().is_some() {
             return Some(FindingProvenanceContext {
                 provenance: "org policy",
                 provenance_key: "org_policy",
+            });
+        }
+
+        if self.code() == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
+            return Some(FindingProvenanceContext {
+                provenance: "repo signals",
+                provenance_key: "repo_signals",
             });
         }
 
@@ -2068,11 +2302,13 @@ impl Serialize for Finding {
     {
         let policy = self.policy_context();
         let drift = self.drift_context();
+        let toolchain_opportunity = self.toolchain_opportunity_context();
         let provenance = self.provenance_context();
         let mut state = serializer.serialize_struct(
             "Finding",
             8 + policy.map(|_| 5).unwrap_or_default()
                 + drift.map(|_| 2).unwrap_or_default()
+                + toolchain_opportunity.map(|_| 1).unwrap_or_default()
                 + provenance.map(|_| 2).unwrap_or_default(),
         )?;
 
@@ -2096,6 +2332,30 @@ impl Serialize for Finding {
         if let Some(drift) = drift {
             state.serialize_field("owner_kind", drift.owner_kind)?;
             state.serialize_field("ownership", drift.ownership)?;
+        }
+
+        if let Some(toolchain_opportunity) = toolchain_opportunity {
+            #[derive(Serialize)]
+            struct ToolchainOpportunityJson<'a> {
+                ecosystem: &'a str,
+                fallback_runtime: &'a str,
+                fallback_tools: &'a [&'a str],
+                candidate_providers: &'a [&'a str],
+                shipped: bool,
+                agent_note: &'a str,
+            }
+
+            state.serialize_field(
+                "toolchain_opportunity",
+                &ToolchainOpportunityJson {
+                    ecosystem: toolchain_opportunity.ecosystem,
+                    fallback_runtime: toolchain_opportunity.fallback_runtime,
+                    fallback_tools: toolchain_opportunity.fallback_tools,
+                    candidate_providers: toolchain_opportunity.candidate_providers,
+                    shipped: false,
+                    agent_note: toolchain_opportunity.agent_note,
+                },
+            )?;
         }
 
         if let Some(provenance) = provenance {
@@ -2217,12 +2477,14 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
 
     if let Some(loaded_policy_ref) = loaded_policy.as_ref() {
         let requirement_surface = contract.all_requirement_surface();
+        let toolchain_names = contract.toolchains.keys().cloned().collect();
         diagnose_org_policy(
             contract,
             contract_path,
             Some(loaded_policy_ref),
             current_os(),
             &requirement_surface,
+            &toolchain_names,
             &mut findings,
         );
         diagnose_adapter_bootstrap(Some(loaded_policy_ref), &mut findings);
@@ -2380,7 +2642,14 @@ fn diagnose_contract_with_scope(
     let mut adapter_bootstrap = None;
     let mut execution_target = None;
     let selected_lifecycle = doctor_selected_lifecycle(mode, lifecycle_override);
-    let precondition_selection = scoped_precondition_selection(contract, mode, workflow_name);
+    let backend_precondition_selections =
+        selected_backend_precondition_selections(contract, workflow_name, overrides);
+    let precondition_selection = backend_precondition_selections
+        .iter()
+        .find(|selection| selection.backend == backend_for_mode(mode))
+        .cloned()
+        .map(ScopedPreconditionSelection::from)
+        .unwrap_or_else(|| scoped_precondition_selection(contract, mode, workflow_name));
     let requirement_surface = precondition_selection.requirement_surface.clone();
     let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         match load_org_policy_pack_auto_details(contract_path) {
@@ -2399,11 +2668,17 @@ fn diagnose_contract_with_scope(
         loaded_policy
             .as_ref()
             .map(|loaded| {
+                let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+                    contract,
+                    &requirement_surface,
+                    &precondition_selection.toolchain_names,
+                    policy_target_os_for_mode(mode),
+                );
                 loaded
                     .pack
                     .selected_provisioning_actions_for_requirement_surface_os(
                         policy_target_os_for_mode(mode),
-                        &requirement_surface,
+                        &policy_requirement_surface,
                     )
             })
             .unwrap_or_default()
@@ -2454,6 +2729,12 @@ fn diagnose_contract_with_scope(
                     &mut findings,
                 );
                 for remote_probe in &remote_probe_contexts {
+                    let required_tools = remote_probe
+                        .requirement_surface
+                        .tools
+                        .keys()
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
                     diagnose_runtimes(
                         &remote_probe.requirement_surface.runtimes,
                         &remote_probe.target_os,
@@ -2468,7 +2749,14 @@ fn diagnose_contract_with_scope(
                         &mut findings,
                     );
                     diagnose_tools(
-                        &remote_probe.requirement_surface.tools,
+                        &requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                            contract,
+                            &remote_probe.requirement_surface,
+                            &precondition_selection.toolchain_names,
+                            &remote_probe.target_os,
+                            Some(&required_tools),
+                        )
+                        .tools,
                         &remote_probe.target_os,
                         contract_path,
                         loaded_policy.as_ref(),
@@ -2515,8 +2803,20 @@ fn diagnose_contract_with_scope(
                 &provisioning_actions,
                 &mut findings,
             );
+            let required_tools = requirement_surface
+                .tools
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>();
             let tool_probe_started = diagnose_tools(
-                &requirement_surface.tools,
+                &requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                    contract,
+                    &requirement_surface,
+                    &precondition_selection.toolchain_names,
+                    policy_target_os_for_mode(mode),
+                    Some(&required_tools),
+                )
+                .tools,
                 policy_target_os_for_mode(mode),
                 contract_path,
                 loaded_policy.as_ref(),
@@ -2548,6 +2848,124 @@ fn diagnose_contract_with_scope(
                     &mut findings,
                 );
             }
+            for additional_selection in backend_precondition_selections
+                .iter()
+                .filter(|selection| selection.backend != backend_for_mode(mode))
+            {
+                let additional_mode = match additional_selection.backend {
+                    Backend::Native => DoctorMode::Native,
+                    Backend::Container => DoctorMode::Container,
+                    Backend::Remote => DoctorMode::Remote,
+                };
+                if additional_mode == DoctorMode::Remote {
+                    continue;
+                }
+                let additional_lifecycle =
+                    doctor_selected_lifecycle(additional_mode, lifecycle_override);
+                let additional_container_probe = if additional_mode == DoctorMode::Container {
+                    diagnose_execution_backend(
+                        contract,
+                        &mut findings,
+                        additional_mode,
+                        additional_lifecycle,
+                        ExecutionOverrides {
+                            backend: Some(Backend::Container),
+                            ..overrides
+                        },
+                    )
+                } else {
+                    None
+                };
+                let additional_provisioning_actions = loaded_policy
+                    .as_ref()
+                    .map(|loaded| {
+                        let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+                            contract,
+                            &additional_selection.requirement_surface,
+                            &additional_selection.toolchain_names,
+                            policy_target_os_for_mode(additional_mode),
+                        );
+                        loaded
+                            .pack
+                            .selected_provisioning_actions_for_requirement_surface_os(
+                                policy_target_os_for_mode(additional_mode),
+                                &policy_requirement_surface,
+                            )
+                    })
+                    .unwrap_or_default();
+                if additional_mode == DoctorMode::Native {
+                    diagnose_env(
+                        contract,
+                        loaded_policy
+                            .as_ref()
+                            .map(|loaded| loaded.pack.env_values()),
+                        &declared_env_sources,
+                        additional_selection
+                            .env_scoped
+                            .then_some(&additional_selection.env_names),
+                        &mut findings,
+                    );
+                }
+                diagnose_runtimes(
+                    &additional_selection.requirement_surface.runtimes,
+                    policy_target_os_for_mode(additional_mode),
+                    contract_path,
+                    loaded_policy.as_ref(),
+                    additional_mode,
+                    additional_lifecycle,
+                    additional_container_probe.as_ref(),
+                    None,
+                    None,
+                    &additional_provisioning_actions,
+                    &mut findings,
+                );
+                let required_tools = additional_selection
+                    .requirement_surface
+                    .tools
+                    .keys()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                diagnose_tools(
+                    &requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                        contract,
+                        &additional_selection.requirement_surface,
+                        &additional_selection.toolchain_names,
+                        policy_target_os_for_mode(additional_mode),
+                        Some(&required_tools),
+                    )
+                    .tools,
+                    policy_target_os_for_mode(additional_mode),
+                    contract_path,
+                    loaded_policy.as_ref(),
+                    additional_mode,
+                    additional_lifecycle,
+                    additional_container_probe.as_ref(),
+                    None,
+                    None,
+                    &additional_provisioning_actions,
+                    &mut findings,
+                );
+                diagnose_toolchains(
+                    contract,
+                    &additional_selection.toolchain_names,
+                    policy_target_os_for_mode(additional_mode),
+                    contract_path,
+                    additional_mode,
+                    additional_container_probe.as_ref(),
+                    None,
+                    None,
+                    &mut findings,
+                );
+                if additional_mode == DoctorMode::Native {
+                    diagnose_native_prerequisites(
+                        contract,
+                        contract_path,
+                        &additional_selection.native_names,
+                        policy_target_os_for_mode(additional_mode),
+                        &mut findings,
+                    );
+                }
+            }
             runtime_probe_started || tool_probe_started || toolchain_probe_started
         };
         if mode == DoctorMode::Native && contract_has_remote_execution_context(contract) {
@@ -2570,6 +2988,12 @@ fn diagnose_contract_with_scope(
                 ),
             });
         }
+        diagnose_unsupported_toolchain_opportunities(
+            contract,
+            contract_path,
+            &requirement_surface,
+            &mut findings,
+        );
         if mode != DoctorMode::Remote {
             provisioning = diagnose_org_policy(
                 contract,
@@ -2577,6 +3001,7 @@ fn diagnose_contract_with_scope(
                 loaded_policy.as_ref(),
                 policy_target_os_for_mode(mode),
                 &requirement_surface,
+                &precondition_selection.toolchain_names,
                 &mut findings,
             );
         }
@@ -4410,6 +4835,9 @@ fn diagnose_toolchains(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
+        let Some(provider) = declared_toolchain_contract(toolchain_name, toolchain) else {
+            continue;
+        };
         if !toolchain.active_for_os(target_os) {
             continue;
         }
@@ -4417,10 +4845,10 @@ fn diagnose_toolchains(
         probe_started |= diagnose_command_version(
             "runtime",
             toolchain_name,
-            toolchain_primary_executable(toolchain_name, toolchain.provider),
+            provider.primary_executable(),
             toolchain.version_for_os(target_os),
             toolchain.required_for_os(target_os),
-            toolchain_provider_hint(toolchain),
+            Some(provider.provider_hint()),
             None,
             mode,
             None,
@@ -4434,97 +4862,64 @@ fn diagnose_toolchains(
             findings,
         );
 
-        match toolchain.provider {
-            ToolchainProvider::Rustup => {
-                let component_names = toolchain.components_for_os(target_os);
-                let target_names = toolchain.targets_for_os(target_os);
-                if component_names.is_empty() && target_names.is_empty() {
-                    continue;
-                }
-                probe_started = true;
-                let mut provider_missing_reported = false;
-
-                match rustup_installed_entries(
-                    "doctor-probe:rustup",
-                    "rustup component list --installed",
-                    mode,
-                    container_probe,
-                    remote_probe,
-                    contract_path,
-                ) {
-                    Ok(Some(installed_components)) => {
-                        for component in component_names {
-                            if installed_components.iter().any(|installed| {
-                                installed == &component
-                                    || installed.starts_with(&format!("{component}-"))
-                            }) {
-                                continue;
-                            }
-                            findings.push(missing_toolchain_component_finding(
-                                toolchain_name,
-                                &component,
-                                mode,
-                            ));
+        let surface_probes = provider.managed_surface_probes(toolchain, target_os);
+        if surface_probes.is_empty() {
+            continue;
+        }
+        probe_started = true;
+        let mut provider_missing_reported = BTreeSet::new();
+        for surface_probe in surface_probes {
+            let probe_name = format!(
+                "doctor-probe:{}:{}",
+                provider.label(),
+                surface_probe.kind.label()
+            );
+            match provider_installed_entries(
+                probe_name.as_str(),
+                surface_probe.command.as_str(),
+                mode,
+                container_probe,
+                remote_probe,
+                contract_path,
+            ) {
+                Ok(Some(installed_entries)) => {
+                    for entry in surface_probe.required_entries {
+                        if installed_entries.iter().any(|installed| {
+                            installed == &entry
+                                || (matches!(
+                                    surface_probe.kind,
+                                    ToolchainManagedSurfaceKind::Component
+                                ) && installed.starts_with(&format!("{entry}-")))
+                        }) {
+                            continue;
                         }
-                    }
-                    Ok(None) => {
-                        provider_missing_reported = true;
-                        findings.push(missing_toolchain_provider_finding(
+                        findings.push(missing_toolchain_managed_surface_finding(
                             toolchain_name,
-                            "rustup",
-                            mode,
-                            "components",
-                        ));
-                    }
-                    Err(details) => {
-                        findings.push(toolchain_provider_probe_failed_finding(
-                            toolchain_name,
-                            "rustup",
-                            "rustup component list --installed",
-                            details,
+                            provider,
+                            surface_probe.kind,
+                            &entry,
                             mode,
                         ));
                     }
                 }
-
-                match rustup_installed_entries(
-                    "doctor-probe:rustup-targets",
-                    "rustup target list --installed",
-                    mode,
-                    container_probe,
-                    remote_probe,
-                    contract_path,
-                ) {
-                    Ok(Some(installed_targets)) => {
-                        for target in target_names {
-                            if installed_targets.contains(target.as_str()) {
-                                continue;
-                            }
-                            findings.push(missing_toolchain_target_finding(
-                                toolchain_name,
-                                &target,
-                                mode,
-                            ));
-                        }
-                    }
-                    Ok(None) if !provider_missing_reported => {
+                Ok(None) => {
+                    if provider_missing_reported.insert(surface_probe.kind.label()) {
                         findings.push(missing_toolchain_provider_finding(
                             toolchain_name,
-                            "rustup",
+                            provider,
                             mode,
-                            "targets",
+                            surface_probe.kind.label(),
                         ));
                     }
-                    Ok(None) => {}
-                    Err(details) => {
-                        findings.push(toolchain_provider_probe_failed_finding(
-                            toolchain_name,
-                            "rustup",
-                            "rustup target list --installed",
-                            details,
-                            mode,
-                        ));
-                    }
+                }
+                Err(details) => {
+                    findings.push(toolchain_provider_probe_failed_finding(
+                        toolchain_name,
+                        provider,
+                        surface_probe.command.as_str(),
+                        details,
+                        mode,
+                    ));
                 }
             }
         }
@@ -4532,20 +4927,6 @@ fn diagnose_toolchains(
 
     probe_started
 }
-
-fn toolchain_primary_executable(name: &str, provider: ToolchainProvider) -> &str {
-    match (name, provider) {
-        ("rust", ToolchainProvider::Rustup) => "rustc",
-        _ => name,
-    }
-}
-
-fn toolchain_provider_hint(toolchain: &ToolchainSpec) -> Option<&str> {
-    match toolchain.provider {
-        ToolchainProvider::Rustup => Some("rustup"),
-    }
-}
-
 fn doctor_probe_backend(
     mode: DoctorMode,
     container_probe: Option<&ContainerProbeContext>,
@@ -4570,7 +4951,7 @@ fn doctor_probe_backend(
     }
 }
 
-fn rustup_installed_entries(
+fn provider_installed_entries(
     probe_name: &str,
     command: &str,
     mode: DoctorMode,
@@ -4611,76 +4992,62 @@ fn rustup_installed_entries(
 
 fn missing_toolchain_provider_finding(
     toolchain_name: &str,
-    provider: &str,
+    provider: crate::toolchains::ToolchainProviderContract,
     mode: DoctorMode,
     surface: &str,
 ) -> Finding {
+    let narrative = provider.missing_provider_diagnostic(
+        toolchain_name,
+        surface,
+        &rerun_doctor_command(mode, None),
+    );
     Finding {
         severity: FindingSeverity::Error,
-        summary: format!("Missing toolchain provider: {provider}"),
-        why: format!(
-            "ota needs `{provider}` to inspect or fulfill {surface} for toolchain `{toolchain_name}` on the selected execution path"
-        ),
-        next: format!(
-            "install `{provider}` or remove provider-managed {surface} from toolchain `{toolchain_name}`, then rerun `{}`",
-            rerun_doctor_command(mode, None)
-        ),
+        summary: narrative.summary,
+        why: narrative.why,
+        next: narrative.next,
     }
 }
 
 fn toolchain_provider_probe_failed_finding(
     toolchain_name: &str,
-    provider: &str,
+    provider: crate::toolchains::ToolchainProviderContract,
     command: &str,
     details: String,
     mode: DoctorMode,
 ) -> Finding {
+    let narrative = provider.probe_failed_diagnostic(
+        toolchain_name,
+        command,
+        &details,
+        &rerun_doctor_command(mode, None),
+    );
     Finding {
         severity: FindingSeverity::Error,
-        summary: format!("Toolchain provider probe failed: {toolchain_name}"),
-        why: format!(
-            "ota could not inspect toolchain `{toolchain_name}` through `{provider}`; `{command}` failed: {details}"
-        ),
-        next: format!(
-            "run `{command}` directly and rerun `{}`",
-            rerun_doctor_command(mode, None)
-        ),
+        summary: narrative.summary,
+        why: narrative.why,
+        next: narrative.next,
     }
 }
 
-fn missing_toolchain_component_finding(
+fn missing_toolchain_managed_surface_finding(
     toolchain_name: &str,
-    component: &str,
+    provider: crate::toolchains::ToolchainProviderContract,
+    kind: ToolchainManagedSurfaceKind,
+    entry: &str,
     mode: DoctorMode,
 ) -> Finding {
+    let narrative = provider.missing_managed_surface_diagnostic(
+        toolchain_name,
+        kind,
+        entry,
+        &rerun_doctor_command(mode, None),
+    );
     Finding {
         severity: FindingSeverity::Error,
-        summary: format!("Missing toolchain component: {toolchain_name}.{component}"),
-        why: format!(
-            "ota inspected toolchain `{toolchain_name}` through `rustup`, but component `{component}` is not installed"
-        ),
-        next: format!(
-            "run `rustup component add {component}` and rerun `{}`",
-            rerun_doctor_command(mode, None)
-        ),
-    }
-}
-
-fn missing_toolchain_target_finding(
-    toolchain_name: &str,
-    target: &str,
-    mode: DoctorMode,
-) -> Finding {
-    Finding {
-        severity: FindingSeverity::Error,
-        summary: format!("Missing toolchain target: {toolchain_name}.{target}"),
-        why: format!(
-            "ota inspected toolchain `{toolchain_name}` through `rustup`, but target `{target}` is not installed"
-        ),
-        next: format!(
-            "run `rustup target add {target}` and rerun `{}`",
-            rerun_doctor_command(mode, None)
-        ),
+        summary: narrative.summary,
+        why: narrative.why,
+        next: narrative.next,
     }
 }
 
@@ -4948,6 +5315,7 @@ fn diagnose_org_policy(
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     policy_os: &str,
     requirement_surface: &RequirementSurface,
+    toolchain_names: &BTreeSet<String>,
     findings: &mut Vec<Finding>,
 ) -> Option<ProvisioningDiagnostics> {
     let Some(loaded_policy) = loaded_policy else {
@@ -4955,13 +5323,21 @@ fn diagnose_org_policy(
     };
     let policy_pack = &loaded_policy.pack;
     let policy_path = &loaded_policy.path;
+    let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+        contract,
+        requirement_surface,
+        toolchain_names,
+        policy_os,
+    );
 
     let contract_root = contract_working_dir(contract_path);
 
     let missing_sections = policy_pack.missing_required_sections(contract);
     let missing_files = policy_pack.missing_required_files(contract_root);
-    let version_violations = policy_pack
-        .version_policy_violations_for_requirement_surface_os(policy_os, requirement_surface);
+    let version_violations = policy_pack.version_policy_violations_for_requirement_surface_os(
+        policy_os,
+        &policy_requirement_surface,
+    );
     if missing_sections.is_empty() && missing_files.is_empty() && version_violations.is_empty() {
         if !policy_pack.policies.version_policy.runtimes.is_empty()
             || !policy_pack.policies.version_policy.tools.is_empty()
@@ -5013,11 +5389,11 @@ fn diagnose_org_policy(
         }
 
         let provisioning_plan = policy_pack
-            .provisioning_plan_for_requirement_surface_os(policy_os, requirement_surface);
+            .provisioning_plan_for_requirement_surface_os(policy_os, &policy_requirement_surface);
         let provisioning_request = ProvisioningBackendRequest {
             actions: policy_pack.selected_provisioning_actions_for_requirement_surface_os(
                 policy_os,
-                requirement_surface,
+                &policy_requirement_surface,
             ),
         };
 
@@ -5079,7 +5455,7 @@ fn diagnose_org_policy(
             let matched_targets: Vec<String> = policy_pack
                 .selected_provisioning_actions_for_requirement_surface_os(
                     policy_os,
-                    requirement_surface,
+                    &policy_requirement_surface,
                 )
                 .into_iter()
                 .map(|entry| provisioning_action_audit_summary(&entry))
@@ -5256,7 +5632,7 @@ fn diagnose_remote_org_policy(
         let context_label = remote_policy_subject(remote_probe.context_name.as_deref());
         let version_violations = policy_pack.version_policy_violations_for_requirement_surface_os(
             &remote_probe.target_os,
-            &remote_probe.requirement_surface,
+            &remote_probe.policy_requirement_surface,
         );
         if !version_violations.is_empty() {
             findings.push(Finding {
@@ -5278,7 +5654,7 @@ fn diagnose_remote_org_policy(
         let version_rules = policy_version_rules_for_requirement_surface_os(
             policy_pack,
             &remote_probe.target_os,
-            &remote_probe.requirement_surface,
+            &remote_probe.policy_requirement_surface,
         );
         if !version_rules.is_empty() {
             findings.push(Finding {
@@ -5297,7 +5673,7 @@ fn diagnose_remote_org_policy(
 
         let provisioning_plan = policy_pack.provisioning_plan_for_requirement_surface_os(
             &remote_probe.target_os,
-            &remote_probe.requirement_surface,
+            &remote_probe.policy_requirement_surface,
         );
         let missing_packages: Vec<String> = provisioning_plan
             .blocked
@@ -5565,6 +5941,30 @@ fn provider_hint_remediation(
 ) -> Option<String> {
     let provider = provider_hint?.trim().to_ascii_lowercase();
 
+    if target_kind == ProvisioningTargetKind::Runtime
+        && let Some(contract) = shipped_toolchain_contract_by_label(provider.as_str())
+        && contract.owned_runtime() == name
+        && let Some(command) = contract.owned_runtime_remediation_command(requirement)
+    {
+        return Some(command);
+    }
+
+    provider_hint_remediation_without_toolchains(
+        target_kind,
+        name,
+        requirement,
+        Some(provider.as_str()),
+    )
+}
+
+fn provider_hint_remediation_without_toolchains(
+    target_kind: ProvisioningTargetKind,
+    name: &str,
+    requirement: &str,
+    provider_hint: Option<&str>,
+) -> Option<String> {
+    let provider = provider_hint?.trim().to_ascii_lowercase();
+
     match (target_kind, name, provider.as_str()) {
         (ProvisioningTargetKind::Runtime, "node", "volta") => {
             Some(format!("volta install node@{requirement}"))
@@ -5587,9 +5987,6 @@ fn provider_hint_remediation(
         (ProvisioningTargetKind::Runtime, "go", "goenv") => {
             Some(format!("goenv install {requirement}"))
         }
-        (ProvisioningTargetKind::Runtime, "rust", "rustup") => {
-            Some(format!("rustup toolchain install {requirement}"))
-        }
         (ProvisioningTargetKind::Runtime, "ruby", "rbenv") => {
             Some(format!("rbenv install {requirement}"))
         }
@@ -5602,6 +5999,92 @@ fn provider_hint_remediation(
             provider_tool_versions_remediation(ToolVersionsManager::Mise, name, requirement)
         }
         _ => None,
+    }
+}
+
+fn unsupported_toolchain_fallback_tools(
+    requirement_surface: &RequirementSurface,
+    names: &[&str],
+) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| requirement_surface.tools.contains_key(**name))
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
+fn unsupported_toolchain_opportunity_finding(
+    ecosystem: &str,
+    contract_root: &Path,
+    requirement_surface: &RequirementSurface,
+) -> Option<Finding> {
+    let context = unsupported_toolchain_opportunity_context(ecosystem)?;
+    if !requirement_surface
+        .runtimes
+        .contains_key(context.fallback_runtime)
+    {
+        return None;
+    }
+
+    let repo_signals = toolchain_repo_signals(contract_root, ecosystem);
+    if repo_signals.is_empty() {
+        return None;
+    }
+
+    let fallback_tools =
+        unsupported_toolchain_fallback_tools(requirement_surface, context.fallback_tools);
+    let fallback_model = if fallback_tools.is_empty() {
+        format!("`runtimes.{}`", context.fallback_runtime)
+    } else {
+        format!(
+            "`runtimes.{}` and {}",
+            context.fallback_runtime,
+            fallback_tools
+                .iter()
+                .map(|tool| format!("`tools.{tool}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let signal_summary = repo_signals
+        .iter()
+        .map(|signal| format!("`{signal}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ecosystem_label = match ecosystem {
+        "java" => "a JVM build surface",
+        "python" => "a Python project surface",
+        _ => "a managed ecosystem surface",
+    };
+
+    Some(Finding {
+        severity: FindingSeverity::Warn,
+        summary: format!("Managed toolchain opportunity: {ecosystem}"),
+        why: format!(
+            "this repo uses {ecosystem_label} and currently models it through {fallback_model}; repo signals: {signal_summary}; ota does not ship a {ecosystem} toolchain provider yet"
+        ),
+        next: format!(
+            "keep {fallback_model} for now; ota can model this more cleanly once {ecosystem} toolchain support is shipped"
+        ),
+    })
+}
+
+fn diagnose_unsupported_toolchain_opportunities(
+    contract: &Contract,
+    contract_path: &Path,
+    requirement_surface: &RequirementSurface,
+    findings: &mut Vec<Finding>,
+) {
+    let contract_root = contract_working_dir(contract_path);
+    for ecosystem in ["python"] {
+        if contract.toolchains.contains_key(ecosystem) {
+            continue;
+        }
+        if let Some(finding) =
+            unsupported_toolchain_opportunity_finding(ecosystem, contract_root, requirement_surface)
+        {
+            findings.push(finding);
+        }
     }
 }
 
@@ -5640,30 +6123,6 @@ fn tool_versions_remediation(
         ToolVersionsManager::Asdf => Some(format!("asdf install {tool_name} {requirement}")),
         ToolVersionsManager::Mise => Some(format!("mise install {tool_name}@{requirement}")),
     }
-}
-
-fn tool_versions_entry(contract_root: &Path, candidate_names: &[&str]) -> Option<String> {
-    let path = contract_root.join(".tool-versions");
-    let contents = std::fs::read_to_string(path).ok()?;
-
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let mut parts = trimmed.split_whitespace();
-        let Some(tool_name) = parts.next() else {
-            continue;
-        };
-        if candidate_names
-            .iter()
-            .any(|candidate| candidate == &tool_name)
-        {
-            return Some(tool_name.to_string());
-        }
-    }
-
-    None
 }
 
 fn tool_versions_manager(contract_root: &Path) -> Option<ToolVersionsManager> {
@@ -6698,16 +7157,40 @@ fn diagnose_checks(
 ) {
     let working_dir = contract_working_dir(contract_path);
     let selected_checks = selected_workflow_check_names(contract, workflow_name, scope);
+    let selected_signal_checks =
+        selected_workflow_signal_check_names(contract, workflow_name, scope);
     let selected_precondition_checks =
         selected_task_requirement_check_names(contract, workflow_name);
     let selected_probes = selected_workflow_probe_names(contract, workflow_name, scope);
+    let selected_signal_probes =
+        selected_workflow_signal_probe_names(contract, workflow_name, scope);
     let selected_surfaces = selected_workflow_surface_names(contract, workflow_name, scope);
+    let selected_signal_surfaces =
+        selected_workflow_signal_surface_names(contract, workflow_name, scope);
+    let scoped_workflow_targets = selected_checks.is_some()
+        || selected_signal_checks.is_some()
+        || selected_precondition_checks.is_some()
+        || selected_probes.is_some()
+        || selected_signal_probes.is_some()
+        || selected_surfaces.is_some()
+        || selected_signal_surfaces.is_some();
     let mut probes_executed_via_checks = BTreeSet::new();
 
     for check in &contract.checks {
         let is_selected_precondition = selected_precondition_checks
             .as_ref()
             .is_some_and(|selected| selected.contains(check.name.as_str()));
+        let is_selected_check = selected_checks
+            .as_ref()
+            .is_some_and(|selected| selected.contains(check.name.as_str()));
+        let is_selected_signal_check = selected_signal_checks
+            .as_ref()
+            .is_some_and(|selected| selected.contains(check.name.as_str()));
+        let is_selected_signal = is_selected_signal_check && !is_selected_check;
+        let has_explicit_workflow_check_selection =
+            selected_checks.is_some() || selected_signal_checks.is_some();
+        let is_explicitly_selected_check =
+            is_selected_precondition || is_selected_check || is_selected_signal_check;
 
         if scope == DoctorScope::Preconditions && check.kind != CheckKind::Precondition {
             continue;
@@ -6726,9 +7209,10 @@ fn diagnose_checks(
                 if check.kind == CheckKind::Precondition {
                     continue;
                 }
-                if let Some(selected) = selected_checks.as_ref()
-                    && !selected.contains(check.name.as_str())
-                {
+                if scoped_workflow_targets && !has_explicit_workflow_check_selection {
+                    continue;
+                }
+                if has_explicit_workflow_check_selection && !is_explicitly_selected_check {
                     continue;
                 }
             }
@@ -6739,9 +7223,9 @@ fn diagnose_checks(
                 {
                     continue;
                 }
-            } else if let Some(selected) = selected_checks.as_ref()
-                && !selected.contains(check.name.as_str())
-            {
+            } else if scoped_workflow_targets && !has_explicit_workflow_check_selection {
+                continue;
+            } else if has_explicit_workflow_check_selection && !is_explicitly_selected_check {
                 continue;
             }
         }
@@ -6753,13 +7237,21 @@ fn diagnose_checks(
         match run_declared_check(contract, contract_path, check, working_dir, None) {
             CheckStatus::Passed => continue,
             CheckStatus::Failed => findings.push(Finding {
-                severity: map_check_severity(check.severity),
+                severity: if is_selected_signal {
+                    FindingSeverity::Info
+                } else {
+                    map_check_severity(check.severity)
+                },
                 summary: failed_check_summary(check),
                 why: failed_check_why(contract, check),
                 next: failed_check_next(contract, workflow_name, check),
             }),
             CheckStatus::TimedOut(timeout) => findings.push(Finding {
-                severity: map_check_severity(check.severity),
+                severity: if is_selected_signal {
+                    FindingSeverity::Info
+                } else {
+                    map_check_severity(check.severity)
+                },
                 summary: timed_out_check_summary(check),
                 why: timed_out_check_why(contract, check, timeout),
                 next: timed_out_check_next(contract, check),
@@ -6767,11 +7259,13 @@ fn diagnose_checks(
         }
     }
 
+    let mut executed_workflow_probes = BTreeSet::new();
     if let Some(selected_probe_names) = selected_probes {
         for probe_name in selected_probe_names {
             if probes_executed_via_checks.contains(probe_name) {
                 continue;
             }
+            executed_workflow_probes.insert(probe_name.to_string());
             if contract.probe(probe_name).is_none() {
                 continue;
             }
@@ -6803,56 +7297,91 @@ fn diagnose_checks(
         }
     }
 
+    if let Some(selected_signal_probe_names) = selected_signal_probes {
+        for probe_name in selected_signal_probe_names {
+            if probes_executed_via_checks.contains(probe_name)
+                || executed_workflow_probes.contains(probe_name)
+            {
+                continue;
+            }
+            if contract.probe(probe_name).is_none() {
+                continue;
+            }
+            let probe = contract
+                .probe(probe_name)
+                .expect("checked probe existence above");
+            match run_named_probe(contract, contract_path, probe_name, None) {
+                CheckStatus::Passed => continue,
+                CheckStatus::Failed => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal probe failed: {probe_name}"),
+                    why: format!(
+                        "the configured workflow signal probe `{probe_name}` ({}) did not succeed",
+                        probe_source_description(contract, probe_name)
+                    ),
+                    next: failed_probe_next(probe_name, probe),
+                }),
+                CheckStatus::TimedOut(timeout) => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal probe timed out: {probe_name}"),
+                    why: format!(
+                        "the configured workflow signal probe `{probe_name}` ({}) did not finish within {}ms",
+                        probe_source_description(contract, probe_name),
+                        timeout
+                    ),
+                    next: timed_out_probe_next(probe_name, probe),
+                }),
+            }
+        }
+    }
+
     if let Some(selected_surface_names) = selected_surfaces {
         for surface_name in selected_surface_names {
+            let rerun_command = rerun_selected_workflow_doctor_command(workflow_name);
             match run_workflow_surface_readiness(
                 contract,
                 contract_path,
                 workflow_name,
                 surface_name,
             ) {
-                Ok(CheckStatus::Passed) => continue,
-                Ok(CheckStatus::Failed) => findings.push(Finding {
+                Ok(observation) if observation.status == CheckStatus::Passed => continue,
+                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
                     severity: FindingSeverity::Error,
                     summary: format!("Surface readiness failed: {surface_name}"),
                     why: format!(
-                        "the selected workflow surface `{surface_name}` on run task `{}` did not become ready",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-")
+                        "the selected workflow surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready after {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.attempts
                     ),
                     next: format!(
-                        "start or repair workflow run task `{}` and rerun `{}`",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-"),
-                        rerun_selected_workflow_doctor_command(workflow_name)
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
                     ),
                 }),
-                Ok(CheckStatus::TimedOut(timeout)) => findings.push(Finding {
+                Ok(observation) => findings.push(Finding {
                     severity: FindingSeverity::Error,
                     summary: format!("Surface readiness timed out: {surface_name}"),
                     why: format!(
-                        "the selected workflow surface `{surface_name}` on run task `{}` did not become ready within {}ms",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-"),
-                        timeout
+                        "the selected workflow surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready within {}ms across {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.timeout_ms,
+                        observation.attempts
                     ),
                     next: format!(
-                        "start or repair workflow run task `{}` and rerun `{}`",
-                        contract
-                            .selected_workflow(workflow_name)
-                            .and_then(|(_, workflow)| workflow.run.as_ref())
-                            .map(|run| run.task.as_str())
-                            .unwrap_or("-"),
-                        rerun_selected_workflow_doctor_command(workflow_name)
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
                     ),
                 }),
                 Err(error) => findings.push(Finding {
@@ -6873,7 +7402,81 @@ fn diagnose_checks(
                             .and_then(|(_, workflow)| workflow.run.as_ref())
                             .map(|run| run.task.as_str())
                             .unwrap_or("-"),
-                        rerun_selected_workflow_doctor_command(workflow_name)
+                        rerun_command
+                    ),
+                }),
+            }
+        }
+    }
+
+    if let Some(selected_signal_surface_names) = selected_signal_surfaces {
+        for surface_name in selected_signal_surface_names {
+            let rerun_command = rerun_selected_workflow_doctor_command(workflow_name);
+            match run_workflow_surface_readiness(
+                contract,
+                contract_path,
+                workflow_name,
+                surface_name,
+            ) {
+                Ok(observation) if observation.status == CheckStatus::Passed => continue,
+                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal surface readiness failed: {surface_name}"),
+                    why: format!(
+                        "the configured workflow signal surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready after {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.attempts
+                    ),
+                    next: format!(
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
+                    ),
+                }),
+                Ok(observation) => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal surface readiness timed out: {surface_name}"),
+                    why: format!(
+                        "the configured workflow signal surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready within {}ms across {} checks",
+                        observation.run_task_name,
+                        observation.backend_label,
+                        observation.address,
+                        observation.port,
+                        observation.timeout_ms,
+                        observation.attempts
+                    ),
+                    next: format!(
+                        "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
+                        observation.run_task_name,
+                        rerun_command,
+                        observation.run_task_name,
+                        rerun_command
+                    ),
+                }),
+                Err(error) => findings.push(Finding {
+                    severity: FindingSeverity::Info,
+                    summary: format!("Signal surface readiness could not be evaluated: {surface_name}"),
+                    why: format!(
+                        "the configured workflow signal surface `{surface_name}` on run task `{}` could not be resolved or checked: {error}",
+                        contract
+                            .selected_workflow(workflow_name)
+                            .and_then(|(_, workflow)| workflow.run.as_ref())
+                            .map(|run| run.task.as_str())
+                            .unwrap_or("-")
+                    ),
+                    next: format!(
+                        "repair workflow run task `{}` surface attachment/readiness and rerun `{}`",
+                        contract
+                            .selected_workflow(workflow_name)
+                            .and_then(|(_, workflow)| workflow.run.as_ref())
+                            .map(|run| run.task.as_str())
+                            .unwrap_or("-"),
+                        rerun_command
                     ),
                 }),
             }
@@ -6974,6 +7577,31 @@ fn selected_workflow_check_names<'a>(
     )
 }
 
+fn selected_workflow_signal_check_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    scope: DoctorScope,
+) -> Option<BTreeSet<&'a str>> {
+    if scope == DoctorScope::Preconditions {
+        return None;
+    }
+
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.readiness.signal.checks.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .readiness
+            .signal
+            .checks
+            .iter()
+            .map(|check| check.as_str())
+            .collect(),
+    )
+}
+
 fn selected_task_requirement_check_names(
     contract: &Contract,
     workflow_name: Option<&str>,
@@ -7017,6 +7645,31 @@ fn selected_workflow_probe_names<'a>(
     )
 }
 
+fn selected_workflow_signal_probe_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    scope: DoctorScope,
+) -> Option<BTreeSet<&'a str>> {
+    if scope == DoctorScope::Preconditions {
+        return None;
+    }
+
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.readiness.signal.probes.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .readiness
+            .signal
+            .probes
+            .iter()
+            .map(|probe| probe.as_str())
+            .collect(),
+    )
+}
+
 fn selected_workflow_surface_names<'a>(
     contract: &'a Contract,
     workflow_name: Option<&str>,
@@ -7034,6 +7687,31 @@ fn selected_workflow_surface_names<'a>(
     Some(
         workflow
             .readiness
+            .surfaces
+            .iter()
+            .map(|surface| surface.as_str())
+            .collect(),
+    )
+}
+
+fn selected_workflow_signal_surface_names<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+    scope: DoctorScope,
+) -> Option<BTreeSet<&'a str>> {
+    if scope == DoctorScope::Preconditions {
+        return None;
+    }
+
+    let (_, workflow) = contract.selected_workflow(workflow_name)?;
+    if workflow.readiness.signal.surfaces.is_empty() {
+        return None;
+    }
+
+    Some(
+        workflow
+            .readiness
+            .signal
             .surfaces
             .iter()
             .map(|surface| surface.as_str())
@@ -7060,6 +7738,7 @@ fn selected_workflow_service_names<'a>(
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CheckStatus {
     Passed,
     Failed,
@@ -7218,7 +7897,7 @@ fn run_workflow_surface_readiness(
     contract_path: &Path,
     workflow_name: Option<&str>,
     surface_name: &str,
-) -> Result<CheckStatus, String> {
+) -> Result<WorkflowSurfaceReadinessObservation, String> {
     let (_, workflow) = contract
         .selected_workflow(workflow_name)
         .ok_or_else(|| String::from("selected workflow is not declared"))?;
@@ -7246,29 +7925,146 @@ fn run_workflow_surface_readiness(
     };
     let probe =
         task_surface_host_readiness_probe_for_backend(contract, task, backend, surface_name)?;
+    let timing = workflow_surface_readiness_timing_policy(contract, surface_name);
+    let resolved_timeout = probe.default_timeout.unwrap_or(Duration::from_millis(200));
+    let effective_probe_timeout = resolved_timeout.min(Duration::from_millis(
+        DOCTOR_WORKFLOW_SURFACE_MAX_PROBE_TIMEOUT_MS,
+    ));
+    let effective_probe_timeout_ms = effective_probe_timeout.as_millis() as u64;
+    let failed_retry_budget = capped_failed_retry_budget(timing.failed_retries, timing.interval);
+    let timed_out_retry_budget =
+        capped_timed_out_retry_budget(timing.timed_out_retries, effective_probe_timeout_ms);
     let spinner = CheckSpinner::start();
-    let status = match probe.request.as_ref() {
-        Some(request) => http_readiness_endpoint_status(
-            probe.address.as_str(),
-            probe.port,
-            request,
-            probe.default_timeout,
-        ),
-        None => {
-            tcp_readiness_endpoint_status(probe.address.as_str(), probe.port, probe.default_timeout)
+    let mut status = CheckStatus::Failed;
+    let mut failed_attempts = 0u32;
+    let mut timed_out_attempts = 0u32;
+    let mut attempts_performed = 0u32;
+    let max_attempts = failed_retry_budget.max(timed_out_retry_budget);
+    if !timing.start_period.is_zero() {
+        thread::sleep(timing.start_period);
+    }
+    let observation_started = Instant::now();
+    for _ in 0..max_attempts {
+        attempts_performed += 1;
+        let observed = match probe.request.as_ref() {
+            Some(request) => http_readiness_endpoint_status(
+                probe.address.as_str(),
+                probe.port,
+                request,
+                Some(effective_probe_timeout),
+            ),
+            None => tcp_readiness_endpoint_status(
+                probe.address.as_str(),
+                probe.port,
+                Some(effective_probe_timeout),
+            ),
+        };
+        status = match observed {
+            HttpReadinessStatus::Passed => CheckStatus::Passed,
+            HttpReadinessStatus::Failed => CheckStatus::Failed,
+            HttpReadinessStatus::TimedOut => CheckStatus::TimedOut(effective_probe_timeout_ms),
+        };
+        if status == CheckStatus::Passed {
+            break;
         }
-    };
+        let should_continue = match status {
+            CheckStatus::Failed => {
+                failed_attempts += 1;
+                failed_attempts < failed_retry_budget
+            }
+            CheckStatus::TimedOut(_) => {
+                timed_out_attempts += 1;
+                timed_out_attempts < timed_out_retry_budget
+            }
+            CheckStatus::Passed => false,
+        };
+        let elapsed_ms = observation_started.elapsed().as_millis() as u64;
+        let within_failed_window = elapsed_ms < DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS;
+        let within_timed_out_window = elapsed_ms < DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS;
+        let within_window = match status {
+            CheckStatus::Failed => within_failed_window,
+            CheckStatus::TimedOut(_) => within_timed_out_window,
+            CheckStatus::Passed => false,
+        };
+        if !should_continue || !within_window {
+            break;
+        }
+        thread::sleep(timing.interval);
+    }
     spinner.stop();
-    Ok(match status {
-        HttpReadinessStatus::Passed => CheckStatus::Passed,
-        HttpReadinessStatus::Failed => CheckStatus::Failed,
-        HttpReadinessStatus::TimedOut => CheckStatus::TimedOut(
-            probe
-                .default_timeout
-                .map(|timeout| timeout.as_millis() as u64)
-                .unwrap_or(200),
-        ),
+    Ok(WorkflowSurfaceReadinessObservation {
+        status,
+        attempts: attempts_performed,
+        run_task_name: run_task_name.to_string(),
+        backend_label: match backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        }
+        .to_string(),
+        address: probe.address.clone(),
+        port: probe.port,
+        timeout_ms: effective_probe_timeout_ms,
     })
+}
+
+fn capped_timed_out_retry_budget(configured_retries: u32, timeout_ms: u64) -> u32 {
+    let timeout_ms = timeout_ms.max(1);
+    let cap = DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS
+        .div_ceil(timeout_ms)
+        .max(1);
+    configured_retries.min(cap as u32).max(1)
+}
+
+fn capped_failed_retry_budget(configured_retries: u32, interval: Duration) -> u32 {
+    let interval_ms = (interval.as_millis() as u64).max(1);
+    let cap = DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS
+        .div_ceil(interval_ms)
+        .max(1);
+    configured_retries.min(cap as u32).max(1)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkflowSurfaceReadinessTimingPolicy {
+    start_period: Duration,
+    interval: Duration,
+    failed_retries: u32,
+    timed_out_retries: u32,
+}
+
+fn workflow_surface_readiness_timing_policy(
+    contract: &Contract,
+    surface_name: &str,
+) -> WorkflowSurfaceReadinessTimingPolicy {
+    let readiness = contract
+        .surface(surface_name)
+        .and_then(|surface| surface.readiness.as_ref());
+    let retries = readiness.and_then(|readiness| readiness.retries);
+    WorkflowSurfaceReadinessTimingPolicy {
+        start_period: readiness
+            .and_then(|readiness| readiness.start_period.as_deref())
+            .and_then(crate::schema::parse_readiness_duration_spec)
+            .unwrap_or(Duration::ZERO),
+        interval: readiness
+            .and_then(|readiness| readiness.interval.as_deref())
+            .and_then(crate::schema::parse_readiness_duration_spec)
+            .unwrap_or(Duration::from_millis(
+                DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS,
+            )),
+        failed_retries: retries.unwrap_or(DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES),
+        timed_out_retries: retries.unwrap_or(DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkflowSurfaceReadinessObservation {
+    status: CheckStatus,
+    attempts: u32,
+    run_task_name: String,
+    backend_label: String,
+    address: String,
+    port: u16,
+    timeout_ms: u64,
 }
 
 fn probe_uses_task_observer(probe: &crate::schema::ReadinessProbeSpec) -> bool {
@@ -7468,11 +8264,11 @@ fn tcp_readiness_endpoint_status(
     port: u16,
     timeout: Option<Duration>,
 ) -> HttpReadinessStatus {
-    let addr = format!("{}:{}", address.trim(), port);
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
-    let Ok(addrs) = addr.to_socket_addrs() else {
+    let addrs = crate::runner::probe_socket_candidates(address, port);
+    if addrs.is_empty() {
         return HttpReadinessStatus::Failed;
-    };
+    }
     let mut timed_out = false;
     for socket in addrs {
         match TcpStream::connect_timeout(&socket, connect_timeout) {
@@ -7754,6 +8550,9 @@ fn check_failure_details_summary(details: &CheckFailureDetails) -> Option<String
     let mut parts = Vec::new();
     if let Some(exit_code) = details.exit_code {
         parts.push(format!("exit code {exit_code}"));
+        if let Some(guidance) = windows_exit_code_guidance_line(exit_code) {
+            parts.push(guidance);
+        }
     }
     if !details.stdout.is_empty() {
         parts.push(format!("stdout: {}", details.stdout));
@@ -7762,6 +8561,25 @@ fn check_failure_details_summary(details: &CheckFailureDetails) -> Option<String
         parts.push(format!("stderr: {}", details.stderr));
     }
     (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+fn windows_exit_code_guidance(exit_code: i32) -> Option<&'static str> {
+    match exit_code {
+        -1073741819 => Some("Windows access violation crash"),
+        -1073740791 => Some("Windows fast-fail / stack buffer overrun crash"),
+        -1073741510 => Some("Windows interrupt/termination (Ctrl+C or console close)"),
+        -1073741502 => Some("Windows DLL initialization failure"),
+        _ => None,
+    }
+}
+
+fn windows_exit_code_guidance_line(exit_code: i32) -> Option<String> {
+    windows_exit_code_guidance(exit_code).map(|guidance| {
+        format!(
+            "on Windows this usually maps to `{guidance}` (`0x{:08X}`)",
+            exit_code as u32
+        )
+    })
 }
 
 struct CheckSpinner {
@@ -8281,6 +9099,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::parser::parse_contract_str;
+    use crate::policy_pack::ProvisioningTargetKind;
     use crate::runner::HttpReadinessRequest;
     use crate::schema::ServiceSpec;
     #[cfg(windows)]
@@ -8289,11 +9108,12 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        Backend, CheckStatus, DoctorMode, FindingSeverity, compose_service_healthcheck_command,
-        diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode,
+        Backend, CheckStatus, DoctorMode, Finding, FindingSeverity,
+        compose_service_healthcheck_command, diagnose_checks_only, diagnose_contract,
+        diagnose_contract_in_mode,
         diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides,
-        diagnose_preconditions, diagnose_preconditions_with_mode, tool_executable_name,
-        version_matches,
+        diagnose_preconditions, diagnose_preconditions_with_mode, provider_hint_remediation,
+        tool_executable_name, version_matches,
     };
 
     #[cfg(unix)]
@@ -9848,8 +10668,18 @@ workflows:
             .by_context
             .get("instant-remote")
             .expect("instant context should be selected");
-        assert!(instant_surface.tools.contains_key("npx"));
-        assert!(!instant_surface.tools.contains_key("pnpm"));
+        assert!(
+            instant_surface
+                .requirement_surface
+                .tools
+                .contains_key("npx")
+        );
+        assert!(
+            !instant_surface
+                .requirement_surface
+                .tools
+                .contains_key("pnpm")
+        );
         assert!(selection.fallback.is_none());
     }
 
@@ -9892,21 +10722,20 @@ workflows:
 version: 1
 project:
   name: ota
-tools:
-  pnpmx:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      pnpmx: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
-      runtimes:
-        node: ">=24"
+      toolchains:
+        - node
       tools:
-        pnpmx: ">=10.22.0"
+        pnpmx: "10.22.0"
   docker:run:
     launch:
       kind: container
@@ -9947,7 +10776,7 @@ workflows:
                 finding.summary.contains("pnpmx")
                     && finding
                         .next
-                        .contains("corepack enable && corepack prepare pnpm@10.22.0 --activate")
+                        .contains("corepack enable && corepack prepare pnpmx@10.22.0 --activate")
             }),
             "{report:?}"
         );
@@ -9986,19 +10815,20 @@ workflows:
 version: 1
 project:
   name: ota
-tools:
-  pnpmx:
-    version: ">=10.22.0"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.22.0"
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      pnpmx: "10.22.0"
 tasks:
   setup:
     run: pnpm install
     requirements:
+      toolchains:
+        - node
       tools:
-        pnpmx: ">=10.22.0"
+        pnpmx: "10.22.0"
 workflows:
   default: contributor
   contributor:
@@ -10033,7 +10863,116 @@ workflows:
         assert!(
             finding
                 .next
-                .contains("corepack prepare pnpm@10.22.0 --activate")
+                .contains("corepack prepare pnpmx@10.22.0 --activate")
+        );
+    }
+
+    #[test]
+    fn doctor_selected_workflow_does_not_surface_unrequired_corepack_package_manager_findings() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "node.cmd" } else { "node" },
+            if cfg!(windows) {
+                "@echo off\r\necho v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v24.0.0'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) {
+                "corepack.cmd"
+            } else {
+                "corepack"
+            },
+            if cfg!(windows) {
+                "@echo off\r\necho corepack 0.31.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'corepack 0.31.0'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "npx.cmd" } else { "npx" },
+            if cfg!(windows) {
+                "@echo off\r\necho 10.22.0\r\n"
+            } else {
+                "#!/bin/sh\necho '10.22.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      pnpmx: "10.22.0"
+tools:
+  npx: "*"
+tasks:
+  setup:
+    run: pnpmx install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpmx: "10.22.0"
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      toolchains:
+        - node
+      tools:
+        npx: "*"
+workflows:
+  default: backend
+  backend:
+    setup:
+      task: setup
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("instant"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report.findings.iter().all(|finding| {
+                !finding.summary.contains("pnpmx")
+                    && !finding.why.contains("pnpmx")
+                    && !finding.next.contains("pnpmx")
+            }),
+            "{report:?}"
         );
     }
 
@@ -11184,6 +12123,144 @@ tasks:
     }
 
     #[test]
+    fn workflow_scoped_checks_do_not_run_unselected_global_checks() {
+        let dir = TempDir::new().unwrap();
+        let contract_path = dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+tasks:
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      tools:
+        node: "20"
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let report =
+            super::diagnose_checks_only_for_workflow(&contract, &contract_path, Some("instant"));
+
+        assert!(report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary
+                    != "File check failed: workspace-dependencies-installed"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_signal_checks_are_non_gating() {
+        let dir = TempDir::new().unwrap();
+        let contract_path = dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: workspace-dependencies-installed
+    kind: file
+    severity: error
+    path: node_modules
+    expect: directory
+  - name: runtime-signal
+    kind: file
+    severity: error
+    path: runtime-ready.flag
+    expect: file
+tasks:
+  quickstart:
+    run: npx --yes n8n
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+    readiness:
+      signal:
+        checks:
+          - runtime-signal
+"#,
+        )
+        .unwrap();
+
+        let report =
+            super::diagnose_checks_only_for_workflow(&contract, &contract_path, Some("instant"));
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "File check failed: runtime-signal"
+                && finding.severity == FindingSeverity::Info
+        }));
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary
+                    != "File check failed: workspace-dependencies-installed"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_signal_probes_are_non_gating() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:9/healthz/readiness
+      timeout: 100
+workflows:
+  default: backend
+  backend:
+    readiness:
+      signal:
+        probes:
+          - backend-ready
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Signal probe failed: backend-ready"
+                && finding.severity == FindingSeverity::Info
+        }));
+    }
+
+    #[test]
     fn workflow_readiness_probes_are_executed() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener.local_addr().unwrap().port();
@@ -11293,6 +12370,194 @@ workflows:
     }
 
     #[test]
+    fn workflow_readiness_surfaces_retry_until_ready() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let server = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(250));
+            let listener = TcpListener::bind(("127.0.0.1", port)).expect("listener should bind");
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 100
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn workflow_surface_readiness_allows_brief_boot_delay() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let server = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(1500));
+            let listener = TcpListener::bind(("127.0.0.1", port)).expect("listener should bind");
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn workflow_surface_readiness_accepts_ipv6_only_loopback_listener() {
+        let listener = match TcpListener::bind("[::1]:0") {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .expect("probe response should write");
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
     fn workflow_surface_failure_preserves_selected_workflow_in_next_step() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -11341,6 +12606,165 @@ workflows:
                 .any(|finding| finding.next.contains("ota doctor --workflow backend")),
             "{report:?}"
         );
+        assert!(
+            report.findings.iter().any(|finding| finding
+                .why
+                .contains("backend `native`; endpoint `127.0.0.1:6551`")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_surface_timeout_uses_effective_default_timeout() {
+        let retries = 3u32;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            for _ in 0..retries {
+                let (_stream, _) = listener.accept().expect("probe should connect");
+                thread::sleep(Duration::from_millis(350));
+            }
+        });
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: {port}
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      retries: {retries}
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#
+            )
+            .as_str(),
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        server.join().expect("probe server should finish");
+
+        assert!(!report.ok, "{report:?}");
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Surface readiness timed out: backend")
+            .expect("surface timeout finding should be present");
+        assert!(finding.why.contains("within 200ms across"), "{report:?}");
+        assert!(!finding.why.contains("within 0ms"), "{report:?}");
+    }
+
+    #[test]
+    fn workflow_surface_timeout_retry_budget_caps_large_timeouts() {
+        let configured = 120;
+        let capped = super::capped_timed_out_retry_budget(configured, 10_000);
+        assert_eq!(capped, 3);
+    }
+
+    #[test]
+    fn workflow_surface_timeout_retry_budget_preserves_small_timeouts() {
+        let configured = 30;
+        let capped = super::capped_timed_out_retry_budget(configured, 200);
+        assert_eq!(capped, configured);
+    }
+
+    #[test]
+    fn workflow_surface_failed_retry_budget_caps_large_intervals() {
+        let configured = 120;
+        let capped = super::capped_failed_retry_budget(configured, Duration::from_secs(5));
+        assert_eq!(capped, 6);
+    }
+
+    #[test]
+    fn workflow_surface_failed_retry_budget_preserves_small_intervals() {
+        let configured = 30;
+        let capped = super::capped_failed_retry_budget(configured, Duration::from_millis(200));
+        assert_eq!(capped, configured);
+    }
+
+    #[test]
+    fn workflow_signal_surface_failure_is_non_gating() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 6553
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 50ms
+      interval: 10ms
+      retries: 1
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      signal:
+        surfaces:
+          - backend
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.iter().any(|finding| {
+            (finding.summary == "Signal surface readiness failed: backend"
+                || finding.summary == "Signal surface readiness timed out: backend")
+                && finding.severity == FindingSeverity::Info
+        }));
+    }
+
+    #[test]
+    fn windows_exit_code_guidance_line_decodes_common_crash_codes() {
+        let guidance = super::windows_exit_code_guidance_line(-1073741819)
+            .expect("known windows code should decode");
+        assert!(guidance.contains("0xC0000005"), "{guidance}");
+        assert!(guidance.contains("access violation"), "{guidance}");
     }
 
     #[test]
@@ -13555,7 +14979,7 @@ unexpected: true
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
-        assert!(!report.ok);
+        assert!(!report.ok, "{report:?}");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].summary, "Invalid org policy pack");
         assert!(report.findings[0].why.contains("org-policy.yaml"));
@@ -13608,7 +15032,6 @@ policies:
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
-        assert!(!report.ok);
         let finding = report
             .findings
             .iter()
@@ -13618,6 +15041,191 @@ policies:
         assert!(finding.why.contains("java via org-mirror"));
         assert!(finding.why.contains("runtime java 22 via org-mirror"));
         assert!(finding.why.contains("tool maven 3.9 via approved-manager"));
+    }
+
+    #[test]
+    fn reports_python_managed_toolchain_opportunity_without_provider_advice_in_text() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  python: "3.12"
+tools:
+  uv: "*"
+tasks:
+  test:
+    run: uv run pytest
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\n",
+        )
+        .unwrap();
+        fs::write(fixture.path().join("uv.lock"), "version = 1\n").unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Managed toolchain opportunity: python")
+            .expect("toolchain opportunity finding should be present");
+        assert_eq!(finding.severity, FindingSeverity::Warn);
+        assert!(finding.why.contains("`runtimes.python` and `tools.uv`"));
+        assert!(
+            finding
+                .why
+                .contains("repo signals: `uv.lock`, `pyproject.toml`")
+        );
+        assert!(!finding.next.contains("mise"));
+        assert_eq!(finding.provenance().as_deref(), Some("repo signals"));
+        assert_eq!(finding.provenance_key().as_deref(), Some("repo_signals"));
+    }
+
+    #[test]
+    fn doctor_json_includes_toolchain_opportunity_agent_metadata() {
+        let finding = Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Managed toolchain opportunity: python"),
+            why: String::from("fallback model"),
+            next: String::from("keep runtimes.python and tools.uv for now"),
+        };
+
+        let json = serde_json::to_value(&finding).expect("finding should serialize");
+        assert_eq!(
+            json["code"],
+            serde_json::Value::String(String::from("OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"))
+        );
+        assert_eq!(json["provenance_key"], "repo_signals");
+        assert_eq!(json["toolchain_opportunity"]["ecosystem"], "python");
+        assert_eq!(json["toolchain_opportunity"]["fallback_runtime"], "python");
+        assert_eq!(
+            json["toolchain_opportunity"]["candidate_providers"][0],
+            "uv"
+        );
+        assert_eq!(
+            json["toolchain_opportunity"]["candidate_providers"][1],
+            "mise"
+        );
+        assert_eq!(json["toolchain_opportunity"]["shipped"], false);
+        assert!(
+            json["toolchain_opportunity"]["agent_note"]
+                .as_str()
+                .expect("agent note")
+                .contains("toolchains.python")
+        );
+    }
+
+    #[test]
+    fn policy_surfaces_include_toolchain_owned_runtime_requirements() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+  version_policy:
+    runtimes:
+      rust:
+        approved_versions:
+          - "1.94.0"
+  provisioning:
+    rust:
+      source: mise
+      approved_versions:
+        - "1.94.0"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        assert!(report.ok, "{report:?}");
+
+        let version_finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Policy-backed version rules are declared")
+            .expect("policy-backed version finding should be present");
+        assert!(
+            version_finding
+                .why
+                .contains("runtime rust (versions 1.94.0)"),
+            "{version_finding:?}"
+        );
+
+        let provisioning_finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Policy-backed provisioning sources are declared")
+            .expect("policy-backed provisioning finding should be present");
+        assert!(
+            provisioning_finding
+                .why
+                .contains("runtime rust 1.94.0 via mise"),
+            "{provisioning_finding:?}"
+        );
+    }
+
+    #[test]
+    fn provider_hint_remediation_uses_toolchain_owned_runtime_contracts() {
+        assert_eq!(
+            provider_hint_remediation(
+                ProvisioningTargetKind::Runtime,
+                "rust",
+                "1.94.0",
+                Some("rustup")
+            ),
+            Some(String::from("rustup toolchain install 1.94.0"))
+        );
+        assert_eq!(
+            provider_hint_remediation(
+                ProvisioningTargetKind::Runtime,
+                "node",
+                "22",
+                Some("corepack")
+            ),
+            None
+        );
     }
 
     #[test]

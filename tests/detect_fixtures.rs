@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use ota::detector::detect_repo;
 use ota::parser::parse_contract_str;
+use ota::schema::ToolchainProvider;
 use ota::validator::validate_contract;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -382,8 +383,12 @@ fn detects_java_version_file_fixture() {
         Some("java-version-file")
     );
     assert_eq!(
-        report.contract.runtimes.get("java"),
-        Some(&"21".to_string())
+        report
+            .contract
+            .toolchains
+            .get("java")
+            .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+        Some((ToolchainProvider::Sdkman, "21"))
     );
 }
 
@@ -400,8 +405,12 @@ fn detects_sdkman_java_fixture() {
         Some("sdkman-java")
     );
     assert_eq!(
-        report.contract.runtimes.get("java"),
-        Some(&"21.0.2-tem".to_string())
+        report
+            .contract
+            .toolchains
+            .get("java")
+            .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+        Some((ToolchainProvider::Sdkman, "21.0.2-tem"))
     );
 }
 

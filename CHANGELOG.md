@@ -26,6 +26,100 @@
 
 ## Unreleased
 
+- improved runtime-proof failure classification when startup exits before readiness: proof output now
+  prioritizes `Run task exited before readiness` over generic workflow-surface readiness blockers
+  when both are present, so deterministic startup-exit root causes surface first
+- added Windows crash-code decoding guidance for common negative exit codes in both run and doctor
+  failure paths, including `0xC0000005` (access violation), `0xC0000409` (fast-fail/stack buffer
+  overrun), and `0xC000013A` (interrupt), so remediation output is actionable without manual code
+  translation
+- added first-class non-gating workflow readiness signals with
+  `workflows.<name>.readiness.signal.{checks,probes,surfaces}`: Ota now executes those surfaces as
+  informational diagnostics that do not block repo readiness verdicts, while preserving strict
+  reference and attachment validation; overlap between gating and signal readiness lanes is now
+  rejected explicitly so one item cannot be both blocking and non-gating
+- tightened toolchain-owned package-manager modeling and workflow dry-run scoping: task
+  `requirements.tools.<name>` now validates against both top-level `tools` and selected
+  toolchain-owned tools/package managers (for example Corepack-owned `pnpm`), task-level
+  requirements are no longer rejected as duplicate ownership when the tool is owned by a selected
+  toolchain, and selected-workflow `ota up` activation/provisioning/preview lanes now render or
+  act on Corepack package-manager requirements only when the selected workflow/task closure
+  actually requires those tools
+- tightened validator determinism for toolchain-owned task tools: when a task references a
+  toolchain-owned tool in `requirements.tools` without explicitly scoping
+  `requirements.toolchains`, validation now fails with an explicit remediation message instead of
+  implicitly inferring ownership from all declared toolchains
+- fixed `ota proof runtime` readiness waiting for packaged/container startup paths by replacing
+  the fixed 180-second wait budget with a deterministic strategy-aware budget (with floor/ceiling),
+  so cold image pulls and first-run packaged launches have enough headroom before proof times out
+- tightened workflow-surface readiness observation latency in `ota doctor` by reducing the bounded
+  retry windows and capping per-attempt probe timeout to 5 seconds, so repeated
+  `ota doctor --workflow ...` polling no longer blocks for long windows while startup is still in progress
+- fixed host-loopback readiness probing across `ota doctor`, `ota up`, and runtime probes so
+  loopback surfaces declared as `127.0.0.1` now also resolve canonical local aliases (`::1`,
+  `localhost`) before failing; this removes false not-ready outcomes on macOS/Windows when the
+  runtime binds IPv6 loopback
+- tightened loopback alias probe behavior for explicit readiness timeouts: primary endpoints keep
+  the declared timeout, while fallback alias connect attempts use a short capped timeout, so
+  Windows/MINGW loopback probing does not burn most of the retry window on slow fallback sockets
+- fixed long-running workflow-surface doctor calls when startup checks fail repeatedly: failed
+  readiness retries are now capped to a bounded observation window (matching timeout retry
+  windowing), so `ota doctor --workflow ...` no longer blocks for many minutes on slow or
+  still-booting packaged startup paths
+- widened the bounded workflow-surface observation window used by doctor/proof retries so slow
+  first-run packaged startup paths (notably on Windows and Docker cold starts) get more startup
+  headroom without reverting to unbounded readiness hangs
+- raised default failed-probe retry capacity for workflow-surface readiness to match the bounded
+  observation window, so slower startup surfaces can use the full bounded budget instead of
+  stopping early at the legacy 120-check default
+- tightened workflow-surface probe timing in `ota doctor` by capping per-attempt probe timeout to
+  a bounded effective ceiling before retry budgeting, so default-surface observation stays
+  responsive even when declared surface timeouts are large
+- fixed workflow-surface readiness retry budgeting in `ota doctor` to avoid false early
+  not-ready outcomes on real startup paths: timeout retries now use a longer default window,
+  and selected surfaces now honor `readiness.start_period`, `readiness.interval`, and explicit
+  `readiness.retries` when evaluating workflow-surface readiness
+- fixed workflow-surface doctor probe hangs for high readiness timeouts by capping timeout-driven
+  retry budgets to a bounded observation window, so a single `ota doctor --workflow ...` call no
+  longer appears stuck for many minutes on slow or non-responsive startup paths
+- fixed native backend version probing to resolve and execute the concrete runtime/tool binary
+  directly (with Windows `.cmd`/`.bat` wrapper handling) instead of relying on shell-shaped
+  probe commands, so backend-fulfillment checks now match doctor-style command resolution and no
+  longer drift under shell/path differences
+- improved workflow-surface readiness diagnostics in `ota doctor`: readiness probes now retry
+  briefly before failing, and surface blocker details now include backend, endpoint, timeout, and
+  probe-attempt context so false early failures are reduced and real failures are easier to
+  diagnose
+- fixed Windows native `launch.kind: command` task startup parity by resolving launch executables
+  through the same command-path resolver used by doctor/probes before spawn, so workflows that
+  run commands like `npx` no longer fail with Windows-specific program-not-found spawn errors
+- fixed workflow-scoped doctor/check selection for selected workflow task-requirement surfaces:
+  when a workflow/task path is explicitly scoped but does not declare readiness checks, Ota no
+  longer falls back to unrelated global checks (for example monorepo `node_modules` file checks)
+  that contradict the selected workflow path
+- improved `ota proof runtime` failure prioritization so deterministic doctor primary blockers are
+  now surfaced before generic up-process timeout/exit messages in proof text and JSON wrappers;
+  runtime process failures still surface when no primary blocker exists
+- fixed `ota proof runtime` readiness waiting to observe selected workflow surfaces/probes with
+  lightweight host polling and capture the canonical doctor report once a real runtime state
+  change is observed, instead of rerunning full diagnosis on every wait iteration; this keeps
+  runtime proof responsive on slow Docker and Windows startup paths
+- redesigned the shared `AGENT` summary block used by `ota tasks`, `ota doctor`, and `ota check`
+  into grouped `Overview`, `Execution`, and `Boundary` sections, with counted wrapped lists and
+  writable-path root/exception collapsing so large agent boundaries stay readable in terminal
+  output; `ota check --json` now also keeps additive `agent` details alongside its verdict/finding
+  payload
+- deepened `toolchains.node`: Corepack-backed Node toolchains can now own declared package-manager
+  activation through `package_managers`, project those tools into doctor/up/policy activation
+  lanes, and reject duplicate `tools.<package-manager>` ownership when the toolchain already owns
+  that package manager
+- tightened the shipped toolchain provider boundary so `toolchains.rust` must use
+  `provider: rustup` and `toolchains.node` must use `provider: corepack`, with validator errors
+  driven by the shipped provider contract registry instead of a Rust-first fallback
+- `ota run` receipts now keep actual toolchain fulfillment explicit: selected `receipt.toolchains[]`
+  entries can record additive `fulfilled` and `commands[]` evidence when ota ran provider
+  fulfillment commands on that execution path, instead of forcing users or automation to infer
+  that from stdout/stderr
 - hardened the PowerShell bootstrap installer: checksum mismatches and missing official checksum
   manifests now fail closed instead of falling back to git installs, and Windows user PATH
   persistence now requires explicit `-SetupPath`
@@ -58,6 +152,54 @@
   setup, and the contract/site docs publish the ownership boundary as a first-class reference
   surface; validation also rejects unsupported toolchain declarations so the shipped surface stays
   explicitly bounded to `toolchains.rust` with `provider: rustup`
+- polished the `doctor`, `up`, and `run` command surfaces around toolchain ownership: duplicate
+  ownership now renders as a structured invalid-contract error instead of a generic validation blob,
+  `ota up --dry-run` explains selected toolchains with honest `fulfillment: none` vs
+  `fulfillment: run` semantics, and run/up fulfillment failures now name the selected toolchain,
+  provider, checked requirement slice, and rerun path without falling back to standalone-tool
+  wording for toolchain-owned capabilities
+- expanded the shipped toolchain surface with `toolchains.java` and `provider: sdkman` as a
+  first-class, check-only Java ecosystem owner: Java detection now writes `toolchains.java`
+  instead of `runtimes.java` for strong repo signals, duplicate ownership now covers `java` and
+  `javac`, and unsupported-toolchain opportunity guidance stays focused on ecosystems Ota still
+  does not ship yet
+- fixed mixed-backend `ota up` preflight so selected workflow prerequisites stay on their own
+  execution boundary instead of being flattened into one doctor mode; native selected-path
+  toolchains now diagnose on the host even when setup runs in a container, and the dry-run preview
+  matches that backend-aware preflight
+- consolidated the shipped Rust toolchain ownership model behind one internal provider definition
+  so validation, diagnosis, dry-run preview, and run-path fulfillment all derive ownership,
+  provider labels, primary executables, and fulfillment commands from the same Rustup-backed
+  registry slice instead of repeating Rust-specific assumptions in each command layer
+- tightened the provider-boundary contract for `toolchains`: the validator now teaches the shared
+  provider-agnostic fields (`provider`, `version`, `fulfillment`, `required`, `only_on`, and
+  `platforms.<os>.version`) vs Rustup-specific compatibility fields (`profile`, `components`,
+  `targets`), and the built-in `examples/basic-rust` contract now uses `toolchains.rust` instead
+  of teaching duplicate `runtimes.rust` / `tools.cargo` ownership
+- formalized the shipped Rustup provider contract inside Ota so validator field legality, duplicate
+  ownership, doctor-managed-surface checks, dry-run requirement rendering, and run-path
+  fulfillment all read from one provider contract instead of repeating parallel Rustup-specific
+  assumptions across command layers
+- moved Rustup-specific field-shape validation (`profile`, `components`, `targets`, including
+  platform overrides) behind that same provider contract so the validator no longer carries a
+  parallel copy of provider-specific field rules
+- added the second shipped toolchain contract slice: `toolchains.node` with `provider: corepack`
+  now gives Node one managed runtime/executable owner without claiming package-manager ownership;
+  the shipped Corepack contract stays intentionally narrow by using only the shared
+  provider-agnostic fields, staying check-only (`fulfillment: none`), and leaving `pnpm` / `yarn`
+  activation explicit under `tools.<package-manager>.acquisition.provider: corepack`
+- sharpened toolchain preview wording so dry-run and fulfillment-facing output now names the owned
+  runtime capability alongside the provider contract, which keeps `toolchains.node` honest as
+  “Node via Corepack” instead of reading like Corepack itself is the runtime being checked
+- exposed selected toolchain decisions as first-class machine-readable evidence: `ota doctor --json`
+  now emits top-level `toolchains[]`, and receipt-bearing surfaces such as `ota run --json`,
+  `ota up --json`, and `ota receipt --json` now emit additive `receipt.toolchains[]` entries with
+  provider, backend, target OS, version, fulfillment mode, owned runtime, and owned
+  tools/components/targets for the selected path
+- bridged selected toolchain-owned runtime lanes into org-policy version/provisioning reasoning, so
+  `ota doctor`, `ota up`, and execution-policy previews can show approved runtime versions and
+  approved install sources for `toolchains.rust` / `toolchains.node` without re-declaring
+  duplicate runtime ownership
 
 ## 1.6.12
 

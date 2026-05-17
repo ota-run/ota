@@ -60,6 +60,10 @@
         "inferred": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/inference" }
+        },
+        "toolchain_opportunities": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/toolchainOpportunity" }
         }
       }
     },

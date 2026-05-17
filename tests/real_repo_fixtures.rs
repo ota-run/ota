@@ -1064,6 +1064,8 @@ fn provisioning_request_uses_real_linux_mirror_policy_on_real_command_path() {
 #[test]
 fn up_reports_missing_adapter_bootstrap_source_on_real_command_path() {
     let fixture = TempDir::new().expect("temp dir should be created");
+    let isolated_home = fixture.path().join("home");
+    fs::create_dir_all(&isolated_home).expect("isolated home should be created");
     fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
     write_contract(
         fixture.path(),
@@ -1098,7 +1100,7 @@ policies:
 
     let output = run_ota_with_env_in_dir(
         &["up", fixture.path().to_str().unwrap()],
-        [("PATH", "")],
+        [("PATH", ""), ("HOME", isolated_home.to_str().unwrap())],
         fixture.path(),
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1238,11 +1240,13 @@ agent:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(stdout.contains("TASKS"));
-    assert!(stdout.contains("Agent"));
-    assert!(stdout.contains("Entrypoint: `setup`"));
-    assert!(stdout.contains("Safe tasks: `setup`"));
-    assert!(stdout.contains("Writable paths: `src`"));
+    assert!(stdout.contains("AGENT"));
     assert!(stdout.contains("Overview"));
+    assert!(stdout.contains("Entrypoint: `setup`"));
+    assert!(stdout.contains("Execution"));
+    assert!(stdout.contains("Safe tasks (1): `setup`"));
+    assert!(stdout.contains("Boundary"));
+    assert!(stdout.contains("Writable paths (1): `src/`"));
 }
 
 #[test]
@@ -1277,9 +1281,11 @@ agent:
         "stderr was: {}",
         String::from_utf8_lossy(&text_output.stderr)
     );
-    assert!(stdout.contains("Agent"));
+    assert!(stdout.contains("AGENT"));
+    assert!(stdout.contains("Overview"));
     assert!(stdout.contains("Entrypoint: `setup`"));
-    assert!(stdout.contains("Safe tasks: `setup`"));
+    assert!(stdout.contains("Execution"));
+    assert!(stdout.contains("Safe tasks (1): `setup`"));
 
     let json_output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
     let json = stdout_json(&json_output);
@@ -1350,7 +1356,8 @@ fn init_json_reports_detected_mode_for_java_gradle_fixture() {
     assert_eq!(json["written"], false);
     assert_eq!(json["mode"], "detected");
     assert_eq!(json["config"]["project"]["name"], "ota-java-service");
-    assert_eq!(json["config"]["runtimes"]["java"], "21");
+    assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+    assert_eq!(json["config"]["toolchains"]["java"]["version"], "21");
     assert_eq!(json["config"]["tools"]["gradle"], "8.10.2");
     assert_eq!(json["config"]["tasks"]["build"]["run"], "./gradlew build");
 }
@@ -1368,7 +1375,9 @@ fn init_write_writes_high_confidence_contract_for_java_gradle_fixture() {
         .expect("ota.yaml should be written for java gradle fixture");
 
     assert!(written.contains("name: ota-java-service"));
-    assert!(written.contains("java: '21'"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: sdkman"));
+    assert!(written.contains("version: '21'") || written.contains("version: \"21\""));
     assert!(written.contains("gradle: 8.10.2"));
     assert!(written.contains("run: ./gradlew build"));
 
@@ -1390,7 +1399,8 @@ fn init_json_reports_detected_mode_for_java_maven_fixture() {
     assert_eq!(json["written"], false);
     assert_eq!(json["mode"], "detected");
     assert_eq!(json["config"]["project"]["name"], "ota-maven-service");
-    assert_eq!(json["config"]["runtimes"]["java"], "21");
+    assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+    assert_eq!(json["config"]["toolchains"]["java"]["version"], "21");
     assert_eq!(json["config"]["tools"]["maven"], "*");
     assert_eq!(json["config"]["tasks"]["test"]["run"], "mvn test");
 }
@@ -1409,7 +1419,9 @@ fn init_write_writes_high_confidence_contract_for_java_maven_fixture() {
         .expect("ota.yaml should be written for java maven fixture");
 
     assert!(written.contains("name: ota-maven-service"));
-    assert!(written.contains("java: '21'"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: sdkman"));
+    assert!(written.contains("version: '21'") || written.contains("version: \"21\""));
     assert!(written.contains("tools:"));
     assert!(written.contains("maven: '*'"));
     assert!(written.contains("tasks:"));
@@ -1461,7 +1473,8 @@ fn init_json_reports_detected_mode_for_java_gradle_multimodule_fixture() {
     assert_eq!(json["written"], false);
     assert_eq!(json["mode"], "detected");
     assert_eq!(json["config"]["project"]["name"], "ota-platform");
-    assert_eq!(json["config"]["runtimes"]["java"], "21");
+    assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+    assert_eq!(json["config"]["toolchains"]["java"]["version"], "21");
     assert_eq!(json["config"]["tools"]["gradle"], "8.11.1");
     assert_eq!(json["config"]["tasks"]["build"]["run"], "./gradlew build");
 }
@@ -2030,7 +2043,9 @@ fn detect_writes_high_confidence_contract_for_java_gradle_fixture() {
         .expect("ota.yaml should be written for java gradle fixture");
 
     assert!(written.contains("name: ota-java-service"));
-    assert!(written.contains("java: '21'"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: sdkman"));
+    assert!(written.contains("version: '21'") || written.contains("version: \"21\""));
     assert!(written.contains("gradle: 8.10.2"));
     assert!(written.contains("run: ./gradlew build"));
 }
@@ -2049,7 +2064,9 @@ fn detect_writes_high_confidence_contract_for_java_maven_fixture() {
         .expect("ota.yaml should be written for java maven fixture");
 
     assert!(written.contains("name: ota-maven-service"));
-    assert!(written.contains("java: '21'"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: sdkman"));
+    assert!(written.contains("version: '21'") || written.contains("version: \"21\""));
     assert!(written.contains("tools:"));
     assert!(written.contains("maven: '*'"));
     assert!(written.contains("tasks:"));

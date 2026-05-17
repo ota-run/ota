@@ -108,6 +108,8 @@ pub struct DoctorSuccess<'a> {
     pub extensions: &'a BTreeMap<String, ExtensionSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<DoctorFixSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchains: Vec<ToolchainSelectionSummary>,
     pub findings: &'a [Finding],
 }
 
@@ -145,6 +147,10 @@ pub struct CheckSuccess<'a> {
     pub finding_groups: Vec<DoctorFindingGroupSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<WorkflowSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentSummary<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchains: Vec<ToolchainSelectionSummary>,
     pub findings: &'a [Finding],
 }
 
@@ -305,6 +311,28 @@ pub struct ExecutionReceiptNativePrerequisite {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ToolchainSelectionSummary {
+    pub name: String,
+    pub provider: String,
+    pub backend: String,
+    pub target_os: String,
+    pub version: String,
+    pub fulfillment: String,
+    pub required: bool,
+    pub owns_runtime: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fulfilled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owns_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ContractIdentityProject {
     pub name: String,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
@@ -392,6 +420,8 @@ pub struct ExecutionReceipt {
     pub env_sources: Vec<ExecutionReceiptEnvSource>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub native_prerequisites: Vec<ExecutionReceiptNativePrerequisite>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchains: Vec<ToolchainSelectionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime: Option<ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -483,6 +513,9 @@ impl Serialize for ExecutionReceipt {
         }
         if !self.native_prerequisites.is_empty() {
             map.serialize_entry("native_prerequisites", &self.native_prerequisites)?;
+        }
+        if !self.toolchains.is_empty() {
+            map.serialize_entry("toolchains", &self.toolchains)?;
         }
         if let Some(runtime) = self.runtime.as_ref() {
             map.serialize_entry("runtime", runtime)?;
@@ -1813,7 +1846,20 @@ pub struct InitSuccess<'a> {
     pub config: &'a DetectContract,
     pub inferred: &'a [Inference],
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchain_opportunities: Vec<ToolchainOpportunityAdvisory>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<ContractFieldProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolchainOpportunityAdvisory {
+    pub ecosystem: String,
+    pub fallback_runtime: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fallback_tools: Vec<String>,
+    pub candidate_providers: Vec<String>,
+    pub shipped: bool,
+    pub agent_note: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1849,6 +1895,7 @@ pub struct InitSelectedPackOptions {
 
 #[derive(Debug, Serialize)]
 pub struct InitPackSeeds {
+    pub toolchains: Vec<String>,
     pub runtimes: Vec<String>,
     pub tools: Vec<String>,
     pub checks: Vec<String>,
@@ -1945,6 +1992,8 @@ pub struct DetectSuccess<'a> {
     pub written: bool,
     pub config: JsonValue,
     pub inferred: &'a [Inference],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchain_opportunities: Vec<ToolchainOpportunityAdvisory>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<&'a DetectComparison>,
 }
@@ -2444,6 +2493,12 @@ pub struct WorkflowSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub readiness_surfaces: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signal_readiness_checks: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signal_readiness_probes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signal_readiness_surfaces: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exposes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub expose_surfaces: Vec<String>,
@@ -2543,6 +2598,9 @@ impl<'a> WorkflowSummary<'a> {
             readiness_checks: workflow.readiness.checks.clone(),
             readiness_probes: workflow.readiness.probes.clone(),
             readiness_surfaces: workflow.readiness.surfaces.clone(),
+            signal_readiness_checks: workflow.readiness.signal.checks.clone(),
+            signal_readiness_probes: workflow.readiness.signal.probes.clone(),
+            signal_readiness_surfaces: workflow.readiness.signal.surfaces.clone(),
             exposes,
             expose_surfaces,
             expose_entries,
