@@ -38,6 +38,17 @@
   informational diagnostics that do not block repo readiness verdicts, while preserving strict
   reference and attachment validation; overlap between gating and signal readiness lanes is now
   rejected explicitly so one item cannot be both blocking and non-gating
+- tightened toolchain-owned package-manager modeling and workflow dry-run scoping: task
+  `requirements.tools.<name>` now validates against both top-level `tools` and selected
+  toolchain-owned tools/package managers (for example Corepack-owned `pnpm`), task-level
+  requirements are no longer rejected as duplicate ownership when the tool is owned by a selected
+  toolchain, and selected-workflow `ota up` activation/provisioning/preview lanes now render or
+  act on Corepack package-manager requirements only when the selected workflow/task closure
+  actually requires those tools
+- tightened validator determinism for toolchain-owned task tools: when a task references a
+  toolchain-owned tool in `requirements.tools` without explicitly scoping
+  `requirements.toolchains`, validation now fails with an explicit remediation message instead of
+  implicitly inferring ownership from all declared toolchains
 - fixed `ota proof runtime` readiness waiting for packaged/container startup paths by replacing
   the fixed 180-second wait budget with a deterministic strategy-aware budget (with floor/ceiling),
   so cold image pulls and first-run packaged launches have enough headroom before proof times out

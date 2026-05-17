@@ -74,9 +74,10 @@ use crate::schema::{
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
     ToolchainManagedSurfaceKind, ToolchainOpportunityContext, declared_toolchain_contract,
-    requirement_surface_with_toolchain_owned_capabilities,
-    requirement_surface_with_toolchain_owned_tools, shipped_toolchain_contract_by_label,
-    tool_versions_entry, toolchain_repo_signals, unsupported_toolchain_opportunity_context,
+    requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
+    requirement_surface_with_toolchain_owned_tools_for_required_tools,
+    shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_repo_signals,
+    unsupported_toolchain_opportunity_context,
 };
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
@@ -535,11 +536,17 @@ fn policy_requirement_surface_for_toolchains(
     toolchain_names: &BTreeSet<String>,
     target_os: &str,
 ) -> RequirementSurface {
-    requirement_surface_with_toolchain_owned_capabilities(
+    let required_tools = requirement_surface
+        .tools
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
         contract,
         requirement_surface,
         toolchain_names,
         target_os,
+        Some(&required_tools),
     )
 }
 
@@ -2722,6 +2729,12 @@ fn diagnose_contract_with_scope(
                     &mut findings,
                 );
                 for remote_probe in &remote_probe_contexts {
+                    let required_tools = remote_probe
+                        .requirement_surface
+                        .tools
+                        .keys()
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
                     diagnose_runtimes(
                         &remote_probe.requirement_surface.runtimes,
                         &remote_probe.target_os,
@@ -2736,11 +2749,12 @@ fn diagnose_contract_with_scope(
                         &mut findings,
                     );
                     diagnose_tools(
-                        &requirement_surface_with_toolchain_owned_tools(
+                        &requirement_surface_with_toolchain_owned_tools_for_required_tools(
                             contract,
                             &remote_probe.requirement_surface,
                             &precondition_selection.toolchain_names,
                             &remote_probe.target_os,
+                            Some(&required_tools),
                         )
                         .tools,
                         &remote_probe.target_os,
@@ -2789,12 +2803,18 @@ fn diagnose_contract_with_scope(
                 &provisioning_actions,
                 &mut findings,
             );
+            let required_tools = requirement_surface
+                .tools
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>();
             let tool_probe_started = diagnose_tools(
-                &requirement_surface_with_toolchain_owned_tools(
+                &requirement_surface_with_toolchain_owned_tools_for_required_tools(
                     contract,
                     &requirement_surface,
                     &precondition_selection.toolchain_names,
                     policy_target_os_for_mode(mode),
+                    Some(&required_tools),
                 )
                 .tools,
                 policy_target_os_for_mode(mode),
@@ -2899,12 +2919,19 @@ fn diagnose_contract_with_scope(
                     &additional_provisioning_actions,
                     &mut findings,
                 );
+                let required_tools = additional_selection
+                    .requirement_surface
+                    .tools
+                    .keys()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
                 diagnose_tools(
-                    &requirement_surface_with_toolchain_owned_tools(
+                    &requirement_surface_with_toolchain_owned_tools_for_required_tools(
                         contract,
                         &additional_selection.requirement_surface,
                         &additional_selection.toolchain_names,
                         policy_target_os_for_mode(additional_mode),
+                        Some(&required_tools),
                     )
                     .tools,
                     policy_target_os_for_mode(additional_mode),
@@ -10707,6 +10734,8 @@ tasks:
     requirements:
       toolchains:
         - node
+      tools:
+        pnpmx: "10.22.0"
   docker:run:
     launch:
       kind: container
@@ -10798,6 +10827,8 @@ tasks:
     requirements:
       toolchains:
         - node
+      tools:
+        pnpmx: "10.22.0"
 workflows:
   default: contributor
   contributor:
@@ -10833,6 +10864,115 @@ workflows:
             finding
                 .next
                 .contains("corepack prepare pnpmx@10.22.0 --activate")
+        );
+    }
+
+    #[test]
+    fn doctor_selected_workflow_does_not_surface_unrequired_corepack_package_manager_findings() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "node.cmd" } else { "node" },
+            if cfg!(windows) {
+                "@echo off\r\necho v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v24.0.0'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) {
+                "corepack.cmd"
+            } else {
+                "corepack"
+            },
+            if cfg!(windows) {
+                "@echo off\r\necho corepack 0.31.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'corepack 0.31.0'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "npx.cmd" } else { "npx" },
+            if cfg!(windows) {
+                "@echo off\r\necho 10.22.0\r\n"
+            } else {
+                "#!/bin/sh\necho '10.22.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      pnpmx: "10.22.0"
+tools:
+  npx: "*"
+tasks:
+  setup:
+    run: pnpmx install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpmx: "10.22.0"
+  quickstart:
+    run: npx --yes n8n
+    requirements:
+      toolchains:
+        - node
+      tools:
+        npx: "*"
+workflows:
+  default: backend
+  backend:
+    setup:
+      task: setup
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("instant"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report.findings.iter().all(|finding| {
+                !finding.summary.contains("pnpmx")
+                    && !finding.why.contains("pnpmx")
+                    && !finding.next.contains("pnpmx")
+            }),
+            "{report:?}"
         );
     }
 

@@ -4700,15 +4700,69 @@ fn duplicate_requirement_owners_for_toolchain(
         .unwrap_or_default()
 }
 
+fn selected_task_toolchains<'a>(
+    contract: &'a Contract,
+    task: &'a TaskSpec,
+) -> Vec<(&'a String, &'a ToolchainSpec)> {
+    if task.requirements.toolchains.is_empty() {
+        return contract.toolchains.iter().collect();
+    }
+    task.requirements
+        .toolchains
+        .iter()
+        .filter_map(|toolchain_name| {
+            contract
+                .toolchains
+                .get_key_value(toolchain_name.as_str())
+                .map(|(name, toolchain)| (name, toolchain))
+        })
+        .collect()
+}
+
+fn toolchain_owners_for_tool(
+    contract: &Contract,
+    tool_name: &str,
+    selected_toolchains: Option<&[String]>,
+) -> Vec<String> {
+    let mut owners = Vec::new();
+
+    match selected_toolchains {
+        Some(toolchain_names) => {
+            for toolchain_name in toolchain_names {
+                let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                    continue;
+                };
+                let owns_tool =
+                    duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+                        .iter()
+                        .any(|(kind, owned_name)| kind == "tool" && owned_name == tool_name);
+                if owns_tool {
+                    owners.push(toolchain_name.clone());
+                }
+            }
+        }
+        None => {
+            for (toolchain_name, toolchain) in &contract.toolchains {
+                let owns_tool =
+                    duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+                        .iter()
+                        .any(|(kind, owned_name)| kind == "tool" && owned_name == tool_name);
+                if owns_tool {
+                    owners.push(toolchain_name.clone());
+                }
+            }
+        }
+    }
+
+    owners.sort();
+    owners.dedup();
+    owners
+}
+
 fn validate_duplicate_requirement_ownership(
     contract: &Contract,
     errors: &mut Vec<ValidationError>,
 ) {
-    let contract_toolchains = contract
-        .toolchains
-        .iter()
-        .collect::<Vec<(&String, &ToolchainSpec)>>();
-
     for (toolchain_name, toolchain) in &contract.toolchains {
         for (duplicate_kind, duplicate_name) in
             duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
@@ -4733,22 +4787,7 @@ fn validate_duplicate_requirement_ownership(
     }
 
     for (task_name, task) in &contract.tasks {
-        let selected_task_toolchains = if task.requirements.toolchains.is_empty() {
-            contract_toolchains.clone()
-        } else {
-            task.requirements
-                .toolchains
-                .iter()
-                .filter_map(|toolchain_name| {
-                    contract
-                        .toolchains
-                        .get_key_value(toolchain_name.as_str())
-                        .map(|(name, toolchain)| (name, toolchain))
-                })
-                .collect::<Vec<(&String, &ToolchainSpec)>>()
-        };
-
-        for (toolchain_name, toolchain) in selected_task_toolchains {
+        for (toolchain_name, toolchain) in selected_task_toolchains(contract, task) {
             for (duplicate_kind, duplicate_name) in
                 duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
             {
@@ -4761,16 +4800,6 @@ fn validate_duplicate_requirement_ownership(
                     {
                         Some(format!(
                             "`tasks.{task_name}.requirements.runtimes.{duplicate_name}`"
-                        ))
-                    }
-                    "tool"
-                        if task
-                            .requirements
-                            .tools
-                            .contains_key(duplicate_name.as_str()) =>
-                    {
-                        Some(format!(
-                            "`tasks.{task_name}.requirements.tools.{duplicate_name}`"
                         ))
                     }
                     _ => None,
@@ -5142,6 +5171,50 @@ fn validate_task_requirement_references(
                 "task `{task_name}` references unknown toolchain `{toolchain_name}` in `requirements.toolchains`"
             )));
         }
+    }
+    let mut known_tools = contract.tools.keys().cloned().collect::<BTreeSet<_>>();
+    for (toolchain_name, toolchain) in selected_task_toolchains(contract, task) {
+        for (kind, name) in duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain) {
+            if kind == "tool" {
+                known_tools.insert(name);
+            }
+        }
+    }
+    for tool_name in task.requirements.tools.keys() {
+        if tool_name.trim().is_empty() {
+            continue;
+        }
+
+        if task.requirements.toolchains.is_empty() {
+            if contract.tools.contains_key(tool_name.as_str()) {
+                continue;
+            }
+            let owners = toolchain_owners_for_tool(contract, tool_name, None);
+            if !owners.is_empty() {
+                let owner_list = owners
+                    .iter()
+                    .map(|owner| format!("`{owner}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` references tool requirement `{tool_name}` in `requirements.tools` without an explicit toolchain scope; `{tool_name}` is owned by toolchain(s) {owner_list}. Declare `tasks.{task_name}.requirements.toolchains` explicitly (for example `[{}]`) to keep ownership deterministic",
+                    owners
+                        .iter()
+                        .map(|owner| format!(r#""{owner}""#))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+                continue;
+            }
+        }
+
+        if known_tools.contains(tool_name) {
+            continue;
+        }
+
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` references unknown tool requirement `{tool_name}` in `requirements.tools`"
+        )));
     }
 
     for env_name in &task.requirements.env {
@@ -16502,16 +16575,10 @@ tasks:
             }),
             "{rendered:?}"
         );
-        assert!(
-            rendered.iter().any(|error| {
-                error.contains("task `setup` requires toolchain `rust`, which owns tool `cargo`, but the task also declares `tasks.setup.requirements.tools.cargo`")
-            }),
-            "{rendered:?}"
-        );
     }
 
     #[test]
-    fn rejects_task_level_duplicates_against_declared_toolchain_owner() {
+    fn rejects_task_level_tool_requirements_owned_by_toolchain_without_explicit_scope() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -16533,20 +16600,52 @@ tasks:
         .unwrap();
 
         let rendered = validate_contract(&contract)
-            .expect_err("task duplicate ownership should fail validation")
+            .expect_err("short-form task tool requirements should require explicit toolchain scope")
             .errors()
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
 
         assert!(
-            rendered.iter().any(|error| {
-                error.contains(
-                    "task `lint` requires toolchain `rust`, which owns tool `cargo`, but the task also declares `tasks.lint.requirements.tools.cargo`",
-                )
-            }),
+            rendered.iter().any(|error| error.contains(
+                "task `lint` references tool requirement `cargo` in `requirements.tools` without an explicit toolchain scope",
+            )),
             "{rendered:?}"
         );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "Declare `tasks.lint.requirements.toolchains` explicitly (for example `[\"rust\"]`)",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_task_level_tool_requirements_owned_by_toolchain_with_explicit_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  lint:
+    run: cargo fmt --check
+    requirements:
+      toolchains:
+        - rust
+      tools:
+        cargo: "*"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("task-level requirements.tools should allow toolchain-owned tools when scoped");
     }
 
     #[test]
@@ -16856,7 +16955,7 @@ tools:
     }
 
     #[test]
-    fn rejects_task_duplicate_ownership_for_corepack_node_tool() {
+    fn accepts_task_requirement_for_toolchain_owned_corepack_runtime_tool() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -16879,8 +16978,67 @@ tasks:
         )
         .unwrap();
 
+        validate_contract(&contract).expect("task requirements should allow corepack-owned tools");
+    }
+
+    #[test]
+    fn accepts_task_requirement_for_toolchain_owned_corepack_package_manager_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.22.0"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("task requirements should allow corepack-owned package managers");
+    }
+
+    #[test]
+    fn rejects_unknown_task_tool_requirement_without_top_level_or_toolchain_owner() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
+tasks:
+  setup:
+    run: npx --yes n8n
+    requirements:
+      toolchains:
+        - node
+      tools:
+        npmx: "*"
+"#,
+        )
+        .unwrap();
+
         let rendered = validate_contract(&contract)
-            .expect_err("task duplicate node tool ownership should fail")
+            .expect_err("unknown task tool requirements should fail validation")
             .errors()
             .iter()
             .map(ToString::to_string)
@@ -16888,7 +17046,7 @@ tasks:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "task `setup` requires toolchain `node`, which owns tool `node`, but the task also declares `tasks.setup.requirements.tools.node`",
+                "task `setup` references unknown tool requirement `npmx` in `requirements.tools`",
             )),
             "{rendered:?}"
         );

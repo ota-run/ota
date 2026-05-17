@@ -26893,7 +26893,7 @@ tasks:
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
             normalized.contains(
-                "check toolchain `node` via `corepack` (owns runtime `node`, version `22`, package managers `pnpm@10.22.0`); fulfillment: none (diagnose only, no provisioning)"
+                "check toolchain `node` via `corepack` (owns runtime `node`, version `22`); fulfillment: none (diagnose only, no provisioning)"
             ),
             "{stdout}"
         );
@@ -26901,6 +26901,102 @@ tasks:
             !normalized
                 .contains("ota may provision the selected toolchain on the selected run path"),
             "{stdout}"
+        );
+    }
+
+    #[test]
+    fn up_dry_run_selected_node_only_workflow_does_not_inherit_corepack_package_managers() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.22.0"
+tasks:
+  quickstart:
+    run: node --version
+    requirements:
+      toolchains:
+        - node
+  backend:
+    run: pnpm --version
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "*"
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+  backend:
+    run:
+      task: backend
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.0.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho v22.0.0\nexit 0\n"
+        };
+        let corepack_body = if cfg!(windows) {
+            "@echo off\r\necho corepack 0.31.0\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho corepack 0.31.0\nexit 0\n"
+        };
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\necho 11.1.1\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\necho 11.1.1\nexit 0\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        write_fake_command(&bin_dir, "corepack", corepack_body);
+        write_fake_command(&bin_dir, "pnpm", pnpm_body);
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let instant_output = run_with([
+            "ota",
+            "up",
+            "--workflow",
+            "instant",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(instant_output.exit_code, 0);
+        let instant_stdout = strip_ansi(&instant_output.stdout);
+        assert!(
+            !instant_stdout.contains("Version mismatch for tool: pnpm"),
+            "{instant_stdout}"
+        );
+        assert!(
+            !instant_stdout.contains("activate tool `pnpm`"),
+            "{instant_stdout}"
+        );
+
+        let backend_output = run_with([
+            "ota",
+            "up",
+            "--workflow",
+            "backend",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(backend_output.exit_code, 1);
+        let backend_stdout = strip_ansi(&backend_output.stdout);
+        assert!(
+            backend_stdout.contains("Version mismatch for tool: pnpm"),
+            "{backend_stdout}"
         );
     }
 
