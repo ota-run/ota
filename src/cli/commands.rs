@@ -119,23 +119,25 @@ use crate::provisioning::{
 };
 use crate::runner::{
     CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
-    ExecutionOverrides, LoadedDeclaredEnvSource, ResolvedEnvValue, ResolvedExecutionBackend,
-    ResolvedTaskRuntime, RunError, RuntimeListenerBindDiscoveryFailure,
-    RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind, ServiceTermination,
-    ServiceTerminationCause, SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee,
-    TaskExecutionRelation, TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence,
-    clean_execution_report, clean_stale_execution, effective_execution,
-    effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
-    env_resolution_source_label, ephemeral_container_name, load_declared_env_sources,
+    ExecutionOverrides, HostRuntimeReadinessProbe, LoadedDeclaredEnvSource, ResolvedEnvValue,
+    ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
+    RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
+    RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
+    SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
+    TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence, clean_execution_report,
+    clean_stale_execution, effective_execution, effective_task_env_for_backend,
+    effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
+    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
     load_policy_env_overlay, named_execution_context, persistent_container_name,
     reported_task_context_for_backend, resolve_declared_env_source_value,
     resolve_effective_task_container_backend, resolve_execution_backend,
-    resolve_execution_backend_with_contract_path, resolve_task_env_details,
-    resolve_task_env_details_for_task, resolve_task_env_details_for_task_with_policy,
-    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
-    run_task_captured_with_args_with_overrides_with_policy,
+    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
+    resolve_task_env_details, resolve_task_env_details_for_task,
+    resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
+    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
     run_task_with_progress_and_args_and_overrides_with_policy, selected_task_context_for_backend,
+    task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
@@ -37659,8 +37661,12 @@ mod tests {
     use std::collections::BTreeMap;
     use std::env;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
@@ -37864,6 +37870,106 @@ workflows:
 
         let exit = child.wait().unwrap();
         assert!(!exit.success());
+    }
+
+    #[test]
+    fn wait_for_proof_runtime_readiness_captures_final_doctor_once_probe_is_observed() {
+        let _guard = cwd_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("probe should connect");
+                let mut buffer = [0u8; 256];
+                let _ = stream.read(&mut buffer);
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .expect("probe response should write");
+            }
+        });
+        let failing_check = if cfg!(windows) {
+            "cmd /C exit 1"
+        } else {
+            "sh -c 'exit 1'"
+        };
+
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: proof-runtime-regression
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:{port}/healthz/readiness
+      timeout: 1000
+checks:
+  - name: setup-complete
+    kind: health
+    severity: error
+    run: {failing_check}
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+  app:
+    run:
+      task: app
+    readiness:
+      probes:
+        - backend-ready
+      checks:
+        - setup-complete
+"#
+            ),
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
+                .spawn()
+                .unwrap()
+        } else {
+            Command::new("sh").args(["-c", "sleep 30"]).spawn().unwrap()
+        };
+
+        let started = Instant::now();
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            &mut child,
+        )
+        .unwrap();
+
+        child.kill().unwrap();
+        let _ = child.wait();
+        server.join().expect("probe server should finish");
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(!proof_ok);
+        assert_eq!(phase, "service readiness");
+        assert!(up_failure.is_none());
+        assert!(!report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Check failed: setup-complete"),
+            "{report:?}"
+        );
     }
 
     #[test]
@@ -60316,6 +60422,129 @@ fn spawn_proof_runtime_up_process(
         .map_err(|error| format!("could not start `ota up --stream` for runtime proof: {error}"))
 }
 
+#[derive(Debug, Clone)]
+enum ProofRuntimeReadinessStrategy {
+    LightweightTargets(Vec<HostRuntimeReadinessProbe>),
+    FullDiagnosis,
+}
+
+fn proof_runtime_readiness_strategy(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> ProofRuntimeReadinessStrategy {
+    match proof_runtime_readiness_targets(contract, contract_path, workflow_name, overrides) {
+        Ok(targets) if !targets.is_empty() => {
+            ProofRuntimeReadinessStrategy::LightweightTargets(targets)
+        }
+        Ok(_) | Err(_) => ProofRuntimeReadinessStrategy::FullDiagnosis,
+    }
+}
+
+fn proof_runtime_readiness_targets(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<Vec<HostRuntimeReadinessProbe>, String> {
+    let Some((_, workflow)) = contract.selected_workflow(workflow_name) else {
+        return Ok(Vec::new());
+    };
+
+    let mut targets = Vec::new();
+    if !workflow.readiness.surfaces.is_empty() {
+        let run_task_name = workflow
+            .run
+            .as_ref()
+            .map(|run| run.task.as_str())
+            .ok_or_else(|| String::from("selected workflow does not declare `run.task`"))?;
+        let task = contract
+            .tasks
+            .get(run_task_name)
+            .ok_or_else(|| format!("workflow run task `{run_task_name}` is not declared"))?;
+        let backend = match resolve_execution_backend_with_contract_path(
+            contract,
+            run_task_name,
+            overrides,
+            Some(contract_path),
+        )
+        .map_err(|error| error.to_string())?
+        {
+            ResolvedExecutionBackend::Native { .. } => Backend::Native,
+            ResolvedExecutionBackend::Container { .. } => Backend::Container,
+            ResolvedExecutionBackend::Remote { .. }
+            | ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
+        };
+        for surface_name in &workflow.readiness.surfaces {
+            targets.push(task_surface_host_readiness_probe_for_backend(
+                contract,
+                task,
+                backend,
+                surface_name,
+            )?);
+        }
+    }
+
+    for probe_name in &workflow.readiness.probes {
+        let target = match resolve_named_readiness_probe(contract, probe_name)? {
+            ResolvedNamedReadinessProbe::Http {
+                address,
+                port,
+                request,
+                timeout,
+                ..
+            } => HostRuntimeReadinessProbe {
+                listener: probe_name.clone(),
+                protocol: TaskRuntimeProtocol::Http,
+                address,
+                port,
+                request: Some(request),
+                default_timeout: timeout,
+            },
+            ResolvedNamedReadinessProbe::Tcp {
+                address,
+                port,
+                timeout,
+                ..
+            } => HostRuntimeReadinessProbe {
+                listener: probe_name.clone(),
+                protocol: TaskRuntimeProtocol::Tcp,
+                address,
+                port,
+                request: None,
+                default_timeout: timeout,
+            },
+        };
+        targets.push(target);
+    }
+
+    Ok(targets)
+}
+
+fn proof_runtime_readiness_targets_observed(targets: &[HostRuntimeReadinessProbe]) -> bool {
+    targets
+        .iter()
+        .all(|target| host_runtime_readiness_observed(target, None))
+}
+
+fn proof_runtime_doctor_report(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    doctor_mode: DoctorMode,
+    overrides: ExecutionOverrides,
+) -> DoctorReport {
+    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+        contract,
+        contract_path,
+        doctor_mode,
+        overrides.lifecycle,
+        workflow_name,
+        overrides,
+    )
+}
+
 fn wait_for_proof_runtime_readiness(
     contract: &Contract,
     contract_path: &Path,
@@ -60325,20 +60554,58 @@ fn wait_for_proof_runtime_readiness(
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
     let deadline = Instant::now() + Duration::from_secs(180);
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
+    let readiness_strategy =
+        proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
     let agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
     loop {
-        let latest_report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
-            contract,
-            contract_path,
-            doctor_mode,
-            overrides.lifecycle,
-            workflow_name,
-            overrides.clone(),
-        );
-        let summary = doctor_summary(&latest_report, agent_verdict);
-        if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
-            return Ok((latest_report, "post-up diagnosis", true, None));
+        if let ProofRuntimeReadinessStrategy::LightweightTargets(targets) = &readiness_strategy
+            && proof_runtime_readiness_targets_observed(targets)
+        {
+            let latest_report = proof_runtime_doctor_report(
+                contract,
+                contract_path,
+                workflow_name,
+                doctor_mode,
+                overrides.clone(),
+            );
+            let summary = doctor_summary(&latest_report, agent_verdict);
+            if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                return Ok((latest_report, "post-up diagnosis", true, None));
+            }
+            return Ok((latest_report, "service readiness", false, None));
         }
+
+        let latest_report = if matches!(
+            readiness_strategy,
+            ProofRuntimeReadinessStrategy::FullDiagnosis
+        ) {
+            let latest_report = proof_runtime_doctor_report(
+                contract,
+                contract_path,
+                workflow_name,
+                doctor_mode,
+                overrides.clone(),
+            );
+            let summary = doctor_summary(&latest_report, agent_verdict);
+            if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                return Ok((latest_report, "post-up diagnosis", true, None));
+            }
+            Some(latest_report)
+        } else {
+            None
+        };
+
+        let finalize_report = |report: Option<DoctorReport>| {
+            report.unwrap_or_else(|| {
+                proof_runtime_doctor_report(
+                    contract,
+                    contract_path,
+                    workflow_name,
+                    doctor_mode,
+                    overrides.clone(),
+                )
+            })
+        };
 
         match up_process.try_wait() {
             Ok(Some(exit_status)) => {
@@ -60352,7 +60619,7 @@ fn wait_for_proof_runtime_readiness(
                     ))
                 };
                 return Ok((
-                    latest_report,
+                    finalize_report(latest_report),
                     "service readiness",
                     false,
                     up_process_failure,
@@ -60368,7 +60635,7 @@ fn wait_for_proof_runtime_readiness(
 
         if Instant::now() >= deadline {
             return Ok((
-                latest_report,
+                finalize_report(latest_report),
                 "service readiness",
                 false,
                 Some(String::from("timed out while waiting for readiness")),

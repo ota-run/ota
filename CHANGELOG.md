@@ -71,6 +71,10 @@
 - improved `ota proof runtime` failure prioritization so deterministic doctor primary blockers are
   now surfaced before generic up-process timeout/exit messages in proof text and JSON wrappers;
   runtime process failures still surface when no primary blocker exists
+- fixed `ota proof runtime` readiness waiting to observe selected workflow surfaces/probes with
+  lightweight host polling and capture the canonical doctor report once a real runtime state
+  change is observed, instead of rerunning full diagnosis on every wait iteration; this keeps
+  runtime proof responsive on slow Docker and Windows startup paths
 - redesigned the shared `AGENT` summary block used by `ota tasks`, `ota doctor`, and `ota check`
   into grouped `Overview`, `Execution`, and `Boundary` sections, with counted wrapped lists and
   writable-path root/exception collapsing so large agent boundaries stay readable in terminal
