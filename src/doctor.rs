@@ -1001,6 +1001,7 @@ const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 30;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
+const DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS: u64 = 30_000;
 const DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7686,6 +7687,7 @@ fn run_workflow_surface_readiness(
     let timing = workflow_surface_readiness_timing_policy(contract, surface_name);
     let resolved_timeout = probe.default_timeout.unwrap_or(Duration::from_millis(200));
     let resolved_timeout_ms = resolved_timeout.as_millis() as u64;
+    let failed_retry_budget = capped_failed_retry_budget(timing.failed_retries, timing.interval);
     let timed_out_retry_budget =
         capped_timed_out_retry_budget(timing.timed_out_retries, resolved_timeout_ms);
     let spinner = CheckSpinner::start();
@@ -7693,10 +7695,11 @@ fn run_workflow_surface_readiness(
     let mut failed_attempts = 0u32;
     let mut timed_out_attempts = 0u32;
     let mut attempts_performed = 0u32;
-    let max_attempts = timing.failed_retries.max(timed_out_retry_budget);
+    let max_attempts = failed_retry_budget.max(timed_out_retry_budget);
     if !timing.start_period.is_zero() {
         thread::sleep(timing.start_period);
     }
+    let observation_started = Instant::now();
     for _ in 0..max_attempts {
         attempts_performed += 1;
         let observed = match probe.request.as_ref() {
@@ -7723,7 +7726,7 @@ fn run_workflow_surface_readiness(
         let should_continue = match status {
             CheckStatus::Failed => {
                 failed_attempts += 1;
-                failed_attempts < timing.failed_retries
+                failed_attempts < failed_retry_budget
             }
             CheckStatus::TimedOut(_) => {
                 timed_out_attempts += 1;
@@ -7731,7 +7734,15 @@ fn run_workflow_surface_readiness(
             }
             CheckStatus::Passed => false,
         };
-        if !should_continue {
+        let elapsed_ms = observation_started.elapsed().as_millis() as u64;
+        let within_failed_window = elapsed_ms < DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS;
+        let within_timed_out_window = elapsed_ms < DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS;
+        let within_window = match status {
+            CheckStatus::Failed => within_failed_window,
+            CheckStatus::TimedOut(_) => within_timed_out_window,
+            CheckStatus::Passed => false,
+        };
+        if !should_continue || !within_window {
             break;
         }
         thread::sleep(timing.interval);
@@ -7757,6 +7768,14 @@ fn capped_timed_out_retry_budget(configured_retries: u32, timeout_ms: u64) -> u3
     let timeout_ms = timeout_ms.max(1);
     let cap = DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS
         .div_ceil(timeout_ms)
+        .max(1);
+    configured_retries.min(cap as u32).max(1)
+}
+
+fn capped_failed_retry_budget(configured_retries: u32, interval: Duration) -> u32 {
+    let interval_ms = (interval.as_millis() as u64).max(1);
+    let cap = DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS
+        .div_ceil(interval_ms)
         .max(1);
     configured_retries.min(cap as u32).max(1)
 }
@@ -12199,6 +12218,20 @@ workflows:
     fn workflow_surface_timeout_retry_budget_preserves_small_timeouts() {
         let configured = 30;
         let capped = super::capped_timed_out_retry_budget(configured, 200);
+        assert_eq!(capped, configured);
+    }
+
+    #[test]
+    fn workflow_surface_failed_retry_budget_caps_large_intervals() {
+        let configured = 120;
+        let capped = super::capped_failed_retry_budget(configured, Duration::from_secs(5));
+        assert_eq!(capped, 6);
+    }
+
+    #[test]
+    fn workflow_surface_failed_retry_budget_preserves_small_intervals() {
+        let configured = 30;
+        let capped = super::capped_failed_retry_budget(configured, Duration::from_millis(200));
         assert_eq!(capped, configured);
     }
 
