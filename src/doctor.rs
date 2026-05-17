@@ -1001,9 +1001,9 @@ const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 600;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 30;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
-const DOCTOR_WORKFLOW_SURFACE_MAX_PROBE_TIMEOUT_MS: u64 = 2_000;
-const DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS: u64 = 90_000;
-const DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS: u64 = 90_000;
+const DOCTOR_WORKFLOW_SURFACE_MAX_PROBE_TIMEOUT_MS: u64 = 5_000;
+const DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS: u64 = 30_000;
+const DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandVersionProbe {
@@ -12215,7 +12215,7 @@ workflows:
     fn workflow_surface_timeout_retry_budget_caps_large_timeouts() {
         let configured = 120;
         let capped = super::capped_timed_out_retry_budget(configured, 10_000);
-        assert_eq!(capped, 9);
+        assert_eq!(capped, 3);
     }
 
     #[test]
@@ -12229,7 +12229,7 @@ workflows:
     fn workflow_surface_failed_retry_budget_caps_large_intervals() {
         let configured = 120;
         let capped = super::capped_failed_retry_budget(configured, Duration::from_secs(5));
-        assert_eq!(capped, 18);
+        assert_eq!(capped, 6);
     }
 
     #[test]

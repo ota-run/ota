@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- fixed `ota proof runtime` readiness waiting for packaged/container startup paths by replacing
+  the fixed 180-second wait budget with a deterministic strategy-aware budget (with floor/ceiling),
+  so cold image pulls and first-run packaged launches have enough headroom before proof times out
+- tightened workflow-surface readiness observation latency in `ota doctor` by reducing the bounded
+  retry windows and capping per-attempt probe timeout to 5 seconds, so repeated
+  `ota doctor --workflow ...` polling no longer blocks for long windows while startup is still in progress
 - fixed host-loopback readiness probing across `ota doctor`, `ota up`, and runtime probes so
   loopback surfaces declared as `127.0.0.1` now also resolve canonical local aliases (`::1`,
   `localhost`) before failing; this removes false not-ready outcomes on macOS/Windows when the

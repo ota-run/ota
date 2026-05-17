@@ -37973,6 +37973,38 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_wait_budget_uses_floor_for_full_diagnosis() {
+        let budget =
+            super::proof_runtime_wait_budget(&super::ProofRuntimeReadinessStrategy::FullDiagnosis);
+        assert_eq!(
+            budget,
+            Duration::from_secs(super::PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS)
+        );
+    }
+
+    #[test]
+    fn proof_runtime_wait_budget_scales_for_slow_surface_targets() {
+        let target = crate::runner::HostRuntimeReadinessProbe {
+            listener: String::from("backend"),
+            protocol: crate::schema::TaskRuntimeProtocol::Http,
+            address: String::from("127.0.0.1"),
+            port: 5678,
+            request: Some(crate::runner::HttpReadinessRequest {
+                method: crate::schema::TaskRuntimeReadinessHttpMethod::Get,
+                path: String::from("/healthz/readiness"),
+                headers: BTreeMap::new(),
+                success_statuses: vec![200],
+                body_contains: None,
+            }),
+            default_timeout: Some(Duration::from_secs(10)),
+        };
+        let budget = super::proof_runtime_wait_budget(
+            &super::ProofRuntimeReadinessStrategy::LightweightTargets(vec![target]),
+        );
+        assert_eq!(budget, Duration::from_secs(420));
+    }
+
+    #[test]
     fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
@@ -60528,6 +60560,38 @@ fn proof_runtime_readiness_targets_observed(targets: &[HostRuntimeReadinessProbe
         .all(|target| host_runtime_readiness_observed(target, None))
 }
 
+const PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS: u64 = 180;
+const PROOF_RUNTIME_READINESS_WAIT_CEILING_SECS: u64 = 900;
+const PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS: u64 = 2;
+const PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET: u64 = 30;
+const PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS: u64 = 60;
+
+fn proof_runtime_wait_budget(readiness_strategy: &ProofRuntimeReadinessStrategy) -> Duration {
+    let floor = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS);
+    let ceiling = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_CEILING_SECS);
+    let computed = match readiness_strategy {
+        ProofRuntimeReadinessStrategy::LightweightTargets(targets) if !targets.is_empty() => {
+            let max_timeout = targets
+                .iter()
+                .filter_map(|target| target.default_timeout)
+                .max()
+                .unwrap_or(Duration::from_millis(200));
+            let timeout_secs = max_timeout.as_secs().max(1);
+            Duration::from_secs(
+                timeout_secs
+                    .saturating_mul(PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET)
+                    .saturating_add(
+                        PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS
+                            * PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET,
+                    )
+                    .saturating_add(PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS),
+            )
+        }
+        _ => floor,
+    };
+    computed.max(floor).min(ceiling)
+}
+
 fn proof_runtime_doctor_report(
     contract: &Contract,
     contract_path: &Path,
@@ -60552,10 +60616,10 @@ fn wait_for_proof_runtime_readiness(
     overrides: ExecutionOverrides,
     up_process: &mut std::process::Child,
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
-    let deadline = Instant::now() + Duration::from_secs(180);
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let readiness_strategy =
         proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
+    let deadline = Instant::now() + proof_runtime_wait_budget(&readiness_strategy);
     let agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
     loop {
         if let ProofRuntimeReadinessStrategy::LightweightTargets(targets) = &readiness_strategy
