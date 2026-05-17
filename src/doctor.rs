@@ -1001,6 +1001,7 @@ const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 30;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
+const DOCTOR_WORKFLOW_SURFACE_MAX_PROBE_TIMEOUT_MS: u64 = 2_000;
 const DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS: u64 = 30_000;
 const DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS: u64 = 30_000;
 
@@ -7686,10 +7687,13 @@ fn run_workflow_surface_readiness(
         task_surface_host_readiness_probe_for_backend(contract, task, backend, surface_name)?;
     let timing = workflow_surface_readiness_timing_policy(contract, surface_name);
     let resolved_timeout = probe.default_timeout.unwrap_or(Duration::from_millis(200));
-    let resolved_timeout_ms = resolved_timeout.as_millis() as u64;
+    let effective_probe_timeout = resolved_timeout.min(Duration::from_millis(
+        DOCTOR_WORKFLOW_SURFACE_MAX_PROBE_TIMEOUT_MS,
+    ));
+    let effective_probe_timeout_ms = effective_probe_timeout.as_millis() as u64;
     let failed_retry_budget = capped_failed_retry_budget(timing.failed_retries, timing.interval);
     let timed_out_retry_budget =
-        capped_timed_out_retry_budget(timing.timed_out_retries, resolved_timeout_ms);
+        capped_timed_out_retry_budget(timing.timed_out_retries, effective_probe_timeout_ms);
     let spinner = CheckSpinner::start();
     let mut status = CheckStatus::Failed;
     let mut failed_attempts = 0u32;
@@ -7707,18 +7711,18 @@ fn run_workflow_surface_readiness(
                 probe.address.as_str(),
                 probe.port,
                 request,
-                Some(resolved_timeout),
+                Some(effective_probe_timeout),
             ),
             None => tcp_readiness_endpoint_status(
                 probe.address.as_str(),
                 probe.port,
-                Some(resolved_timeout),
+                Some(effective_probe_timeout),
             ),
         };
         status = match observed {
             HttpReadinessStatus::Passed => CheckStatus::Passed,
             HttpReadinessStatus::Failed => CheckStatus::Failed,
-            HttpReadinessStatus::TimedOut => CheckStatus::TimedOut(resolved_timeout_ms),
+            HttpReadinessStatus::TimedOut => CheckStatus::TimedOut(effective_probe_timeout_ms),
         };
         if status == CheckStatus::Passed {
             break;
@@ -7760,7 +7764,7 @@ fn run_workflow_surface_readiness(
         .to_string(),
         address: probe.address.clone(),
         port: probe.port,
-        timeout_ms: resolved_timeout_ms,
+        timeout_ms: effective_probe_timeout_ms,
     })
 }
 
