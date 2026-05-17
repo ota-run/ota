@@ -14423,6 +14423,21 @@ fn structured_error_text(
     stdout
 }
 
+fn structured_error_text_with_details(
+    command: &str,
+    where_value: &str,
+    summary: &str,
+    why_lines: &[String],
+    next_steps: &[String],
+    details: &[String],
+) -> String {
+    let mut stdout = structured_error_text(command, where_value, summary, why_lines, next_steps);
+    if !details.is_empty() {
+        append_error_detail_section(&mut stdout, "Details:", details, None);
+    }
+    stdout
+}
+
 fn structured_field_error_text(
     command: &str,
     where_value: &str,
@@ -21621,7 +21636,10 @@ pub fn clean(
                         Ok(section) => vec![section],
                         Err(error) => {
                             return finalize_debug(
-                                CommandOutput::failure(error),
+                                CommandOutput::failure(render_clean_failure_text(
+                                    &text_path_display,
+                                    &error,
+                                )),
                                 debug,
                                 debug_lines,
                             );
@@ -21744,7 +21762,13 @@ pub fn clean(
                             Ok(section) => sections.push(section),
                             Err(error) => {
                                 return finalize_debug(
-                                    CommandOutput::failure(error),
+                                    CommandOutput::failure(render_clean_failure_text(
+                                        &display_contract_target(
+                                            &compact_path_display,
+                                            Some(member.as_str()),
+                                        ),
+                                        &error,
+                                    )),
                                     debug,
                                     debug_lines,
                                 );
@@ -21759,12 +21783,9 @@ pub fn clean(
                         clean_execution_report(&target.contract, &target.contract_path),
                     ) {
                         Ok(text) => CommandOutput::success(text),
-                        Err(error) => CommandOutput::failure(command_message_failure_text(
-                            "CLEAN",
+                        Err(error) => CommandOutput::failure(render_clean_failure_text(
                             &text_path_display,
-                            "Cleanup failed",
                             &error,
-                            &[],
                         )),
                     }
                 }
@@ -21882,15 +21903,12 @@ pub fn clean(
                         Ok(section) => sections.push(section),
                         Err(error) => {
                             return finalize_debug(
-                                CommandOutput::failure(command_message_failure_text(
-                                    "CLEAN",
+                                CommandOutput::failure(render_clean_failure_text(
                                     &display_contract_target(
                                         &compact_path_display,
                                         Some(member.as_str()),
                                     ),
-                                    "Cleanup failed",
                                     &error,
-                                    &[],
                                 )),
                                 debug,
                                 debug_lines,
@@ -22043,6 +22061,155 @@ fn render_clean_text<E: ToString>(
             Ok(lines.join("\n"))
         }
         Err(error) => Err(error.to_string()),
+    }
+}
+
+fn render_clean_failure_text(path: &str, error: &str) -> String {
+    let compact_error = compact_backticked_paths(error);
+    if let Some(rendered) = render_clean_engine_unavailable_text(path, &compact_error) {
+        return rendered;
+    }
+    command_message_failure_text("CLEAN", path, "Cleanup failed", &compact_error, &[])
+}
+
+fn render_clean_engine_unavailable_text(path: &str, error: &str) -> Option<String> {
+    let parsed = parse_clean_engine_failure(error)?;
+    if !clean_engine_details_indicate_unavailable(parsed.details) {
+        return None;
+    }
+
+    let engine_label = display_container_engine_name(parsed.engine);
+    let why = match (parsed.state_kind.as_str(), parsed.state_name.as_deref()) {
+        ("persistent container", Some(state_name)) => format!(
+            "`ota clean` needs {engine_label} to remove persistent repo state for `{state_name}`, but {engine_label} is not reachable."
+        ),
+        ("dependency-isolation volume", Some(state_name)) => format!(
+            "`ota clean` needs {engine_label} to remove dependency-isolation repo state for `{state_name}`, but {engine_label} is not reachable."
+        ),
+        ("stale ota-managed containers", _) => format!(
+            "`ota clean` needs {engine_label} to inspect stale ota-managed container state, but {engine_label} is not reachable."
+        ),
+        _ => format!(
+            "`ota clean` needs {engine_label} to remove repo execution state, but {engine_label} is not reachable."
+        ),
+    };
+
+    let details = summarize_clean_engine_details(parsed.details);
+    Some(structured_error_text_with_details(
+        "CLEAN",
+        path,
+        "Container engine unavailable",
+        &[why],
+        &clean_engine_unavailable_next_steps(parsed.engine),
+        &[details],
+    ))
+}
+
+struct CleanEngineFailure<'a> {
+    engine: &'a str,
+    details: &'a str,
+    state_kind: String,
+    state_name: Option<&'a str>,
+}
+
+fn parse_clean_engine_failure(error: &str) -> Option<CleanEngineFailure<'_>> {
+    if let Some(remainder) = error.strip_prefix("task `clean` could not ") {
+        if let Some((action_and_container, details)) =
+            remainder.split_once(" using container engine `")
+        {
+            let (engine, details) = details.split_once("`: ")?;
+            if let Some((_, container)) = action_and_container.split_once(" persistent container `")
+            {
+                let container = container.strip_suffix('`')?;
+                return Some(CleanEngineFailure {
+                    engine,
+                    details,
+                    state_kind: String::from("persistent container"),
+                    state_name: Some(container),
+                });
+            }
+            if let Some((_, volume)) =
+                action_and_container.split_once(" dependency-isolation volume `")
+            {
+                let volume = volume.strip_suffix('`')?;
+                return Some(CleanEngineFailure {
+                    engine,
+                    details,
+                    state_kind: String::from("dependency-isolation volume"),
+                    state_name: Some(volume),
+                });
+            }
+        }
+    }
+
+    if let Some(remainder) = error.strip_prefix("container backend `") {
+        let (engine, details) = remainder.split_once("` could not list stale ota containers: ")?;
+        return Some(CleanEngineFailure {
+            engine,
+            details,
+            state_kind: String::from("stale ota-managed containers"),
+            state_name: None,
+        });
+    }
+
+    None
+}
+
+fn clean_engine_details_indicate_unavailable(details: &str) -> bool {
+    let lowered = details.to_ascii_lowercase();
+    lowered.contains("cannot connect to podman")
+        || lowered.contains("unable to connect to podman socket")
+        || lowered.contains("docker daemon is not running")
+        || lowered.contains("cannot connect to the docker daemon")
+        || lowered.contains("is the docker daemon running")
+        || lowered.contains("error while dialing")
+        || lowered.contains("connection refused")
+}
+
+fn summarize_clean_engine_details(details: &str) -> String {
+    details
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.strip_prefix("Error: ").unwrap_or(line).to_string())
+        .unwrap_or_else(|| details.trim().to_string())
+}
+
+fn clean_engine_unavailable_next_steps(engine: &str) -> Vec<String> {
+    match engine {
+        "podman" => vec![
+            String::from("start Podman and rerun `ota clean`"),
+            String::from("run `podman system connection list`"),
+            String::from("if needed, run `podman machine init` and `podman machine start`"),
+        ],
+        "docker" => vec![
+            String::from("start Docker and rerun `ota clean`"),
+            String::from("run `docker info`"),
+            String::from("if needed, start Docker Desktop or the Docker daemon"),
+        ],
+        _ => vec![
+            format!("start `{engine}` and rerun `ota clean`"),
+            format!("verify `{engine}` is reachable from this shell"),
+        ],
+    }
+}
+
+fn display_container_engine_name(engine: &str) -> String {
+    match engine {
+        "podman" => String::from("Podman"),
+        "docker" => String::from("Docker"),
+        _ => {
+            let mut chars = engine.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut out = first.to_uppercase().collect::<String>();
+                    out.push_str(chars.as_str());
+                    out
+                }
+                None => String::from("Container engine"),
+            }
+        }
     }
 }
 
