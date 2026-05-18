@@ -483,6 +483,15 @@ enum Commands {
         /// Stream raw live service-start and setup output in text mode.
         #[arg(long, action = ArgAction::SetTrue)]
         stream: bool,
+        /// Keep up attached to the workflow run task process.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "detach")]
+        attach: bool,
+        /// Detach after readiness confirms instead of waiting for run task exit.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["stream", "attach"])]
+        detach: bool,
+        /// Override readiness wait budget for detached up behavior.
+        #[arg(long, value_name = "DURATION")]
+        ready_timeout: Option<String>,
         /// Override the execution mode for this invocation.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
@@ -4781,6 +4790,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             json,
             dry_run,
             stream,
+            attach,
+            detach,
+            ready_timeout,
             backend,
             native,
             container,
@@ -4809,6 +4821,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             dry_run,
             stream,
             receipt,
+            attach,
+            detach,
+            ready_timeout.as_deref(),
         ),
         Commands::Clean {
             stale,
@@ -15998,6 +16013,9 @@ tasks:
             json: false,
             dry_run: false,
             stream: false,
+            attach: false,
+            detach: false,
+            ready_timeout: None,
             backend: None,
             native: false,
             container: false,
@@ -16018,6 +16036,9 @@ tasks:
             json: false,
             dry_run: false,
             stream: true,
+            attach: false,
+            detach: false,
+            ready_timeout: None,
             backend: None,
             native: false,
             container: false,
@@ -16066,6 +16087,9 @@ tasks:
                 json: false,
                 dry_run: false,
                 stream: false,
+                attach: false,
+                detach: false,
+                ready_timeout: None,
                 backend: None,
                 native: false,
                 container: false,
@@ -16092,6 +16116,9 @@ tasks:
                 json: false,
                 dry_run: false,
                 stream: false,
+                attach: false,
+                detach: false,
+                ready_timeout: None,
                 backend: None,
                 native: false,
                 container: false,
@@ -16519,6 +16546,9 @@ tasks:
                     json: true,
                     dry_run: false,
                     stream: false,
+                    attach: false,
+                    detach: false,
+                    ready_timeout: None,
                     backend: None,
                     native: false,
                     container: false,
@@ -28304,6 +28334,25 @@ project:
         assert_eq!(
             strip_ansi(output.stderr.as_deref().unwrap()),
             "`--stream` is only supported for mutating `ota up`"
+        );
+    }
+
+    #[test]
+    fn up_rejects_invalid_ready_timeout_value() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--ready-timeout", "soon", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            strip_ansi(output.stderr.as_deref().unwrap()),
+            "`--ready-timeout soon` is invalid; expected values like `90s`, `5m`, or `1h`"
         );
     }
 
