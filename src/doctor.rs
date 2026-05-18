@@ -63,8 +63,8 @@ use crate::runner::{
     parse_http_probe_url, resolve_context_execution_backend, resolve_declared_env_source_value,
     resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
     resolve_task_target_binding_url_with_contract_path, run_backend_argv_command_captured,
-    run_backend_command_captured,
-    task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
+    run_backend_command_captured, task_runtime_host_readiness_probe_for_backend,
+    task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
