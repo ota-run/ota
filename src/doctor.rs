@@ -77,7 +77,7 @@ use crate::toolchains::{
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
     requirement_surface_with_toolchain_owned_tools_for_required_tools,
     shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_repo_signals,
-    unsupported_toolchain_opportunity_context,
+    unsupported_toolchain_opportunity_context, unsupported_toolchain_opportunity_ecosystems,
 };
 use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
 use crate::workspace::load_contract_for_workspace_repo_ref;
@@ -6076,12 +6076,16 @@ fn diagnose_unsupported_toolchain_opportunities(
     findings: &mut Vec<Finding>,
 ) {
     let contract_root = contract_working_dir(contract_path);
-    for ecosystem in ["python"] {
-        if contract.toolchains.contains_key(ecosystem) {
+    for ecosystem in unsupported_toolchain_opportunity_ecosystems() {
+        if contract.toolchains.contains_key(*ecosystem) {
             continue;
         }
         if let Some(finding) =
-            unsupported_toolchain_opportunity_finding(ecosystem, contract_root, requirement_surface)
+            unsupported_toolchain_opportunity_finding(
+                ecosystem,
+                contract_root,
+                requirement_surface,
+            )
         {
             findings.push(finding);
         }

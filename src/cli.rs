@@ -486,10 +486,10 @@ enum Commands {
         /// Keep up attached to the workflow run task process.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "detach")]
         attach: bool,
-        /// Detach after readiness confirms instead of waiting for run task exit.
+        /// Keep the proved workflow run task running after readiness confirms.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["stream", "attach"])]
         detach: bool,
-        /// Override readiness wait budget for detached up behavior.
+        /// Override readiness wait budget for service-runtime proof behavior.
         #[arg(long, value_name = "DURATION")]
         ready_timeout: Option<String>,
         /// Override the execution mode for this invocation.
@@ -20516,6 +20516,51 @@ tasks:
     }
 
     #[test]
+    fn doctor_json_reports_stable_toolchain_opportunity_object_shape() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: python-managed-fallback
+runtimes:
+  python: "3.12"
+tools:
+  uv: "*"
+tasks:
+  test:
+    run: uv run pytest
+"#,
+        );
+        fixture.write(
+            "pyproject.toml",
+            "[project]\nname = \"python-managed-fallback\"\n",
+        );
+        fixture.write("uv.lock", "version = 1\n");
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).expect("valid doctor json");
+        let finding = json["findings"]
+            .as_array()
+            .expect("findings array")
+            .iter()
+            .find(|finding| finding["code"] == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED")
+            .expect("toolchain opportunity finding should be present");
+
+        assert_eq!(finding["provenance_key"], "repo_signals");
+        assert_eq!(
+            finding["toolchain_opportunity"],
+            json!({
+                "ecosystem": "python",
+                "fallback_runtime": "python",
+                "fallback_tools": ["uv"],
+                "candidate_providers": ["uv", "mise"],
+                "shipped": false,
+                "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
+            })
+        );
+    }
+
+    #[test]
     fn doctor_text_includes_agent_summary() {
         let fixture = ContractFixture::new(
             r#"
@@ -28353,6 +28398,27 @@ project:
         assert_eq!(
             strip_ansi(output.stderr.as_deref().unwrap()),
             "`--ready-timeout soon` is invalid; expected values like `90s`, `5m`, or `1h`"
+        );
+    }
+
+    #[test]
+    fn up_help_describes_detach_as_keep_running_behavior() {
+        let output = run_with(["ota", "up", "--help"]);
+
+        assert_eq!(output.exit_code, 0);
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.unwrap_or_default()
+        ));
+        assert!(rendered.contains("--attach"));
+        assert!(rendered.contains("--detach"));
+        assert!(rendered.contains("--ready-timeout <DURATION>"));
+        assert!(
+            rendered.contains("Keep the proved workflow run task running after readiness confirms")
+        );
+        assert!(
+            rendered.contains("Override readiness wait budget for service-runtime proof behavior")
         );
     }
 

@@ -55,6 +55,7 @@ pub(crate) const PYTHON_TOOLCHAIN_OPPORTUNITY_CONTEXT: ToolchainOpportunityConte
         candidate_providers: &["uv", "mise"],
         agent_note: "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary.",
     };
+const UNSUPPORTED_TOOLCHAIN_OPPORTUNITY_ECOSYSTEMS: &[&str] = &[PYTHON_TOOLCHAIN_NAME];
 pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
     toolchain_name: RUSTUP_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Rustup,
@@ -1363,6 +1364,10 @@ pub(crate) fn unsupported_toolchain_opportunity_context(
     }
 }
 
+pub(crate) fn unsupported_toolchain_opportunity_ecosystems() -> &'static [&'static str] {
+    UNSUPPORTED_TOOLCHAIN_OPPORTUNITY_ECOSYSTEMS
+}
+
 pub(crate) fn toolchain_repo_signals(contract_root: &Path, ecosystem: &str) -> Vec<&'static str> {
     match ecosystem {
         JAVA_TOOLCHAIN_NAME => {
@@ -1442,6 +1447,17 @@ mod tests {
 
     fn contract(yaml: &str) -> Contract {
         parse_contract_str(Path::new("./ota.yaml"), yaml).unwrap()
+    }
+
+    #[test]
+    fn unsupported_toolchain_opportunity_ecosystems_match_declared_contexts() {
+        let ecosystems = unsupported_toolchain_opportunity_ecosystems();
+        assert!(ecosystems.contains(&PYTHON_TOOLCHAIN_NAME));
+        for ecosystem in ecosystems {
+            let context = unsupported_toolchain_opportunity_context(ecosystem)
+                .expect("unsupported ecosystem should resolve a context");
+            assert_eq!(context.ecosystem, *ecosystem);
+        }
     }
 
     #[test]

@@ -161,7 +161,7 @@ use crate::toolchains::{
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
     requirement_surface_with_toolchain_owned_tools_for_required_tools,
     toolchain_fulfillment_status_detail, toolchain_repo_signals,
-    unsupported_toolchain_opportunity_context,
+    unsupported_toolchain_opportunity_context, unsupported_toolchain_opportunity_ecosystems,
 };
 use crate::update;
 use crate::validator::{
@@ -28287,8 +28287,9 @@ struct DetectedToolchainOpportunity {
 }
 
 fn detect_toolchain_opportunities(report: &DetectReport) -> Vec<DetectedToolchainOpportunity> {
-    ["python"]
-        .into_iter()
+    unsupported_toolchain_opportunity_ecosystems()
+        .iter()
+        .copied()
         .filter_map(|ecosystem| {
             let context = unsupported_toolchain_opportunity_context(ecosystem)?;
             if !report.contract.runtimes.contains_key(context.fallback_runtime) {
@@ -40285,6 +40286,12 @@ env:
             json["toolchain_opportunities"][0]["candidate_providers"][1],
             serde_json::Value::String(String::from("mise"))
         );
+        assert!(
+            json["toolchain_opportunities"][0]["agent_note"]
+                .as_str()
+                .expect("agent note")
+                .contains("toolchains.python")
+        );
     }
 
     #[test]
@@ -40361,6 +40368,39 @@ env:
             "{stdout}"
         );
         assert!(!stdout.contains("mise"), "{stdout}");
+    }
+
+    #[test]
+    fn init_preview_json_includes_toolchain_opportunity_agent_note() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("pyproject.toml"),
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12'\n",
+        )
+        .expect("write pyproject");
+        fs::write(repo.path().join("uv.lock"), "version = 1\n").expect("write uv.lock");
+        fs::write(repo.path().join(".python-version"), "3.12\n").expect("write .python-version");
+
+        let output = super::init(
+            Some(repo.path()),
+            false,
+            false,
+            None,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse init json");
+        assert_eq!(json["toolchain_opportunities"][0]["ecosystem"], "python");
+        assert!(
+            json["toolchain_opportunities"][0]["agent_note"]
+                .as_str()
+                .expect("agent note")
+                .contains("toolchains.python")
+        );
     }
 
     #[test]
@@ -49843,7 +49883,7 @@ workflows:
             super::RepoExecutionMode::Capture,
             super::UpRunBehaviorPreference::Auto,
         );
-        assert_eq!(behavior, super::UpRunBehavior::Detach);
+        assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
     }
 
     #[test]
@@ -49882,7 +49922,7 @@ workflows:
             super::RepoExecutionMode::Stream,
             super::UpRunBehaviorPreference::Auto,
         );
-        assert_eq!(behavior, super::UpRunBehavior::Detach);
+        assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
     }
 
     #[test]
@@ -49926,7 +49966,7 @@ workflows:
             super::RepoExecutionMode::Stream,
             super::UpRunBehaviorPreference::Auto,
         );
-        assert_eq!(behavior, super::UpRunBehavior::Detach);
+        assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
     }
 
     #[test]
@@ -49970,7 +50010,7 @@ workflows:
             super::RepoExecutionMode::Capture,
             super::UpRunBehaviorPreference::Auto,
         );
-        assert_eq!(behavior, super::UpRunBehavior::Detach);
+        assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
     }
 
     #[test]
@@ -50005,6 +50045,421 @@ workflows:
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::Attach);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_detach_preference_keeps_service_running() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            super::RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Detach,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::DetachedLeaveRunning);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_attach_preference_keeps_service_attached() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            super::RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Attach,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::Attach);
+    }
+
+    #[test]
+    fn up_task_execution_overrides_force_ephemeral_for_default_service_proof() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            lifecycle: Some(Lifecycle::Persistent),
+            host_port: None,
+            memory: None,
+            skip_deps: false,
+        };
+        let effective = super::up_task_execution_overrides(
+            &contract,
+            None,
+            overrides,
+            super::UpRunBehavior::DetachedProofTeardown,
+        );
+        assert_eq!(effective.lifecycle, Some(Lifecycle::Ephemeral));
+    }
+
+    #[test]
+    fn up_task_execution_overrides_keep_persistent_for_detach_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            lifecycle: Some(Lifecycle::Persistent),
+            host_port: None,
+            memory: None,
+            skip_deps: false,
+        };
+        let effective = super::up_task_execution_overrides(
+            &contract,
+            None,
+            overrides,
+            super::UpRunBehavior::DetachedLeaveRunning,
+        );
+        assert_eq!(effective.lifecycle, Some(Lifecycle::Persistent));
+    }
+
+    #[test]
+    fn up_task_execution_overrides_does_not_force_ephemeral_for_attach_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Container),
+            lifecycle: Some(Lifecycle::Persistent),
+            host_port: None,
+            memory: None,
+            skip_deps: false,
+        };
+        let effective = super::up_task_execution_overrides(
+            &contract,
+            None,
+            overrides,
+            super::UpRunBehavior::Attach,
+        );
+        assert_eq!(effective.lifecycle, Some(Lifecycle::Persistent));
+    }
+
+    #[test]
+    fn up_success_execution_context_uses_run_task_context_for_detach_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+    development:ctx:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: development:ctx
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: docs
+  docs:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let context = super::up_success_execution_context(
+            &contract,
+            Path::new("/tmp/ota-site/ota.yaml"),
+            Some("docs"),
+            super::UpRunBehavior::DetachedLeaveRunning,
+            Some("dev"),
+            ExecutionOverrides::default(),
+            DoctorMode::Container,
+            ExecutionOverrides::default(),
+            &DoctorReport {
+                ok: true,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: Some(String::from("ota-ephemeral-proof")),
+                findings: Vec::new(),
+            },
+        );
+
+        assert_eq!(context.backend.as_deref(), Some("container"));
+        assert_eq!(context.context.as_deref(), Some("development:ctx"));
+        assert_eq!(context.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(context.image.as_deref(), Some("node:24-bookworm"));
+    }
+
+    #[test]
+    fn up_success_execution_context_uses_native_run_context_for_detach_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+    development:ctx:
+      backend: native
+tasks:
+  dev:
+    context: development:ctx
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: docs
+  docs:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let context = super::up_success_execution_context(
+            &contract,
+            Path::new("/tmp/ota-site/ota.yaml"),
+            Some("docs"),
+            super::UpRunBehavior::DetachedLeaveRunning,
+            Some("dev"),
+            ExecutionOverrides::default(),
+            DoctorMode::Container,
+            ExecutionOverrides::default(),
+            &DoctorReport {
+                ok: true,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: Some(String::from("ota-ephemeral-proof")),
+                findings: Vec::new(),
+            },
+        );
+
+        assert_eq!(context.backend.as_deref(), Some("native"));
+        assert_eq!(context.context.as_deref(), Some("development:ctx"));
+    }
+
+    #[test]
+    fn up_success_execution_context_keeps_doctor_context_for_default_proof_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+execution:
+  default_context: verify:ctx
+  contexts:
+    verify:ctx:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+    development:ctx:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+tasks:
+  dev:
+    context: development:ctx
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: docs
+  docs:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let context = super::up_success_execution_context(
+            &contract,
+            Path::new("/tmp/ota-site/ota.yaml"),
+            Some("docs"),
+            super::UpRunBehavior::DetachedProofTeardown,
+            Some("dev"),
+            ExecutionOverrides::default(),
+            DoctorMode::Container,
+            ExecutionOverrides::default(),
+            &DoctorReport {
+                ok: true,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: Some(String::from("ota-ephemeral-proof")),
+                findings: Vec::new(),
+            },
+        );
+
+        assert_eq!(context.backend.as_deref(), Some("container"));
+        assert_eq!(context.context.as_deref(), Some("verify:ctx"));
+        assert_eq!(context.lifecycle.as_deref(), Some("ephemeral"));
+        assert_eq!(context.image.as_deref(), Some("node:24-bookworm"));
     }
 
     fn run_output_regression_service_contract() -> crate::schema::Contract {
@@ -62362,6 +62817,7 @@ fn spawn_up_detached_run_process(
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
     run_log_artifact_path: &Path,
+    keep_stdin_open: bool,
 ) -> Result<std::process::Child, String> {
     let exe = env::current_exe().map_err(|error| {
         format!("could not resolve the current ota executable for detached up run: {error}")
@@ -62381,6 +62837,12 @@ fn spawn_up_detached_run_process(
         .arg(task_name)
         .arg("--stream")
         .arg("--skip-deps");
+
+    #[cfg(unix)]
+    if keep_stdin_open {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
 
     if let Some(backend) = overrides.backend {
         command.arg("--mode").arg(match backend {
@@ -62405,9 +62867,13 @@ fn spawn_up_detached_run_process(
         command.envs(policy_env.iter());
     }
 
+    command.arg(".");
+    if keep_stdin_open {
+        command.stdin(Stdio::inherit());
+    } else {
+        command.stdin(Stdio::null());
+    }
     command
-        .arg(".")
-        .stdin(Stdio::null())
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
 
@@ -65205,7 +65671,8 @@ enum UpRunBehaviorPreference {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpRunBehavior {
     Attach,
-    Detach,
+    DetachedProofTeardown,
+    DetachedLeaveRunning,
 }
 
 struct CommandRunResult {
@@ -68310,15 +68777,66 @@ fn resolve_up_run_behavior(
 ) -> UpRunBehavior {
     match preference {
         UpRunBehaviorPreference::Attach => UpRunBehavior::Attach,
-        UpRunBehaviorPreference::Detach => UpRunBehavior::Detach,
+        UpRunBehaviorPreference::Detach => UpRunBehavior::DetachedLeaveRunning,
         UpRunBehaviorPreference::Auto => {
             if selected_up_run_task_is_service(contract, workflow_name) {
-                UpRunBehavior::Detach
+                UpRunBehavior::DetachedProofTeardown
             } else {
                 UpRunBehavior::Attach
             }
         }
     }
+}
+
+fn up_task_execution_overrides(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+    run_behavior: UpRunBehavior,
+) -> ExecutionOverrides {
+    if matches!(run_behavior, UpRunBehavior::DetachedProofTeardown)
+        && selected_up_run_task_is_service(contract, workflow_name)
+    {
+        ExecutionOverrides {
+            lifecycle: Some(Lifecycle::Ephemeral),
+            ..overrides
+        }
+    } else {
+        overrides
+    }
+}
+
+fn up_success_execution_context(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    run_behavior: UpRunBehavior,
+    activation_task: Option<&str>,
+    task_execution_overrides: ExecutionOverrides,
+    doctor_mode: DoctorMode,
+    overrides: ExecutionOverrides,
+    report: &DoctorReport,
+) -> PhaseExecutionContext {
+    if matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning)
+        && selected_up_run_task_is_service(contract, workflow_name)
+        && let Some(task_name) = activation_task
+    {
+        return task_phase_execution_context(
+            contract,
+            resolved_path,
+            task_name,
+            task_execution_overrides,
+            None,
+        );
+    }
+
+    doctor_report_execution_context(
+        contract,
+        resolved_path,
+        doctor_mode,
+        overrides.lifecycle,
+        report,
+    )
 }
 
 fn run_up_task_detached_until_ready(
@@ -68329,6 +68847,7 @@ fn run_up_task_detached_until_ready(
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
     ready_timeout: Option<Duration>,
+    keep_running: bool,
 ) -> Result<CommandRunResult, String> {
     let repo_root = contract_working_dir(resolved_path);
     let artifact_dir = proof_runtime_artifact_dir(repo_root, None, workflow_name);
@@ -68347,7 +68866,9 @@ fn run_up_task_detached_until_ready(
         overrides,
         policy_env,
         &run_log_artifact_path,
+        keep_running,
     )?;
+    let proof_owner_pid = run_process.id();
     let (proof_report, _, proof_ok, run_process_failure) = wait_for_proof_runtime_readiness(
         contract,
         resolved_path,
@@ -68359,6 +68880,18 @@ fn run_up_task_detached_until_ready(
     )?;
 
     if proof_ok {
+        if !keep_running {
+            stop_proof_runtime_up_process(&mut run_process).map_err(|error| {
+                format!(
+                    "readiness proved, but ota could not stop the proof run process: {error}\ninspect `{run_log_artifact}` for detached run task logs"
+                )
+            })?;
+            cleanup_proof_owned_containers(proof_owner_pid).map_err(|error| {
+                format!(
+                    "readiness proved, but ota could not clean proof-owned runtime containers: {error}\ninspect `{run_log_artifact}` for detached run task logs"
+                )
+            })?;
+        }
         return Ok(CommandRunResult {
             exit_code: 0,
             stdout: String::new(),
@@ -68370,6 +68903,9 @@ fn run_up_task_detached_until_ready(
     }
 
     let _ = stop_proof_runtime_up_process(&mut run_process);
+    if !keep_running {
+        let _ = cleanup_proof_owned_containers(proof_owner_pid);
+    }
     let summary = doctor_summary(
         &proof_report,
         crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
@@ -68389,6 +68925,63 @@ fn run_up_task_detached_until_ready(
         runtime: None,
         service_termination: None,
     })
+}
+
+fn cleanup_proof_owned_containers(owner_pid: u32) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for engine in crate::execution::available_container_engines() {
+        let owner_filter = format!("label=dev.ota.owner_pid={owner_pid}");
+        let list_output = match Command::new(&engine)
+            .args(["ps", "-aq", "--filter", "label=dev.ota.managed=true"])
+            .arg("--filter")
+            .arg(owner_filter)
+            .output()
+        {
+            Ok(output) => output,
+            Err(_) => continue,
+        };
+        if !list_output.status.success() {
+            continue;
+        }
+        let container_ids = String::from_utf8_lossy(&list_output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(String::from)
+            .collect::<Vec<_>>();
+        if container_ids.is_empty() {
+            continue;
+        }
+        let remove_output = match Command::new(&engine)
+            .arg("rm")
+            .arg("-f")
+            .args(container_ids.iter())
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                failures.push(format!(
+                    "failed to clean proof-owned containers with `{engine} rm -f`: {error}"
+                ));
+                continue;
+            }
+        };
+        if !remove_output.status.success() {
+            let stderr = String::from_utf8_lossy(&remove_output.stderr)
+                .trim()
+                .to_string();
+            failures.push(if stderr.is_empty() {
+                format!("`{engine} rm -f` failed while removing proof-owned containers")
+            } else {
+                format!("`{engine} rm -f` failed while removing proof-owned containers: {stderr}")
+            });
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 fn contract_adjusted_for_up_setup_phase(
@@ -68931,6 +69524,8 @@ fn execute_repo_up_with_behavior(
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
     let run_behavior =
         resolve_up_run_behavior(contract, workflow_name, mode, run_behavior_preference);
+    let task_execution_overrides =
+        up_task_execution_overrides(contract, workflow_name, overrides, run_behavior);
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
     let provisioning_output_mode = match mode {
@@ -69765,7 +70360,7 @@ fn execute_repo_up_with_behavior(
             setup_contract_ref,
             resolved_path,
             setup_task_name,
-            overrides,
+            task_execution_overrides,
             policy_env,
             mode,
         ) {
@@ -69784,7 +70379,7 @@ fn execute_repo_up_with_behavior(
                             contract,
                             resolved_path,
                             setup_task_name,
-                            overrides,
+                            task_execution_overrides,
                             outcome.target.clone(),
                         ),
                         "SETUP FAILED",
@@ -69867,7 +70462,7 @@ fn execute_repo_up_with_behavior(
                     contract,
                     resolved_path,
                     workflow_name,
-                    overrides,
+                    task_execution_overrides,
                     setup_task_name,
                     setup_task_command.clone(),
                     stdout.clone(),
@@ -69900,17 +70495,30 @@ fn execute_repo_up_with_behavior(
             .tasks
             .get(run_task_name)
             .and_then(task_command_preview);
-        let run_result = if run_behavior == UpRunBehavior::Detach
-            && selected_up_run_task_is_service(contract, workflow_name)
+        let run_result = if selected_up_run_task_is_service(contract, workflow_name)
+            && matches!(
+                run_behavior,
+                UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
+            )
         {
+            let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
+            let proof_overrides = if keep_running {
+                overrides
+            } else {
+                ExecutionOverrides {
+                    lifecycle: Some(Lifecycle::Ephemeral),
+                    ..overrides
+                }
+            };
             run_up_task_detached_until_ready(
                 contract,
                 resolved_path,
                 workflow_name,
                 run_task_name,
-                overrides,
+                proof_overrides,
                 policy_env,
                 ready_timeout,
+                keep_running,
             )
             .map_err(|error| RunError::SpawnFailed {
                 task: run_task_name.to_string(),
@@ -69921,7 +70529,7 @@ fn execute_repo_up_with_behavior(
                 contract,
                 resolved_path,
                 run_task_name,
-                overrides,
+                task_execution_overrides,
                 policy_env,
                 mode,
             )
@@ -69938,7 +70546,7 @@ fn execute_repo_up_with_behavior(
                         contract,
                         resolved_path,
                         run_task_name,
-                        overrides,
+                        task_execution_overrides,
                         outcome.target.clone(),
                     ),
                     "RUN FAILED",
@@ -69982,7 +70590,7 @@ fn execute_repo_up_with_behavior(
                     contract,
                     resolved_path,
                     workflow_name,
-                    overrides,
+                    task_execution_overrides,
                     run_task_name,
                     run_task_command.clone(),
                     stdout.clone(),
@@ -70050,11 +70658,15 @@ fn execute_repo_up_with_behavior(
     let mut receipt = repo_execution_receipt(
         resolved_path,
         contract,
-        doctor_report_execution_context(
+        up_success_execution_context(
             contract,
             resolved_path,
+            workflow_name,
+            run_behavior,
+            activation_task,
+            task_execution_overrides,
             doctor_mode,
-            overrides.lifecycle,
+            overrides,
             &report,
         ),
         if report.ok { "READY" } else { "NOT READY" },
