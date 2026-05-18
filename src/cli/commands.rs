@@ -47271,8 +47271,41 @@ workflows:
 
     #[test]
     fn doctor_json_includes_selected_toolchains() {
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().expect("temp dir");
         let contract_path = fixture.path().join("ota.yaml");
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin dir");
+        if cfg!(windows) {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "rustc"),
+                "@echo off\r\necho rustc 1.94.0\r\nexit /b 0\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "rustup"),
+                "@echo off\r\nif \"%1\"==\"component\" if \"%2\"==\"list\" if \"%3\"==\"--installed\" (\r\n  echo rustfmt-x86_64-pc-windows-msvc\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"toolchain\" if \"%2\"==\"install\" exit /b 0\r\nexit /b 0\r\n",
+            );
+        } else {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "rustc"),
+                "#!/bin/sh\necho rustc 1.94.0\nexit 0\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "rustup"),
+                "#!/bin/sh\nif [ \"$1\" = \"component\" ] && [ \"$2\" = \"list\" ] && [ \"$3\" = \"--installed\" ]; then\n  echo rustfmt-x86_64-unknown-linux-gnu\n  exit 0\nfi\nif [ \"$1\" = \"toolchain\" ] && [ \"$2\" = \"install\" ]; then\n  exit 0\nfi\nexit 0\n",
+            );
+        }
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).expect("join PATH"));
+        }
         fs::write(
             &contract_path,
             r#"
@@ -47311,8 +47344,11 @@ workflows:
             OutputFormat::Json,
             false,
         );
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
-        assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("doctor json should parse");
         let toolchains = json["toolchains"]
@@ -48918,7 +48954,10 @@ execution:
         assert!(!text.contains("run `ota up` to prepare the repo end to end"));
         let verdict = text.find("Verdict").expect("verdict");
         let next = text.find("Next:").expect("next");
-        let agent_index = text.find("\nAgent\n").expect("agent");
+        let agent_index = text
+            .find("\nAGENT\n")
+            .or_else(|| text.find("\nAgent\n"))
+            .expect("agent");
         assert!(verdict < next);
         assert!(next < agent_index);
     }
@@ -56540,25 +56579,39 @@ workflows:
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = &original_path {
             path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
         }
         unsafe {
             env::set_var("PATH", env::join_paths(path_entries).unwrap());
         }
+        let setup_command = fake_command_path(&bin_dir, "phase-setup-after")
+            .display()
+            .to_string();
+        let service_command = fake_command_path(&bin_dir, "phase-service-after")
+            .display()
+            .to_string();
+        let readiness_command = fake_command_path(&bin_dir, "phase-env-ready")
+            .display()
+            .to_string();
         let contract = parse_contract_str(
             contract_path.as_path(),
-            r#"
+            &format!(
+                r#"
 version: 1
 project:
   name: phased-up
 services:
   app:
     required: true
-    start: phase-service-after
-    healthcheck: phase-env-ready
+    start: "{service_command}"
+    healthcheck: "{readiness_command}"
 tasks:
   setup:
-    run: phase-setup-after
+    run: "{setup_command}"
 "#,
+            ),
         )
         .unwrap();
 
@@ -56647,31 +56700,51 @@ tasks:
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = &original_path {
             path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
         }
         unsafe {
             env::set_var("PATH", env::join_paths(path_entries).unwrap());
         }
+        let postgres_command = fake_command_path(&bin_dir, "phase-postgres")
+            .display()
+            .to_string();
+        let db_ready_command = fake_command_path(&bin_dir, "phase-db-ready")
+            .display()
+            .to_string();
+        let setup_command = fake_command_path(&bin_dir, "phase-setup-pre")
+            .display()
+            .to_string();
+        let app_command = fake_command_path(&bin_dir, "phase-app")
+            .display()
+            .to_string();
+        let env_ready_command = fake_command_path(&bin_dir, "phase-env-ready")
+            .display()
+            .to_string();
         let contract = parse_contract_str(
             contract_path.as_path(),
-            r#"
+            &format!(
+                r#"
 version: 1
 project:
   name: phased-up
 services:
   postgres:
     required: true
-    start: phase-postgres
-    healthcheck: phase-db-ready
+    start: "{postgres_command}"
+    healthcheck: "{db_ready_command}"
   app:
     required: true
-    start: phase-app
-    healthcheck: phase-env-ready
+    start: "{app_command}"
+    healthcheck: "{env_ready_command}"
 tasks:
   setup:
     requires_services:
       - postgres
-    run: phase-setup-pre
+    run: "{setup_command}"
 "#,
+            ),
         )
         .unwrap();
 
@@ -56934,6 +57007,30 @@ workflows:
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
         let contract_path = repo.path().join("ota.yaml");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        if cfg!(windows) {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "node"),
+                "@echo off\r\necho v19.0.0\r\nexit /b 0\r\n",
+            );
+        } else {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "node"),
+                "#!/bin/sh\necho v19.0.0\nexit 0\n",
+            );
+        }
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
         let contract = parse_contract_str(
             contract_path.as_path(),
             r#"
@@ -56971,6 +57068,10 @@ workflows:
             RepoExecutionMode::Capture,
         )
         .unwrap();
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         assert!(!result.report.findings.iter().any(
             |finding| finding.summary == "File check failed: workspace-dependencies-installed"

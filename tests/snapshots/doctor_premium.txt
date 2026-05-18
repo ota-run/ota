@@ -16,13 +16,19 @@ Execution
  »  Mode: `native`
  »  Lifecycle: `ephemeral`
 
-Agent
+AGENT
+
+Overview
  »  Entrypoint: `ci`
  »  Default task: `ci`
- »  Safe tasks: `ci`
- »  Verify after changes: `ci`
- »  Writable paths: `src`, `docs`
- »  Protected paths: `ota.yaml`, `Cargo.lock`
+
+Execution
+Safe tasks (1): `ci`
+Verify after changes (1): `ci`
+
+Boundary
+Writable paths (2): `src/`, `docs/`
+Protected paths (2): `ota.yaml`, `Cargo.lock`
 
 ◉ WARN  Ephemeral lifecycle is advisory in native mode (1)
 Why: `execution.lifecycle: ephemeral` is advisory in native mode only. Native execution

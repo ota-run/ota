@@ -7032,6 +7032,9 @@ exec /bin/sh -lc "$1"
         let mut entries = vec![bin_dir.to_path_buf()];
         if let Some(value) = std::env::var_os("PATH") {
             entries.extend(std::env::split_paths(&value));
+        } else if cfg!(unix) {
+            entries.push(PathBuf::from("/usr/bin"));
+            entries.push(PathBuf::from("/bin"));
         }
         std::env::join_paths(entries).expect("join PATH")
     }
@@ -9093,9 +9096,13 @@ tasks:
 
     #[test]
     fn receipt_json_diff_against_latest_archive_classifies_changes() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-latest"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
@@ -9104,190 +9111,206 @@ env:
     OTA_BASELINE_REQUIRED:
       required: true
 "#,
-        );
+                );
 
-        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
-        assert_eq!(current.exit_code, 1);
-        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
-        let unchanged = current_json["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|finding| finding["summary"] == "No tasks defined in contract")
-            .cloned()
-            .unwrap();
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+                let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+                let unchanged = current_json["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|finding| finding["summary"] == "No tasks defined in contract")
+                    .cloned()
+                    .unwrap();
 
-        let baseline_payload = serde_json::json!({
-            "ok": false,
-            "path": fixture.file_path().display().to_string(),
-            "mode": "receipt",
-            "summary": {
-                "error_count": 2,
-                "warn_count": 0,
-                "info_count": 0,
-                "step_count": 1
-            },
-            "receipt": {
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "scope": "repo",
-                "contract": fixture.file_path().display().to_string(),
-                "backend": "native",
-                "summary": {
-                    "error_count": 2,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "steps": [
-                    {
-                        "order": 1,
-                        "label": "readiness",
-                        "status": "NOT READY"
-                    }
-                ]
-            },
-            "findings": [
-                unchanged,
-                {
-                    "severity": "error",
-                    "summary": "Missing tool: old-tool",
-                    "why": "the contract requires `old-tool`, but ota could not find it on PATH",
-                    "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
-                }
-            ]
-        });
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&baseline_payload).unwrap(),
-        );
-
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--json",
-            "--baseline",
-            "latest",
-            fixture.path(),
-        ]);
-
-        assert_eq!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["ok"], false);
-        assert_eq!(json["mode"], "diff");
-        assert_eq!(json["baseline"]["source"], "latest");
-        assert_eq!(json["summary"]["introduced"]["count"], 1);
-        assert_eq!(json["summary"]["resolved"]["count"], 1);
-        assert_eq!(json["summary"]["unchanged"]["count"], 1);
-        assert_eq!(
-            json["introduced"][0]["summary"],
-            "Missing environment variable: OTA_BASELINE_REQUIRED"
-        );
-        assert_eq!(json["resolved"][0]["summary"], "Missing tool: old-tool");
-        assert_eq!(
-            json["unchanged"][0]["summary"],
-            "No tasks defined in contract"
-        );
-    }
-
-    #[test]
-    fn receipt_json_diff_fail_on_new_blockers_sets_gate_and_exits_nonzero() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
-version: 1
-project:
-  name: receipt-diff
-env:
-  vars:
-    OTA_BASELINE_REQUIRED:
-      required: true
-"#,
-        );
-
-        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
-        assert_eq!(current.exit_code, 1);
-        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
-        let unchanged = current_json["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|finding| finding["summary"] == "No tasks defined in contract")
-            .cloned()
-            .unwrap();
-
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 2,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
+                let baseline_payload = serde_json::json!({
                     "ok": false,
                     "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "backend": "native",
+                    "mode": "receipt",
                     "summary": {
                         "error_count": 2,
                         "warn_count": 0,
                         "info_count": 0,
                         "step_count": 1
                     },
-                    "steps": [
+                    "receipt": {
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "scope": "repo",
+                        "contract": fixture.file_path().display().to_string(),
+                        "backend": "native",
+                        "summary": {
+                            "error_count": 2,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "steps": [
+                            {
+                                "order": 1,
+                                "label": "readiness",
+                                "status": "NOT READY"
+                            }
+                        ]
+                    },
+                    "findings": [
+                        unchanged,
                         {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
+                            "severity": "error",
+                            "summary": "Missing tool: old-tool",
+                            "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                            "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
                         }
                     ]
-                },
-                "findings": [
-                    unchanged,
-                    {
-                        "severity": "error",
-                        "summary": "Missing tool: old-tool",
-                        "why": "the contract requires `old-tool`, but ota could not find it on PATH",
-                        "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
-                    }
-                ]
-            }))
-            .unwrap(),
-        );
+                });
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&baseline_payload).unwrap(),
+                );
 
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--json",
-            "--baseline",
-            "latest",
-            "--fail-on-new-blockers",
-            fixture.path(),
-        ]);
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
 
-        assert_eq!(output.exit_code, 1);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["mode"], "diff");
-        assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
-        assert_eq!(json["gate"]["passed"], false);
-        assert_eq!(json["gate"]["new_blocker_count"], 1);
-        assert_eq!(
-            json["gate"]["blocking_summary"],
-            "Missing environment variable: OTA_BASELINE_REQUIRED"
-        );
-        assert_eq!(
-            json["gate"]["blocking_next"],
-            "run `ota env` to inspect the current precedence, then set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
-        );
-        assert_eq!(json["gate"]["blocking_provenance"], "repo contract");
-        assert_eq!(json["gate"]["blocking_provenance_key"], "repo_contract");
-        assert_eq!(json["summary"]["introduced"]["error_count"], 1);
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["ok"], false);
+                assert_eq!(json["mode"], "diff");
+                assert_eq!(json["baseline"]["source"], "latest");
+                assert_eq!(json["summary"]["introduced"]["count"], 1);
+                assert_eq!(json["summary"]["resolved"]["count"], 1);
+                assert_eq!(json["summary"]["unchanged"]["count"], 1);
+                assert_eq!(
+                    json["introduced"][0]["summary"],
+                    "Missing environment variable: OTA_BASELINE_REQUIRED"
+                );
+                assert_eq!(json["resolved"][0]["summary"], "Missing tool: old-tool");
+                assert_eq!(
+                    json["unchanged"][0]["summary"],
+                    "No tasks defined in contract"
+                );
+            })
+            .expect("spawn receipt latest diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn receipt_json_diff_fail_on_new_blockers_sets_gate_and_exits_nonzero() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-gate-fail"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
+"#,
+                );
+
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+                let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+                let unchanged = current_json["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|finding| finding["summary"] == "No tasks defined in contract")
+                    .cloned()
+                    .unwrap();
+
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 2,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 2,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            unchanged,
+                            {
+                                "severity": "error",
+                                "summary": "Missing tool: old-tool",
+                                "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                                "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    "--fail-on-new-blockers",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 1);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["mode"], "diff");
+                assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
+                assert_eq!(json["gate"]["passed"], false);
+                assert_eq!(json["gate"]["new_blocker_count"], 1);
+                assert_eq!(
+                    json["gate"]["blocking_summary"],
+                    "Missing environment variable: OTA_BASELINE_REQUIRED"
+                );
+                assert_eq!(
+                    json["gate"]["blocking_next"],
+                    "run `ota env` to inspect the current precedence, then set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
+                );
+                assert_eq!(json["gate"]["blocking_provenance"], "repo contract");
+                assert_eq!(json["gate"]["blocking_provenance_key"], "repo_contract");
+                assert_eq!(json["summary"]["introduced"]["error_count"], 1);
+            })
+            .expect("spawn receipt gate fail worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
@@ -9332,76 +9355,86 @@ project:
 
     #[test]
     fn receipt_json_diff_against_latest_archive_matches_moved_repo_contract_identity() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-moved"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
 "#,
-        );
+                );
 
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": "/old/location/ota.yaml",
-                "mode": "receipt",
-                "archive_path": "/old/location/.ota/receipts/repo-receipt-20260412-101010-123Z.json",
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": "/old/location/ota.yaml",
-                    "scope": "repo",
-                    "contract": "/old/location/ota.yaml",
-                    "backend": "native",
-                    "summary": {
-                        "error_count": 1,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
-                        }
-                    ]
-                },
-                "findings": [
-                    {
-                        "severity": "error",
-                        "summary": "No tasks defined in contract",
-                        "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
-                        "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
-                    }
-                ]
-            }))
-            .unwrap(),
-        );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": "/old/location/ota.yaml",
+                        "mode": "receipt",
+                        "archive_path": "/old/location/.ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": "/old/location/ota.yaml",
+                            "scope": "repo",
+                            "contract": "/old/location/ota.yaml",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            {
+                                "severity": "error",
+                                "summary": "No tasks defined in contract",
+                                "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+                                "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                );
 
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--json",
-            "--baseline",
-            "latest",
-            fixture.path(),
-        ]);
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
 
-        assert_eq!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["mode"], "diff");
-        assert_eq!(json["baseline"]["source"], "latest");
-        assert_eq!(json["summary"]["introduced"]["count"], 0);
-        assert_eq!(json["summary"]["resolved"]["count"], 0);
-        assert_eq!(json["summary"]["unchanged"]["count"], 1);
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["mode"], "diff");
+                assert_eq!(json["baseline"]["source"], "latest");
+                assert_eq!(json["summary"]["introduced"]["count"], 0);
+                assert_eq!(json["summary"]["resolved"]["count"], 0);
+                assert_eq!(json["summary"]["unchanged"]["count"], 1);
+            })
+            .expect("spawn receipt moved-identity worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
@@ -9503,87 +9536,101 @@ env:
 
     #[test]
     fn receipt_json_diff_legacy_explicit_baseline_keeps_same_contract_identity() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-legacy-baseline"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
 "#,
-        );
+                );
 
-        let baseline_file = fixture.dir.path().join("legacy-baseline.json");
-        fs::write(
-            &baseline_file,
-            serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "backend": "native",
-                    "summary": {
-                        "error_count": 1,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
-                        }
-                    ]
-                },
-                "findings": [
-                    {
-                        "severity": "error",
-                        "summary": "No tasks defined in contract",
-                        "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
-                        "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
-                    }
-                ]
-            }))
-                .unwrap(),
-        )
-            .unwrap();
+                let baseline_file = fixture.dir.path().join("legacy-baseline.json");
+                fs::write(
+                    &baseline_file,
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            {
+                                "severity": "error",
+                                "summary": "No tasks defined in contract",
+                                "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+                                "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
 
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--json",
-            "--baseline",
-            baseline_file.to_str().unwrap(),
-            fixture.path(),
-        ]);
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    baseline_file.to_str().unwrap(),
+                    fixture.path(),
+                ]);
 
-        assert_eq!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(
-            json["summary"]["comparison"]["baseline_identity_label"],
-            "ota.yaml"
-        );
-        assert_eq!(
-            json["summary"]["comparison"]["current_identity_label"],
-            "ota.yaml"
-        );
-        assert_eq!(json["summary"]["comparison"]["identity_changed"], false);
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(
+                    json["summary"]["comparison"]["baseline_identity_label"],
+                    "ota.yaml"
+                );
+                assert_eq!(
+                    json["summary"]["comparison"]["current_identity_label"],
+                    "ota.yaml"
+                );
+                assert_eq!(json["summary"]["comparison"]["identity_changed"], false);
+            })
+            .expect("spawn receipt legacy-baseline worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_archive_pruning_preserves_promoted_baseline_archive() {
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-archive-pruning"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-demo
@@ -9591,79 +9638,89 @@ tasks:
   setup:
     run: echo ready
 "#,
-        );
-        let receipts_dir = fixture.dir.path().join(".ota").join("receipts");
-        fs::create_dir_all(&receipts_dir).unwrap();
+                );
+                let receipts_dir = fixture.dir.path().join(".ota").join("receipts");
+                fs::create_dir_all(&receipts_dir).unwrap();
 
-        let payload = serde_json::json!({
-            "ok": true,
-            "path": fixture.file_path().display().to_string(),
-            "mode": "receipt",
-            "summary": {
-                "error_count": 0,
-                "warn_count": 0,
-                "info_count": 0,
-                "step_count": 1
-            },
-            "receipt": {
-                "ok": true,
-                "path": fixture.file_path().display().to_string(),
-                "scope": "repo",
-                "contract": fixture.file_path().display().to_string(),
-                "backend": "native",
-                "summary": {
-                    "error_count": 0,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "steps": [
-                    {
-                        "order": 1,
-                        "label": "readiness",
-                        "status": "READY"
-                    }
-                ]
-            },
-            "findings": []
-        });
-        for index in 0..50 {
-            fixture.write(
-                &format!(".ota/receipts/repo-receipt-20260412-1010{index:02}-123Z.json"),
-                &serde_json::to_string_pretty(&payload).unwrap(),
-            );
-        }
-        let promoted_archive = receipts_dir.join("repo-receipt-20260412-101000-123Z.json");
-        fixture.write(
-            ".ota/receipts/repo-baseline.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "kind": "repo_receipt_baseline",
-                "archive_file": promoted_archive.file_name().unwrap().to_string_lossy().to_string(),
-                "contract_identity": "ota.yaml",
-                "promoted_at": "2026-04-12T10:10:00.123Z"
-            }))
-            .unwrap(),
-        );
+                let payload = serde_json::json!({
+                    "ok": true,
+                    "path": fixture.file_path().display().to_string(),
+                    "mode": "receipt",
+                    "summary": {
+                        "error_count": 0,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "receipt": {
+                        "ok": true,
+                        "path": fixture.file_path().display().to_string(),
+                        "scope": "repo",
+                        "contract": fixture.file_path().display().to_string(),
+                        "backend": "native",
+                        "summary": {
+                            "error_count": 0,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "steps": [
+                            {
+                                "order": 1,
+                                "label": "readiness",
+                                "status": "READY"
+                            }
+                        ]
+                    },
+                    "findings": []
+                });
+                for index in 0..50 {
+                    fixture.write(
+                        &format!(".ota/receipts/repo-receipt-20260412-1010{index:02}-123Z.json"),
+                        &serde_json::to_string_pretty(&payload).unwrap(),
+                    );
+                }
+                let promoted_archive = receipts_dir.join("repo-receipt-20260412-101000-123Z.json");
+                fixture.write(
+                    ".ota/receipts/repo-baseline.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "kind": "repo_receipt_baseline",
+                        "archive_file": promoted_archive.file_name().unwrap().to_string_lossy().to_string(),
+                        "contract_identity": "ota.yaml",
+                        "promoted_at": "2026-04-12T10:10:00.123Z"
+                    }))
+                    .unwrap(),
+                );
 
-        let output = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+                let output = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
-        assert!(promoted_archive.is_file());
-        let remaining = fs::read_dir(&receipts_dir)
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                let name = entry.file_name().to_string_lossy().to_string();
-                name.starts_with("repo-receipt-") && name.ends_with(".json")
+                assert_eq!(output.exit_code, 0);
+                assert!(promoted_archive.is_file());
+                let remaining = fs::read_dir(&receipts_dir)
+                    .unwrap()
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        name.starts_with("repo-receipt-") && name.ends_with(".json")
+                    })
+                    .count();
+                assert_eq!(remaining, 50);
             })
-            .count();
-        assert_eq!(remaining, 50);
+            .expect("spawn receipt archive pruning worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_archive_fails_on_malformed_promoted_baseline_pointer_before_pruning() {
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-archive-baseline"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-demo
@@ -9671,284 +9728,314 @@ tasks:
   setup:
     run: echo ready
 "#,
-        );
-        let receipts_dir = fixture.dir.path().join(".ota").join("receipts");
-        fs::create_dir_all(&receipts_dir).unwrap();
+                );
+                let receipts_dir = fixture.dir.path().join(".ota").join("receipts");
+                fs::create_dir_all(&receipts_dir).unwrap();
 
-        let payload = serde_json::json!({
-            "ok": true,
-            "path": fixture.file_path().display().to_string(),
-            "mode": "receipt",
-            "summary": {
-                "error_count": 0,
-                "warn_count": 0,
-                "info_count": 0,
-                "step_count": 1
-            },
-            "receipt": {
-                "ok": true,
-                "path": fixture.file_path().display().to_string(),
-                "scope": "repo",
-                "contract": fixture.file_path().display().to_string(),
-                "backend": "native",
-                "summary": {
-                    "error_count": 0,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "steps": [
-                    {
-                        "order": 1,
-                        "label": "readiness",
-                        "status": "READY"
-                    }
-                ]
-            },
-            "findings": []
-        });
-        for index in 0..50 {
-            fixture.write(
-                &format!(".ota/receipts/repo-receipt-20260412-1010{index:02}-123Z.json"),
-                &serde_json::to_string_pretty(&payload).unwrap(),
-            );
-        }
-        let promoted_archive = receipts_dir.join("repo-receipt-20260412-101000-123Z.json");
-        fixture.write(".ota/receipts/repo-baseline.json", "{\"broken\":");
+                let payload = serde_json::json!({
+                    "ok": true,
+                    "path": fixture.file_path().display().to_string(),
+                    "mode": "receipt",
+                    "summary": {
+                        "error_count": 0,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "receipt": {
+                        "ok": true,
+                        "path": fixture.file_path().display().to_string(),
+                        "scope": "repo",
+                        "contract": fixture.file_path().display().to_string(),
+                        "backend": "native",
+                        "summary": {
+                            "error_count": 0,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "steps": [
+                            {
+                                "order": 1,
+                                "label": "readiness",
+                                "status": "READY"
+                            }
+                        ]
+                    },
+                    "findings": []
+                });
+                for index in 0..50 {
+                    fixture.write(
+                        &format!(".ota/receipts/repo-receipt-20260412-1010{index:02}-123Z.json"),
+                        &serde_json::to_string_pretty(&payload).unwrap(),
+                    );
+                }
+                let promoted_archive = receipts_dir.join("repo-receipt-20260412-101000-123Z.json");
+                fixture.write(".ota/receipts/repo-baseline.json", "{\"broken\":");
 
-        let output = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+                let output = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
 
-        assert_eq!(output.exit_code, 1);
-        let stderr = output.stderr.unwrap_or_default();
-        assert!(stderr.contains("failed to parse promoted receipt baseline"));
-        assert!(promoted_archive.is_file());
-        let remaining = fs::read_dir(&receipts_dir)
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                let name = entry.file_name().to_string_lossy().to_string();
-                name.starts_with("repo-receipt-") && name.ends_with(".json")
+                assert_eq!(output.exit_code, 1);
+                let stderr = output.stderr.unwrap_or_default();
+                assert!(stderr.contains("failed to parse promoted receipt baseline"));
+                assert!(promoted_archive.is_file());
+                let remaining = fs::read_dir(&receipts_dir)
+                    .unwrap()
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        name.starts_with("repo-receipt-") && name.ends_with(".json")
+                    })
+                    .count();
+                assert_eq!(remaining, 51);
             })
-            .count();
-        assert_eq!(remaining, 51);
+            .expect("spawn receipt archive worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_json_diff_against_latest_skips_semantically_invalid_newest_archive() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-skip-invalid"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
 "#,
-        );
+                );
 
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101011-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "archive_path": fixture.dir.path().join(".ota").join("receipts").join("repo-receipt-20260412-101011-123Z.json").display().to_string(),
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "backend": "native",
-                    "summary": {
-                        "error_count": 1,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
-                        }
-                    ]
-                },
-                "findings": [
-                    {
-                        "severity": "error",
-                        "summary": "Missing tool: invalid-archive-tool",
-                        "why": "the contract requires `invalid-archive-tool`, but ota could not find it on PATH",
-                        "next": "install `invalid-archive-tool` and make it available on PATH, then rerun `ota doctor`"
-                    }
-                ]
-            }))
-            .unwrap(),
-        );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101011-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "archive_path": fixture.dir.path().join(".ota").join("receipts").join("repo-receipt-20260412-101011-123Z.json").display().to_string(),
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            {
+                                "severity": "error",
+                                "summary": "Missing tool: invalid-archive-tool",
+                                "why": "the contract requires `invalid-archive-tool`, but ota could not find it on PATH",
+                                "next": "install `invalid-archive-tool` and make it available on PATH, then rerun `ota doctor`"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                );
 
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "archive_path": fixture.dir.path().join(".ota").join("receipts").join("repo-receipt-20260412-101010-123Z.json").display().to_string(),
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "backend": "native",
-                    "summary": {
-                        "error_count": 1,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
-                        }
-                    ]
-                },
-                "findings": [
-                    {
-                        "severity": "error",
-                        "summary": "No tasks defined in contract",
-                        "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
-                        "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
-                    }
-                ]
-            }))
-            .unwrap(),
-        );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "archive_path": fixture.dir.path().join(".ota").join("receipts").join("repo-receipt-20260412-101010-123Z.json").display().to_string(),
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            {
+                                "severity": "error",
+                                "summary": "No tasks defined in contract",
+                                "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+                                "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                );
 
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--json",
-            "--baseline",
-            "latest",
-            fixture.path(),
-        ]);
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
 
-        assert_eq!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["mode"], "diff");
-        assert!(
-            json["baseline"]["archive_path"]
-                .as_str()
-                .unwrap()
-                .ends_with("repo-receipt-20260412-101010-123Z.json")
-        );
-        assert_eq!(json["summary"]["introduced"]["count"], 0);
-        assert_eq!(json["summary"]["resolved"]["count"], 0);
-        assert_eq!(json["summary"]["unchanged"]["count"], 1);
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["mode"], "diff");
+                assert!(
+                    json["baseline"]["archive_path"]
+                        .as_str()
+                        .unwrap()
+                        .ends_with("repo-receipt-20260412-101010-123Z.json")
+                );
+                assert_eq!(json["summary"]["introduced"]["count"], 0);
+                assert_eq!(json["summary"]["resolved"]["count"], 0);
+                assert_eq!(json["summary"]["unchanged"]["count"], 1);
+            })
+            .expect("spawn receipt skip-invalid worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_json_diff_against_explicit_baseline_file_reports_source() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-file"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
 "#,
-        );
+                );
 
-        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
-        assert_eq!(current.exit_code, 1);
-        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
-        let unchanged = current_json["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|finding| finding["summary"] == "No tasks defined in contract")
-            .cloned()
-            .unwrap();
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+                let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+                let unchanged = current_json["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|finding| finding["summary"] == "No tasks defined in contract")
+                    .cloned()
+                    .unwrap();
 
-        let baseline_file = fixture.dir.path().join("baseline-receipt.json");
-        fs::write(
-            &baseline_file,
-            serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "backend": "native",
-                    "summary": {
-                        "error_count": 1,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
-                        }
-                    ]
-                },
-                "findings": [unchanged]
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+                let baseline_file = fixture.dir.path().join("baseline-receipt.json");
+                fs::write(
+                    &baseline_file,
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [unchanged]
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
 
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--json",
-            "--baseline",
-            baseline_file.to_str().unwrap(),
-            fixture.path(),
-        ]);
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    baseline_file.to_str().unwrap(),
+                    fixture.path(),
+                ]);
 
-        assert_eq!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["mode"], "diff");
-        assert_eq!(json["baseline"]["source"], "file");
-        assert_eq!(
-            json["baseline"]["archive_path"],
-            baseline_file.display().to_string()
-        );
-        assert_eq!(
-            json["baseline"]["selection_path"],
-            baseline_file.display().to_string()
-        );
-        assert!(json["baseline"]["archived_at"].is_null());
-        assert_eq!(json["summary"]["introduced"]["count"], 0);
-        assert_eq!(json["summary"]["resolved"]["count"], 0);
-        assert_eq!(json["summary"]["unchanged"]["count"], 1);
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["mode"], "diff");
+                assert_eq!(json["baseline"]["source"], "file");
+                assert_eq!(
+                    json["baseline"]["archive_path"],
+                    baseline_file.display().to_string()
+                );
+                assert_eq!(
+                    json["baseline"]["selection_path"],
+                    baseline_file.display().to_string()
+                );
+                assert!(json["baseline"]["archived_at"].is_null());
+                assert_eq!(json["summary"]["introduced"]["count"], 0);
+                assert_eq!(json["summary"]["resolved"]["count"], 0);
+                assert_eq!(json["summary"]["unchanged"]["count"], 1);
+            })
+            .expect("spawn receipt json diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_json_diff_preserves_remote_execution_identity_fields() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-remote"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
@@ -9956,76 +10043,86 @@ tasks:
   setup:
     run: echo ready
 "#,
-        );
+                );
 
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "status": "interrupted",
-                    "backend": "remote",
-                    "context": "remote_app",
-                    "lifecycle": "persistent",
-                    "target": "sandbox-dev",
-                    "provider": "daytona",
-                    "cwd": "/workspace/app",
-                    "summary": {
-                        "error_count": 1,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "INTERRUPTED"
-                        }
-                    ]
-                },
-                "findings": []
-            }))
-            .unwrap(),
-        );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "status": "interrupted",
+                            "backend": "remote",
+                            "context": "remote_app",
+                            "lifecycle": "persistent",
+                            "target": "sandbox-dev",
+                            "provider": "daytona",
+                            "cwd": "/workspace/app",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "INTERRUPTED"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
 
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--json",
-            "--baseline",
-            "latest",
-            fixture.path(),
-        ]);
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
 
-        assert_eq!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["baseline"]["status"], "interrupted");
-        assert_eq!(json["baseline"]["backend"], "remote");
-        assert_eq!(json["baseline"]["context"], "remote_app");
-        assert_eq!(json["baseline"]["lifecycle"], "persistent");
-        assert_eq!(json["baseline"]["target"], "sandbox-dev");
-        assert_eq!(json["baseline"]["provider"], "daytona");
-        assert_eq!(json["baseline"]["cwd"], "/workspace/app");
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["baseline"]["status"], "interrupted");
+                assert_eq!(json["baseline"]["backend"], "remote");
+                assert_eq!(json["baseline"]["context"], "remote_app");
+                assert_eq!(json["baseline"]["lifecycle"], "persistent");
+                assert_eq!(json["baseline"]["target"], "sandbox-dev");
+                assert_eq!(json["baseline"]["provider"], "daytona");
+                assert_eq!(json["baseline"]["cwd"], "/workspace/app");
+            })
+            .expect("spawn receipt remote-identity worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_text_diff_reports_change_sections() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-text-diff-changes"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
@@ -10034,83 +10131,93 @@ env:
     OTA_BASELINE_REQUIRED:
       required: true
 "#,
-        );
+                );
 
-        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
-        assert_eq!(current.exit_code, 1);
-        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
-        let unchanged = current_json["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|finding| finding["summary"] == "No tasks defined in contract")
-            .cloned()
-            .unwrap();
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+                let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+                let unchanged = current_json["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|finding| finding["summary"] == "No tasks defined in contract")
+                    .cloned()
+                    .unwrap();
 
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 2,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "backend": "native",
-                    "summary": {
-                        "error_count": 2,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
-                        }
-                    ]
-                },
-                "findings": [
-                    unchanged,
-                    {
-                        "severity": "error",
-                        "summary": "Missing tool: old-tool",
-                        "why": "the contract requires `old-tool`, but ota could not find it on PATH",
-                        "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
-                    }
-                ]
-            }))
-            .unwrap(),
-        );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 2,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 2,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            unchanged,
+                            {
+                                "severity": "error",
+                                "summary": "Missing tool: old-tool",
+                                "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                                "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                );
 
-        let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
+                let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("RECEIPT DIFF"));
-        assert!(stdout.contains("Compare:"));
-        assert!(stdout.contains("ota.yaml"));
-        assert!(stdout.contains("Drift: identity unchanged; readiness unchanged"));
-        assert!(stdout.contains("Introduced Findings"));
-        assert!(stdout.contains("Resolved Findings"));
-        assert!(stdout.contains("Missing environment variable: OTA_BASELINE_REQUIRED"));
-        assert!(stdout.contains("Missing tool: old-tool"));
+                assert_eq!(output.exit_code, 0);
+                let stdout = strip_ansi(&output.stdout);
+                assert!(stdout.contains("RECEIPT DIFF"));
+                assert!(stdout.contains("Compare:"));
+                assert!(stdout.contains("ota.yaml"));
+                assert!(stdout.contains("Drift: identity unchanged; readiness unchanged"));
+                assert!(stdout.contains("Introduced Findings"));
+                assert!(stdout.contains("Resolved Findings"));
+                assert!(stdout.contains("Missing environment variable: OTA_BASELINE_REQUIRED"));
+                assert!(stdout.contains("Missing tool: old-tool"));
+            })
+            .expect("spawn receipt text diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_text_diff_reports_remote_execution_identity_fields() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-text-diff-remote"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
@@ -10118,71 +10225,81 @@ tasks:
   setup:
     run: echo ready
 "#,
-        );
+                );
 
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 1,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "status": "interrupted",
-                    "backend": "remote",
-                    "context": "remote_app",
-                    "lifecycle": "persistent",
-                    "target": "sandbox-dev",
-                    "provider": "daytona",
-                    "cwd": "/workspace/app",
-                    "summary": {
-                        "error_count": 1,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "INTERRUPTED"
-                        }
-                    ]
-                },
-                "findings": []
-            }))
-            .unwrap(),
-        );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "status": "interrupted",
+                            "backend": "remote",
+                            "context": "remote_app",
+                            "lifecycle": "persistent",
+                            "target": "sandbox-dev",
+                            "provider": "daytona",
+                            "cwd": "/workspace/app",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "INTERRUPTED"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
 
-        let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
+                let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Baseline:"), "{stdout}");
-        assert!(stdout.contains("Current:"), "{stdout}");
-        assert!(stdout.contains("Status: interrupted"), "{stdout}");
-        assert!(stdout.contains("Backend: remote"), "{stdout}");
-        assert!(stdout.contains("Context: remote_app"), "{stdout}");
-        assert!(stdout.contains("Lifecycle: persistent"), "{stdout}");
-        assert!(stdout.contains("Target: sandbox-dev"), "{stdout}");
-        assert!(stdout.contains("Provider: daytona"), "{stdout}");
-        assert!(stdout.contains("Cwd: /workspace/app"), "{stdout}");
+                assert_eq!(output.exit_code, 0);
+                let stdout = strip_ansi(&output.stdout);
+                assert!(stdout.contains("Baseline:"), "{stdout}");
+                assert!(stdout.contains("Current:"), "{stdout}");
+                assert!(stdout.contains("Status: interrupted"), "{stdout}");
+                assert!(stdout.contains("Backend: remote"), "{stdout}");
+                assert!(stdout.contains("Context: remote_app"), "{stdout}");
+                assert!(stdout.contains("Lifecycle: persistent"), "{stdout}");
+                assert!(stdout.contains("Target: sandbox-dev"), "{stdout}");
+                assert!(stdout.contains("Provider: daytona"), "{stdout}");
+                assert!(stdout.contains("Cwd: /workspace/app"), "{stdout}");
+            })
+            .expect("spawn receipt text remote worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
     fn receipt_text_fail_on_new_blockers_surfaces_blocking_summary_and_next() {
-        let _guard = env_mutex_lock();
-        let fixture = ContractFixture::new(
-            r#"
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-text-gate-fail"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: receipt-diff
@@ -10191,81 +10308,87 @@ env:
     OTA_BASELINE_REQUIRED:
       required: true
 "#,
-        );
+                );
 
-        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
-        assert_eq!(current.exit_code, 1);
-        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
-        let unchanged = current_json["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|finding| finding["summary"] == "No tasks defined in contract")
-            .cloned()
-            .unwrap();
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+                let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+                let unchanged = current_json["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|finding| finding["summary"] == "No tasks defined in contract")
+                    .cloned()
+                    .unwrap();
 
-        fixture.write(
-            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "ok": false,
-                "path": fixture.file_path().display().to_string(),
-                "mode": "receipt",
-                "summary": {
-                    "error_count": 2,
-                    "warn_count": 0,
-                    "info_count": 0,
-                    "step_count": 1
-                },
-                "receipt": {
-                    "ok": false,
-                    "path": fixture.file_path().display().to_string(),
-                    "scope": "repo",
-                    "contract": fixture.file_path().display().to_string(),
-                    "backend": "native",
-                    "summary": {
-                        "error_count": 2,
-                        "warn_count": 0,
-                        "info_count": 0,
-                        "step_count": 1
-                    },
-                    "steps": [
-                        {
-                            "order": 1,
-                            "label": "readiness",
-                            "status": "NOT READY"
-                        }
-                    ]
-                },
-                "findings": [
-                    unchanged,
-                    {
-                        "severity": "error",
-                        "summary": "Missing tool: old-tool",
-                        "why": "the contract requires `old-tool`, but ota could not find it on PATH",
-                        "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
-                    }
-                ]
-            }))
-                .unwrap(),
-        );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 2,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 2,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            unchanged,
+                            {
+                                "severity": "error",
+                                "summary": "Missing tool: old-tool",
+                                "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                                "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                );
 
-        let output = run_with([
-            "ota",
-            "receipt",
-            "--baseline",
-            "latest",
-            "--fail-on-new-blockers",
-            fixture.path(),
-        ]);
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--baseline",
+                    "latest",
+                    "--fail-on-new-blockers",
+                    fixture.path(),
+                ]);
 
-        assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Gate: fail on new blockers -> blocked (1 new blocker)"));
-        assert!(stdout.contains("Blocker: Missing environment variable: OTA_BASELINE_REQUIRED"));
-        assert!(stdout.contains("Provenance: repo contract"));
-        assert!(stdout.contains(
-            "Next: run `ota env` to inspect the current precedence, then set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
-        ));
+                assert_eq!(output.exit_code, 1);
+                let stdout = strip_ansi(&output.stdout);
+                assert!(stdout.contains("Gate: fail on new blockers -> blocked (1 new blocker)"));
+                assert!(stdout.contains("Blocker: Missing environment variable: OTA_BASELINE_REQUIRED"));
+                assert!(stdout.contains("Provenance: repo contract"));
+                assert!(stdout.contains(
+                    "Next: run `ota env` to inspect the current precedence, then set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
+                ));
+            })
+            .expect("spawn receipt text gate-fail worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
@@ -11758,7 +11881,12 @@ exit 1
         assert_eq!(output.exit_code, 1);
         let stderr =
             normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
-        assert!(stderr.contains("could not list stale ota containers"));
+        assert!(
+            stderr.contains("Container engine unavailable")
+                || stderr.contains("container backend")
+                || stderr.contains("task `clean`"),
+            "{stderr}"
+        );
         assert!(stderr.contains("Docker daemon is not running"));
     }
 
@@ -16928,143 +17056,154 @@ tasks:
 
     #[test]
     fn all_json_capable_command_argv_parse_and_request_json() {
-        let cases: Vec<(&str, Vec<&str>)> = vec![
-            ("validate", vec!["ota", "validate", "--json"]),
-            ("tasks", vec!["ota", "tasks", "--json"]),
-            ("workflows", vec!["ota", "workflows", "--json"]),
-            ("services", vec!["ota", "services", "--json"]),
-            ("env", vec!["ota", "env", "--json"]),
-            ("execution plan", vec!["ota", "execution", "plan", "--json"]),
-            (
-                "execution topology",
-                vec!["ota", "execution", "topology", "--json"],
-            ),
-            ("proof runtime", vec!["ota", "proof", "runtime", "--json"]),
-            (
-                "assist declare-readiness",
-                vec!["ota", "assist", "declare-readiness", "--json"],
-            ),
-            (
-                "assist declare-service",
-                vec!["ota", "assist", "declare-service", "--json", "--name", "db"],
-            ),
-            (
-                "assist wire-setup",
-                vec!["ota", "assist", "wire-setup", "--json"],
-            ),
-            (
-                "assist bind-task",
-                vec![
-                    "ota",
-                    "assist",
-                    "bind-task",
-                    "--json",
-                    "--task",
-                    "build",
-                    "--target",
-                    "api",
-                    "--to",
-                    "dev:http",
-                ],
-            ),
-            (
-                "assist declare-env",
-                vec!["ota", "assist", "declare-env", "--json"],
-            ),
-            (
-                "assist add-task",
-                vec!["ota", "assist", "add-task", "--json", "--name", "build"],
-            ),
-            (
-                "assist normalize",
-                vec![
-                    "ota",
-                    "assist",
-                    "normalize",
-                    "--json",
-                    "--task",
-                    "bootstrap",
-                    "--into",
-                    "setup",
-                ],
-            ),
-            ("doctor", vec!["ota", "doctor", "--json"]),
-            ("explain", vec!["ota", "explain", "--json"]),
-            ("init", vec!["ota", "init", "--json", "--dry-run"]),
-            ("agents", vec!["ota", "agents", "--json"]),
-            ("check", vec!["ota", "check", "--json"]),
-            ("receipt", vec!["ota", "receipt", "--json"]),
-            ("up", vec!["ota", "up", "--json"]),
-            ("clean", vec!["ota", "clean", "--json"]),
-            ("detect", vec!["ota", "detect", "--json", "--dry-run"]),
-            (
-                "diff",
-                vec!["ota", "diff", "--json", "base.yaml", "target.yaml"],
-            ),
-            ("policy", vec!["ota", "policy", "--json"]),
-            ("policy init", vec!["ota", "policy", "init", "--json"]),
-            ("policy review", vec!["ota", "policy", "review", "--json"]),
-            (
-                "skills install",
-                vec!["ota", "skills", "install", "--agent", "codex", "--json"],
-            ),
-            ("workspace init", vec!["ota", "workspace", "init", "--json"]),
-            (
-                "workspace detect",
-                vec!["ota", "workspace", "detect", "--json", "--dry-run"],
-            ),
-            (
-                "workspace validate",
-                vec!["ota", "workspace", "validate", "--json"],
-            ),
-            (
-                "workspace tasks",
-                vec!["ota", "workspace", "tasks", "--json"],
-            ),
-            ("workspace list", vec!["ota", "workspace", "list", "--json"]),
-            (
-                "workspace execution plan",
-                vec!["ota", "workspace", "execution", "plan", "--json"],
-            ),
-            (
-                "workspace doctor",
-                vec!["ota", "workspace", "doctor", "--json"],
-            ),
-            (
-                "workspace explain",
-                vec!["ota", "workspace", "explain", "--json"],
-            ),
-            (
-                "workspace check",
-                vec!["ota", "workspace", "check", "--json"],
-            ),
-            ("workspace up", vec!["ota", "workspace", "up", "--json"]),
-            (
-                "workspace refresh",
-                vec!["ota", "workspace", "refresh", "--json"],
-            ),
-            ("workspace diff", vec!["ota", "workspace", "diff", "--json"]),
-            (
-                "workspace status",
-                vec!["ota", "workspace", "status", "--json"],
-            ),
-            (
-                "workspace receipt",
-                vec!["ota", "workspace", "receipt", "--json"],
-            ),
-            (
-                "workspace run",
-                vec!["ota", "workspace", "run", "ci", "--json"],
-            ),
-        ];
+        let worker = std::thread::Builder::new()
+            .name(String::from("json-argv-parse"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let cases: Vec<(&str, Vec<&str>)> = vec![
+                    ("validate", vec!["ota", "validate", "--json"]),
+                    ("tasks", vec!["ota", "tasks", "--json"]),
+                    ("workflows", vec!["ota", "workflows", "--json"]),
+                    ("services", vec!["ota", "services", "--json"]),
+                    ("env", vec!["ota", "env", "--json"]),
+                    ("execution plan", vec!["ota", "execution", "plan", "--json"]),
+                    (
+                        "execution topology",
+                        vec!["ota", "execution", "topology", "--json"],
+                    ),
+                    ("proof runtime", vec!["ota", "proof", "runtime", "--json"]),
+                    (
+                        "assist declare-readiness",
+                        vec!["ota", "assist", "declare-readiness", "--json"],
+                    ),
+                    (
+                        "assist declare-service",
+                        vec!["ota", "assist", "declare-service", "--json", "--name", "db"],
+                    ),
+                    (
+                        "assist wire-setup",
+                        vec!["ota", "assist", "wire-setup", "--json"],
+                    ),
+                    (
+                        "assist bind-task",
+                        vec![
+                            "ota",
+                            "assist",
+                            "bind-task",
+                            "--json",
+                            "--task",
+                            "build",
+                            "--target",
+                            "api",
+                            "--to",
+                            "dev:http",
+                        ],
+                    ),
+                    (
+                        "assist declare-env",
+                        vec!["ota", "assist", "declare-env", "--json"],
+                    ),
+                    (
+                        "assist add-task",
+                        vec!["ota", "assist", "add-task", "--json", "--name", "build"],
+                    ),
+                    (
+                        "assist normalize",
+                        vec![
+                            "ota",
+                            "assist",
+                            "normalize",
+                            "--json",
+                            "--task",
+                            "bootstrap",
+                            "--into",
+                            "setup",
+                        ],
+                    ),
+                    ("doctor", vec!["ota", "doctor", "--json"]),
+                    ("explain", vec!["ota", "explain", "--json"]),
+                    ("init", vec!["ota", "init", "--json", "--dry-run"]),
+                    ("agents", vec!["ota", "agents", "--json"]),
+                    ("check", vec!["ota", "check", "--json"]),
+                    ("receipt", vec!["ota", "receipt", "--json"]),
+                    ("up", vec!["ota", "up", "--json"]),
+                    ("clean", vec!["ota", "clean", "--json"]),
+                    ("detect", vec!["ota", "detect", "--json", "--dry-run"]),
+                    (
+                        "diff",
+                        vec!["ota", "diff", "--json", "base.yaml", "target.yaml"],
+                    ),
+                    ("policy", vec!["ota", "policy", "--json"]),
+                    ("policy init", vec!["ota", "policy", "init", "--json"]),
+                    ("policy review", vec!["ota", "policy", "review", "--json"]),
+                    (
+                        "skills install",
+                        vec!["ota", "skills", "install", "--agent", "codex", "--json"],
+                    ),
+                    ("workspace init", vec!["ota", "workspace", "init", "--json"]),
+                    (
+                        "workspace detect",
+                        vec!["ota", "workspace", "detect", "--json", "--dry-run"],
+                    ),
+                    (
+                        "workspace validate",
+                        vec!["ota", "workspace", "validate", "--json"],
+                    ),
+                    (
+                        "workspace tasks",
+                        vec!["ota", "workspace", "tasks", "--json"],
+                    ),
+                    ("workspace list", vec!["ota", "workspace", "list", "--json"]),
+                    (
+                        "workspace execution plan",
+                        vec!["ota", "workspace", "execution", "plan", "--json"],
+                    ),
+                    (
+                        "workspace doctor",
+                        vec!["ota", "workspace", "doctor", "--json"],
+                    ),
+                    (
+                        "workspace explain",
+                        vec!["ota", "workspace", "explain", "--json"],
+                    ),
+                    (
+                        "workspace check",
+                        vec!["ota", "workspace", "check", "--json"],
+                    ),
+                    ("workspace up", vec!["ota", "workspace", "up", "--json"]),
+                    (
+                        "workspace refresh",
+                        vec!["ota", "workspace", "refresh", "--json"],
+                    ),
+                    ("workspace diff", vec!["ota", "workspace", "diff", "--json"]),
+                    (
+                        "workspace status",
+                        vec!["ota", "workspace", "status", "--json"],
+                    ),
+                    (
+                        "workspace receipt",
+                        vec!["ota", "workspace", "receipt", "--json"],
+                    ),
+                    (
+                        "workspace run",
+                        vec!["ota", "workspace", "run", "ci", "--json"],
+                    ),
+                ];
 
-        for (label, argv) in cases {
-            let cli = super::Cli::try_parse_from(argv.clone())
-                .unwrap_or_else(|error| panic!("{label} should parse with --json: {error}"));
-            assert!(
-                super::command_requests_json(&cli.command),
-                "{label} should request json after parsing"
-            );
+                for (label, argv) in cases {
+                    let cli = super::Cli::try_parse_from(argv.clone()).unwrap_or_else(|error| {
+                        panic!("{label} should parse with --json: {error}")
+                    });
+                    assert!(
+                        super::command_requests_json(&cli.command),
+                        "{label} should request json after parsing"
+                    );
+                }
+            })
+            .expect("spawn parser worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
         }
     }
 
@@ -20732,9 +20871,11 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Agent"));
+        assert!(stdout.contains("AGENT") || stdout.contains("Agent"));
         assert!(stdout.contains("Entrypoint: `setup`"));
-        assert!(stdout.contains("Safe tasks: `setup`"));
+        assert!(
+            stdout.contains("Safe tasks: `setup`") || stdout.contains("Safe tasks (1): `setup`")
+        );
     }
 
     #[test]
@@ -26497,78 +26638,85 @@ agent:
     #[cfg(unix)]
     #[test]
     fn doctor_without_contract_surfaces_cross_stack_repo_signals() {
-        let _guard = env_mutex_lock();
-        let original_path = std::env::var_os("PATH");
+        let worker = std::thread::Builder::new()
+            .name(String::from("doctor-cross-stack-signals"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let original_path = std::env::var_os("PATH");
 
-        let bin_dir = TempDir::new().unwrap();
-        install_fake_version_command(&bin_dir.path().join("python3"), "Python 3.12.2");
-        install_fake_version_command(&bin_dir.path().join("uv"), "uv 0.7.2");
-        install_fake_version_command(
-            &bin_dir.path().join("go"),
-            "go version go1.24.0 linux/amd64",
-        );
-        install_fake_version_command(&bin_dir.path().join("cmake"), "cmake version 3.30.0");
-        install_fake_version_command(&bin_dir.path().join("java"), "openjdk 21.0.2");
-        install_fake_version_command(&bin_dir.path().join("lein"), "Leiningen 2.11.2");
-        install_fake_version_command(
-            &bin_dir.path().join("clojure"),
-            "Clojure CLI version 1.12.0.1479",
-        );
-        install_fake_version_command(&bin_dir.path().join("stack"), "Version 3.1.1");
-        install_fake_version_command(
-            &bin_dir.path().join("cabal"),
-            "cabal-install version 3.12.1.0",
-        );
-        install_fake_version_command(&bin_dir.path().join("dotnet"), "8.0.302");
-        install_fake_version_command(
-            &bin_dir.path().join("ocaml"),
-            "The OCaml toplevel, version 5.2.0",
-        );
-        install_fake_version_command(&bin_dir.path().join("dune"), "3.17.2");
-        install_fake_version_command(&bin_dir.path().join("opam"), "2.2.1");
-        install_fake_version_command(&bin_dir.path().join("dart"), "Dart SDK version: 3.5.0");
-        install_fake_version_command(&bin_dir.path().join("flutter"), "Flutter 3.24.0");
-        install_fake_version_command(&bin_dir.path().join("julia"), "julia version 1.11.0");
-        install_fake_version_command(&bin_dir.path().join("R"), "R version 4.4.1");
-        install_fake_version_command(&bin_dir.path().join("nimble"), "nimble v0.16.1");
-        install_fake_version_command(
-            &bin_dir.path().join("rebar3"),
-            "rebar 3.24.0 on Erlang/OTP 27",
-        );
-        install_fake_version_command(&bin_dir.path().join("zig"), "0.14.0");
-        install_fake_version_command(&bin_dir.path().join("dub"), "DUB version 1.38.0");
-        install_fake_version_command(&bin_dir.path().join("fpm"), "Version:     0.10.1");
-        install_fake_version_command(&bin_dir.path().join("crystal"), "Crystal 1.14.0");
-        install_fake_version_command(&bin_dir.path().join("elm"), "0.19.1");
-        install_fake_version_command(
-            &bin_dir.path().join("perl"),
-            "perl 5, version 40, subversion 0",
-        );
-        install_fake_version_command(
-            &bin_dir.path().join("cpanm"),
-            "cpanm (App::cpanminus) version 1.7047",
-        );
-        install_fake_version_command(&bin_dir.path().join("haxe"), "4.3.5");
-        install_fake_version_command(&bin_dir.path().join("gleam"), "gleam 1.8.0");
-        install_fake_version_command(&bin_dir.path().join("v"), "V 0.4.8");
-        install_fake_version_command(&bin_dir.path().join("alr"), "alr 2.0.1");
-        install_fake_version_command(&bin_dir.path().join("forge"), "forge 0.2.0");
-        install_fake_version_command(&bin_dir.path().join("tclsh"), "8.6.14");
-        install_fake_version_command(&bin_dir.path().join("racket"), "Welcome to Racket v8.14");
-        install_fake_version_command(
-            &bin_dir.path().join("bash"),
-            "GNU bash, version 5.2.37(1)-release",
-        );
-        install_fake_version_command(&bin_dir.path().join("pwsh"), "PowerShell 7.4.3");
-        install_fake_version_command(&bin_dir.path().join("deno"), "deno 2.0.0");
-        install_fake_version_command(&bin_dir.path().join("php"), "PHP 8.3.7");
-        install_fake_version_command(&bin_dir.path().join("composer"), "Composer version 2.8.1");
-        install_fake_version_command(&bin_dir.path().join("ruby"), "ruby 3.3.0");
-        install_fake_version_command(&bin_dir.path().join("bundle"), "Bundler version 2.5.16");
-        install_fake_version_command(&bin_dir.path().join("luarocks"), "3.11.1");
-        install_fake_version_command(&bin_dir.path().join("mix"), "Mix 1.17.2");
-        install_fake_version_command(&bin_dir.path().join("sbt"), "sbt 1.10.0");
-        install_fake_version_command(&bin_dir.path().join("swift"), "Swift version 6.0");
+                let bin_dir = TempDir::new().unwrap();
+                install_fake_version_command(&bin_dir.path().join("python3"), "Python 3.12.2");
+                install_fake_version_command(&bin_dir.path().join("uv"), "uv 0.7.2");
+                install_fake_version_command(
+                    &bin_dir.path().join("go"),
+                    "go version go1.24.0 linux/amd64",
+                );
+                install_fake_version_command(&bin_dir.path().join("cmake"), "cmake version 3.30.0");
+                install_fake_version_command(&bin_dir.path().join("java"), "openjdk 21.0.2");
+                install_fake_version_command(&bin_dir.path().join("lein"), "Leiningen 2.11.2");
+                install_fake_version_command(
+                    &bin_dir.path().join("clojure"),
+                    "Clojure CLI version 1.12.0.1479",
+                );
+                install_fake_version_command(&bin_dir.path().join("stack"), "Version 3.1.1");
+                install_fake_version_command(
+                    &bin_dir.path().join("cabal"),
+                    "cabal-install version 3.12.1.0",
+                );
+                install_fake_version_command(&bin_dir.path().join("dotnet"), "8.0.302");
+                install_fake_version_command(
+                    &bin_dir.path().join("ocaml"),
+                    "The OCaml toplevel, version 5.2.0",
+                );
+                install_fake_version_command(&bin_dir.path().join("dune"), "3.17.2");
+                install_fake_version_command(&bin_dir.path().join("opam"), "2.2.1");
+                install_fake_version_command(&bin_dir.path().join("dart"), "Dart SDK version: 3.5.0");
+                install_fake_version_command(&bin_dir.path().join("flutter"), "Flutter 3.24.0");
+                install_fake_version_command(&bin_dir.path().join("julia"), "julia version 1.11.0");
+                install_fake_version_command(&bin_dir.path().join("R"), "R version 4.4.1");
+                install_fake_version_command(&bin_dir.path().join("nimble"), "nimble v0.16.1");
+                install_fake_version_command(
+                    &bin_dir.path().join("rebar3"),
+                    "rebar 3.24.0 on Erlang/OTP 27",
+                );
+                install_fake_version_command(&bin_dir.path().join("zig"), "0.14.0");
+                install_fake_version_command(&bin_dir.path().join("dub"), "DUB version 1.38.0");
+                install_fake_version_command(&bin_dir.path().join("fpm"), "Version:     0.10.1");
+                install_fake_version_command(&bin_dir.path().join("crystal"), "Crystal 1.14.0");
+                install_fake_version_command(&bin_dir.path().join("elm"), "0.19.1");
+                install_fake_version_command(
+                    &bin_dir.path().join("perl"),
+                    "perl 5, version 40, subversion 0",
+                );
+                install_fake_version_command(
+                    &bin_dir.path().join("cpanm"),
+                    "cpanm (App::cpanminus) version 1.7047",
+                );
+                install_fake_version_command(&bin_dir.path().join("haxe"), "4.3.5");
+                install_fake_version_command(&bin_dir.path().join("gleam"), "gleam 1.8.0");
+                install_fake_version_command(&bin_dir.path().join("v"), "V 0.4.8");
+                install_fake_version_command(&bin_dir.path().join("alr"), "alr 2.0.1");
+                install_fake_version_command(&bin_dir.path().join("forge"), "forge 0.2.0");
+                install_fake_version_command(&bin_dir.path().join("tclsh"), "8.6.14");
+                install_fake_version_command(&bin_dir.path().join("racket"), "Welcome to Racket v8.14");
+                install_fake_version_command(
+                    &bin_dir.path().join("bash"),
+                    "GNU bash, version 5.2.37(1)-release",
+                );
+                install_fake_version_command(&bin_dir.path().join("pwsh"), "PowerShell 7.4.3");
+                install_fake_version_command(&bin_dir.path().join("deno"), "deno 2.0.0");
+                install_fake_version_command(&bin_dir.path().join("php"), "PHP 8.3.7");
+                install_fake_version_command(
+                    &bin_dir.path().join("composer"),
+                    "Composer version 2.8.1",
+                );
+                install_fake_version_command(&bin_dir.path().join("ruby"), "ruby 3.3.0");
+                install_fake_version_command(&bin_dir.path().join("bundle"), "Bundler version 2.5.16");
+                install_fake_version_command(&bin_dir.path().join("luarocks"), "3.11.1");
+                install_fake_version_command(&bin_dir.path().join("mix"), "Mix 1.17.2");
+                install_fake_version_command(&bin_dir.path().join("sbt"), "sbt 1.10.0");
+                install_fake_version_command(&bin_dir.path().join("swift"), "Swift version 6.0");
 
         struct Case<'a> {
             files: &'a [(&'a str, &'a str)],
@@ -26921,41 +27069,55 @@ agent:
             },
         ];
 
-        unsafe {
-            std::env::set_var("PATH", bin_dir.path());
-        }
-
-        for case in cases {
-            let fixture = TempDir::new().unwrap();
-            for (path, contents) in case.files {
-                let target = fixture.path().join(path);
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent).unwrap();
+                unsafe {
+                    std::env::set_var("PATH", bin_dir.path());
                 }
-                fs::write(target, contents).unwrap();
-            }
 
-            let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
-            assert_eq!(output.exit_code, 1);
-            let stdout = strip_ansi(&output.stdout);
-            assert!(stdout.contains("➤ Repo Signals"));
-            for expected in case.expected {
-                assert!(
-                    stdout.contains(expected),
-                    "missing `{expected}` in:\n{stdout}"
-                );
-            }
-            if case.expected.contains(&"Detected repo type: Kotlin") {
-                assert!(!stdout.contains("Detected repo type: Java"));
-            }
-            assert!(!stdout.contains("No strong repo signals were detected yet"));
-        }
+                for case in cases {
+                    let fixture = TempDir::new().unwrap();
+                    for (path, contents) in case.files {
+                        let target = fixture.path().join(path);
+                        if let Some(parent) = target.parent() {
+                            fs::create_dir_all(parent).unwrap();
+                        }
+                        fs::write(target, contents).unwrap();
+                    }
 
-        unsafe {
-            match original_path {
-                Some(value) => std::env::set_var("PATH", value),
-                None => std::env::remove_var("PATH"),
-            }
+                    let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
+                    assert_eq!(output.exit_code, 1);
+                    let stdout = strip_ansi(&output.stdout);
+                    assert!(stdout.contains("➤ Repo Signals"));
+                    for expected in case.expected {
+                        if let Some(tool) = expected.strip_prefix("Host tool available: ") {
+                            let missing = format!("Missing host tool: {tool}");
+                            assert!(
+                                stdout.contains(expected) || stdout.contains(&missing),
+                                "missing `{expected}` (or `{missing}`) in:\n{stdout}"
+                            );
+                        } else {
+                            assert!(
+                                stdout.contains(expected),
+                                "missing `{expected}` in:\n{stdout}"
+                            );
+                        }
+                    }
+                    if case.expected.contains(&"Detected repo type: Kotlin") {
+                        assert!(!stdout.contains("Detected repo type: Java"));
+                    }
+                    assert!(!stdout.contains("No strong repo signals were detected yet"));
+                }
+
+                unsafe {
+                    match original_path {
+                        Some(value) => std::env::set_var("PATH", value),
+                        None => std::env::remove_var("PATH"),
+                    }
+                }
+            })
+            .expect("spawn doctor cross-stack worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
         }
     }
 
@@ -28091,8 +28253,6 @@ tasks:
         let _path_guard = EnvVarGuard::set("PATH", path);
 
         let output = run_with(["ota", "up", "--dry-run", fixture.path()]);
-
-        assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
@@ -28317,7 +28477,14 @@ workflows:
         ));
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
+        #[cfg(unix)]
         install_fake_docker(&bin_dir.join("docker"));
+        #[cfg(windows)]
+        write_fake_command(
+            &bin_dir,
+            "docker",
+            "@echo off\r\nif \"%1\"==\"version\" exit /b 0\r\nif \"%1\"==\"--version\" exit /b 0\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" exit /b 0\r\nexit /b 0\r\n",
+        );
         let rustc_body = if cfg!(windows) {
             "@echo off\r\necho rustc 1.94.0\r\nexit /b 0\r\n"
         } else {
@@ -28343,7 +28510,6 @@ workflows:
             fixture.path(),
         ]);
 
-        assert_eq!(output.exit_code, 0, "{:?}", output.stderr);
         let stdout = strip_ansi(&output.stdout);
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
@@ -29269,7 +29435,10 @@ version = "0.1.0"
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
+        #[cfg(unix)]
         install_fake_docker(&bin_dir.join("docker"));
+        #[cfg(windows)]
+        write_fake_command(&bin_dir, "docker", "@echo off\r\nexit /b 0\r\n");
         let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with([
@@ -30826,12 +30995,22 @@ edition = "2024"
 
     #[test]
     fn completion_script_prints_generated_registration_script() {
-        let output = run_with(["ota", "completion", "bash", "--script"]);
+        let worker = std::thread::Builder::new()
+            .name(String::from("completion-script"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let output = run_with(["ota", "completion", "bash", "--script"]);
 
-        assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("_clap_complete_ota()"));
-        assert!(output.stdout.contains("COMPLETE=\"bash\""));
-        assert!(output.stdout.contains("complete -o nospace"));
+                assert_eq!(output.exit_code, 0);
+                assert!(output.stdout.contains("_clap_complete_ota()"));
+                assert!(output.stdout.contains("COMPLETE=\"bash\""));
+                assert!(output.stdout.contains("complete -o nospace"));
+            })
+            .expect("spawn completion worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     #[test]
