@@ -136,7 +136,7 @@ jobs:
           body = json.loads(payload)
           assert body["dry_run"] is True
           assert body["phase"] == "preview"
-          assert body["status"] in {"READY", "BLOCKED"}
+          assert body["status"] in {"READY", "READY WITH WARNINGS", "BLOCKED"}
           assert isinstance(body["plan"]["actions"], list)
           assert body["contract_identity"]["project"]["name"] == "ota"
           pathlib.Path("repo-up-preview.json").write_text(payload, encoding="utf-8")
