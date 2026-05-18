@@ -37,7 +37,7 @@ execution:
     - container
   backends:
     container:
-      image: rust:1.94-bookworm
+      image: rust:1.95-bookworm
       engines:
         - docker
         - podman
@@ -51,10 +51,14 @@ tools:
 toolchains:
   rust:
     provider: rustup
-    version: "1.94.0"
-    components:
-      - rustfmt
+    version: "1.95.0"
     fulfillment: run
+checks:
+  - name: repository-readme
+    kind: file
+    severity: info
+    path: README.md
+    expect: file
 tasks:
   setup:
     description: Prepare the Rust toolchain and fetch dependencies
@@ -64,7 +68,7 @@ tasks:
       prepares the workspace without compiling the crate.
     category: setup
     internal: true
-    run: cargo fetch
+    run: cargo fetch && rustup component add rustfmt
     safe_for_agent: true
   build:
     description: Compile the CLI

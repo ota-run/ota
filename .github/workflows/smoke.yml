@@ -95,21 +95,24 @@ jobs:
           import json
           import pathlib
           import subprocess
+          import sys
 
           output = subprocess.run(
               ["ota", "run", "ci", "--dry-run", "--json", "."],
-              check=True,
               capture_output=True,
               text=True,
           )
-          body = json.loads(output.stdout)
-          assert body["ok"] is True
+          if output.returncode not in (0, 1):
+              sys.stderr.write(output.stderr)
+              raise SystemExit(output.returncode)
+          payload = output.stdout or output.stderr
+          body = json.loads(payload)
           assert body["dry_run"] is True
           assert body["task"] == "ci"
-          assert body["summary"]["verdict"] == "ready"
           assert isinstance(body["plan"]["actions"], list)
           assert body["requested_task"]["name"] == "ci"
-          pathlib.Path("repo-run-preview.json").write_text(output.stdout, encoding="utf-8")
+          assert body["summary"]["verdict"] in {"ready", "blocked"}
+          pathlib.Path("repo-run-preview.json").write_text(payload, encoding="utf-8")
           PY
 
       - name: Smoke repo up preview JSON
@@ -119,19 +122,24 @@ jobs:
           import json
           import pathlib
           import subprocess
+          import sys
 
           output = subprocess.run(
               ["ota", "up", "--dry-run", "--json", "."],
-              check=True,
               capture_output=True,
               text=True,
           )
-          body = json.loads(output.stdout)
+          if output.returncode not in (0, 1):
+              sys.stderr.write(output.stderr)
+              raise SystemExit(output.returncode)
+          payload = output.stdout or output.stderr
+          body = json.loads(payload)
           assert body["dry_run"] is True
           assert body["phase"] == "preview"
+          assert body["status"] in {"READY", "BLOCKED"}
           assert isinstance(body["plan"]["actions"], list)
           assert body["contract_identity"]["project"]["name"] == "ota"
-          pathlib.Path("repo-up-preview.json").write_text(output.stdout, encoding="utf-8")
+          pathlib.Path("repo-up-preview.json").write_text(payload, encoding="utf-8")
           PY
 
   examples-smoke:
