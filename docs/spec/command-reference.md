@@ -1037,6 +1037,8 @@ Run a validated task.
 
 ```bash
 ota run <task> [PATH]
+ota run <task> --dry-run [PATH]
+ota run <task> --dry-run --json [PATH]
 ota run <task> --stream [PATH]
 ota run <task> --member api [PATH]
 ota run <task> --member api --member web [PATH]
@@ -1064,6 +1066,14 @@ Current behavior:
 - `allowed` limits the accepted values for that input
 - task inputs only apply to the task you invoked, not its dependencies
 - if every declared input has a default, you can omit all input flags
+- `--dry-run` is the read-only repo run preview surface: it resolves the selected task path,
+  env, toolchains, native prerequisites, dependencies, and execution plan without running setup,
+  dependencies, task processes, or containers
+- `--dry-run` prints `RUN PREVIEW`, uses the shared `READY` / `BLOCKED` readiness vocabulary, and
+  shows `Mode: dry-run (no write)` plus the selected execution path, requirements, and planned
+  actions
+- repo-level `--json` currently requires `--dry-run`, so the machine-readable run surface is
+  `ota run <task> --dry-run --json`
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
 - backend-configuration failures now point through `ota execution plan` first so the selected execution path can be inspected before you change contract execution settings or retry the task
@@ -1071,8 +1081,11 @@ Current behavior:
 - when the selected task path uses `requirements.toolchains`, ota treats that toolchain as the owner for the selected path instead of describing its owned capabilities as standalone `runtimes` or `tools`
 - toolchain run-path fulfillment is opt-in: `toolchains.<name>.fulfillment: none` keeps `ota run` on diagnosis/check-only behavior, while `fulfillment: run` lets ota attempt provider-backed run-path provisioning for the selected toolchain only
 - when toolchain fulfillment fails, run output names the selected toolchain, the owning provider, the declared requirement slice ota checked, and the rerun lane instead of reducing the failure to a generic tool install error
-- `ota run --json` and receipt-backed run summaries now expose additive `toolchains[]` evidence for the selected task path, including provider, backend, target OS, version, fulfillment mode, owned runtime, and any owned tools/components/targets ota selected on that path
-- when ota actually runs provider fulfillment commands on that path, the same `toolchains[]` entry also records `fulfilled` plus additive `commands[]` evidence
+- `ota run <task> --dry-run --json` exposes additive `toolchains[]` evidence for the selected
+  preview path, including provider, backend, target OS, version, fulfillment mode, owned runtime,
+  and any owned tools/components/targets ota selected on that path
+- when ota actually runs provider fulfillment commands on an executed path, the corresponding
+  receipt-backed toolchain evidence records `fulfilled` plus additive `commands[]`
 - on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - on non-interactive text success, large task output is shown as a bounded excerpt before the compact `RUN SUMMARY`
 - on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
@@ -1551,8 +1564,8 @@ Current behavior:
 - captures the current repo state as an execution receipt with one `readiness` step
 - when a lifecycle override is selected, the receipt preserves that selected lifecycle, image, target, and rerun path instead of falling back to the default doctor container lifecycle
 - receipt JSON now includes additive `receipt.toolchains[]` evidence for the selected readiness
-  path, mirroring the same provider/backend/target OS/fulfillment shape used by `ota run --json`
-  and `ota up --json`
+  path, mirroring the same provider/backend/target OS/fulfillment shape used by
+  `ota run <task> --dry-run --json` and `ota up --json`
 - when a recorded execution path actually ran provider fulfillment commands, `receipt.toolchains[]`
   can also include additive `fulfilled` and `commands[]` evidence there
 - never provisions, runs tasks, starts services, or writes repo state

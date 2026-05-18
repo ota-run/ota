@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added a first-class repo run preview surface: `ota run <task> --dry-run` now renders `RUN
+  PREVIEW` with the shared readiness vocabulary and selected execution/requirement plan, while
+  `ota run <task> --dry-run --json` emits the matching machine-readable preview payload; repo-level
+  `--json` is now documented and enforced as preview-only for `ota run`
 - added explicit `ota up` service-run behavior controls with `--attach`, `--detach`, and
   `--ready-timeout`; default `ota up` now runs service-runtime readiness proof in cleanup-owned
   mode (prepare + verify + teardown + return), while `--detach` keeps the proved workload running
@@ -238,10 +242,11 @@
   runtime capability alongside the provider contract, which keeps `toolchains.node` honest as
   “Node via Corepack” instead of reading like Corepack itself is the runtime being checked
 - exposed selected toolchain decisions as first-class machine-readable evidence: `ota doctor --json`
-  now emits top-level `toolchains[]`, and receipt-bearing surfaces such as `ota run --json`,
-  `ota up --json`, and `ota receipt --json` now emit additive `receipt.toolchains[]` entries with
-  provider, backend, target OS, version, fulfillment mode, owned runtime, and owned
-  tools/components/targets for the selected path
+  now emits top-level `toolchains[]`, `ota run <task> --dry-run --json` emits top-level
+  preview-path `toolchains[]`, and receipt-bearing surfaces such as `ota up --json` and
+  `ota receipt --json` now emit additive `receipt.toolchains[]` entries with provider, backend,
+  target OS, version, fulfillment mode, owned runtime, and owned tools/components/targets for the
+  selected path
 - bridged selected toolchain-owned runtime lanes into org-policy version/provisioning reasoning, so
   `ota doctor`, `ota up`, and execution-policy previews can show approved runtime versions and
   approved install sources for `toolchains.rust` / `toolchains.node` without re-declaring

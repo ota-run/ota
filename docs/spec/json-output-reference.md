@@ -87,6 +87,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota receipt --json` when you want a read-only repo receipt artifact
 - use `ota clean --json` or `ota clean --stale --json` when you want deterministic cleanup reports or structured cleanup failure details instead of scraping text receipts
 - use `ota up --json` or `ota workspace up --json` when you want preparation or readiness roll-up data
+- use `ota run <task> --dry-run --json` when you want a repo task execution preview without
+  starting dependencies, processes, or containers
 - use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
 - use `ota workspace receipt --json` when you want a read-only workspace receipt artifact
 - use `ota diff --json` or `ota explain --json` when you want contract change impact or remediation planning
@@ -101,6 +103,8 @@ human text output:
 - `ota skills install --json`: use `ok`, `skill`, `agent`, and `path`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - `ota execution topology --json`: use `contract_identity`, `declared_execution`, `shared_backends`, `readiness_probes`, `surfaces`, `services`, and `tasks`
+- `ota run <task> --dry-run --json`: use `summary`, `resolved`, `requested_task`, `env`,
+  `toolchains`, and `plan`; repo-level run JSON is currently preview-only and requires `--dry-run`
 - `ota proof runtime --json`: use `mode`, `workflow`, `phase`, `summary`, and `artifacts`; inspect the referenced `doctor.json` and `topology.json` artifacts instead of expecting the proof wrapper to duplicate those payloads
 - `ota services --json`: use `services`, grouped `members` when present, and nested `manager`, `readiness`, `endpoints`, and `depends_on`
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
@@ -1720,13 +1724,107 @@ without inferring it from task names. That workflow summary may also include add
 `notes` and `readiness_probes` when the workflow declares them or references reusable named
 probes.
 
-Receipt-bearing execution surfaces such as `ota receipt --json`, `ota up --json`, and
-`ota run --json` may also include additive `receipt.toolchains[]` entries with the same toolchain
-evidence shape. Use those entries when you need to know which selected provider-backed ecosystem
-ota checked or fulfilled on the recorded execution path, instead of inferring that from human text
-or standalone runtime/tool fields. When fulfillment actually ran, `receipt.toolchains[]` can also
+`ota run <task> --dry-run --json` exposes selected task-path toolchains at top level in
+`toolchains[]`. Receipt-bearing execution surfaces such as `ota receipt --json` and `ota up
+--json` may also include additive `receipt.toolchains[]` entries with the same toolchain evidence
+shape. Use those entries when you need to know which selected provider-backed ecosystem ota
+checked or fulfilled on the recorded execution path, instead of inferring that from human text or
+standalone runtime/tool fields. When fulfillment actually ran, `receipt.toolchains[]` can also
 include `fulfilled: true` plus additive `commands[]` entries with the exact provider commands ota
 executed for that toolchain during the recorded run path.
+
+## `ota run --dry-run --json`
+
+`ota run <task> --dry-run --json` is the read-only repo execution preview surface. It resolves the
+same selected task path, execution backend, env requirements, toolchains, native prerequisites,
+dependency order, and preview actions that text `RUN PREVIEW` uses, but it does not execute setup,
+dependencies, containers, or task processes.
+
+Repo-level `ota run --json` is currently not a mutating execution receipt surface. Use
+`ota run <task> --dry-run --json` for planning, `ota receipt --json` for repo readiness receipts,
+and `ota workspace run --json` for coordinated multi-repo execution receipts.
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "contract": "/path/to/ota.yaml",
+  "task": "ci",
+  "dry_run": true,
+  "summary": {
+    "verdict": "ready",
+    "agent_verdict": "ready",
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0
+  },
+  "contract_identity": {
+    "version": 1,
+    "project": {
+      "name": "demo"
+    },
+    "counts": {
+      "runtimes": 0,
+      "tools": 0,
+      "env": 0,
+      "services": 0,
+      "checks": 0,
+      "tasks": 1
+    }
+  },
+  "resolved": {
+    "backend": "native",
+    "backend_source": "task",
+    "target_strategy": "host process"
+  },
+  "requested_task": {
+    "name": "ci",
+    "kind": "run",
+    "run": "npm test",
+    "depends_on": [],
+    "requires_services": [],
+    "after_success": [],
+    "after_failure": [],
+    "after_always": [],
+    "safe_for_agent": false
+  },
+  "env_summary": {
+    "contract_count": 0,
+    "source_count": 0,
+    "source_issue_count": 0,
+    "task_count": 1,
+    "resolved_count": 0,
+    "missing_count": 0,
+    "invalid_count": 0
+  },
+  "env": [
+    {
+      "name": "OTA_WORKSPACE",
+      "kind": "task",
+      "required": false,
+      "value": "/path/to/workspace",
+      "source": "execution",
+      "status": "task"
+    }
+  ],
+  "plan": {
+    "dependency_chain": ["ci"],
+    "actions": ["would execute `npm test` on the host"]
+  }
+}
+```
+
+Use this when a human or agent needs the selected run plan before execution:
+
+- `resolved` is the selected backend/lifecycle/image/provider plan
+- `requested_task` is the selected task body after contract validation
+- `env_summary`, `sources`, and `env` show the selected env state and blockers
+- `toolchains[]` keeps toolchain-owned capabilities on the toolchain instead of duplicating them as
+  standalone runtime/tool evidence
+- `plan.dependency_chain`, `plan.requirement_lines`, `plan.actions`, and `plan.notes` show what
+  ota would check, activate, provision, or run
+- exit `0` means the preview is actionable; exit `1` means the preview is blocked by contract,
+  env, or execution-plan problems
 
 ## `ota policy review --json`
 

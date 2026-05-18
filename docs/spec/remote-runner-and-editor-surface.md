@@ -94,7 +94,7 @@ Recommended inputs:
 - `ota workspace tasks --json` for workspace task inventory and dependency order
 - `ota workspace list --json` for repo inventory, contract presence, readiness, and execution metadata
 - `ota workspace check --json` for checks-only workspace readiness
-- `ota run --json` for repo task execution metadata
+- `ota run <task> --dry-run --json` for repo task execution previews before anything starts
 - `ota workspace run --json` for workspace task execution roll-ups and receipts
 - `ota up --json` for repo preparation roll-ups and execution receipts
 - `ota workspace up --json` for workspace preparation roll-ups and execution receipts

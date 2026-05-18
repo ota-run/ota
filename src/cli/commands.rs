@@ -91,17 +91,17 @@ use crate::output::{
     ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
     ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
     ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary,
-    TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory, ToolchainSelectionSummary,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkflowSummary, WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
+    ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
+    ValidateFailure, ValidateSuccess, ValidateSummary, WorkflowSummary, WorkflowsFailure,
+    WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
     WorkspaceTaskLaunchSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
     WorkspaceUpSuccess,
 };
@@ -3250,14 +3250,44 @@ fn resolve_execution_plan(
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
 ) -> Result<ExecutionPlanResolved, RunError> {
-    let selected_task = selected_execution_plan_task_name(contract, workflow_name);
-    let task_name = selected_task.unwrap_or("execution plan");
+    resolve_execution_plan_for_selected_task(
+        contract,
+        contract_path,
+        overrides,
+        selected_execution_plan_task_name(contract, workflow_name)
+            .map(|task_name| (task_name, "workflow task")),
+    )
+}
+
+fn resolve_execution_plan_for_task(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<ExecutionPlanResolved, RunError> {
+    resolve_execution_plan_for_selected_task(
+        contract,
+        contract_path,
+        overrides,
+        Some((task_name, "task")),
+    )
+}
+
+fn resolve_execution_plan_for_selected_task(
+    contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    selected_task: Option<(&str, &'static str)>,
+) -> Result<ExecutionPlanResolved, RunError> {
+    let selected_task_name = selected_task.map(|(task_name, _)| task_name);
+    let selected_task_source = selected_task.map(|(_, source)| source);
+    let task_name = selected_task_name.unwrap_or("execution plan");
     let effective = effective_task_execution(contract, task_name, overrides);
     let backend = effective.backend;
     let lifecycle = effective.lifecycle;
     let execution = contract.execution.as_ref();
-    let selected_task_lifecycle = selected_task
-        .and_then(|task_name| contract.tasks.get(task_name))
+    let selected_task_lifecycle = selected_task_name
+        .and_then(|selected_task_name| contract.tasks.get(selected_task_name))
         .and_then(|task| task.mode_execution_branch(backend))
         .and_then(|branch| branch.lifecycle)
         .is_some();
@@ -3269,8 +3299,8 @@ fn resolve_execution_plan(
         .is_some_and(|context| context.lifecycle.is_some());
     let backend_source = if overrides.backend.is_some() {
         "override"
-    } else if selected_task.is_some() {
-        "workflow task"
+    } else if let Some(source) = selected_task_source {
+        source
     } else if execution
         .and_then(|execution| execution.default_context.as_deref())
         .is_some_and(|name| effective.context_name == Some(name))
@@ -3289,7 +3319,7 @@ fn resolve_execution_plan(
     let mut lifecycle_source = if overrides.lifecycle.is_some() {
         String::from("override")
     } else if selected_task_lifecycle {
-        String::from("workflow task")
+        String::from(selected_task_source.unwrap_or("task"))
     } else if context_lifecycle {
         String::from("context lifecycle")
     } else if contract
@@ -13196,15 +13226,46 @@ pub fn run_command(
     task_name: &str,
     path: Option<&Path>,
     file_override: Option<&Path>,
+    format: OutputFormat,
     overrides: ExecutionOverrides,
     members: &[String],
     task_inputs: &[String],
+    dry_run: bool,
     debug: bool,
     show_receipt: bool,
     stream: bool,
     persist_logs: bool,
 ) -> CommandOutput {
     activate_mise_paths_for_current_process();
+    if dry_run && stream {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` cannot be used with `ota run --dry-run`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=run"),
+                format!("DEBUG task={task_name}"),
+                String::from("DEBUG dry_run=true"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+    if matches!(format, OutputFormat::Json) && !dry_run {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--json` currently requires `ota run --dry-run`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=run"),
+                format!("DEBUG task={task_name}"),
+                String::from("DEBUG json=true"),
+            ],
+        );
+    }
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -13246,6 +13307,9 @@ pub fn run_command(
         format!("DEBUG task={task_name}"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if dry_run {
+        debug_lines.push(String::from("DEBUG dry_run=true"));
+    }
     if normalized_task_inputs != task_inputs {
         debug_lines.push(format!(
             "DEBUG task_inputs={}",
@@ -13269,38 +13333,49 @@ pub fn run_command(
     }
 
     finalize_debug(
-        match run_contract_targets(
-            task_name,
-            &resolved_path,
-            overrides,
-            members,
-            &normalized_task_inputs,
-            show_receipt,
-            run_command_streaming_enabled(stream),
-            persist_logs,
-        ) {
-            Ok(stderr) => CommandOutput {
-                stdout: String::new(),
-                stderr: (!stderr.is_empty()).then_some(stderr),
-                exit_code: 0,
-            },
-            Err(error) => CommandOutput {
-                stdout: String::new(),
-                stderr: Some(match (error.summary, error.receipt) {
-                    (Some(summary), Some(receipt)) if error.message.is_empty() => {
-                        format!("{summary}\n{receipt}")
-                    }
-                    (Some(summary), Some(receipt)) => {
-                        format!("{summary}\n\n{}\n{}", error.message, receipt)
-                    }
-                    (Some(summary), None) if error.message.is_empty() => summary,
-                    (Some(summary), None) => format!("{summary}\n\n{}", error.message),
-                    (None, Some(receipt)) if error.message.is_empty() => receipt,
-                    (None, Some(receipt)) => format!("{}\n{}", error.message, receipt),
-                    (None, None) => error.message,
-                }),
-                exit_code: error.exit_code,
-            },
+        if dry_run {
+            run_preview_command(
+                task_name,
+                &resolved_path,
+                overrides,
+                members,
+                format,
+                persist_logs,
+            )
+        } else {
+            match run_contract_targets(
+                task_name,
+                &resolved_path,
+                overrides,
+                members,
+                &normalized_task_inputs,
+                show_receipt,
+                run_command_streaming_enabled(stream),
+                persist_logs,
+            ) {
+                Ok(stderr) => CommandOutput {
+                    stdout: String::new(),
+                    stderr: (!stderr.is_empty()).then_some(stderr),
+                    exit_code: 0,
+                },
+                Err(error) => CommandOutput {
+                    stdout: String::new(),
+                    stderr: Some(match (error.summary, error.receipt) {
+                        (Some(summary), Some(receipt)) if error.message.is_empty() => {
+                            format!("{summary}\n{receipt}")
+                        }
+                        (Some(summary), Some(receipt)) => {
+                            format!("{summary}\n\n{}\n{}", error.message, receipt)
+                        }
+                        (Some(summary), None) if error.message.is_empty() => summary,
+                        (Some(summary), None) => format!("{summary}\n\n{}", error.message),
+                        (None, Some(receipt)) if error.message.is_empty() => receipt,
+                        (None, Some(receipt)) => format!("{}\n{}", error.message, receipt),
+                        (None, None) => error.message,
+                    }),
+                    exit_code: error.exit_code,
+                },
+            }
         },
         debug,
         debug_lines,
@@ -13377,6 +13452,1074 @@ fn can_reinterpret_missing_repo_run_path(path: &Path) -> bool {
 
 fn run_command_streaming_enabled(force_stream: bool) -> bool {
     force_stream || (!plain_mode() && (io::stdout().is_terminal() || io::stderr().is_terminal()))
+}
+
+fn run_preview_command(
+    task_name: &str,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    members: &[String],
+    format: OutputFormat,
+    persist_logs: bool,
+) -> CommandOutput {
+    let path_display = resolved_path.display().to_string();
+    if members.is_empty() {
+        return match load_and_validate_target(resolved_path, None) {
+            Ok(target) => {
+                render_run_preview_target(task_name, overrides, None, target, format, persist_logs)
+            }
+            Err(error) => render_run_preview_contract_problem(
+                resolved_path,
+                None,
+                task_name,
+                format,
+                &path_display,
+                error,
+            ),
+        };
+    }
+
+    let mut overall_ok = true;
+    let mut text_sections = Vec::new();
+    let mut member_results = Vec::new();
+    for member in members {
+        let target = match load_and_validate_target(resolved_path, Some(member.as_str())) {
+            Ok(target) => target,
+            Err(error) => {
+                return render_run_preview_contract_problem(
+                    resolved_path,
+                    Some(member.as_str()),
+                    task_name,
+                    format,
+                    &path_display,
+                    error,
+                );
+            }
+        };
+        let output = render_run_preview_target(
+            task_name,
+            overrides,
+            Some(member.as_str()),
+            target,
+            format,
+            persist_logs,
+        );
+        overall_ok &= output.exit_code == 0;
+        match format {
+            OutputFormat::Text => {
+                text_sections.push(output.stdout);
+            }
+            OutputFormat::Json => {
+                let parsed = serde_json::from_str::<JsonValue>(&output.stdout)
+                    .expect("run preview json should be valid");
+                member_results.push(parsed);
+            }
+        }
+    }
+
+    match format {
+        OutputFormat::Text => CommandOutput {
+            stdout: text_sections.join("\n\n"),
+            stderr: None,
+            exit_code: if overall_ok { 0 } else { 1 },
+        },
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json_value(json!({
+                "ok": overall_ok,
+                "path": path_display,
+                "task": task_name,
+                "dry_run": true,
+                "members": member_results,
+            })),
+            stderr: None,
+            exit_code: if overall_ok { 0 } else { 1 },
+        },
+    }
+}
+
+fn render_run_preview_contract_problem(
+    resolved_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    format: OutputFormat,
+    path_display: &str,
+    error: ContractProblem,
+) -> CommandOutput {
+    match error {
+        ContractProblem::Validation(errors) => match format {
+            OutputFormat::Text => render_task_runtime_bind_validation_text(
+                "RUN PREVIEW",
+                resolved_path,
+                member,
+                &errors,
+                &["ota validate", "ota run"],
+            )
+            .map(CommandOutput::failure)
+            .unwrap_or_else(|| {
+                invalid_repo_contract_output(
+                    "RUN PREVIEW",
+                    resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target("ota validate", resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_repo_contract_target(
+                                    &repo_run_preview_command(task_name, member),
+                                    resolved_path
+                                )
+                            ))
+                        ),
+                    ],
+                    format,
+                )
+            }),
+            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                summary: None,
+                ok: false,
+                path: path_display,
+                errors: errors.errors().iter().map(ToString::to_string).collect(),
+                error: None,
+                warnings: Vec::new(),
+            })),
+        },
+        ContractProblem::Load(error) => match format {
+            OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                "RUN PREVIEW",
+                resolved_path,
+                "Contract could not be loaded",
+                &error.to_string(),
+                &[
+                    format!(
+                        "repair {}",
+                        paint_code(&format!("`{}`", compact_contract_path(resolved_path)))
+                    ),
+                    format!(
+                        "rerun {}",
+                        paint_code(&format!(
+                            "`{}`",
+                            command_for_repo_contract_target("ota validate", resolved_path)
+                        ))
+                    ),
+                    format!(
+                        "rerun `{}`",
+                        command_for_repo_contract_target(
+                            &repo_run_preview_command(task_name, member),
+                            resolved_path
+                        )
+                    ),
+                ],
+            )),
+            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                summary: None,
+                ok: false,
+                path: path_display,
+                errors: Vec::new(),
+                error: Some(error.to_string()),
+                warnings: Vec::new(),
+            })),
+        },
+    }
+}
+
+fn render_run_preview_target(
+    requested_task_name: &str,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+    target: LoadedContractTarget,
+    format: OutputFormat,
+    persist_logs: bool,
+) -> CommandOutput {
+    let task_name = canonical_declared_task_name(&target.contract, requested_task_name);
+    let Some(task) = target.contract.tasks.get(task_name.as_str()) else {
+        let error = render_run_error(RunError::UnknownTask {
+            task: requested_task_name.to_string(),
+        });
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(stylize_text_failure("ota run", &error)),
+            OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                "ok": false,
+                "path": target.contract_path.display().to_string(),
+                "member": member,
+                "task": requested_task_name,
+                "dry_run": true,
+                "error": error,
+            }))),
+        };
+    };
+
+    let path_display = target.contract_path.display().to_string();
+    let text_path_display =
+        display_contract_target(&compact_contract_path(&target.contract_path), member);
+    let contract_identity = repo_contract_identity(&target.contract);
+    let required_env_names = target.contract.task_required_env_names(task_name.as_str());
+    let declared_execution = ExecutionSummary::from_contract_with_required_env_names(
+        &target.contract,
+        &target.contract_path,
+        (!required_env_names.is_empty()).then_some(&required_env_names),
+    );
+    let applied_overrides = execution_plan_overrides(overrides);
+    let requested_task =
+        TaskSummary::from_spec(task_name.as_str(), task, current_os(), &target.contract);
+    let env_report = match build_env_report(
+        &target.contract,
+        &target.contract_path,
+        Some(task_name.as_str()),
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            return match format {
+                OutputFormat::Text => {
+                    CommandOutput::failure(stylize_text_failure("ota run", &error))
+                }
+                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                    "ok": false,
+                    "path": path_display,
+                    "member": member,
+                    "task": task_name,
+                    "dry_run": true,
+                    "error": error,
+                }))),
+            };
+        }
+    };
+    let execution_plan = match resolve_execution_plan_for_task(
+        &target.contract,
+        &target.contract_path,
+        task_name.as_str(),
+        overrides,
+    ) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            let summary = DoctorSummary {
+                verdict: DoctorVerdict::NotReady,
+                agent_verdict: DoctorVerdict::Ready,
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                primary_blocker: Some(run_preview_execution_primary_blocker(
+                    &target.contract,
+                    &target.contract_path,
+                    member,
+                    task_name.as_str(),
+                    overrides,
+                    &error,
+                )),
+            };
+            let text = render_run_preview_text(
+                task_name.as_str(),
+                &text_path_display,
+                &summary,
+                &contract_identity,
+                declared_execution.as_ref(),
+                &ExecutionPlanResolved {
+                    backend: format_backend(
+                        effective_task_execution(&target.contract, task_name.as_str(), overrides)
+                            .backend,
+                    )
+                    .to_string(),
+                    backend_source: String::from("task"),
+                    lifecycle: effective_task_execution(
+                        &target.contract,
+                        task_name.as_str(),
+                        overrides,
+                    )
+                    .lifecycle
+                    .map(format_lifecycle)
+                    .map(str::to_string),
+                    lifecycle_source: None,
+                    image: None,
+                    engine: None,
+                    engine_candidates: Vec::new(),
+                    provider: None,
+                    target: None,
+                    target_strategy: String::from("unresolved"),
+                    cwd: None,
+                },
+                applied_overrides.as_ref(),
+                &requested_task,
+                &env_report,
+                &[],
+                &[],
+                &RunPreviewPlan::default(),
+                persist_logs,
+            );
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(text),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&RunPreviewSuccess {
+                        ok: false,
+                        path: &text_path_display,
+                        contract: &path_display,
+                        member,
+                        task: task_name.as_str(),
+                        dry_run: true,
+                        summary,
+                        contract_identity,
+                        declared_execution,
+                        resolved: ExecutionPlanResolved {
+                            backend: format_backend(
+                                effective_task_execution(
+                                    &target.contract,
+                                    task_name.as_str(),
+                                    overrides,
+                                )
+                                .backend,
+                            )
+                            .to_string(),
+                            backend_source: String::from("task"),
+                            lifecycle: effective_task_execution(
+                                &target.contract,
+                                task_name.as_str(),
+                                overrides,
+                            )
+                            .lifecycle
+                            .map(format_lifecycle)
+                            .map(str::to_string),
+                            lifecycle_source: None,
+                            image: None,
+                            engine: None,
+                            engine_candidates: Vec::new(),
+                            provider: None,
+                            target: None,
+                            target_strategy: String::from("unresolved"),
+                            cwd: None,
+                        },
+                        overrides: applied_overrides,
+                        requested_task,
+                        env_summary: env_report.summary,
+                        sources: env_report.sources,
+                        env: env_report.env,
+                        toolchains: Vec::new(),
+                        native_prerequisites: Vec::new(),
+                        plan: RunPreviewPlan::default(),
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
+            };
+        }
+    };
+
+    let toolchains =
+        selected_task_toolchain_summaries(&target.contract, task_name.as_str(), overrides);
+    let native_prerequisites = receipt_native_prerequisites(
+        &target.contract,
+        Some(task_name.as_str()),
+        effective_task_execution(&target.contract, task_name.as_str(), overrides).backend,
+        current_requirement_platform(),
+        false,
+    );
+    let plan = build_run_preview_plan(
+        &target.contract,
+        task_name.as_str(),
+        overrides,
+        &requested_task,
+        &execution_plan,
+        persist_logs,
+    );
+    let summary = run_preview_summary(&target.contract, task_name.as_str(), member, &env_report);
+    let exit_code = if summary.verdict == DoctorVerdict::Ready {
+        0
+    } else {
+        1
+    };
+    let text = render_run_preview_text(
+        task_name.as_str(),
+        &text_path_display,
+        &summary,
+        &contract_identity,
+        declared_execution.as_ref(),
+        &execution_plan,
+        applied_overrides.as_ref(),
+        &requested_task,
+        &env_report,
+        &toolchains,
+        &native_prerequisites,
+        &plan,
+        persist_logs,
+    );
+
+    match format {
+        OutputFormat::Text => CommandOutput {
+            stdout: text,
+            stderr: None,
+            exit_code,
+        },
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&RunPreviewSuccess {
+                ok: summary.verdict == DoctorVerdict::Ready,
+                path: &text_path_display,
+                contract: &path_display,
+                member,
+                task: task_name.as_str(),
+                dry_run: true,
+                summary,
+                contract_identity,
+                declared_execution,
+                resolved: execution_plan,
+                overrides: applied_overrides,
+                requested_task,
+                env_summary: env_report.summary,
+                sources: env_report.sources,
+                env: env_report.env,
+                toolchains,
+                native_prerequisites,
+                plan,
+            }),
+            stderr: None,
+            exit_code,
+        },
+    }
+}
+
+fn run_preview_summary(
+    contract: &Contract,
+    task_name: &str,
+    member: Option<&str>,
+    env_report: &EnvReport,
+) -> DoctorSummary {
+    let primary_blocker = run_preview_env_primary_blocker(task_name, member, env_report);
+    DoctorSummary {
+        verdict: if primary_blocker.is_some() {
+            DoctorVerdict::NotReady
+        } else {
+            DoctorVerdict::Ready
+        },
+        agent_verdict: DoctorVerdict::Ready,
+        error_count: usize::from(primary_blocker.is_some()),
+        warn_count: 0,
+        info_count: 0,
+        primary_blocker: primary_blocker.or_else(|| {
+            (!contract.tasks.contains_key(task_name)).then(|| DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Task is not declared"),
+                why: format!("`{task_name}` is not declared in this contract"),
+                next: format!(
+                    "run `{}` to inspect runnable task usage",
+                    repo_tasks_use_command(member)
+                ),
+                provenance: Some(String::from("contract")),
+                provenance_key: None,
+            })
+        }),
+    }
+}
+
+fn run_preview_env_primary_blocker(
+    task_name: &str,
+    member: Option<&str>,
+    env_report: &EnvReport,
+) -> Option<DoctorPrimaryBlocker> {
+    if let Some(source) = env_report.sources.iter().find(|source| {
+        !matches!(
+            source.status,
+            EnvSourceStatus::Loaded | EnvSourceStatus::MissingOptional
+        )
+    }) {
+        return Some(DoctorPrimaryBlocker {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Declared env source is {}",
+                render_env_source_status(source.status)
+            ),
+            why: source.detail.clone().unwrap_or_else(|| {
+                format!(
+                    "declared env source `{}` is {}",
+                    source.label,
+                    render_env_source_status(source.status)
+                )
+            }),
+            next: source.next.clone().unwrap_or_else(|| {
+                format!(
+                    "run `{}` to inspect env source status for task `{task_name}`",
+                    repo_env_task_command(task_name, member)
+                )
+            }),
+            provenance: Some(String::from("declared env source")),
+            provenance_key: None,
+        });
+    }
+    if let Some(entry) = env_report
+        .env
+        .iter()
+        .find(|entry| entry.status == EnvEntryStatus::Missing)
+    {
+        return Some(DoctorPrimaryBlocker {
+            severity: FindingSeverity::Error,
+            summary: format!("Missing env: {}", entry.name),
+            why: format!(
+                "task `{task_name}` requires `{}`, but no value source is available on the selected run path",
+                entry.name
+            ),
+            next: entry.next.clone().unwrap_or_else(|| {
+                format!(
+                    "run `{}` to inspect env requirements for task `{task_name}`",
+                    repo_env_task_command(task_name, member)
+                )
+            }),
+            provenance: Some(String::from("execution env")),
+            provenance_key: None,
+        });
+    }
+    env_report
+        .env
+        .iter()
+        .find(|entry| entry.status == EnvEntryStatus::Invalid)
+        .map(|entry| DoctorPrimaryBlocker {
+            severity: FindingSeverity::Error,
+            summary: format!("Invalid env: {}", entry.name),
+            why: format!(
+                "`{}` resolved from `{}` but does not satisfy the declared allowed values for task `{task_name}`",
+                entry.name, entry.source
+            ),
+            next: entry.next.clone().unwrap_or_else(|| {
+                format!(
+                    "run `{}` to inspect env requirements for task `{task_name}`",
+                    repo_env_task_command(task_name, member)
+                )
+            }),
+            provenance: Some(String::from("execution env")),
+            provenance_key: None,
+        })
+}
+
+fn run_preview_execution_primary_blocker(
+    contract: &Contract,
+    contract_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    error: &RunError,
+) -> DoctorPrimaryBlocker {
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    DoctorPrimaryBlocker {
+        severity: FindingSeverity::Error,
+        summary: String::from("Execution plan could not be resolved"),
+        why: execution_plan_error(error),
+        next: format!(
+            "run `{}` to inspect the selected execution path before retrying task `{task_name}`",
+            repo_execution_plan_command(contract_path, member, backend)
+        ),
+        provenance: Some(String::from("execution")),
+        provenance_key: None,
+    }
+}
+
+fn build_run_preview_plan(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    requested_task: &TaskSummary<'_>,
+    execution_plan: &ExecutionPlanResolved,
+    persist_logs: bool,
+) -> RunPreviewPlan {
+    let direct_requirements =
+        selected_task_requirement_surface(contract, task_name, overrides).unwrap_or_default();
+    let target_os = requirement_target_os_for_backend(
+        effective_task_execution(contract, task_name, overrides).backend,
+    );
+    let mut plan = RunPreviewPlan::default();
+
+    if overrides.skip_deps {
+        if !requested_task.depends_on.is_empty() {
+            plan.notes.push(format!(
+                "declared depends_on skipped by local override: {}",
+                requested_task.depends_on.join(", ")
+            ));
+        }
+        plan.dependency_chain.push(task_name.to_string());
+    } else if let Ok(task_plan) = crate::runner::plan_task_execution(contract, task_name) {
+        plan.dependency_chain = task_plan.tasks;
+    } else {
+        plan.dependency_chain.push(task_name.to_string());
+    }
+
+    let required_tool_names = direct_requirements
+        .tools
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for toolchain_line in selected_task_toolchain_preview_actions(
+        contract,
+        task_name,
+        overrides,
+        &required_tool_names,
+    ) {
+        plan.requirement_lines.push(toolchain_line);
+    }
+    for (runtime_name, requirement) in &direct_requirements.runtimes {
+        if !requirement.active_for_os(target_os) {
+            continue;
+        }
+        plan.requirement_lines.push(format!(
+            "runtime `{runtime_name}` version `{}`{}",
+            requirement.version_for_os(target_os),
+            if requirement.required_for_os(target_os) {
+                ""
+            } else {
+                " (optional)"
+            }
+        ));
+    }
+    for (tool_name, requirement) in &direct_requirements.tools {
+        if !requirement.active_for_os(target_os) {
+            continue;
+        }
+        let mut line = format!(
+            "tool `{tool_name}` version `{}`",
+            requirement.version_for_os(target_os)
+        );
+        if !requirement.required_for_os(target_os) {
+            line.push_str(" (optional)");
+        }
+        if let Some(acquisition) = requirement.acquisition() {
+            let provider = match acquisition.provider {
+                ToolAcquisitionProvider::Corepack => "corepack",
+                ToolAcquisitionProvider::Command => "command",
+            };
+            line.push_str(&format!(", acquisition `{provider}`"));
+        }
+        plan.requirement_lines.push(line);
+    }
+    if let Some(task) = contract.tasks.get(task_name) {
+        for native_name in &task.requirements.native {
+            plan.requirement_lines
+                .push(format!("native prerequisite `{native_name}`"));
+        }
+    }
+
+    if !overrides.skip_deps {
+        for dependency in plan
+            .dependency_chain
+            .iter()
+            .take(plan.dependency_chain.len().saturating_sub(1))
+        {
+            plan.actions.push(format!(
+                "would run dependency `{dependency}` before `{task_name}`"
+            ));
+        }
+    } else if !requested_task.depends_on.is_empty() {
+        plan.actions.push(format!(
+            "skip declared depends_on before requested task `{task_name}`"
+        ));
+    }
+    if matches!(
+        effective_task_execution(contract, task_name, overrides).backend,
+        Backend::Native
+    ) {
+        let activation_surface =
+            selected_task_activation_requirement_surface(contract, task_name, overrides)
+                .unwrap_or_default();
+        for action in requirement_surface_activation_actions(&activation_surface) {
+            plan.actions
+                .push(render_up_preview_activation_action(&action));
+        }
+        for action in selected_task_native_activation_actions(contract, task_name, overrides) {
+            plan.actions
+                .push(render_up_preview_native_activation_action(&action));
+        }
+    }
+    plan.actions.push(run_preview_task_execution_action(
+        requested_task,
+        execution_plan,
+    ));
+    if persist_logs {
+        plan.actions.push(String::from(
+            "would persist durable task logs under `.ota/state/logs/`",
+        ));
+    }
+
+    plan
+}
+
+fn run_preview_task_execution_action(
+    task: &TaskSummary<'_>,
+    execution_plan: &ExecutionPlanResolved,
+) -> String {
+    let backend_detail = match execution_plan.backend.as_str() {
+        "container" => execution_plan
+            .image
+            .as_deref()
+            .map(|image| format!(" inside container image `{image}`"))
+            .unwrap_or_else(|| String::from(" inside container execution")),
+        "remote" => execution_plan
+            .provider
+            .as_deref()
+            .map(|provider| format!(" through remote provider `{provider}`"))
+            .unwrap_or_else(|| String::from(" through remote execution")),
+        _ => String::from(" on the host"),
+    };
+    if let Some(command) = task.run.or(task.script) {
+        return format!("would execute `{command}`{backend_detail}");
+    }
+    if let Some(launch) = task.launch.as_ref() {
+        if let Some(exe) = launch.exe {
+            if launch.args.is_empty() {
+                return format!("would launch `{exe}`{backend_detail}");
+            }
+            return format!(
+                "would launch `{}`{backend_detail}",
+                std::iter::once(exe)
+                    .chain(launch.args.iter().copied())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+        if let Some(image) = launch.image {
+            return format!("would launch container workload `{image}`{backend_detail}");
+        }
+        return format!(
+            "would launch structured task `{}`{backend_detail}",
+            task.name
+        );
+    }
+    if let Some(action) = task.action.as_ref() {
+        return format!("would run task action `{}`{backend_detail}", action.kind);
+    }
+    format!("would execute task `{}`{backend_detail}", task.name)
+}
+
+fn render_run_preview_text(
+    task_name: &str,
+    path: &str,
+    summary: &DoctorSummary,
+    contract_identity: &ContractIdentity,
+    declared_execution: Option<&ExecutionSummary<'_>>,
+    execution_plan: &ExecutionPlanResolved,
+    _overrides: Option<&ExecutionPlanOverrides>,
+    requested_task: &TaskSummary<'_>,
+    env_report: &EnvReport,
+    toolchains: &[ToolchainSelectionSummary],
+    native_prerequisites: &[crate::output::ExecutionReceiptNativePrerequisite],
+    plan: &RunPreviewPlan,
+    persist_logs: bool,
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}\n\n{}",
+        format_command_header("RUN PREVIEW", task_name),
+        render_doctor_readiness_status(summary.verdict),
+        format_mode_line("dry-run (no write)")
+    );
+
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Execution")));
+    stdout.push_str(&detail_list_row(
+        &paint_key("Task:"),
+        &paint_backticked_code(task_name),
+    ));
+    stdout.push('\n');
+    stdout.push_str(&detail_list_row(
+        &paint_key("Backend:"),
+        &paint_backticked_code(&execution_plan.backend),
+    ));
+    if let Some(lifecycle) = execution_plan.lifecycle.as_deref() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Lifecycle:"),
+            &paint_backticked_code(lifecycle),
+        ));
+    }
+    if let Some(image) = execution_plan.image.as_deref() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Image:"),
+            &paint_backticked_code(image),
+        ));
+    }
+    if let Some(provider) = execution_plan.provider.as_deref() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Provider:"),
+            &paint_backticked_code(provider),
+        ));
+    }
+    if let Some(target) = execution_plan.target.as_deref() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Target:"),
+            &paint_backticked_code(target),
+        ));
+    }
+    if let Some(context) = requested_task.context {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Context:"),
+            &paint_backticked_code(context),
+        ));
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{}",
+        render_contract_identity_text(contract_identity)
+    ));
+    if let Some(declared_execution) = declared_execution {
+        let selected_context =
+            selected_execution_plan_context_name(Some(declared_execution), execution_plan);
+        if let Some(context_label) =
+            render_execution_plan_selected_context_label(Some(declared_execution), selected_context)
+        {
+            stdout.push('\n');
+            stdout.push_str(&detail_list_row(
+                &paint_key("Selected Context:"),
+                &context_label,
+            ));
+        }
+    }
+
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Requirements")));
+    if plan.requirement_lines.is_empty() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_item("none"));
+    } else {
+        for line in &plan.requirement_lines {
+            append_wrapped_bullet_text(
+                &mut stdout,
+                detail_arrow(),
+                line,
+                " ",
+                84,
+                render_backticked_preview_value,
+            );
+        }
+    }
+
+    if !env_report.env.is_empty() || !env_report.sources.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Environment")));
+        for entry in env_report
+            .env
+            .iter()
+            .filter(|entry| entry.required || matches!(entry.kind, EnvEntryKind::Task))
+        {
+            let mut line = format!(
+                "`{}`: {} from `{}`",
+                entry.name,
+                render_env_status(entry.status),
+                entry.source
+            );
+            if let Some(default) = entry.default.as_deref() {
+                line.push_str(&format!(" (default `{default}`)"));
+            }
+            stdout.push('\n');
+            stdout.push_str(&detail_list_item(&line));
+        }
+        for source in env_report.sources.iter().filter(|source| {
+            !matches!(
+                source.status,
+                EnvSourceStatus::Loaded | EnvSourceStatus::MissingOptional
+            )
+        }) {
+            stdout.push('\n');
+            stdout.push_str(&detail_list_item(&format!(
+                "declared source `{}`: {}",
+                source.label,
+                render_env_source_status(source.status)
+            )));
+        }
+    }
+
+    if !toolchains.is_empty() {
+        stdout.push_str("\n\n");
+        stdout.push_str(&render_toolchain_summary_text(toolchains));
+    }
+
+    if !native_prerequisites.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Native")));
+        for prerequisite in native_prerequisites {
+            let mut line = format!("`{}` on `{}`", prerequisite.name, prerequisite.platform);
+            if let Some(check) = prerequisite.check.as_deref() {
+                line.push_str(&format!(" ({check})"));
+            }
+            stdout.push('\n');
+            stdout.push_str(&detail_list_item(&line));
+        }
+    }
+
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Plan")));
+    if plan.actions.is_empty() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_item("none"));
+    } else {
+        for action in &plan.actions {
+            append_wrapped_bullet_text(
+                &mut stdout,
+                detail_arrow(),
+                action,
+                " ",
+                84,
+                render_backticked_preview_value,
+            );
+        }
+    }
+    for note in &plan.notes {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_item(note));
+    }
+
+    if let Some(primary_finding) = summary.primary_blocker.as_ref() {
+        stdout.push_str("\n\n");
+        stdout.push_str(&render_primary_finding_text_with_next_rewriter(
+            primary_finding.severity,
+            &primary_finding.summary,
+            &primary_finding.why,
+            &primary_finding.next,
+            primary_finding.provenance.clone(),
+            doctor_mode_from_backend(Some(execution_plan.backend.as_str())),
+            lifecycle_from_display_value(execution_plan.lifecycle.as_deref()),
+            None,
+            rewrite_up_preview_next_command,
+        ));
+    }
+
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Dry run only")));
+    for line in [
+        "no setup tasks executed",
+        "no task dependencies executed",
+        "no task processes started",
+        "no containers started",
+        "no provisioning executed",
+        if persist_logs {
+            "no durable logs were written"
+        } else {
+            "no repo files changed"
+        },
+    ] {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_item(line));
+    }
+    if persist_logs {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_item("no repo files changed"));
+    }
+
+    let _ = path;
+    stdout
+}
+
+fn selected_task_requirement_surface(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<RequirementSurface> {
+    let mut surface = contract.task_requirement_surface([task_name.to_string()])?;
+    let effective = effective_task_execution(contract, task_name, overrides);
+    if let Some(context_name) = effective.context_name
+        && let Some((_, context)) = named_execution_context(contract, context_name)
+    {
+        surface.merge(&RequirementSurface {
+            runtimes: context.requirements.runtimes.clone(),
+            tools: context.requirements.tools.clone(),
+        });
+    }
+    Some(surface)
+}
+
+fn selected_task_toolchain_preview_actions(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    required_tool_names: &BTreeSet<String>,
+) -> Vec<String> {
+    let target_os = requirement_target_os_for_backend(
+        effective_task_execution(contract, task_name, overrides).backend,
+    );
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for toolchain_name in contract.task_required_toolchain_names(task_name) {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if !toolchain.active_for_os(target_os) {
+            continue;
+        }
+        let action = declared_toolchain_preview_action_for_required_tools(
+            toolchain_name.as_str(),
+            toolchain,
+            target_os,
+            required_tool_names,
+        );
+        if seen.insert(action.clone()) {
+            actions.push(action);
+        }
+    }
+    actions
+}
+
+fn selected_task_activation_requirement_surface(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<RequirementSurface> {
+    if !matches!(
+        effective_task_execution(contract, task_name, overrides).backend,
+        Backend::Native
+    ) {
+        return None;
+    }
+
+    let requirement_surface = selected_task_requirement_surface(contract, task_name, overrides)?;
+    let required_tool_names = requirement_surface
+        .tools
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    Some(
+        requirement_surface_with_toolchain_owned_tools_for_required_tools(
+            contract,
+            &requirement_surface,
+            &contract.task_required_toolchain_names(task_name),
+            requirement_target_os_for_backend(Backend::Native),
+            Some(&required_tool_names),
+        ),
+    )
+}
+
+fn selected_task_native_activation_actions(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Vec<NativeRequirementActivationAction> {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Vec::new();
+    };
+    if !matches!(
+        effective_task_execution(contract, task_name, overrides).backend,
+        Backend::Native
+    ) {
+        return Vec::new();
+    }
+    let mut actions = Vec::new();
+    for native_name in &task.requirements.native {
+        let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+            continue;
+        };
+        let Some(platform) = prerequisite.platform_for_os(current_requirement_platform()) else {
+            continue;
+        };
+        let Some(activation) = platform.activation.as_ref() else {
+            continue;
+        };
+        actions.push(NativeRequirementActivationAction {
+            prerequisite_name: native_name.clone(),
+            activation: activation.clone(),
+        });
+    }
+    actions
 }
 
 pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) -> CommandOutput {
@@ -40664,9 +41807,11 @@ tasks:
             "dev",
             Some(repo.path()),
             None,
+            OutputFormat::Text,
             ExecutionOverrides::default(),
             &[],
             &[],
+            false,
             false,
             false,
             false,
@@ -40723,9 +41868,11 @@ tasks:
             "dev",
             Some(repo.path()),
             None,
+            OutputFormat::Text,
             ExecutionOverrides::default(),
             &[],
             &[],
+            false,
             false,
             false,
             true,
@@ -40771,9 +41918,11 @@ tasks:
             "dev",
             None,
             None,
+            OutputFormat::Text,
             ExecutionOverrides::default(),
             &[],
             &[],
+            false,
             false,
             false,
             false,
@@ -40789,6 +41938,97 @@ tasks:
         assert!(stderr.contains("run `ota detect --dry-run .`"), "{stderr}");
         assert!(stderr.contains("run `ota detect --contract .`"), "{stderr}");
         assert!(stderr.contains("run `ota init --dry-run .`"), "{stderr}");
+    }
+
+    #[test]
+    fn run_dry_run_preview_renders_without_starting_task_processes() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let proof_file = repo.path().join("should-not-exist");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+tasks:
+  ci:
+    run: sh -c 'touch "{}"'
+"#,
+                proof_file.display()
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "ci",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            !proof_file.exists(),
+            "dry-run should not execute the task command"
+        );
+
+        let stdout = strip_ansi_codes(&output.stdout);
+        assert!(stdout.contains("RUN PREVIEW"), "{stdout}");
+        assert!(stdout.contains("Mode: dry-run (no write)"), "{stdout}");
+        assert!(stdout.contains("would execute"), "{stdout}");
+        assert!(stdout.contains("no task processes started"), "{stdout}");
+    }
+
+    #[test]
+    fn run_dry_run_json_returns_preview_shape() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  ci:
+    run: npm test
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "ci",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["dry_run"], true);
+        assert_eq!(json["task"], "ci");
+        assert_eq!(json["resolved"]["backend"], "native");
+        assert!(json["plan"]["actions"].is_array());
     }
 
     #[test]
@@ -45147,6 +46387,53 @@ workflows:
             Some("context lifecycle")
         );
         assert_eq!(resolved.image.as_deref(), Some("ghcr.io/ota/dev:latest"));
+    }
+
+    #[test]
+    fn execution_plan_for_task_uses_requested_task_instead_of_default_workflow_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: execution-plan
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo dev
+  ci:
+    run: echo ci
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .expect("contract should parse");
+
+        let resolved = super::resolve_execution_plan_for_task(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            "ci",
+            ExecutionOverrides::default(),
+        )
+        .expect("requested task execution plan should resolve from the requested task");
+
+        assert_eq!(resolved.backend, "native");
+        assert_eq!(resolved.backend_source, "task");
+        assert_eq!(resolved.lifecycle_source, None);
+        assert_eq!(resolved.image, None);
     }
 
     #[test]
@@ -59239,6 +60526,17 @@ fn repo_run_command(task_name: &str, member: Option<&str>) -> String {
     match member {
         Some(member) => format!("ota run --member {member} {task_name}"),
         None => format!("ota run {task_name}"),
+    }
+}
+
+fn repo_run_preview_command(task_name: &str, member: Option<&str>) -> String {
+    format!("{} --dry-run", repo_run_command(task_name, member))
+}
+
+fn repo_tasks_use_command(member: Option<&str>) -> String {
+    match member {
+        Some(member) => format!("ota tasks --member {member} --use"),
+        None => String::from("ota tasks --use"),
     }
 }
 
