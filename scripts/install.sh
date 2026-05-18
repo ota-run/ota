@@ -102,6 +102,14 @@ ota_info() {
   fi
 }
 
+ota_info_light_green() {
+  if supports_color; then
+    printf '\033[1;38;2;144;238;144m%s\033[0m\n' "$1" >&2
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
 ota_receipt() {
   if supports_color; then
     printf '\033[1;38;2;214;161;95m%s\033[0m\n' "$1" >&2
@@ -674,7 +682,7 @@ fi
 ota_receipt "READY"
 ota_receipt_line "${version_text}"
 ota_info ""
-ota_info "Optional next steps"
+ota_info_light_green "Optional next steps"
 ota_receipt_line "Install the Ota skill for Codex:"
 ota_info "   ota skills install --agent codex"
 ota_receipt_line "Install the Ota skill for Claude Code:"

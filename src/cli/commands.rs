@@ -38556,6 +38556,184 @@ workflows:
     }
 
     #[test]
+    fn wait_for_proof_runtime_readiness_does_not_report_ready_when_probe_is_live_but_process_exits()
+     {
+        let _guard = cwd_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should become nonblocking");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 256];
+                        let _ = stream.read(&mut buffer);
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: proof-runtime-regression
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:{port}/healthz/readiness
+      timeout: 1000
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+  app:
+    run:
+      task: app
+    readiness:
+      probes:
+        - backend-ready
+"#
+            ),
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 1"]).spawn().unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 1"]).spawn().unwrap()
+        };
+
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            &mut child,
+            "ota up --stream",
+            None,
+        )
+        .unwrap();
+
+        let _ = child.wait();
+        server.join().expect("probe server should finish");
+
+        assert!(!proof_ok);
+        assert_eq!(phase, "service readiness");
+        let reason = up_failure.as_deref().unwrap_or_default();
+        assert!(reason.contains("exit code 1"), "{reason}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn wait_for_proof_runtime_readiness_reports_ready_when_probe_is_live_and_process_exits_zero() {
+        let _guard = cwd_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should become nonblocking");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 256];
+                        let _ = stream.read(&mut buffer);
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: proof-runtime-regression
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:{port}/healthz/readiness
+      timeout: 1000
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+  app:
+    run:
+      task: app
+    readiness:
+      probes:
+        - backend-ready
+"#
+            ),
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 0"]).spawn().unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap()
+        };
+
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            &mut child,
+            "ota up --stream",
+            None,
+        )
+        .unwrap();
+
+        let _ = child.wait();
+        server.join().expect("probe server should finish");
+
+        assert!(proof_ok);
+        assert_eq!(phase, "post-up diagnosis");
+        assert!(up_failure.is_none(), "{up_failure:?}");
+        assert!(report.ok, "{report:?}");
+    }
+
+    #[test]
     fn proof_runtime_wait_budget_uses_floor_for_full_diagnosis() {
         let budget =
             super::proof_runtime_wait_budget(&super::ProofRuntimeReadinessStrategy::FullDiagnosis);
@@ -49669,7 +49847,7 @@ workflows:
     }
 
     #[test]
-    fn resolve_up_run_behavior_auto_attaches_when_streaming() {
+    fn resolve_up_run_behavior_auto_detaches_service_run_task_when_streaming_native() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -49704,7 +49882,51 @@ workflows:
             super::RepoExecutionMode::Stream,
             super::UpRunBehaviorPreference::Auto,
         );
-        assert_eq!(behavior, super::UpRunBehavior::Attach);
+        assert_eq!(behavior, super::UpRunBehavior::Detach);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_auto_detaches_service_run_task_when_streaming_container() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+execution:
+  default_context: container
+  contexts:
+    container:
+      backend: container
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            super::RepoExecutionMode::Stream,
+            super::UpRunBehaviorPreference::Auto,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::Detach);
     }
 
     #[test]
@@ -62365,6 +62587,39 @@ fn wait_for_proof_runtime_readiness(
         + wait_budget_override.unwrap_or_else(|| proof_runtime_wait_budget(&readiness_strategy));
     let agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
     loop {
+        match up_process.try_wait() {
+            Ok(Some(exit_status)) => {
+                let latest_report = proof_runtime_doctor_report(
+                    contract,
+                    contract_path,
+                    workflow_name,
+                    doctor_mode,
+                    overrides.clone(),
+                );
+                let summary = doctor_summary(&latest_report, agent_verdict);
+                if exit_status.success()
+                    && latest_report.ok
+                    && summary.verdict == DoctorVerdict::Ready
+                {
+                    return Ok((latest_report, "post-up diagnosis", true, None));
+                }
+                let up_process_failure =
+                    Some(proof_runtime_process_exit_failure(process_label, exit_status));
+                return Ok((
+                    latest_report,
+                    "service readiness",
+                    false,
+                    up_process_failure,
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(format!(
+                    "could not observe the runtime-proof `ota up --stream` process: {error}"
+                ));
+            }
+        }
+
         if let ProofRuntimeReadinessStrategy::LightweightTargets(targets) = &readiness_strategy
             && proof_runtime_readiness_targets_observed(targets)
         {
@@ -62377,6 +62632,27 @@ fn wait_for_proof_runtime_readiness(
             );
             let summary = doctor_summary(&latest_report, agent_verdict);
             if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                match up_process.try_wait() {
+                    Ok(Some(exit_status)) => {
+                        if exit_status.success() {
+                            return Ok((latest_report, "post-up diagnosis", true, None));
+                        }
+                        let up_process_failure =
+                            Some(proof_runtime_process_exit_failure(process_label, exit_status));
+                        return Ok((
+                            latest_report,
+                            "service readiness",
+                            false,
+                            up_process_failure,
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "could not observe the runtime-proof `ota up --stream` process: {error}"
+                        ));
+                    }
+                }
                 return Ok((latest_report, "post-up diagnosis", true, None));
             }
             return Ok((latest_report, "service readiness", false, None));
@@ -62395,6 +62671,27 @@ fn wait_for_proof_runtime_readiness(
             );
             let summary = doctor_summary(&latest_report, agent_verdict);
             if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                match up_process.try_wait() {
+                    Ok(Some(exit_status)) => {
+                        if exit_status.success() {
+                            return Ok((latest_report, "post-up diagnosis", true, None));
+                        }
+                        let up_process_failure =
+                            Some(proof_runtime_process_exit_failure(process_label, exit_status));
+                        return Ok((
+                            latest_report,
+                            "service readiness",
+                            false,
+                            up_process_failure,
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "could not observe the runtime-proof `ota up --stream` process: {error}"
+                        ));
+                    }
+                }
                 return Ok((latest_report, "post-up diagnosis", true, None));
             }
             Some(latest_report)
@@ -62414,37 +62711,6 @@ fn wait_for_proof_runtime_readiness(
             })
         };
 
-        match up_process.try_wait() {
-            Ok(Some(exit_status)) => {
-                let up_process_failure = if let Some(code) = exit_status.code() {
-                    let mut why = format!(
-                        "`{process_label}` exited while waiting for readiness (exit code {code})"
-                    );
-                    if let Some(guidance) = windows_exit_code_guidance_line(code) {
-                        why.push_str("; ");
-                        why.push_str(guidance.as_str());
-                    }
-                    Some(why)
-                } else {
-                    Some(String::from(format!(
-                        "`{process_label}` was terminated before readiness could be observed"
-                    )))
-                };
-                return Ok((
-                    finalize_report(latest_report),
-                    "service readiness",
-                    false,
-                    up_process_failure,
-                ));
-            }
-            Ok(None) => {}
-            Err(error) => {
-                return Err(format!(
-                    "could not observe the runtime-proof `ota up --stream` process: {error}"
-                ));
-            }
-        }
-
         if Instant::now() >= deadline {
             return Ok((
                 finalize_report(latest_report),
@@ -62455,6 +62721,25 @@ fn wait_for_proof_runtime_readiness(
         }
 
         thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn proof_runtime_process_exit_failure(
+    process_label: &str,
+    exit_status: std::process::ExitStatus,
+) -> String {
+    if let Some(code) = exit_status.code() {
+        let mut why =
+            format!("`{process_label}` exited while waiting for readiness (exit code {code})");
+        if let Some(guidance) = windows_exit_code_guidance_line(code) {
+            why.push_str("; ");
+            why.push_str(guidance.as_str());
+        }
+        why
+    } else {
+        String::from(format!(
+            "`{process_label}` was terminated before readiness could be observed"
+        ))
     }
 }
 
@@ -68020,16 +68305,14 @@ fn selected_up_run_task_is_service(contract: &Contract, workflow_name: Option<&s
 fn resolve_up_run_behavior(
     contract: &Contract,
     workflow_name: Option<&str>,
-    mode: RepoExecutionMode,
+    _mode: RepoExecutionMode,
     preference: UpRunBehaviorPreference,
 ) -> UpRunBehavior {
     match preference {
         UpRunBehaviorPreference::Attach => UpRunBehavior::Attach,
         UpRunBehaviorPreference::Detach => UpRunBehavior::Detach,
         UpRunBehaviorPreference::Auto => {
-            if matches!(mode, RepoExecutionMode::Stream) {
-                UpRunBehavior::Attach
-            } else if selected_up_run_task_is_service(contract, workflow_name) {
+            if selected_up_run_task_is_service(contract, workflow_name) {
                 UpRunBehavior::Detach
             } else {
                 UpRunBehavior::Attach
