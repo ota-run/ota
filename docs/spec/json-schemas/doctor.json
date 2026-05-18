@@ -165,6 +165,19 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "default_context": { "type": "string" },
+        "contexts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "backend"],
+            "properties": {
+              "name": { "type": "string" },
+              "backend": { "type": "string" }
+            }
+          }
+        },
         "preferred": { "enum": ["native", "container", "remote"] },
         "supported": {
           "type": "array",
@@ -206,6 +219,7 @@
               "required": { "type": "boolean" },
               "default": { "type": "string" },
               "policy": { "type": "string" },
+              "source": { "type": "string" },
               "allowed": {
                 "type": "array",
                 "items": { "type": "string" }

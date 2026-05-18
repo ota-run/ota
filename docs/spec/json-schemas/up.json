@@ -74,6 +74,7 @@
           "required": ["backend"],
           "properties": {
             "backend": { "type": "string" },
+            "context": { "type": "string" },
             "lifecycle": { "type": "string" },
             "image": { "type": "string" },
             "container_memory_bytes": { "type": "integer", "minimum": 1 },

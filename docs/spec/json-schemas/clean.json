@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/clean.json",
+  "title": "ota clean --json",
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "removed_current_persistent_containers",
+        "removed_drift_persistent_containers",
+        "removed_drift_attached_containers",
+        "removed_current_dependency_isolation_volumes",
+        "removed_drift_dependency_isolation_volumes",
+        "skipped_ambiguous_persistent_containers",
+        "skipped_ambiguous_dependency_isolation_volumes",
+        "total_removed",
+        "total_skipped_ambiguous"
+      ],
+      "properties": {
+        "removed_current_persistent_containers": { "type": "integer" },
+        "removed_drift_persistent_containers": { "type": "integer" },
+        "removed_drift_attached_containers": { "type": "integer" },
+        "removed_current_dependency_isolation_volumes": { "type": "integer" },
+        "removed_drift_dependency_isolation_volumes": { "type": "integer" },
+        "skipped_ambiguous_persistent_containers": { "type": "integer" },
+        "skipped_ambiguous_dependency_isolation_volumes": { "type": "integer" },
+        "total_removed": { "type": "integer" },
+        "total_skipped_ambiguous": { "type": "integer" }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "summary", "queried_engines"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "summary": { "$ref": "#/$defs/summary" },
+        "queried_engines": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "classifiedFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "summary",
+        "error",
+        "why",
+        "next",
+        "reason",
+        "engine",
+        "action",
+        "resource_kind",
+        "details"
+      ],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "summary": { "type": "string" },
+        "error": { "type": "string" },
+        "why": { "type": "string" },
+        "next": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reason": {
+          "enum": ["engine_unavailable", "other"]
+        },
+        "engine": { "type": "string" },
+        "action": { "type": "string" },
+        "resource_kind": {
+          "enum": [
+            "persistent_container",
+            "dependency_isolation_volume",
+            "stale_containers"
+          ]
+        },
+        "resource_name": { "type": ["string", "null"] },
+        "details": { "type": "string" }
+      }
+    },
+    "genericFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "summary", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "summary": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/classifiedFailure" },
+    { "$ref": "#/$defs/genericFailure" },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "summary", "queried_engines"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "summary": { "$ref": "#/$defs/summary" },
+        "queried_engines": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "members"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["member", "report"],
+            "properties": {
+              "member": { "type": "string" },
+              "report": { "$ref": "#/$defs/report" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "workspace"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root", "members"],
+          "properties": {
+            "root": { "$ref": "#/$defs/report" },
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["member", "report"],
+                "properties": {
+                  "member": { "type": "string" },
+                  "report": { "$ref": "#/$defs/report" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "scope", "dry_run", "engines", "summary", "containers"],
+      "properties": {
+        "ok": { "const": true },
+        "scope": { "const": "stale" },
+        "dry_run": { "type": "boolean" },
+        "engines": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["matched_count", "removed_count", "would_remove_count"],
+          "properties": {
+            "matched_count": { "type": "integer" },
+            "removed_count": { "type": "integer" },
+            "would_remove_count": { "type": "integer" }
+          }
+        },
+        "containers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["engine", "name", "ownership"],
+            "properties": {
+              "engine": { "type": "string" },
+              "name": { "type": "string" },
+              "ownership": { "enum": ["label", "legacy_name"] }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

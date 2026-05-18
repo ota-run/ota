@@ -157,6 +157,31 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
 }
 
 #[test]
+fn clean_schema_covers_repo_workspace_stale_and_nullable_stale_failure_resource() {
+    let schema = load_schema("docs/spec/json-schemas/clean.json");
+    let classified_failure = &schema["$defs"]["classifiedFailure"]["properties"];
+    let generic_failure = &schema["$defs"]["genericFailure"]["properties"];
+    let workspace = &schema["oneOf"][4]["properties"]["workspace"]["properties"];
+    let stale_success = &schema["oneOf"][5]["properties"];
+
+    assert!(classified_failure.get("reason").is_some());
+    assert!(classified_failure.get("engine").is_some());
+    assert!(classified_failure.get("resource_kind").is_some());
+    assert!(classified_failure.get("resource_name").is_some());
+    assert_eq!(
+        classified_failure["resource_name"]["type"],
+        serde_json::json!(["string", "null"])
+    );
+    assert!(generic_failure.get("summary").is_some());
+    assert!(generic_failure.get("error").is_some());
+    assert!(generic_failure.get("reason").is_none());
+    assert!(workspace.get("root").is_some());
+    assert!(workspace.get("members").is_some());
+    assert_eq!(stale_success["scope"]["const"], "stale");
+    assert!(stale_success.get("containers").is_some());
+}
+
+#[test]
 fn doctor_schema_includes_agent_summary() {
     let schema = load_schema("docs/spec/json-schemas/doctor.json");
     let shared = load_schema("docs/spec/json-schemas/shared.json");
@@ -166,6 +191,7 @@ fn doctor_schema_includes_agent_summary() {
     let member_properties = &properties["members"]["items"]["properties"];
     let member_agent_properties = &member_properties["agent"]["properties"];
     let execution_properties = &properties["execution"]["properties"];
+    let execution_context_properties = &execution_properties["contexts"]["items"]["properties"];
     let execution_env_properties = &execution_properties["env"]["items"]["properties"];
     let provisioning_action = &shared["$defs"]["provisioningAction"]["properties"];
     let provisioning_entry = &shared["$defs"]["provisioningPlanEntry"]["properties"];
@@ -190,8 +216,13 @@ fn doctor_schema_includes_agent_summary() {
             .get("inferred_boundary_reviewed")
             .is_some()
     );
+    assert!(execution_properties.get("default_context").is_some());
+    assert!(execution_properties.get("contexts").is_some());
+    assert!(execution_context_properties.get("name").is_some());
+    assert!(execution_context_properties.get("backend").is_some());
     assert!(execution_properties.get("env").is_some());
     assert!(execution_env_properties.get("policy").is_some());
+    assert!(execution_env_properties.get("source").is_some());
     assert!(provisioning_action.get("normalized_requirement").is_some());
     assert!(provisioning_action.get("resolved_version").is_some());
     assert!(provisioning_action.get("policy_match").is_some());
@@ -204,6 +235,16 @@ fn doctor_schema_includes_agent_summary() {
             .get("agent_verdict")
             .is_some()
     );
+}
+
+#[test]
+fn validate_schema_includes_warn_count_in_success_and_failure_summaries() {
+    let schema = load_schema("docs/spec/json-schemas/validate.json");
+    let success_summary = &schema["oneOf"][0]["properties"]["summary"]["properties"];
+    let failure_summary = &schema["oneOf"][1]["properties"]["summary"]["properties"];
+
+    assert!(success_summary.get("warn_count").is_some());
+    assert!(failure_summary.get("warn_count").is_some());
 }
 
 #[test]
@@ -1085,10 +1126,15 @@ fn workspace_check_schema_exists_and_covers_repo_check_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-check.json");
     let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
+    let execution = &repo["execution"]["properties"];
+    let execution_env = &execution["env"]["items"]["properties"];
 
     assert!(properties.get("summary").is_some());
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
+    assert!(repo.get("execution").is_some());
+    assert!(execution.get("env").is_some());
+    assert!(execution_env.get("source").is_some());
     assert!(repo.get("primary_blocker").is_some());
     assert!(repo.get("findings").is_some());
 }
@@ -1168,12 +1214,17 @@ fn workspace_explain_schema_includes_step_provenance() {
 fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     let schema = load_schema("docs/spec/json-schemas/workspace-up.json");
     let properties = &schema["properties"];
+    let summary = &properties["summary"]["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let receipt = &properties["receipt"]["properties"];
 
     assert!(properties.get("summary").is_some());
+    assert!(summary.get("repo_count").is_some());
+    assert!(summary.get("ready_count").is_some());
+    assert!(summary.get("not_ready_count").is_some());
     assert!(properties.get("receipt").is_some());
     assert!(receipt.get("contract_identity").is_some());
+    assert!(receipt.get("status").is_some());
     assert!(repo.get("status").is_some());
     assert!(repo.get("phase").is_some());
     assert!(repo.get("next").is_some());
@@ -1199,6 +1250,7 @@ fn check_schema_includes_member_grouping() {
 fn up_schema_includes_member_grouping() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
     let preview_properties = &schema["oneOf"][0]["properties"];
+    let preview_execution_properties = &preview_properties["execution"]["properties"];
     let runtime_properties = &schema["oneOf"][1]["properties"];
     let runtime_receipt_properties = &runtime_properties["receipt"]["properties"];
     let runtime_member_properties =
@@ -1217,6 +1269,7 @@ fn up_schema_includes_member_grouping() {
 
     assert!(preview_properties.get("dry_run").is_some());
     assert!(preview_properties.get("execution").is_some());
+    assert!(preview_execution_properties.get("context").is_some());
     assert!(preview_properties.get("plan").is_some());
     assert!(preview_properties.get("stderr").is_some());
     assert!(runtime_properties.get("stderr").is_some());

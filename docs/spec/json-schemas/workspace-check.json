@@ -65,6 +65,61 @@
           "agent_verdict": {
             "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
           },
+          "execution": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "preferred": { "enum": ["native", "container", "remote"] },
+              "supported": {
+                "type": "array",
+                "items": { "enum": ["native", "container", "remote"] }
+              },
+              "lifecycle": { "enum": ["persistent", "ephemeral"] },
+              "backends": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "container": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["image"],
+                    "properties": {
+                      "image": { "type": "string" }
+                    }
+                  },
+                  "remote": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["provider"],
+                    "properties": {
+                      "provider": { "type": "string" },
+                      "target": { "type": "string" },
+                      "cwd": { "type": "string" }
+                    }
+                  }
+                }
+              },
+              "env": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "required"],
+                  "properties": {
+                    "name": { "type": "string" },
+                    "required": { "type": "boolean" },
+                    "default": { "type": "string" },
+                    "policy": { "type": "string" },
+                    "source": { "type": "string" },
+                    "allowed": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
           "primary_blocker": {
             "type": "object",
             "additionalProperties": false,

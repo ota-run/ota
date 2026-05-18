@@ -13,9 +13,10 @@
         "summary": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["error_count"],
+          "required": ["error_count", "warn_count"],
           "properties": {
-            "error_count": { "type": "integer" }
+            "error_count": { "type": "integer" },
+            "warn_count": { "type": "integer" }
           }
         }
       }
@@ -30,9 +31,10 @@
         "summary": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["error_count"],
+          "required": ["error_count", "warn_count"],
           "properties": {
-            "error_count": { "type": "integer" }
+            "error_count": { "type": "integer" },
+            "warn_count": { "type": "integer" }
           }
         },
         "errors": {

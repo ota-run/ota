@@ -201,6 +201,7 @@ tasks:
       set -e
       cargo test contract_is_stable
       cargo test --test json_schema_contracts
+      cargo test --test json_output_conformance
       cargo test --test detect_fixtures
     variants:
       - when:
@@ -209,6 +210,8 @@ tasks:
           cargo test contract_is_stable
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test json_schema_contracts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --test json_output_conformance
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test detect_fixtures
     depends_on:
