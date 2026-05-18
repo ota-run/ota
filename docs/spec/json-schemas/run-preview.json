@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/run-preview.json",
+  "title": "ota run --dry-run --json",
+  "$defs": {
+    "envSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_count",
+        "source_count",
+        "source_issue_count",
+        "task_count",
+        "resolved_count",
+        "missing_count",
+        "invalid_count"
+      ],
+      "properties": {
+        "contract_count": { "type": "integer", "minimum": 0 },
+        "source_count": { "type": "integer", "minimum": 0 },
+        "source_issue_count": { "type": "integer", "minimum": 0 },
+        "task_count": { "type": "integer", "minimum": 0 },
+        "resolved_count": { "type": "integer", "minimum": 0 },
+        "missing_count": { "type": "integer", "minimum": 0 },
+        "invalid_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "envSourceStatus": {
+      "enum": [
+        "loaded",
+        "missing_optional",
+        "missing_required",
+        "parse_failed",
+        "invalid_structure",
+        "collision"
+      ]
+    },
+    "envSourceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "label", "must_exist", "status"],
+      "properties": {
+        "kind": { "type": "string" },
+        "path": { "type": "string" },
+        "label": { "type": "string" },
+        "must_exist": { "type": "boolean" },
+        "status": { "$ref": "#/$defs/envSourceStatus" },
+        "detail": { "type": "string" },
+        "next": { "type": "string" }
+      }
+    },
+    "envEntryKind": {
+      "enum": ["contract", "task"]
+    },
+    "envEntryStatus": {
+      "enum": ["resolved", "missing", "optional", "invalid", "task"]
+    },
+    "envEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "required", "source", "status"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "$ref": "#/$defs/envEntryKind" },
+        "required": { "type": "boolean" },
+        "default": { "type": "string" },
+        "allowed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "value": { "type": "string" },
+        "source": { "type": "string" },
+        "source_kind": { "type": "string" },
+        "source_path": { "type": "string" },
+        "source_status": { "$ref": "#/$defs/envSourceStatus" },
+        "source_label": { "type": "string" },
+        "status": { "$ref": "#/$defs/envEntryStatus" },
+        "next": { "type": "string" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dependency_chain": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requirement_lines": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "actions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "singleTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "contract",
+        "task",
+        "dry_run",
+        "summary",
+        "contract_identity",
+        "resolved",
+        "requested_task",
+        "env_summary",
+        "plan"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "path": { "type": "string" },
+        "contract": { "type": "string" },
+        "member": { "type": "string" },
+        "task": { "type": "string" },
+        "dry_run": { "const": true },
+        "summary": { "$ref": "./doctor.json#/properties/summary" },
+        "contract_identity": {
+          "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
+        },
+        "declared_execution": { "$ref": "./execution.json#/$defs/declaredExecution" },
+        "resolved": { "$ref": "./execution.json#/oneOf/0/properties/resolved" },
+        "overrides": { "$ref": "./execution.json#/oneOf/0/properties/overrides" },
+        "requested_task": { "$ref": "./tasks.json#/oneOf/0/properties/tasks/items" },
+        "env_summary": { "$ref": "#/$defs/envSummary" },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/envSourceEntry" }
+        },
+        "env": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/envEntry" }
+        },
+        "toolchains": {
+          "type": "array",
+          "items": { "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/toolchains/items" }
+        },
+        "native_prerequisites": {
+          "type": "array",
+          "items": {
+            "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/native_prerequisites/items"
+          }
+        },
+        "plan": { "$ref": "#/$defs/plan" }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "task", "dry_run", "members"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "path": { "type": "string" },
+        "task": { "type": "string" },
+        "dry_run": { "const": true },
+        "members": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/singleTarget" }
+        }
+      }
+    },
+    "simpleFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "task", "dry_run", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "task": { "type": "string" },
+        "dry_run": { "const": true },
+        "error": { "type": "string" }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/singleTarget" },
+    { "$ref": "#/$defs/aggregate" },
+    { "$ref": "#/$defs/simpleFailure" }
+  ]
+}

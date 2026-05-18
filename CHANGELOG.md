@@ -30,6 +30,9 @@
   PREVIEW` with the shared readiness vocabulary and selected execution/requirement plan, while
   `ota run <task> --dry-run --json` emits the matching machine-readable preview payload; repo-level
   `--json` is now documented and enforced as preview-only for `ota run`
+- published and locked the `ota run <task> --dry-run --json` contract: `run-preview.json` now
+  defines the shipped single-target, blocked-preview, aggregate-member, and pre-preview error
+  envelopes, and end-to-end conformance coverage now checks real command output against that schema
 - added explicit `ota up` service-run behavior controls with `--attach`, `--detach`, and
   `--ready-timeout`; default `ota up` now runs service-runtime readiness proof in cleanup-owned
   mode (prepare + verify + teardown + return), while `--detach` keeps the proved workload running

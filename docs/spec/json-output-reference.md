@@ -37,6 +37,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/init.json](json-schemas/init.json)
 - [json-schemas/policy-init.json](json-schemas/policy-init.json)
 - [json-schemas/up.json](json-schemas/up.json)
+- [json-schemas/run-preview.json](json-schemas/run-preview.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
 - [json-schemas/policy-review.json](json-schemas/policy-review.json)
 - [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
@@ -53,6 +54,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 ## General notes
 
 - success output is printed to stdout
+- `ota run <task> --dry-run --json` keeps preview JSON on stdout for both ready and blocked
+  previews; only pre-preview command failures fall back to the simpler error envelope
 - command failures may still use stderr when the command cannot produce its normal JSON result
 - some JSON failures include an optional `next` string when ota can point to one safe follow-up command
 - execution receipts may also expose additive `next_steps` when the same follow-up lane is available as ordered machine-readable steps
@@ -1740,6 +1743,10 @@ same selected task path, execution backend, env requirements, toolchains, native
 dependency order, and preview actions that text `RUN PREVIEW` uses, but it does not execute setup,
 dependencies, containers, or task processes.
 
+The published schema for this surface is
+[json-schemas/run-preview.json](json-schemas/run-preview.json). It covers single-target ready or
+blocked previews, aggregate member previews, and the simpler pre-preview error envelope.
+
 Repo-level `ota run --json` is currently not a mutating execution receipt surface. Use
 `ota run <task> --dry-run --json` for planning, `ota receipt --json` for repo readiness receipts,
 and `ota workspace run --json` for coordinated multi-repo execution receipts.
@@ -1825,6 +1832,8 @@ Use this when a human or agent needs the selected run plan before execution:
   ota would check, activate, provision, or run
 - exit `0` means the preview is actionable; exit `1` means the preview is blocked by contract,
   env, or execution-plan problems
+- blocked previews still use the full preview envelope on stdout so automation can read
+  `summary.primary_blocker` without scraping stderr
 
 ## `ota policy review --json`
 
