@@ -33,9 +33,10 @@
 - published and locked the `ota run <task> --dry-run --json` contract: `run-preview.json` now
   defines the shipped single-target, blocked-preview, aggregate-member, and pre-preview error
   envelopes, and end-to-end conformance coverage now checks real command output against that schema
-- added a dedicated GitHub Actions smoke workflow for the public Ota surface: clean-runner jobs now
-  install ota, validate the repo contract, smoke `ota run` and `ota up` preview JSON in this repo,
-  and exercise canonical example and workspace contracts without duplicating the full release gate
+- added a dedicated GitHub Actions smoke workflow for the public Ota surface: core repo smoke now
+  runs on Linux, macOS, and Windows against the installed ota binary, while canonical example and
+  workspace smoke stays Linux-only for now to maximize signal without turning examples into a noisy
+  cross-OS matrix
 - added explicit `ota up` service-run behavior controls with `--attach`, `--detach`, and
   `--ready-timeout`; default `ota up` now runs service-runtime readiness proof in cleanup-owned
   mode (prepare + verify + teardown + return), while `--detach` keeps the proved workload running

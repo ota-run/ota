@@ -37,8 +37,18 @@ env:
 
 jobs:
   repo-smoke:
-    name: Repo Smoke
-    runs-on: ubuntu-latest
+    name: Repo Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    env:
+      RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/STACK:8388608' || '' }}
+      COLUMNS: "120"
 
     steps:
       - name: Checkout
@@ -50,13 +60,30 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust artifacts
+        if: runner.os != 'Windows'
         uses: Swatinem/rust-cache@v2
 
       - name: Install ota
         shell: bash
         run: |
           set -euo pipefail
-          env -u RUSTC_WRAPPER cargo install --path . --locked
+          if command -v rustup >/dev/null 2>&1; then
+            CARGO_CMD="$(rustup which cargo)"
+            RUSTC_CMD="$(rustup which rustc)"
+            env -u RUSTC_WRAPPER RUSTC="$RUSTC_CMD" "$CARGO_CMD" install --path . --locked
+          else
+            env -u RUSTC_WRAPPER cargo install --path . --locked
+          fi
+
+      - name: Ensure cargo is on PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+          if (-not (Test-Path $cargoBin)) {
+            throw "cargo bin path not found: $cargoBin"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $cargoBin
 
       - name: Validate repo contract
         run: ota validate . --plain
@@ -64,28 +91,48 @@ jobs:
       - name: Smoke repo run preview JSON
         shell: bash
         run: |
-          set -euo pipefail
-          ota run ci --dry-run --json . > repo-run-preview.json
-          jq -e '
-            .ok == true and
-            .dry_run == true and
-            .task == "ci" and
-            .summary.verdict == "ready" and
-            (.plan.actions | type == "array") and
-            (.requested_task.name == "ci")
-          ' repo-run-preview.json >/dev/null
+          python - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          output = subprocess.run(
+              ["ota", "run", "ci", "--dry-run", "--json", "."],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          body = json.loads(output.stdout)
+          assert body["ok"] is True
+          assert body["dry_run"] is True
+          assert body["task"] == "ci"
+          assert body["summary"]["verdict"] == "ready"
+          assert isinstance(body["plan"]["actions"], list)
+          assert body["requested_task"]["name"] == "ci"
+          pathlib.Path("repo-run-preview.json").write_text(output.stdout, encoding="utf-8")
+          PY
 
       - name: Smoke repo up preview JSON
         shell: bash
         run: |
-          set -euo pipefail
-          ota up --dry-run --json . > repo-up-preview.json
-          jq -e '
-            .dry_run == true and
-            .phase == "preview" and
-            (.plan.actions | type == "array") and
-            (.contract_identity.project.name == "ota")
-          ' repo-up-preview.json >/dev/null
+          python - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          output = subprocess.run(
+              ["ota", "up", "--dry-run", "--json", "."],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          body = json.loads(output.stdout)
+          assert body["dry_run"] is True
+          assert body["phase"] == "preview"
+          assert isinstance(body["plan"]["actions"], list)
+          assert body["contract_identity"]["project"]["name"] == "ota"
+          pathlib.Path("repo-up-preview.json").write_text(output.stdout, encoding="utf-8")
+          PY
 
   examples-smoke:
     name: Examples Smoke
@@ -118,36 +165,72 @@ jobs:
       - name: Smoke Rust example preview
         shell: bash
         run: |
-          set -euo pipefail
-          ota run test --dry-run --json examples/basic-rust > basic-rust-run-preview.json
-          jq -e '
-            .ok == true and
-            .dry_run == true and
-            .requested_task.name == "test" and
-            (.toolchains | length) == 1 and
-            .toolchains[0].name == "rust"
-          ' basic-rust-run-preview.json >/dev/null
+          python - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          output = subprocess.run(
+              ["ota", "run", "test", "--dry-run", "--json", "examples/basic-rust"],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          body = json.loads(output.stdout)
+          assert body["ok"] is True
+          assert body["dry_run"] is True
+          assert body["requested_task"]["name"] == "test"
+          assert len(body["toolchains"]) == 1
+          assert body["toolchains"][0]["name"] == "rust"
+          pathlib.Path("basic-rust-run-preview.json").write_text(
+              output.stdout,
+              encoding="utf-8",
+          )
+          PY
 
       - name: Smoke Node example preview
         shell: bash
         run: |
-          set -euo pipefail
-          ota run test --dry-run --json examples/basic-node > basic-node-run-preview.json
-          jq -e '
-            .ok == true and
-            .dry_run == true and
-            .requested_task.name == "test" and
-            (.toolchains | length) == 1 and
-            .toolchains[0].name == "node"
-          ' basic-node-run-preview.json >/dev/null
+          python - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          output = subprocess.run(
+              ["ota", "run", "test", "--dry-run", "--json", "examples/basic-node"],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          body = json.loads(output.stdout)
+          assert body["ok"] is True
+          assert body["dry_run"] is True
+          assert body["requested_task"]["name"] == "test"
+          assert len(body["toolchains"]) == 1
+          assert body["toolchains"][0]["name"] == "node"
+          pathlib.Path("basic-node-run-preview.json").write_text(
+              output.stdout,
+              encoding="utf-8",
+          )
+          PY
 
       - name: Smoke workspace tasks JSON
         shell: bash
         run: |
-          set -euo pipefail
-          ota workspace tasks --json examples/workspace-basic > workspace-tasks.json
-          jq -e '
-            .ok == true and
-            (.repos | length) == 2 and
-            (.summary.repo_count == 2)
-          ' workspace-tasks.json >/dev/null
+          python - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          output = subprocess.run(
+              ["ota", "workspace", "tasks", "--json", "examples/workspace-basic"],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          body = json.loads(output.stdout)
+          assert body["ok"] is True
+          assert len(body["repos"]) == 2
+          assert body["summary"]["repo_count"] == 2
+          pathlib.Path("workspace-tasks.json").write_text(output.stdout, encoding="utf-8")
+          PY
