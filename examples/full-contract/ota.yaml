@@ -66,6 +66,8 @@ tools:
     required: false
     only_on:
       - windows
+  docker: "*"
+  npx: "*"
 env:
   vars:
     OTA_ENV:
