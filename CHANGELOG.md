@@ -27,8 +27,17 @@
 ## Unreleased
 
 - added explicit `ota up` service-run behavior controls with `--attach`, `--detach`, and
-  `--ready-timeout`; default `ota up` behavior now treats workflow service run tasks as detached
-  readiness (prepare + verify + return) while keeping `--stream`/`--attach` as foreground mode
+  `--ready-timeout`; default `ota up` now runs service-runtime readiness proof in cleanup-owned
+  mode (prepare + verify + teardown + return), while `--detach` keeps the proved workload running
+  intentionally
+- strengthened unsupported managed-toolchain opportunity diagnostics and JSON guidance surfaces:
+  `doctor`, `detect --dry-run --json`, and `init --json` now share one declared unsupported
+  ecosystem list and include stable agent-facing `toolchain_opportunity` metadata (including
+  `agent_note`) for unsupported ecosystems such as `python`
+- fixed `ota up --detach` runtime lifecycle consistency across backends: native keep-running
+  paths now launch detached proof-run workers in their own process group so the proved workload
+  remains alive after `ota up` returns, and detach success receipts now report the selected
+  workflow run execution context instead of falling back to diagnosis-only context metadata
 - improved `ota clean` container-engine failure handling across both text and JSON output:
   cleanup errors now surface `Container engine unavailable` with structured engine/resource
   semantics, concrete `Next:` guidance, and a compact `Details:` line instead of raw cleanup

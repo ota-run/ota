@@ -1675,6 +1675,12 @@ Current behavior:
 - stops in the `services` phase when required-service readiness still fails
 - runs the selected workflow setup task if one exists, using the configured execution backend when present
 - activates the selected workflow run task when it has a declared service runtime
+- for service-runtime workflow run tasks, default `ota up` behavior uses detached readiness proof
+  semantics: start the run task, wait for readiness, then tear down proof-owned run execution
+  before returning `READY`
+- `ota up --detach` keeps that proved run task alive intentionally after readiness confirms
+- `ota up --attach` keeps `ota up` attached to the workflow run task process instead of detached proof behavior
+- `--ready-timeout <duration>` overrides readiness wait budget for detached service-runtime proof behavior
 - when setup binds to a named context that uses `extends`, `ota up` uses the merged context backend/lifecycle/image shape
 - can override execution mode and lifecycle for the selected workflow setup/run phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - the current workflow-task backend path supports native, container, and the shipped remote providers

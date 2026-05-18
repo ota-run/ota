@@ -60,7 +60,11 @@ Current behavior:
 Important boundaries:
 
 - ota preserves child exit codes for service start failures
-- ota does not perform automatic teardown
+- for workflow run tasks with `runtime.kind: service`, default `ota up` behavior now runs
+  detached readiness proof and tears down proof-owned run execution after readiness confirms
+- `ota up --detach` is the explicit keep-running path for that proved workflow run task
+- ota still does not perform broad automatic teardown of declared repo services started through
+  `services.<name>.start`
 - ota does not provide deep service orchestration
 - ota does not infer service dependency ordering
 
