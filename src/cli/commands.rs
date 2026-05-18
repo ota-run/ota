@@ -1924,7 +1924,7 @@ pub fn proof_runtime(
 
                 let cleanup_error = clean_execution_report(&target.contract, &target.contract_path)
                     .err()
-                    .map(|error| error.to_string());
+                    .and_then(proof_runtime_cleanup_failure_message);
                 let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
                     .err()
                     .map(|error| error.to_string());
@@ -40010,6 +40010,38 @@ readiness:
     }
 
     #[test]
+    fn proof_runtime_cleanup_failure_message_ignores_engine_unavailable() {
+        let message = super::proof_runtime_cleanup_failure_message(
+            crate::runner::CleanExecutionError::Cleanup(crate::runner::CleanExecutionFailure {
+                engine: String::from("docker"),
+                action: String::from("list"),
+                resource_kind: crate::runner::CleanExecutionResourceKind::PersistentContainer,
+                resource_name: Some(String::from("repo-container")),
+                reason: crate::runner::CleanExecutionFailureReason::EngineUnavailable,
+                details: String::from("cannot connect to the docker daemon"),
+            }),
+        );
+
+        assert!(message.is_none());
+    }
+
+    #[test]
+    fn proof_runtime_cleanup_failure_message_keeps_other_failures() {
+        let message = super::proof_runtime_cleanup_failure_message(
+            crate::runner::CleanExecutionError::Cleanup(crate::runner::CleanExecutionFailure {
+                engine: String::from("docker"),
+                action: String::from("remove"),
+                resource_kind: crate::runner::CleanExecutionResourceKind::PersistentContainer,
+                resource_name: Some(String::from("repo-container")),
+                reason: crate::runner::CleanExecutionFailureReason::Other,
+                details: String::from("permission denied"),
+            }),
+        );
+
+        assert!(message.is_some());
+    }
+
+    #[test]
     fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
@@ -64842,6 +64874,16 @@ fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result
                 ));
             }
         }
+    }
+}
+
+fn proof_runtime_cleanup_failure_message(error: CleanExecutionError) -> Option<String> {
+    match error {
+        CleanExecutionError::Cleanup(CleanExecutionFailure {
+            reason: CleanExecutionFailureReason::EngineUnavailable,
+            ..
+        }) => None,
+        other => Some(other.to_string()),
     }
 }
 
