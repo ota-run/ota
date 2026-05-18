@@ -56605,11 +56605,11 @@ project:
 services:
   app:
     required: true
-    start: "{service_command}"
-    healthcheck: "{readiness_command}"
+    start: '{service_command}'
+    healthcheck: '{readiness_command}'
 tasks:
   setup:
-    run: "{setup_command}"
+    run: '{setup_command}'
 "#,
             ),
         )
@@ -56732,17 +56732,17 @@ project:
 services:
   postgres:
     required: true
-    start: "{postgres_command}"
-    healthcheck: "{db_ready_command}"
+    start: '{postgres_command}'
+    healthcheck: '{db_ready_command}'
   app:
     required: true
-    start: "{app_command}"
-    healthcheck: "{env_ready_command}"
+    start: '{app_command}'
+    healthcheck: '{env_ready_command}'
 tasks:
   setup:
     requires_services:
       - postgres
-    run: "{setup_command}"
+    run: '{setup_command}'
 "#,
             ),
         )
