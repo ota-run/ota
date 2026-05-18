@@ -6222,6 +6222,41 @@ pub(crate) fn run_backend_command_captured(
     )
 }
 
+// Runs a command by argv (no shell) on native backends, shell on container/remote backends.
+// This avoids login-shell PATH reordering (e.g. macOS path_helper) for probe and
+// toolchain-fulfillment commands that are simple binary invocations.
+pub(crate) fn run_backend_argv_command_captured(
+    task_name: &str,
+    exe: &str,
+    args: &[String],
+    working_dir: &Path,
+    backend: &ResolvedExecutionBackend,
+) -> Result<TaskCommandOutput, RunError> {
+    let execution = match backend {
+        ResolvedExecutionBackend::Native { .. } => PreparedTaskExecution::NativeCommand {
+            exe: exe.to_string(),
+            args: args.to_vec(),
+        },
+        _ => PreparedTaskExecution::Shell {
+            command: shell_quote_command_argv(backend, exe, args),
+        },
+    };
+    execute_task_command(
+        None,
+        task_name,
+        None,
+        &execution,
+        working_dir,
+        &BTreeMap::new(),
+        None,
+        &BTreeSet::new(),
+        backend,
+        None,
+        None,
+        TaskExecutionMode::Capture,
+    )
+}
+
 #[derive(Debug, Clone, Default)]
 struct BackendFulfillmentPreparation {
     evidence: Option<BackendFulfillmentEvidence>,
@@ -6549,12 +6584,15 @@ fn maybe_fulfill_toolchains_on_run_path(
         }
 
         let mut executed_commands = Vec::new();
-        for command in
-            toolchain_fulfillment_commands(toolchain_name.as_str(), toolchain, target_os, backend)
+        for command_spec in
+            toolchain_fulfillment_command_specs(toolchain_name.as_str(), toolchain, target_os)
         {
-            let output = run_backend_command_captured(
-                &format!("toolchain-fulfill:{toolchain_name}"),
-                command.as_str(),
+            let command_display = render_toolchain_command(backend, command_spec.clone());
+            let task_label = format!("toolchain-fulfill:{toolchain_name}");
+            let output = run_backend_argv_command_captured(
+                &task_label,
+                command_spec.program,
+                &command_spec.args,
                 contract_working_dir(contract_path),
                 backend,
             )?;
@@ -6564,10 +6602,10 @@ fn maybe_fulfill_toolchains_on_run_path(
                 return Err(RunError::ToolchainFulfillmentFailed {
                     task: task_name.to_string(),
                     toolchain: toolchain_name,
-                    details: format!("`{command}` exited with code {}", output.exit_code),
+                    details: format!("`{command_display}` exited with code {}", output.exit_code),
                 });
             }
-            executed_commands.push(command);
+            executed_commands.push(command_display);
         }
         if !executed_commands.is_empty() {
             state
@@ -6632,6 +6670,16 @@ fn toolchain_fulfillment_commands(
                 .map(|command| render_toolchain_command(backend, command))
                 .collect()
         })
+        .unwrap_or_default()
+}
+
+fn toolchain_fulfillment_command_specs(
+    toolchain_name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    declared_toolchain_contract(toolchain_name, toolchain)
+        .map(|provider| provider.fulfillment_commands(toolchain, target_os))
         .unwrap_or_default()
 }
 
@@ -29352,11 +29400,11 @@ tasks:
 
         thread::sleep(std::time::Duration::from_millis(25));
         super::simulate_run_interrupt_for_test();
-        thread::sleep(std::time::Duration::from_millis(75));
+        thread::sleep(std::time::Duration::from_millis(50));
         let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind listener");
         let observed = {
             let _listener = listener;
-            thread::sleep(std::time::Duration::from_millis(120));
+            thread::sleep(std::time::Duration::from_millis(300));
             probe.stop_and_collect()
         };
 
@@ -43011,8 +43059,11 @@ tasks:
         );
         if let Err(error) = first_result {
             let message = error.to_string();
+            // With direct exec (NativeCommand), binary not found produces SpawnFailed.
+            // With shell fallback, binary not found produces exit code 127.
             assert!(
-                message.contains("`'rustup' 'toolchain' 'install' '1.94.0' '--component' 'rustfmt'` exited with code 127"),
+                message.contains("`'rustup' 'toolchain' 'install' '1.94.0' '--component' 'rustfmt'` exited with code 127")
+                    || message.contains("failed to start task `toolchain-fulfill:rust`"),
                 "{message}"
             );
             match original_path {

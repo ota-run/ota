@@ -15619,6 +15619,9 @@ agent:
 
     #[test]
     fn core_extension_json_contracts_expose_stable_nested_semantics() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -15761,6 +15764,10 @@ agent:
             receipt_json["findings"][0]["next"],
             "run `ota env` to inspect the current precedence, then set FOO in policy env, the shell, or a declared env source before running tasks"
         );
+            })
+            .expect("thread spawn should succeed")
+            .join()
+            .expect("thread should not panic");
     }
 
     #[test]
@@ -22043,6 +22050,9 @@ tasks:
 
     #[test]
     fn agents_confirm_dry_run_previews_review_toggle_without_writing() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -22075,6 +22085,10 @@ agent:
         assert!(stdout.contains("ota agents --confirm"));
         assert!(stdout.contains("ota agents --write"));
         assert_eq!(fs::read_to_string(fixture.file_path()).unwrap(), before);
+            })
+            .expect("thread spawn should succeed")
+            .join()
+            .expect("thread should not panic");
     }
 
     #[test]
