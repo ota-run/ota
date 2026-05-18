@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.13
+
 - aligned the repo readiness contract with the container-first execution path: the root
   toolchain now targets Rust 1.95.0, `setup` explicitly provisions `rustfmt`, and the hosted
   readiness workflow now validates the container execution mode instead of the host-only path
