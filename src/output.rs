@@ -634,6 +634,47 @@ pub struct ExecutionPlanFailure<'a> {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
+pub struct RunPreviewPlan {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependency_chain: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requirement_lines: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunPreviewSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub contract: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<&'a str>,
+    pub task: &'a str,
+    pub dry_run: bool,
+    pub summary: DoctorSummary,
+    pub contract_identity: ContractIdentity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_execution: Option<ExecutionSummary<'a>>,
+    pub resolved: ExecutionPlanResolved,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<ExecutionPlanOverrides>,
+    pub requested_task: TaskSummary<'a>,
+    pub env_summary: EnvSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<EnvSourceEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<EnvEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolchains: Vec<ToolchainSelectionSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub native_prerequisites: Vec<ExecutionReceiptNativePrerequisite>,
+    pub plan: RunPreviewPlan,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExecutionTopologySuccess<'a> {
     pub ok: bool,

@@ -178,13 +178,19 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
         /// Task name to execute.
         #[arg(index = 1, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
         task: String,
+        /// Print machine-readable JSON output for dry-run preview.
+        #[arg(long, action = ArgAction::SetTrue, requires = "dry_run")]
+        json: bool,
+        /// Preview the selected task plan without executing anything.
+        #[arg(long, action = ArgAction::SetTrue)]
+        dry_run: bool,
         /// Override the execution mode for this invocation.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
@@ -216,13 +222,13 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         skip_deps: bool,
         /// Include the execution receipt in text output.
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
         /// Stream raw child process output live instead of buffering it into the final report.
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         stream: bool,
         /// Persist durable run logs under `.ota/state/logs/` for this invocation.
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         log: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
@@ -3237,10 +3243,12 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--native" | "--container" | "--remote" | "--ephemeral" | "--persistent"
-        | "--skip-deps" | "--receipt" | "--stream" | "--log" | "--debug" | "--plain"
-        | "--concise" | "--verbose" => Some(RunFlagSpec {
+        "--json" | "--dry-run" | "--native" | "--container" | "--remote" | "--ephemeral"
+        | "--persistent" | "--skip-deps" | "--receipt" | "--stream" | "--log" | "--debug"
+        | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
             canonical: match name {
+                "--json" => "json",
+                "--dry-run" => "dry-run",
                 "--native" | "--container" | "--remote" => "mode",
                 "--ephemeral" | "--persistent" => "lifecycle",
                 "--skip-deps" => "skip-deps",
@@ -4639,6 +4647,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Run {
             task,
+            json,
+            dry_run,
             backend,
             native,
             container,
@@ -4659,6 +4669,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             task.as_str(),
             path.as_deref(),
             file.as_deref(),
+            format_from_json(json),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
@@ -4668,6 +4679,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             },
             &member,
             &inputs,
+            dry_run,
             debug,
             receipt,
             stream,
@@ -14313,7 +14325,9 @@ tasks:
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
-        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs."));
+        assert!(help.contains("Put ota command flags like `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs."));
+        assert!(help.contains("ota run ci --dry-run"));
+        assert!(help.contains("ota run ci --dry-run --json"));
         assert!(help.contains("--native"));
         assert!(help.contains("--container"));
         assert!(help.contains("--persistent"));
@@ -14973,12 +14987,56 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_uses_requested_task_execution_instead_of_default_workflow_run_task() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo dev
+  ci:
+    run: echo ci
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        );
+
+        let output = run_with(["ota", "run", "ci", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(output.stdout.as_str());
+        assert!(stdout.contains("Backend: `native`"), "{stdout}");
+        assert!(
+            !stdout.contains("Image: `ghcr.io/ota/dev:latest`"),
+            "{stdout}"
+        );
+    }
+
+    #[test]
     fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
         let stderr = "◉ ERROR  Task Failed\n`install-from-source` exited with code 101\nWhere: ./ota.yaml\nWhy: task `install-from-source` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦 RUN SUMMARY\n\nScope:     repo";
         let rendered = strip_ansi(&append_try_footer(
             stderr.to_string(),
             &Commands::Run {
                 task: String::from("install-from-source"),
+                json: false,
+                dry_run: false,
                 backend: None,
                 native: false,
                 container: false,
@@ -15015,6 +15073,8 @@ tasks:
             stderr.to_string(),
             &Commands::Run {
                 task: String::from("ci"),
+                json: false,
+                dry_run: false,
                 backend: None,
                 native: false,
                 container: false,
@@ -16177,6 +16237,8 @@ tasks:
     fn run_does_not_use_command_spinner() {
         assert!(!super::command_supports_spinner(&super::Commands::Run {
             task: String::from("test"),
+            json: false,
+            dry_run: false,
             backend: None,
             native: false,
             container: false,
@@ -19676,6 +19738,29 @@ policies:
             }
             other => panic!("unexpected command parsed: {other:?}"),
         }
+    }
+
+    #[test]
+    fn run_dry_run_and_json_are_classified_as_repo_run_flags() {
+        let dry_run = super::parse_run_flag_occurrence(
+            &[OsString::from("--dry-run")],
+            0,
+            super::RunCommandKind::Repo,
+        )
+        .expect("dry-run should be classified");
+        assert_eq!(dry_run.canonical, "dry-run");
+        assert!(!dry_run.takes_value);
+        assert!(dry_run.valid_for_flag);
+
+        let json = super::parse_run_flag_occurrence(
+            &[OsString::from("--json")],
+            0,
+            super::RunCommandKind::Repo,
+        )
+        .expect("json should be classified");
+        assert_eq!(json.canonical, "json");
+        assert!(!json.takes_value);
+        assert!(json.valid_for_flag);
     }
 
     #[test]
