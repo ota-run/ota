@@ -38735,6 +38735,77 @@ workflows:
     }
 
     #[test]
+    fn wait_for_proof_runtime_readiness_treats_successful_service_run_exit_as_ready_for_up_proof() {
+        let _guard = cwd_mutex_lock();
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: proof-runtime-regression
+tasks:
+  dev:
+    run: echo ok
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      probes:
+        - backend-ready
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:3000/healthz/readiness
+      timeout: 1000
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 0"]).spawn().unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap()
+        };
+
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            &mut child,
+            "ota run dev --stream",
+            None,
+        )
+        .unwrap();
+
+        let _ = child.wait();
+
+        assert!(proof_ok);
+        assert_eq!(phase, "post-up diagnosis");
+        assert!(up_failure.is_none(), "{up_failure:?}");
+        assert!(!report.ok, "{report:?}");
+    }
+
+    #[test]
     fn proof_runtime_wait_budget_uses_floor_for_full_diagnosis() {
         let budget =
             super::proof_runtime_wait_budget(&super::ProofRuntimeReadinessStrategy::FullDiagnosis);
@@ -50164,6 +50235,7 @@ workflows:
         };
         let effective = super::up_task_execution_overrides(
             &contract,
+            Path::new("ota.yaml"),
             None,
             overrides,
             super::UpRunBehavior::DetachedProofTeardown,
@@ -50210,6 +50282,7 @@ workflows:
         };
         let effective = super::up_task_execution_overrides(
             &contract,
+            Path::new("ota.yaml"),
             None,
             overrides,
             super::UpRunBehavior::DetachedLeaveRunning,
@@ -50256,9 +50329,57 @@ workflows:
         };
         let effective = super::up_task_execution_overrides(
             &contract,
+            Path::new("ota.yaml"),
             None,
             overrides,
             super::UpRunBehavior::Attach,
+        );
+        assert_eq!(effective.lifecycle, Some(Lifecycle::Persistent));
+    }
+
+    #[test]
+    fn up_task_execution_overrides_keeps_native_lifecycle_for_default_service_proof() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let overrides = ExecutionOverrides {
+            backend: Some(Backend::Native),
+            lifecycle: Some(Lifecycle::Persistent),
+            host_port: None,
+            memory: None,
+            skip_deps: false,
+        };
+        let effective = super::up_task_execution_overrides(
+            &contract,
+            Path::new("ota.yaml"),
+            None,
+            overrides,
+            super::UpRunBehavior::DetachedProofTeardown,
         );
         assert_eq!(effective.lifecycle, Some(Lifecycle::Persistent));
     }
@@ -63063,6 +63184,13 @@ fn wait_for_proof_runtime_readiness(
                     overrides.clone(),
                 );
                 let summary = doctor_summary(&latest_report, agent_verdict);
+                let successful_service_run_exit =
+                    process_label.starts_with("ota run ")
+                        && selected_up_run_task_is_service(contract, workflow_name)
+                        && exit_status.success();
+                if successful_service_run_exit {
+                    return Ok((latest_report, "post-up diagnosis", true, None));
+                }
                 if exit_status.success()
                     && latest_report.ok
                     && summary.verdict == DoctorVerdict::Ready
@@ -68790,12 +68918,27 @@ fn resolve_up_run_behavior(
 
 fn up_task_execution_overrides(
     contract: &Contract,
+    resolved_path: &Path,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     run_behavior: UpRunBehavior,
 ) -> ExecutionOverrides {
+    let should_force_ephemeral = matches!(overrides.backend, Some(Backend::Container))
+        || selected_up_activation_task_name(contract, workflow_name)
+        .and_then(|task_name| {
+            resolve_execution_backend_with_contract_path(
+                contract,
+                task_name,
+                overrides,
+                Some(resolved_path),
+            )
+            .ok()
+        })
+        .is_some_and(|backend| matches!(backend, ResolvedExecutionBackend::Container { .. }));
+
     if matches!(run_behavior, UpRunBehavior::DetachedProofTeardown)
         && selected_up_run_task_is_service(contract, workflow_name)
+        && should_force_ephemeral
     {
         ExecutionOverrides {
             lifecycle: Some(Lifecycle::Ephemeral),
@@ -69525,7 +69668,7 @@ fn execute_repo_up_with_behavior(
     let run_behavior =
         resolve_up_run_behavior(contract, workflow_name, mode, run_behavior_preference);
     let task_execution_overrides =
-        up_task_execution_overrides(contract, workflow_name, overrides, run_behavior);
+        up_task_execution_overrides(contract, resolved_path, workflow_name, overrides, run_behavior);
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
     let provisioning_output_mode = match mode {
@@ -70502,14 +70645,7 @@ fn execute_repo_up_with_behavior(
             )
         {
             let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
-            let proof_overrides = if keep_running {
-                overrides
-            } else {
-                ExecutionOverrides {
-                    lifecycle: Some(Lifecycle::Ephemeral),
-                    ..overrides
-                }
-            };
+            let proof_overrides = if keep_running { overrides } else { task_execution_overrides };
             run_up_task_detached_until_ready(
                 contract,
                 resolved_path,
@@ -70641,13 +70777,18 @@ fn execute_repo_up_with_behavior(
         });
     }
 
+    let mut diagnosis_overrides = doctor_mode_execution_overrides(doctor_mode, overrides.lifecycle);
+    diagnosis_overrides.host_port = overrides.host_port;
+    diagnosis_overrides.memory = overrides.memory;
+    diagnosis_overrides.skip_deps = overrides.skip_deps;
+
     let report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
         contract,
         resolved_path,
         doctor_mode,
-        overrides.lifecycle,
+        diagnosis_overrides.lifecycle,
         workflow_name,
-        overrides.clone(),
+        diagnosis_overrides,
     );
     let workloads = resolve_up_workloads(
         setup_task,
