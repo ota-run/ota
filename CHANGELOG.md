@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added explicit `ota up` service-run behavior controls with `--attach`, `--detach`, and
+  `--ready-timeout`; default `ota up` behavior now treats workflow service run tasks as detached
+  readiness (prepare + verify + return) while keeping `--stream`/`--attach` as foreground mode
 - improved `ota clean` container-engine failure handling across both text and JSON output:
   cleanup errors now surface `Container engine unavailable` with structured engine/resource
   semantics, concrete `Next:` guidance, and a compact `Details:` line instead of raw cleanup

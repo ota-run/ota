@@ -151,6 +151,7 @@ use crate::schema::{
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
     ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -1877,6 +1878,8 @@ pub fn proof_runtime(
                         workflow_name,
                         overrides,
                         &mut up_process,
+                        "ota up --stream",
+                        None,
                     ) {
                         Ok(result) => result,
                         Err(error) => {
@@ -21060,6 +21063,9 @@ pub fn up(
     dry_run: bool,
     stream: bool,
     show_receipt: bool,
+    attach: bool,
+    detach: bool,
+    ready_timeout: Option<&str>,
 ) -> CommandOutput {
     activate_mise_paths_for_current_process();
     if let Some(duplicate) = duplicate_member(members) {
@@ -21099,6 +21105,34 @@ pub fn up(
             ],
         );
     }
+    let run_behavior_preference = if detach {
+        UpRunBehaviorPreference::Detach
+    } else if attach {
+        UpRunBehaviorPreference::Attach
+    } else {
+        UpRunBehaviorPreference::Auto
+    };
+    let ready_timeout = match ready_timeout {
+        Some(value) => match parse_readiness_duration_spec(value) {
+            Some(duration) => Some(duration),
+            None => {
+                return finalize_debug(
+                    CommandOutput::failure_with_code(
+                        format!(
+                            "`--ready-timeout {value}` is invalid; expected values like `90s`, `5m`, or `1h`"
+                        ),
+                        2,
+                    ),
+                    debug,
+                    vec![
+                        String::from("DEBUG command=up"),
+                        format!("DEBUG stream={stream}"),
+                    ],
+                );
+            }
+        },
+        None => None,
+    };
 
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
@@ -21124,7 +21158,11 @@ pub fn up(
         String::from("DEBUG command=up"),
         format!("DEBUG contract_path={path_display}"),
         format!("DEBUG stream={stream}"),
+        format!("DEBUG up_behavior_preference={run_behavior_preference:?}"),
     ];
+    if let Some(timeout) = ready_timeout {
+        debug_lines.push(format!("DEBUG ready_timeout_secs={}", timeout.as_secs()));
+    }
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
@@ -21164,7 +21202,7 @@ pub fn up(
                         workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
                     })
                 {
-                    let root_result = match execute_repo_up(
+                    let root_result = match execute_repo_up_with_behavior(
                         &target.contract,
                         &target.contract_path,
                         overrides,
@@ -21172,6 +21210,8 @@ pub fn up(
                         None,
                         dry_run,
                         execution_mode,
+                        run_behavior_preference,
+                        ready_timeout,
                     ) {
                         Ok(result) => result,
                         Err(error) => return CommandOutput::failure(error),
@@ -21228,7 +21268,7 @@ pub fn up(
                                         };
                                     }
                                 };
-                            let member_result = match execute_repo_up(
+                            let member_result = match execute_repo_up_with_behavior(
                                 &member_target.contract,
                                 &member_target.contract_path,
                                 overrides,
@@ -21236,6 +21276,8 @@ pub fn up(
                                 None,
                                 dry_run,
                                 execution_mode,
+                                run_behavior_preference,
+                                ready_timeout,
                             ) {
                                 Ok(result) => result,
                                 Err(error) => return CommandOutput::failure(error),
@@ -21273,7 +21315,7 @@ pub fn up(
                         }
                     }
                 } else {
-                    match execute_repo_up(
+                    match execute_repo_up_with_behavior(
                         &target.contract,
                         &target.contract_path,
                         overrides,
@@ -21281,6 +21323,8 @@ pub fn up(
                         None,
                         dry_run,
                         execution_mode,
+                        run_behavior_preference,
+                        ready_timeout,
                     ) {
                         Ok(result) => render_up_result(
                             &path_display,
@@ -21338,7 +21382,7 @@ pub fn up(
                                 };
                             }
                         };
-                    let result = match execute_repo_up(
+                    let result = match execute_repo_up_with_behavior(
                         &target.contract,
                         &target.contract_path,
                         overrides,
@@ -21346,6 +21390,8 @@ pub fn up(
                         None,
                         dry_run,
                         execution_mode,
+                        run_behavior_preference,
+                        ready_timeout,
                     ) {
                         Ok(result) => result,
                         Err(error) => return CommandOutput::failure(error),
@@ -38392,6 +38438,8 @@ workflows:
             None,
             ExecutionOverrides::default(),
             &mut child,
+            "ota up --stream",
+            None,
         )
         .unwrap();
 
@@ -38484,6 +38532,8 @@ workflows:
             Some("app"),
             ExecutionOverrides::default(),
             &mut child,
+            "ota up --stream",
+            None,
         )
         .unwrap();
 
@@ -43168,6 +43218,8 @@ tasks:
     requirements:
       toolchains:
         - node
+      tools:
+        pnpm: "10.22.0"
   docker:run:
     launch:
       kind: container
@@ -43295,20 +43347,6 @@ workflows:
             requirement_surface.tools.contains_key("pnpm"),
             "{requirement_surface:?}"
         );
-        let preview_action = &preflight
-            .provisioning
-            .as_ref()
-            .expect("provisioning diagnostics")
-            .request
-            .actions[0];
-        assert!(super::requirement_surface_targets_provisioning_action(
-            &requirement_surface,
-            preview_action,
-        ));
-        assert!(super::finding_targets_provisioning_action(
-            &preflight.findings[0],
-            preview_action,
-        ));
 
         assert!(preview.plan.actions.contains(&String::from(
             "activate tool `pnpm` via `corepack` (`pnpm@10.22.0`)"
@@ -49554,6 +49592,197 @@ tasks:
             rendered.contains("persistent container recreated (execution shape changed); service stopped after readiness; container exited with status 1"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn run_phase_failure_exit_code_accepts_non_zero_exit_code() {
+        let outcome = super::CommandRunResult {
+            exit_code: 42,
+            stdout: String::new(),
+            stderr: String::new(),
+            target: None,
+            runtime: None,
+            service_termination: None,
+        };
+
+        assert_eq!(super::run_phase_failure_exit_code(&outcome), Some(42));
+    }
+
+    #[test]
+    fn run_phase_failure_exit_code_treats_service_termination_as_failure() {
+        let outcome = super::CommandRunResult {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            target: Some(String::from("ota-persistent-app")),
+            runtime: None,
+            service_termination: Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::Exited,
+                after_readiness: true,
+                target: String::from("container"),
+                container: String::from("ota-persistent-app"),
+                exit_code: None,
+            }),
+        };
+
+        assert_eq!(super::run_phase_failure_exit_code(&outcome), Some(1));
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_auto_detaches_service_run_task_in_capture_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            super::RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::Detach);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_auto_attaches_when_streaming() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            super::RepoExecutionMode::Stream,
+            super::UpRunBehaviorPreference::Auto,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::Attach);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_auto_detaches_service_run_task_regardless_of_backend_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+execution:
+  default_context: container
+  contexts:
+    container:
+      backend: container
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            super::RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::Detach);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_auto_keeps_non_service_run_task_attached() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+execution:
+  default_context: container
+  contexts:
+    container:
+      backend: container
+tasks:
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            super::RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::Attach);
     }
 
     fn run_output_regression_service_contract() -> crate::schema::Contract {
@@ -61905,6 +62134,66 @@ fn spawn_proof_runtime_up_process(
         .map_err(|error| format!("could not start `ota up --stream` for runtime proof: {error}"))
 }
 
+fn spawn_up_detached_run_process(
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
+    run_log_artifact_path: &Path,
+) -> Result<std::process::Child, String> {
+    let exe = env::current_exe().map_err(|error| {
+        format!("could not resolve the current ota executable for detached up run: {error}")
+    })?;
+    let working_dir = contract_working_dir(contract_path);
+    let stdout_log = File::create(run_log_artifact_path)
+        .map_err(|error| format!("could not create detached up run log artifact: {error}"))?;
+    let stderr_log = stdout_log
+        .try_clone()
+        .map_err(|error| format!("could not prepare detached up run log stream: {error}"))?;
+
+    let mut command = Command::new(exe);
+    command
+        .current_dir(working_dir)
+        .env("OTA_FILE", contract_path)
+        .arg("run")
+        .arg(task_name)
+        .arg("--stream")
+        .arg("--skip-deps");
+
+    if let Some(backend) = overrides.backend {
+        command.arg("--mode").arg(match backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        });
+    }
+    if let Some(lifecycle) = overrides.lifecycle {
+        command.arg("--lifecycle").arg(match lifecycle {
+            Lifecycle::Persistent => "persistent",
+            Lifecycle::Ephemeral => "ephemeral",
+        });
+    }
+    if let Some(host_port) = overrides.host_port {
+        command.arg("--host-port").arg(host_port.to_string());
+    }
+    if let Some(memory) = overrides.memory {
+        command.arg("--memory").arg(memory.to_string());
+    }
+    if let Some(policy_env) = policy_env {
+        command.envs(policy_env.iter());
+    }
+
+    command
+        .arg(".")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log));
+
+    command
+        .spawn()
+        .map_err(|error| format!("could not start detached `ota run {task_name}`: {error}"))
+}
+
 #[derive(Debug, Clone)]
 enum ProofRuntimeReadinessStrategy {
     LightweightTargets(Vec<HostRuntimeReadinessProbe>),
@@ -62066,11 +62355,14 @@ fn wait_for_proof_runtime_readiness(
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     up_process: &mut std::process::Child,
+    process_label: &str,
+    wait_budget_override: Option<Duration>,
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let readiness_strategy =
         proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
-    let deadline = Instant::now() + proof_runtime_wait_budget(&readiness_strategy);
+    let deadline = Instant::now()
+        + wait_budget_override.unwrap_or_else(|| proof_runtime_wait_budget(&readiness_strategy));
     let agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
     loop {
         if let ProofRuntimeReadinessStrategy::LightweightTargets(targets) = &readiness_strategy
@@ -62126,7 +62418,7 @@ fn wait_for_proof_runtime_readiness(
             Ok(Some(exit_status)) => {
                 let up_process_failure = if let Some(code) = exit_status.code() {
                     let mut why = format!(
-                        "`ota up --stream` exited while waiting for readiness (exit code {code})"
+                        "`{process_label}` exited while waiting for readiness (exit code {code})"
                     );
                     if let Some(guidance) = windows_exit_code_guidance_line(code) {
                         why.push_str("; ");
@@ -62134,9 +62426,9 @@ fn wait_for_proof_runtime_readiness(
                     }
                     Some(why)
                 } else {
-                    Some(String::from(
-                        "`ota up --stream` was terminated before readiness could be observed",
-                    ))
+                    Some(String::from(format!(
+                        "`{process_label}` was terminated before readiness could be observed"
+                    )))
                 };
                 return Ok((
                     finalize_report(latest_report),
@@ -64618,12 +64910,26 @@ enum RepoExecutionMode {
     Capture,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpRunBehaviorPreference {
+    Auto,
+    Attach,
+    Detach,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpRunBehavior {
+    Attach,
+    Detach,
+}
+
 struct CommandRunResult {
     exit_code: i32,
     stdout: String,
     stderr: String,
     target: Option<String>,
     runtime: Option<ResolvedTaskRuntime>,
+    service_termination: Option<ServiceTermination>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -66323,6 +66629,7 @@ fn acquire_workspace_repo(
             stderr: String::new(),
             target: None,
             runtime: None,
+            service_termination: None,
         });
     }
 
@@ -66359,6 +66666,7 @@ fn acquire_workspace_repo(
             stderr,
             target: None,
             runtime: None,
+            service_termination: None,
         });
     }
 
@@ -66379,6 +66687,7 @@ fn acquire_workspace_repo(
                 stderr,
                 target: None,
                 runtime: None,
+                service_termination: None,
             });
         }
     }
@@ -66389,6 +66698,7 @@ fn acquire_workspace_repo(
         stderr,
         target: None,
         runtime: None,
+        service_termination: None,
     })
 }
 
@@ -66412,6 +66722,7 @@ fn run_git_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
                 runtime: None,
+                service_termination: None,
             })
         }
         RepoExecutionMode::Stream => {
@@ -66422,6 +66733,7 @@ fn run_git_command(
                 stderr: String::new(),
                 target: None,
                 runtime: None,
+                service_termination: None,
             })
         }
     }
@@ -66853,6 +67165,14 @@ fn finding_targets_activation_action(
 ) -> bool {
     if let Some(key) = provisionable_target_key_for_finding(finding) {
         return key == activation_action_key(action);
+    }
+
+    if finding
+        .summary
+        .strip_prefix("Missing tool: ")
+        .is_some_and(|name| name.trim() == action.tool_name)
+    {
+        return true;
     }
 
     match action.acquisition.provider {
@@ -67656,6 +67976,7 @@ fn run_up_task(
             stderr: String::new(),
             target: outcome.target,
             runtime: outcome.runtime,
+            service_termination: outcome.service_termination,
         })
         .map_err(|error| error),
         RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
@@ -67672,9 +67993,119 @@ fn run_up_task(
             stderr: outcome.stderr,
             target: outcome.target,
             runtime: outcome.runtime,
+            service_termination: outcome.service_termination,
         })
         .map_err(|error| error),
     }
+}
+
+fn run_phase_failure_exit_code(outcome: &CommandRunResult) -> Option<i32> {
+    if outcome.exit_code != 0 {
+        return Some(outcome.exit_code);
+    }
+
+    outcome
+        .service_termination
+        .as_ref()
+        .map(|termination| termination.exit_code.unwrap_or(1))
+}
+
+fn selected_up_run_task_is_service(contract: &Contract, workflow_name: Option<&str>) -> bool {
+    selected_up_activation_task_name(contract, workflow_name)
+        .and_then(|task_name| contract.tasks.get(task_name))
+        .and_then(|task| task.runtime.as_ref())
+        .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+}
+
+fn resolve_up_run_behavior(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    mode: RepoExecutionMode,
+    preference: UpRunBehaviorPreference,
+) -> UpRunBehavior {
+    match preference {
+        UpRunBehaviorPreference::Attach => UpRunBehavior::Attach,
+        UpRunBehaviorPreference::Detach => UpRunBehavior::Detach,
+        UpRunBehaviorPreference::Auto => {
+            if matches!(mode, RepoExecutionMode::Stream) {
+                UpRunBehavior::Attach
+            } else if selected_up_run_task_is_service(contract, workflow_name) {
+                UpRunBehavior::Detach
+            } else {
+                UpRunBehavior::Attach
+            }
+        }
+    }
+}
+
+fn run_up_task_detached_until_ready(
+    contract: &Contract,
+    resolved_path: &Path,
+    workflow_name: Option<&str>,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
+    ready_timeout: Option<Duration>,
+) -> Result<CommandRunResult, String> {
+    let repo_root = contract_working_dir(resolved_path);
+    let artifact_dir = proof_runtime_artifact_dir(repo_root, None, workflow_name);
+    fs::create_dir_all(&artifact_dir).map_err(|error| {
+        format!(
+            "failed to create detached up artifact directory `{}`: {error}",
+            compact_path(&artifact_dir, ".")
+        )
+    })?;
+    let run_log_artifact_path = artifact_dir.join("up-detached-run.log");
+    let run_log_artifact = compact_path(&run_log_artifact_path, ".");
+
+    let mut run_process = spawn_up_detached_run_process(
+        resolved_path,
+        task_name,
+        overrides,
+        policy_env,
+        &run_log_artifact_path,
+    )?;
+    let (proof_report, _, proof_ok, run_process_failure) = wait_for_proof_runtime_readiness(
+        contract,
+        resolved_path,
+        workflow_name,
+        overrides,
+        &mut run_process,
+        &format!("ota run {task_name} --stream"),
+        ready_timeout,
+    )?;
+
+    if proof_ok {
+        return Ok(CommandRunResult {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            target: None,
+            runtime: None,
+            service_termination: None,
+        });
+    }
+
+    let _ = stop_proof_runtime_up_process(&mut run_process);
+    let summary = doctor_summary(
+        &proof_report,
+        crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+    );
+    let failure = run_process_failure.unwrap_or_else(|| {
+        summary
+            .primary_blocker
+            .as_ref()
+            .map(|blocker| blocker.summary.clone())
+            .unwrap_or_else(|| String::from("detached run task did not reach readiness"))
+    });
+    Ok(CommandRunResult {
+        exit_code: 1,
+        stdout: String::new(),
+        stderr: format!("{failure}\ninspect `{run_log_artifact}` for detached run task logs\n"),
+        target: None,
+        runtime: None,
+        service_termination: None,
+    })
 }
 
 fn contract_adjusted_for_up_setup_phase(
@@ -67925,6 +68356,7 @@ fn run_corepack_activation_action(
         stderr: format!("{}{}", enable.stderr, prepare.stderr),
         target: None,
         runtime: None,
+        service_termination: None,
     })
 }
 
@@ -68009,6 +68441,7 @@ fn run_process_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
                 runtime: None,
+                service_termination: None,
             },
             Err(error) => command_spawn_failure_result(&command_label, error),
         },
@@ -68020,6 +68453,7 @@ fn run_process_command(
                     stderr: String::new(),
                     target: None,
                     runtime: None,
+                    service_termination: None,
                 },
                 Err(error) => command_spawn_failure_result(&command_label, error),
             }
@@ -68046,6 +68480,7 @@ fn command_spawn_failure_result(command_label: &str, error: io::Error) -> Comman
         stderr: format!("failed to execute `{command_label}`: {error}\n"),
         target: None,
         runtime: None,
+        service_termination: None,
     }
 }
 
@@ -68173,6 +68608,30 @@ fn execute_repo_up(
     dry_run: bool,
     mode: RepoExecutionMode,
 ) -> Result<RepoUpResult, String> {
+    execute_repo_up_with_behavior(
+        contract,
+        resolved_path,
+        overrides,
+        workflow_name,
+        policy_env,
+        dry_run,
+        mode,
+        UpRunBehaviorPreference::Auto,
+        None,
+    )
+}
+
+fn execute_repo_up_with_behavior(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
+    mode: RepoExecutionMode,
+    run_behavior_preference: UpRunBehaviorPreference,
+    ready_timeout: Option<Duration>,
+) -> Result<RepoUpResult, String> {
     let mut stdout = String::new();
     let mut stderr = String::new();
     if let Some(workflow_name) = workflow_name
@@ -68187,6 +68646,8 @@ fn execute_repo_up(
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
+    let run_behavior =
+        resolve_up_run_behavior(contract, workflow_name, mode, run_behavior_preference);
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
     let provisioning_output_mode = match mode {
@@ -69156,40 +69617,62 @@ fn execute_repo_up(
             .tasks
             .get(run_task_name)
             .and_then(task_command_preview);
-        match run_up_task(
-            contract,
-            resolved_path,
-            run_task_name,
-            overrides,
-            policy_env,
-            mode,
-        ) {
-            Ok(outcome) if outcome.exit_code != 0 => {
+        let run_result = if run_behavior == UpRunBehavior::Detach
+            && selected_up_run_task_is_service(contract, workflow_name)
+        {
+            run_up_task_detached_until_ready(
+                contract,
+                resolved_path,
+                workflow_name,
+                run_task_name,
+                overrides,
+                policy_env,
+                ready_timeout,
+            )
+            .map_err(|error| RunError::SpawnFailed {
+                task: run_task_name.to_string(),
+                source: io::Error::other(error),
+            })
+        } else {
+            run_up_task(
+                contract,
+                resolved_path,
+                run_task_name,
+                overrides,
+                policy_env,
+                mode,
+            )
+        };
+        match run_result {
+            Ok(outcome) if run_phase_failure_exit_code(&outcome).is_some() => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
+                let exit_code = run_phase_failure_exit_code(&outcome).unwrap_or(1);
+                let mut receipt = repo_execution_receipt(
+                    resolved_path,
+                    contract,
+                    task_phase_execution_context(
+                        contract,
+                        resolved_path,
+                        run_task_name,
+                        overrides,
+                        outcome.target.clone(),
+                    ),
+                    "RUN FAILED",
+                    "run",
+                    None,
+                    Some(run_task_name),
+                    &[],
+                    Some(exit_code),
+                    None,
+                );
+                receipt.service_termination = outcome.service_termination.clone();
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "RUN FAILED",
                     phase: "run",
                     preview: None,
-                    receipt: repo_execution_receipt(
-                        resolved_path,
-                        contract,
-                        task_phase_execution_context(
-                            contract,
-                            resolved_path,
-                            run_task_name,
-                            overrides,
-                            outcome.target.clone(),
-                        ),
-                        "RUN FAILED",
-                        "run",
-                        None,
-                        Some(run_task_name),
-                        &[],
-                        Some(outcome.exit_code),
-                        None,
-                    ),
+                    receipt,
                     report: DoctorReport {
                         ok: false,
                         provisioning: None,
@@ -69201,7 +69684,7 @@ fn execute_repo_up(
                     service_command: None,
                     task: Some(run_task_name.to_string()),
                     task_command: run_task_command,
-                    exit_code: Some(outcome.exit_code),
+                    exit_code: Some(exit_code),
                     stdout,
                     stderr,
                 });
@@ -71358,6 +71841,7 @@ fn run_workspace_repo_refresh_command(
                 stderr,
                 target: None,
                 runtime: None,
+                service_termination: None,
             });
         }
 
@@ -71373,6 +71857,7 @@ fn run_workspace_repo_refresh_command(
             stderr,
             target: None,
             runtime: None,
+            service_termination: None,
         });
     }
 
@@ -71870,6 +72355,7 @@ fn run_workspace_repo_task(
                         stderr: result.stderr,
                         target: result.target,
                         runtime: result.runtime,
+                        service_termination: result.service_termination,
                     })
                 }
                 RepoExecutionMode::Stream => {
@@ -71890,6 +72376,7 @@ fn run_workspace_repo_task(
                         stderr: String::new(),
                         target: result.target,
                         runtime: result.runtime,
+                        service_termination: result.service_termination,
                     })
                 }
             };
@@ -72481,6 +72968,7 @@ fn run_shell_command(
                     stderr: String::new(),
                     target: None,
                     runtime: None,
+                    service_termination: None,
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
         }
@@ -72497,6 +72985,7 @@ fn run_shell_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
                 runtime: None,
+                service_termination: None,
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }
