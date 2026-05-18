@@ -3024,7 +3024,14 @@ fn diagnose_contract_with_scope(
     }
     if scope != DoctorScope::ServicesOnly {
         if mode == DoctorMode::Native {
-            diagnose_checks(contract, contract_path, scope, workflow_name, &mut findings);
+            diagnose_checks(
+                contract,
+                contract_path,
+                scope,
+                workflow_name,
+                &mut findings,
+                overrides,
+            );
         }
     }
 
@@ -6081,11 +6088,7 @@ fn diagnose_unsupported_toolchain_opportunities(
             continue;
         }
         if let Some(finding) =
-            unsupported_toolchain_opportunity_finding(
-                ecosystem,
-                contract_root,
-                requirement_surface,
-            )
+            unsupported_toolchain_opportunity_finding(ecosystem, contract_root, requirement_surface)
         {
             findings.push(finding);
         }
@@ -7158,6 +7161,7 @@ fn diagnose_checks(
     scope: DoctorScope,
     workflow_name: Option<&str>,
     findings: &mut Vec<Finding>,
+    overrides: ExecutionOverrides,
 ) {
     let working_dir = contract_working_dir(contract_path);
     let selected_checks = selected_workflow_check_names(contract, workflow_name, scope);
@@ -7238,7 +7242,7 @@ fn diagnose_checks(
             probes_executed_via_checks.insert(probe_name.to_string());
         }
 
-        match run_declared_check(contract, contract_path, check, working_dir, None) {
+        match run_declared_check(contract, contract_path, check, working_dir, None, overrides) {
             CheckStatus::Passed => continue,
             CheckStatus::Failed => findings.push(Finding {
                 severity: if is_selected_signal {
@@ -7276,7 +7280,7 @@ fn diagnose_checks(
             let probe = contract
                 .probe(probe_name)
                 .expect("checked probe existence above");
-            match run_named_probe(contract, contract_path, probe_name, None) {
+            match run_named_probe(contract, contract_path, probe_name, None, overrides) {
                 CheckStatus::Passed => continue,
                 CheckStatus::Failed => findings.push(Finding {
                     severity: FindingSeverity::Error,
@@ -7314,7 +7318,7 @@ fn diagnose_checks(
             let probe = contract
                 .probe(probe_name)
                 .expect("checked probe existence above");
-            match run_named_probe(contract, contract_path, probe_name, None) {
+            match run_named_probe(contract, contract_path, probe_name, None, overrides) {
                 CheckStatus::Passed => continue,
                 CheckStatus::Failed => findings.push(Finding {
                     severity: FindingSeverity::Info,
@@ -7347,6 +7351,7 @@ fn diagnose_checks(
                 contract_path,
                 workflow_name,
                 surface_name,
+                overrides,
             ) {
                 Ok(observation) if observation.status == CheckStatus::Passed => continue,
                 Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
@@ -7421,6 +7426,7 @@ fn diagnose_checks(
                 contract_path,
                 workflow_name,
                 surface_name,
+                overrides,
             ) {
                 Ok(observation) if observation.status == CheckStatus::Passed => continue,
                 Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
@@ -7773,6 +7779,7 @@ fn run_declared_check(
     check: &crate::schema::CheckSpec,
     working_dir: &Path,
     command_override: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> CheckStatus {
     if check.kind == crate::schema::CheckKind::File {
         return run_file_check(check, working_dir);
@@ -7783,7 +7790,13 @@ fn run_declared_check(
     if let Some(probe_name) = check.probe.as_deref()
         && contract.probe(probe_name).is_some()
     {
-        return run_named_probe(contract, contract_path, probe_name, check.timeout);
+        return run_named_probe(
+            contract,
+            contract_path,
+            probe_name,
+            check.timeout,
+            overrides,
+        );
     }
     CheckStatus::Failed
 }
@@ -7838,6 +7851,7 @@ fn run_named_probe(
     contract_path: &Path,
     probe_name: &str,
     timeout_override_ms: Option<u64>,
+    overrides: ExecutionOverrides,
 ) -> CheckStatus {
     let Some(probe) = contract.probe(probe_name) else {
         return CheckStatus::Failed;
@@ -7849,6 +7863,7 @@ fn run_named_probe(
             probe_name,
             probe,
             timeout_override_ms,
+            overrides,
         );
     }
     let Ok(resolved) = resolve_named_readiness_probe(contract, probe_name) else {
@@ -7901,6 +7916,7 @@ fn run_workflow_surface_readiness(
     contract_path: &Path,
     workflow_name: Option<&str>,
     surface_name: &str,
+    overrides: ExecutionOverrides,
 ) -> Result<WorkflowSurfaceReadinessObservation, String> {
     let (_, workflow) = contract
         .selected_workflow(workflow_name)
@@ -7917,7 +7933,7 @@ fn run_workflow_surface_readiness(
     let backend = match crate::runner::resolve_execution_backend_with_contract_path(
         contract,
         run_task_name,
-        crate::runner::ExecutionOverrides::default(),
+        overrides,
         Some(contract_path),
     )
     .map_err(|error| error.to_string())?
@@ -8086,6 +8102,7 @@ fn run_observer_task_named_probe(
     probe_name: &str,
     probe: &crate::schema::ReadinessProbeSpec,
     timeout_override_ms: Option<u64>,
+    overrides: ExecutionOverrides,
 ) -> CheckStatus {
     let Some(target) = probe.target.as_ref() else {
         return CheckStatus::Failed;
@@ -8105,18 +8122,14 @@ fn run_observer_task_named_probe(
     let observer_backend = match crate::runner::resolve_execution_backend_with_contract_path(
         contract,
         observer_task_name,
-        crate::runner::ExecutionOverrides::default(),
+        overrides,
         Some(contract_path),
     ) {
         Ok(backend) => backend,
         Err(_) => return CheckStatus::Failed,
     };
-    let caller_backend = crate::runner::effective_task_execution(
-        contract,
-        observer_task_name,
-        crate::runner::ExecutionOverrides::default(),
-    )
-    .backend;
+    let caller_backend =
+        crate::runner::effective_task_execution(contract, observer_task_name, overrides).backend;
     let resolved = match resolve_observer_task_probe_command(
         contract,
         contract_path,
@@ -8125,6 +8138,7 @@ fn run_observer_task_named_probe(
         observer_task_name,
         caller_backend,
         timeout_override_ms,
+        overrides,
     ) {
         Ok(resolved) => resolved,
         Err(_) => return CheckStatus::Failed,
@@ -8161,6 +8175,7 @@ fn resolve_observer_task_probe_command(
     observer_task_name: &str,
     caller_backend: Backend,
     timeout_override_ms: Option<u64>,
+    overrides: ExecutionOverrides,
 ) -> Result<ObserverTaskProbeCommand, String> {
     let target = probe
         .target
@@ -8193,7 +8208,7 @@ fn resolve_observer_task_probe_command(
         probe_name,
         &synthetic_target,
         caller_backend,
-        crate::runner::ExecutionOverrides::default(),
+        overrides,
     )
     .map_err(|error| error.to_string())?;
     let timeout_duration = timeout_override_ms
@@ -12619,6 +12634,74 @@ workflows:
     }
 
     #[test]
+    fn workflow_surface_failure_uses_native_override_backend_label_over_task_context_backend() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: verify
+  contexts:
+    verify:
+      backend: container
+      container:
+        image: node:24-bookworm
+surfaces:
+  backend:
+    kind: http
+    port: 6551
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 50ms
+tasks:
+  dev:be:
+    context: verify
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            None,
+            Some("backend"),
+            crate::runner::ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..crate::runner::ExecutionOverrides::default()
+            },
+        );
+
+        assert!(!report.ok, "{report:?}");
+        assert!(
+            report.findings.iter().any(|finding| {
+                (finding.summary == "Surface readiness failed: backend"
+                    || finding.summary == "Surface readiness timed out: backend")
+                    && finding
+                        .why
+                        .contains("backend `native`; endpoint `127.0.0.1:6551`")
+            }),
+            "{report:?}"
+        );
+    }
+
+    #[test]
     fn workflow_surface_timeout_uses_effective_default_timeout() {
         let retries = 3u32;
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
@@ -13091,8 +13174,13 @@ tasks:
         )
         .unwrap();
 
-        let status =
-            super::run_named_probe(&contract, synthetic_contract_path(), "backend-ready", None);
+        let status = super::run_named_probe(
+            &contract,
+            synthetic_contract_path(),
+            "backend-ready",
+            None,
+            crate::runner::ExecutionOverrides::default(),
+        );
         server.join().expect("probe server should finish");
 
         assert!(matches!(status, CheckStatus::TimedOut(100)));

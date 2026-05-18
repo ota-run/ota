@@ -38,6 +38,15 @@
   paths now launch detached proof-run workers in their own process group so the proved workload
   remains alive after `ota up` returns, and detach success receipts now report the selected
   workflow run execution context instead of falling back to diagnosis-only context metadata
+- fixed `ota up --native` workflow surface diagnosis drift for service-runtime proof mode:
+  workflow surface checks now honor the effective execution override backend instead of always
+  resolving from default task-context backend, and proof-teardown mode now suppresses stale
+  post-teardown workflow-surface findings so successful native proof runs return `READY` instead
+  of false post-up `NOT READY` surface timeouts
+- fixed service proof-readiness exit handling so successful detached `ota run <task> --stream`
+  exits no longer auto-mark `ota up` ready when non-surface readiness still fails; Ota now only
+  suppresses stale workflow-surface findings in that exit path and preserves real probe/check
+  blockers as `NOT READY`
 - improved `ota clean` container-engine failure handling across both text and JSON output:
   cleanup errors now surface `Container engine unavailable` with structured engine/resource
   semantics, concrete `Next:` guidance, and a compact `Details:` line instead of raw cleanup
