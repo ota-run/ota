@@ -173,9 +173,24 @@ jobs:
           }
 
       - name: Upload proof artifacts
+        id: upload-proof-artifacts
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: windows-native-proof-artifacts
           path: ${{ runner.temp }}/ota-windows-native-proof
           if-no-files-found: ignore
+
+      - name: Warn when artifact upload flakes
+        if: always() && steps.upload-proof-artifacts.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::proof artifacts failed to upload, but the Windows native proof itself completed"
+          {
+            echo "### Artifact upload warning"
+            echo
+            echo "- workflow: windows-native-proof"
+            echo "- job: native-proof"
+            echo "- note: diagnostic artifact upload failed after proof execution"
+          } >> "$GITHUB_STEP_SUMMARY"

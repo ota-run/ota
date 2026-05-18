@@ -164,9 +164,24 @@ jobs:
           esac
 
       - name: Upload proof artifacts
+        id: upload-proof-artifacts
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: windows-container-bash-proof-artifacts
           path: .ota-ci/windows-mingw-container-proof
           if-no-files-found: ignore
+
+      - name: Warn when artifact upload flakes
+        if: always() && steps.upload-proof-artifacts.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::proof artifacts failed to upload, but the Windows container path proof itself completed"
+          {
+            echo "### Artifact upload warning"
+            echo
+            echo "- workflow: windows-container-bash-proof"
+            echo "- job: mingw-container-path-proof"
+            echo "- note: diagnostic artifact upload failed after proof execution"
+          } >> "$GITHUB_STEP_SUMMARY"
