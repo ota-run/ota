@@ -62,7 +62,8 @@ use crate::runner::{
     host_runtime_readiness_observed, http_readiness_endpoint_status, load_declared_env_sources,
     parse_http_probe_url, resolve_context_execution_backend, resolve_declared_env_source_value,
     resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
-    resolve_task_target_binding_url_with_contract_path, run_backend_command_captured,
+    resolve_task_target_binding_url_with_contract_path, run_backend_argv_command_captured,
+    run_backend_command_captured,
     task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
@@ -4969,9 +4970,16 @@ fn provider_installed_entries(
     let Some(backend) = doctor_probe_backend(mode, container_probe, remote_probe) else {
         return Ok(None);
     };
-    let output = run_backend_command_captured(
+    // Split the probe command into argv and use direct exec on native backends so that
+    // login-shell PATH reordering (e.g. macOS path_helper via `sh -lc`) does not cause
+    // the wrong binary to be found. Container and remote backends still use shell.
+    let mut parts = command.split_whitespace();
+    let exe = parts.next().unwrap_or_default();
+    let args: Vec<String> = parts.map(str::to_string).collect();
+    let output = run_backend_argv_command_captured(
         probe_name,
-        command,
+        exe,
+        &args,
         contract_working_dir(contract_path),
         &backend,
     )
