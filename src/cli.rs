@@ -22053,8 +22053,8 @@ tasks:
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-        let fixture = ContractFixture::new(
-            r#"
+                let fixture = ContractFixture::new(
+                    r#"
 version: 1
 project:
   name: ota-site
@@ -22071,20 +22071,20 @@ agent:
       protected_paths:
         - detect:contract_file_default
 "#,
-        );
+                );
 
-        let before = fs::read_to_string(fixture.file_path()).unwrap();
-        let output = run_with(["ota", "agents", "--confirm", "--dry-run", fixture.path()]);
+                let before = fs::read_to_string(fixture.file_path()).unwrap();
+                let output = run_with(["ota", "agents", "--confirm", "--dry-run", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("AGENTS CONFIRM"));
-        assert!(stdout.contains("PREVIEW"));
-        assert!(stdout.contains("agent.inferred_boundary.reviewed"));
-        assert!(stdout.contains("reviewed: true"));
-        assert!(stdout.contains("ota agents --confirm"));
-        assert!(stdout.contains("ota agents --write"));
-        assert_eq!(fs::read_to_string(fixture.file_path()).unwrap(), before);
+                assert_eq!(output.exit_code, 0);
+                let stdout = strip_ansi(&output.stdout);
+                assert!(stdout.contains("AGENTS CONFIRM"));
+                assert!(stdout.contains("PREVIEW"));
+                assert!(stdout.contains("agent.inferred_boundary.reviewed"));
+                assert!(stdout.contains("reviewed: true"));
+                assert!(stdout.contains("ota agents --confirm"));
+                assert!(stdout.contains("ota agents --write"));
+                assert_eq!(fs::read_to_string(fixture.file_path()).unwrap(), before);
             })
             .expect("thread spawn should succeed")
             .join()
