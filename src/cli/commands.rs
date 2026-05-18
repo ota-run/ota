@@ -38558,7 +38558,7 @@ workflows:
 
     #[test]
     fn wait_for_proof_runtime_readiness_does_not_report_ready_when_probe_is_live_but_process_exits()
-     {
+    {
         let _guard = cwd_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         listener
@@ -38735,7 +38735,8 @@ workflows:
     }
 
     #[test]
-    fn wait_for_proof_runtime_readiness_treats_successful_service_run_exit_as_ready_for_up_proof() {
+    fn wait_for_proof_runtime_readiness_does_not_hide_probe_failure_when_service_run_exits_successfully()
+     {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
         let contract_path = contract_dir.path().join("ota.yaml");
@@ -38799,10 +38800,18 @@ readiness:
 
         let _ = child.wait();
 
-        assert!(proof_ok);
-        assert_eq!(phase, "post-up diagnosis");
-        assert!(up_failure.is_none(), "{up_failure:?}");
+        assert!(!proof_ok);
+        assert_eq!(phase, "service readiness");
+        let reason = up_failure.as_deref().unwrap_or_default();
+        assert!(reason.contains("exit code 0"), "{reason}");
         assert!(!report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Probe failed: backend-ready"),
+            "{report:?}"
+        );
     }
 
     #[test]
@@ -38978,6 +38987,47 @@ workflows:
         assert!(rendered.contains("Run task exited before readiness"));
         assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
         assert!(!rendered.contains("Surface readiness failed: app"));
+    }
+
+    #[test]
+    fn report_without_workflow_surface_readiness_findings_drops_surface_errors() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness failed: app"),
+                why: String::from("surface was not ready"),
+                next: String::from("rerun"),
+            }],
+        };
+
+        let filtered = super::report_without_workflow_surface_readiness_findings(report);
+        assert!(filtered.ok);
+        assert!(filtered.findings.is_empty());
+    }
+
+    #[test]
+    fn report_without_workflow_surface_readiness_findings_keeps_non_surface_errors() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Check failed: setup-complete"),
+                why: String::from("check command failed"),
+                next: String::from("fix check"),
+            }],
+        };
+
+        let filtered = super::report_without_workflow_surface_readiness_findings(report);
+        assert!(!filtered.ok);
+        assert_eq!(filtered.findings.len(), 1);
+        assert_eq!(filtered.findings[0].summary, "Check failed: setup-complete");
     }
 
     #[test]
@@ -63183,22 +63233,37 @@ fn wait_for_proof_runtime_readiness(
                     doctor_mode,
                     overrides.clone(),
                 );
-                let summary = doctor_summary(&latest_report, agent_verdict);
-                let successful_service_run_exit =
-                    process_label.starts_with("ota run ")
-                        && selected_up_run_task_is_service(contract, workflow_name)
-                        && exit_status.success();
+                let successful_service_run_exit = process_label.starts_with("ota run ")
+                    && selected_up_run_task_is_service(contract, workflow_name)
+                    && exit_status.success();
                 if successful_service_run_exit {
-                    return Ok((latest_report, "post-up diagnosis", true, None));
+                    let filtered_report =
+                        report_without_workflow_surface_readiness_findings(latest_report);
+                    let filtered_summary = doctor_summary(&filtered_report, agent_verdict);
+                    if filtered_report.ok && filtered_summary.verdict == DoctorVerdict::Ready {
+                        return Ok((filtered_report, "post-up diagnosis", true, None));
+                    }
+                    return Ok((
+                        filtered_report,
+                        "service readiness",
+                        false,
+                        Some(proof_runtime_process_exit_failure(
+                            process_label,
+                            exit_status,
+                        )),
+                    ));
                 }
+                let summary = doctor_summary(&latest_report, agent_verdict);
                 if exit_status.success()
                     && latest_report.ok
                     && summary.verdict == DoctorVerdict::Ready
                 {
                     return Ok((latest_report, "post-up diagnosis", true, None));
                 }
-                let up_process_failure =
-                    Some(proof_runtime_process_exit_failure(process_label, exit_status));
+                let up_process_failure = Some(proof_runtime_process_exit_failure(
+                    process_label,
+                    exit_status,
+                ));
                 return Ok((
                     latest_report,
                     "service readiness",
@@ -63231,8 +63296,10 @@ fn wait_for_proof_runtime_readiness(
                         if exit_status.success() {
                             return Ok((latest_report, "post-up diagnosis", true, None));
                         }
-                        let up_process_failure =
-                            Some(proof_runtime_process_exit_failure(process_label, exit_status));
+                        let up_process_failure = Some(proof_runtime_process_exit_failure(
+                            process_label,
+                            exit_status,
+                        ));
                         return Ok((
                             latest_report,
                             "service readiness",
@@ -63270,8 +63337,10 @@ fn wait_for_proof_runtime_readiness(
                         if exit_status.success() {
                             return Ok((latest_report, "post-up diagnosis", true, None));
                         }
-                        let up_process_failure =
-                            Some(proof_runtime_process_exit_failure(process_label, exit_status));
+                        let up_process_failure = Some(proof_runtime_process_exit_failure(
+                            process_label,
+                            exit_status,
+                        ));
                         return Ok((
                             latest_report,
                             "service readiness",
@@ -68925,16 +68994,16 @@ fn up_task_execution_overrides(
 ) -> ExecutionOverrides {
     let should_force_ephemeral = matches!(overrides.backend, Some(Backend::Container))
         || selected_up_activation_task_name(contract, workflow_name)
-        .and_then(|task_name| {
-            resolve_execution_backend_with_contract_path(
-                contract,
-                task_name,
-                overrides,
-                Some(resolved_path),
-            )
-            .ok()
-        })
-        .is_some_and(|backend| matches!(backend, ResolvedExecutionBackend::Container { .. }));
+            .and_then(|task_name| {
+                resolve_execution_backend_with_contract_path(
+                    contract,
+                    task_name,
+                    overrides,
+                    Some(resolved_path),
+                )
+                .ok()
+            })
+            .is_some_and(|backend| matches!(backend, ResolvedExecutionBackend::Container { .. }));
 
     if matches!(run_behavior, UpRunBehavior::DetachedProofTeardown)
         && selected_up_run_task_is_service(contract, workflow_name)
@@ -68980,6 +69049,34 @@ fn up_success_execution_context(
         overrides.lifecycle,
         report,
     )
+}
+
+fn is_workflow_surface_readiness_finding(finding: &Finding) -> bool {
+    finding.summary.starts_with("Surface readiness failed:")
+        || finding.summary.starts_with("Surface readiness timed out:")
+        || finding
+            .summary
+            .starts_with("Surface readiness could not be evaluated:")
+        || finding
+            .summary
+            .starts_with("Signal surface readiness failed:")
+        || finding
+            .summary
+            .starts_with("Signal surface readiness timed out:")
+        || finding
+            .summary
+            .starts_with("Signal surface readiness could not be evaluated:")
+}
+
+fn report_without_workflow_surface_readiness_findings(mut report: DoctorReport) -> DoctorReport {
+    report
+        .findings
+        .retain(|finding| !is_workflow_surface_readiness_finding(finding));
+    report.ok = !report
+        .findings
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Error);
+    report
 }
 
 fn run_up_task_detached_until_ready(
@@ -69667,8 +69764,13 @@ fn execute_repo_up_with_behavior(
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
     let run_behavior =
         resolve_up_run_behavior(contract, workflow_name, mode, run_behavior_preference);
-    let task_execution_overrides =
-        up_task_execution_overrides(contract, resolved_path, workflow_name, overrides, run_behavior);
+    let task_execution_overrides = up_task_execution_overrides(
+        contract,
+        resolved_path,
+        workflow_name,
+        overrides,
+        run_behavior,
+    );
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
     let provisioning_output_mode = match mode {
@@ -70642,10 +70744,13 @@ fn execute_repo_up_with_behavior(
             && matches!(
                 run_behavior,
                 UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
-            )
-        {
+            ) {
             let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
-            let proof_overrides = if keep_running { overrides } else { task_execution_overrides };
+            let proof_overrides = if keep_running {
+                overrides
+            } else {
+                task_execution_overrides
+            };
             run_up_task_detached_until_ready(
                 contract,
                 resolved_path,
@@ -70740,41 +70845,45 @@ fn execute_repo_up_with_behavior(
         }
     }
 
-    let service_report =
-        diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
-    if !service_report.ok {
-        let mut receipt = repo_execution_receipt(
-            resolved_path,
-            contract,
-            native_phase_execution_context(),
-            "NOT READY",
-            "services",
-            None,
-            None,
-            &service_report.findings,
-            None,
-            service_report
-                .findings
-                .first()
-                .map(|finding| finding.next.clone()),
-        );
-        receipt.native_prerequisites =
-            selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
-        return Ok(RepoUpResult {
-            ok: false,
-            status: "NOT READY",
-            phase: "services",
-            preview: None,
-            receipt,
-            report: service_report,
-            service: None,
-            service_command: None,
-            task: None,
-            task_command: None,
-            exit_code: None,
-            stdout,
-            stderr,
-        });
+    let proof_teardown_service_run = selected_up_run_task_is_service(contract, workflow_name)
+        && matches!(run_behavior, UpRunBehavior::DetachedProofTeardown);
+    if !proof_teardown_service_run {
+        let service_report =
+            diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
+        if !service_report.ok {
+            let mut receipt = repo_execution_receipt(
+                resolved_path,
+                contract,
+                native_phase_execution_context(),
+                "NOT READY",
+                "services",
+                None,
+                None,
+                &service_report.findings,
+                None,
+                service_report
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+            );
+            receipt.native_prerequisites =
+                selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
+            return Ok(RepoUpResult {
+                ok: false,
+                status: "NOT READY",
+                phase: "services",
+                preview: None,
+                receipt,
+                report: service_report,
+                service: None,
+                service_command: None,
+                task: None,
+                task_command: None,
+                exit_code: None,
+                stdout,
+                stderr,
+            });
+        }
     }
 
     let mut diagnosis_overrides = doctor_mode_execution_overrides(doctor_mode, overrides.lifecycle);
@@ -70790,6 +70899,11 @@ fn execute_repo_up_with_behavior(
         workflow_name,
         diagnosis_overrides,
     );
+    let report = if proof_teardown_service_run {
+        report_without_workflow_surface_readiness_findings(report)
+    } else {
+        report
+    };
     let workloads = resolve_up_workloads(
         setup_task,
         setup_runtime.as_ref(),
