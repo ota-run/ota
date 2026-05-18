@@ -13653,14 +13653,12 @@ fn render_run_preview_target(
         });
         return match format {
             OutputFormat::Text => CommandOutput::failure(stylize_text_failure("ota run", &error)),
-            OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
-                "ok": false,
-                "path": target.contract_path.display().to_string(),
-                "member": member,
-                "task": requested_task_name,
-                "dry_run": true,
-                "error": error,
-            }))),
+            OutputFormat::Json => CommandOutput::failure(run_preview_error_json(
+                target.contract_path.display().to_string(),
+                member,
+                requested_task_name,
+                error,
+            )),
         };
     };
 
@@ -13688,14 +13686,12 @@ fn render_run_preview_target(
                 OutputFormat::Text => {
                     CommandOutput::failure(stylize_text_failure("ota run", &error))
                 }
-                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
-                    "ok": false,
-                    "path": path_display,
-                    "member": member,
-                    "task": task_name,
-                    "dry_run": true,
-                    "error": error,
-                }))),
+                OutputFormat::Json => CommandOutput::failure(run_preview_error_json(
+                    path_display,
+                    member,
+                    task_name.as_str(),
+                    error,
+                )),
             };
         }
     };
@@ -13887,6 +13883,30 @@ fn render_run_preview_target(
             exit_code,
         },
     }
+}
+
+fn run_preview_error_json(
+    path: String,
+    member: Option<&str>,
+    task_name: &str,
+    error: String,
+) -> String {
+    let mut body = serde_json::Map::new();
+    body.insert(String::from("ok"), JsonValue::Bool(false));
+    body.insert(String::from("path"), JsonValue::String(path));
+    if let Some(member) = member {
+        body.insert(
+            String::from("member"),
+            JsonValue::String(member.to_string()),
+        );
+    }
+    body.insert(
+        String::from("task"),
+        JsonValue::String(task_name.to_string()),
+    );
+    body.insert(String::from("dry_run"), JsonValue::Bool(true));
+    body.insert(String::from("error"), JsonValue::String(error));
+    to_json_value(JsonValue::Object(body))
 }
 
 fn run_preview_summary(

@@ -61,6 +61,21 @@ fn run_ota_with_env(
     serde_json::from_slice(json_bytes).expect("command should emit valid JSON")
 }
 
+fn run_ota_failure_stdout_json(args: &[&str], cwd: &Path) -> Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("ota command should run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "ota command should fail\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    serde_json::from_slice(&output.stdout).expect("command should emit valid stdout JSON")
+}
+
 fn schema_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas")
 }
@@ -616,6 +631,159 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("up.json", &json);
+}
+
+#[test]
+fn run_dry_run_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: run-preview-demo
+tasks:
+  ci:
+    run: npm test
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "run",
+            "ci",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &json);
+}
+
+#[test]
+fn run_dry_run_blocked_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: blocked-run-preview
+env:
+  vars:
+    SECRET_TOKEN:
+      required: true
+tasks:
+  ci:
+    run: echo ci
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "run",
+            "ci",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &json);
+}
+
+#[test]
+fn run_dry_run_member_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: mono
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+tasks:
+  ci:
+    run: echo root
+"#,
+    );
+    fs::create_dir_all(fixture.path().join("api")).expect("api dir");
+    fs::create_dir_all(fixture.path().join("web")).expect("web dir");
+    fs::write(
+        fixture.path().join("api").join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: api
+tasks:
+  ci:
+    run: echo api
+"#,
+    )
+    .expect("api contract");
+    fs::write(
+        fixture.path().join("web").join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  ci:
+    run: echo web
+"#,
+    )
+    .expect("web contract");
+
+    let json = run_ota(
+        &[
+            "run",
+            "ci",
+            "--dry-run",
+            "--json",
+            "--member",
+            "api",
+            "--member",
+            "web",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &json);
+}
+
+#[test]
+fn run_dry_run_unknown_task_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: unknown-task-preview
+tasks:
+  ci:
+    run: echo ci
+"#,
+    );
+
+    let json = run_ota_with_env(
+        &[
+            "run",
+            "missing",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("run-preview.json", &json);
 }
 
 #[test]

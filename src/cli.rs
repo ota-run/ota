@@ -5689,8 +5689,8 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Receipt { json, .. }
             | WorkspaceCommands::Run { json, .. } => *json,
         },
-        Commands::Run { .. }
-        | Commands::Completion { .. }
+        Commands::Run { json, .. } => *json,
+        Commands::Completion { .. }
         | Commands::Uninstall
         | Commands::SelfUpdate { .. }
         | Commands::Annotations { .. } => false,
@@ -15029,6 +15029,45 @@ workflows:
     }
 
     #[test]
+    fn run_dry_run_unknown_task_json_preserves_structured_error_envelope() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "run",
+            "missing",
+            "--dry-run",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.is_empty(), "{}", output.stdout);
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(!stderr.contains("Operation failed"), "{stderr}");
+        let json: Value = serde_json::from_str(stderr).expect("run error json");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["task"], "missing");
+        assert_eq!(json["dry_run"], true);
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("task `missing` is not defined"),
+            "{json}"
+        );
+    }
+
+    #[test]
     fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
         let stderr = "◉ ERROR  Task Failed\n`install-from-source` exited with code 101\nWhere: ./ota.yaml\nWhy: task `install-from-source` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦 RUN SUMMARY\n\nScope:     repo";
         let rendered = strip_ansi(&append_try_footer(
@@ -19761,6 +19800,33 @@ policies:
         assert_eq!(json.canonical, "json");
         assert!(!json.takes_value);
         assert!(json.valid_for_flag);
+    }
+
+    #[test]
+    fn run_dry_run_json_requests_json_output() {
+        let command = super::Commands::Run {
+            task: String::from("ci"),
+            json: true,
+            dry_run: true,
+            backend: None,
+            native: false,
+            container: false,
+            remote: false,
+            lifecycle: None,
+            persistent: false,
+            host_port: None,
+            memory: None,
+            ephemeral: false,
+            skip_deps: false,
+            receipt: false,
+            stream: false,
+            log: false,
+            member: Vec::new(),
+            path: None,
+            inputs: Vec::new(),
+        };
+
+        assert!(super::command_requests_json(&command));
     }
 
     #[test]

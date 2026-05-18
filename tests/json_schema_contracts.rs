@@ -232,6 +232,11 @@ fn doctor_schema_includes_agent_summary() {
     assert!(properties["summary"]["properties"].get("verdict").is_some());
     assert!(
         properties["summary"]["properties"]
+            .get("primary_blocker")
+            .is_some()
+    );
+    assert!(
+        properties["summary"]["properties"]
             .get("agent_verdict")
             .is_some()
     );
@@ -423,6 +428,66 @@ fn up_schema_keeps_aggregate_member_output_separate_from_repo_receipts() {
             .get("contract_identity")
             .is_some()
     );
+}
+
+#[test]
+fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
+    let schema = load_schema("docs/spec/json-schemas/run-preview.json");
+    let single_target = &schema["$defs"]["singleTarget"]["properties"];
+    let env_summary = &schema["$defs"]["envSummary"]["properties"];
+    let plan = &schema["$defs"]["plan"]["properties"];
+    let simple_failure = &schema["$defs"]["simpleFailure"]["properties"];
+
+    assert_eq!(
+        single_target["summary"]["$ref"],
+        serde_json::json!("./doctor.json#/properties/summary")
+    );
+    assert_eq!(
+        single_target["contract_identity"]["$ref"],
+        serde_json::json!(
+            "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
+        )
+    );
+    assert_eq!(
+        single_target["declared_execution"]["$ref"],
+        serde_json::json!("./execution.json#/$defs/declaredExecution")
+    );
+    assert_eq!(
+        single_target["resolved"]["$ref"],
+        serde_json::json!("./execution.json#/oneOf/0/properties/resolved")
+    );
+    assert_eq!(
+        single_target["requested_task"]["$ref"],
+        serde_json::json!("./tasks.json#/oneOf/0/properties/tasks/items")
+    );
+    assert!(single_target.get("env_summary").is_some());
+    assert!(single_target.get("sources").is_some());
+    assert!(single_target.get("env").is_some());
+    assert!(single_target.get("toolchains").is_some());
+    assert!(single_target.get("native_prerequisites").is_some());
+    assert!(env_summary.get("source_issue_count").is_some());
+    assert!(plan.get("dependency_chain").is_some());
+    assert!(plan.get("requirement_lines").is_some());
+    assert!(plan.get("actions").is_some());
+    assert!(plan.get("notes").is_some());
+    assert_eq!(
+        simple_failure["dry_run"],
+        serde_json::json!({ "const": true })
+    );
+}
+
+#[test]
+fn run_preview_schema_keeps_member_aggregate_separate_from_single_target_preview() {
+    let schema = load_schema("docs/spec/json-schemas/run-preview.json");
+    let aggregate = &schema["$defs"]["aggregate"]["properties"];
+
+    assert_eq!(aggregate["dry_run"], serde_json::json!({ "const": true }));
+    assert_eq!(
+        aggregate["members"]["items"]["$ref"],
+        serde_json::json!("#/$defs/singleTarget")
+    );
+    assert!(aggregate.get("summary").is_none());
+    assert!(aggregate.get("contract_identity").is_none());
 }
 
 #[test]
