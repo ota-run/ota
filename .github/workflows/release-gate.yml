@@ -832,7 +832,7 @@ jobs:
 
           release = api_json(f"{api_base}/releases/tags/{release_tag}")
           release_name = release.get("name") or release.get("tag_name") or release_tag
-          release_url = release.get("html_url") or f"https://github.com/{repo}/releases/tag/{release_tag}"
+          release_url = f"https://ota.run/releases/{release_tag}"
           release_body = release.get("body") or ""
           release_version = release_tag[1:] if release_tag.startswith("v") else release_tag
 
